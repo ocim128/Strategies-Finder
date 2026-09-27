@@ -697,6 +697,137 @@ async function testStaleRunningManifestReconcilesToInterrupted(): Promise<void> 
     console.log("PASS: stale running manifest reconciles to interrupted on status");
 }
 
+
+/**
+ * finder_arm profile (Finder Arm Performance optimization plan, phases 1-2):
+ * a coordinator built with deps.executionProfile === "finder_arm" runs ONLY
+ * the full-window replay — no annual calendar passes (even across a
+ * multi-year From/To), no current_snapshot event, no per-row event details,
+ * and no result.json on disk. Finder children delete their run directory
+ * after each candidate and the parent retains only scalar state, so nothing
+ * can consume those outputs. Standalone behavior stays the default (the F4
+ * test above locks the snapshot path for engines without the profile).
+ */
+async function testFinderArmProfileSkipsAnnualSnapshotAndResultJson(): Promise<void> {
+    const runId = `spec_finder_arm_${Date.now()}`;
+    const baseDir = undefined;
+    const pairListText = "AAPL\u2022+MSFT\u2022\nAAPL\u2022+NVDA\u2022";
+    const enumRes = enumerateSp500Pairs({ interval: "4h", pairListText });
+    if (enumRes.canonicalPairs.length === 0) {
+        console.log("SKIP: finder_arm profile test (S&P 500 catalog not available in this env)");
+        return;
+    }
+
+    const request: Record<string, unknown> = {
+        runId,
+        strategyKey: "close_location_median_alignment",
+        strategyParams: { lookback: 20, threshold: 0.5 },
+        backtestSettings: { direction: "long", slippage: 0, commission: 0 },
+        capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 },
+        interval: "4h",
+        horizons: [12],
+        pairListText,
+        // Spans 2022-2024: WITHOUT the profile this derives three annual
+        // replay passes on top of the full-window pass (their progress text
+        // is asserted absent below).
+        sampleFromSec: 1_660_000_000,
+        sampleToSec: 1_730_000_000,
+        resume: true,
+        saveArchiveLog: false,
+        useRustEnginePreference: false,
+    };
+    const fingerprint = computeRunFingerprint({
+        strategyKey: request.strategyKey as string,
+        strategyParams: request.strategyParams,
+        backtestSettings: request.backtestSettings,
+        capitalSettings: request.capitalSettings,
+        interval: "4h",
+        useRustEnginePreference: false,
+        canonicalAssets: enumRes.eligibleAssets,
+        canonicalPairs: enumRes.canonicalPairs,
+    });
+
+    // Trade entries INSIDE the 2022-2024 sample window (entryTime 1 would
+    // predate sampleFromSec and the full-window replay would legitimately
+    // report zero decision events -> empty horizons).
+    const inWindowTrades = [{
+        type: "long" as const,
+        entryTime: 1_690_000_000 as Time,
+        exitTime: 1_690_003_600 as Time,
+        exitReason: "end_of_data" as const,
+    }];
+    const shardZero: CompactPairArtifact[] = [
+        openArtifact(0, "AAPL+Q1", "long", 1_700_000_000, inWindowTrades),
+        openArtifact(1, "AAPL+Q2", "long", 1_700_000_000, inWindowTrades),
+        openArtifact(2, "MSFT+Q3", "long", 1_700_000_000, inWindowTrades),
+        openArtifact(3, "MSFT+Q4", "long", 1_700_000_000, inWindowTrades),
+        openArtifact(4, "NVDA+Q5", "long", 1_700_000_000, inWindowTrades),
+        openArtifact(5, "NVDA+Q6", "long", 1_700_000_000, inWindowTrades),
+    ];
+    writeShardArtifacts(runId, 0, shardZero, baseDir);
+
+    const manifest: TopMeanRunManifest = {
+        schema: "top_mean_run_manifest.v1",
+        runId,
+        status: "running",
+        fingerprint,
+        strategyKey: "close_location_median_alignment",
+        interval: "4h",
+        pairCount: enumRes.canonicalPairs.length,
+        shardSize: 50,
+        totalShards: 1,
+        completedShards: [0],
+        failedShards: [],
+        completedPairsCount: 6,
+        failedPairsCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    };
+    saveManifest(manifest, baseDir);
+
+    const engine = new TopMeanCoordinatorEngine(request as any, baseDir, {
+        enumeration: enumRes,
+        evaluationNowSec: 1_760_000_000,
+        executionProfile: "finder_arm",
+    });
+    const events: Array<{ type: string; [k: string]: unknown }> = [];
+    try {
+        await engine.run((event: unknown) => {
+            events.push(event as { type: string; [k: string]: unknown });
+        });
+    } finally {
+        rmSync(getRunDir(runId, baseDir), { recursive: true, force: true });
+    }
+
+    const types = events.map((e) => e.type);
+    assert.equal(
+        types.filter((type) => type === "current_snapshot").length,
+        0,
+        "finder_arm must not emit a current_snapshot event",
+    );
+    assert.equal(
+        events.filter((e) => String(e.text ?? "").includes("OPEN_SCORE USD replay for 20")).length,
+        0,
+        "finder_arm must not run annual calendar replay passes",
+    );
+    const done = events.find((e) => e.type === "done" && e.interrupted !== true) as
+        | { result?: TopMeanResultSummary }
+        | undefined;
+    assert.ok(done?.result?.completed, "the finder_arm run must complete");
+    const result = done.result!;
+    assert.ok(result.horizons.length > 0, "the full-window replay must still run");
+    assert.equal(result.annualReports?.length ?? 0, 0, "finder_arm returns no annual reports");
+    assert.equal(result.openScoreEventDetails, undefined, "finder_arm omits per-row event details");
+    assert.equal(result.ongoingEventDetails, undefined, "finder_arm omits ongoing event details");
+    assert.equal(result.currentSnapshot, undefined, "finder_arm omits the current snapshot");
+    assert.equal(
+        existsSync(join(getRunDir(runId, baseDir), "result.json")),
+        false,
+        "finder_arm must not write result.json",
+    );
+    console.log("PASS: finder_arm profile runs the full-window replay only");
+}
+
 /**
  * Shared POST /run harness for route-boundary validation tests (mirrors the
  * saveArchiveLog rejection test below).
@@ -1322,6 +1453,7 @@ async function main(): Promise<void> {
     await testResultJsonAugmentationIsAdditive();
     await testResultSummaryFieldIsOptional();
     await testRunIntegratesSnapshotAndPersistsBeforeReplay();
+    await testFinderArmProfileSkipsAnnualSnapshotAndResultJson();
     await testTopMeanRouteRejectsNonBooleanArchiveFlag();
     await testStaleRunningManifestReconcilesToInterrupted();
     await testTopMeanRouteRejectsInvalidRunIdsAndDates();

@@ -417,6 +417,8 @@ export class TopMeanWorkerPool {
     private activeWorkers = new Set<Worker>();
     private terminationPromises = new Map<Worker, Promise<unknown>>();
     private isCancelled = false;
+    /** Set by dispose(); lets owners/tests verify final termination happened. */
+    public disposed = false;
     /**
      * Assigned inside execute(): drains queued dispatch callbacks so their
      * in-flight promises settle. Audit (all-workers-dead hang): a retry that
@@ -454,7 +456,28 @@ export class TopMeanWorkerPool {
         this.drainQueuedTasks?.();
     }
 
+    /**
+     * Final teardown for a sweep-scoped pool (Finder Arm Performance phase 3):
+     * the owner calls this exactly once in its finally — success, child
+     * failure, Stop, and fatal paths alike — before returning control to the
+     * plugin's owner-release path, so no worker thread outlives the sweep.
+     * Drainage distinction: execute() already settled every task and durable
+     * shard write before returning; dispose() only terminates.
+     */
+    public async dispose(): Promise<void> {
+        this.cancel();
+        await this.waitForTeardown();
+        this.disposed = true;
+    }
+
     public async execute(options: WorkerPoolRunOptions): Promise<TopMeanWorkerPoolExecutionResult> {
+        // finder_arm sweep reuse: a cancelled pool is never handed to a later
+        // candidate (the runner latches via isCancelled and fails the sweep
+        // instead), so a cancelled pool entering execute() can only mean a
+        // caller bug — reject instead of resurrecting cancelled workers.
+        if (this.isCancelled) {
+            throw new Error("Operation cancelled");
+        }
         const poolStartedAt = performance.now();
         const workerCount = resolveTopMeanWorkerCount(options.workerCount);
         const totalPairs = options.canonicalPairs.length;
@@ -646,8 +669,42 @@ export class TopMeanWorkerPool {
             for (const cb of stuck) cb();
         };
         this.drainQueuedTasks = drainPendingTaskCallbacks;
+        // Pending per-candidate cache-reset acknowledgements (audit P1).
+        const cacheResetAcks = new Map<Worker, { resolve: () => void; reject: (err: Error) => void }>();
+        const rejectCacheResetAck = (worker: Worker, error: Error): void => {
+            const pending = cacheResetAcks.get(worker);
+            if (!pending) return;
+            cacheResetAcks.delete(worker);
+            pending.reject(error);
+        };
+        const resetWorkerCaches = (worker: Worker): Promise<void> =>
+            new Promise<void>((resolve, reject) => {
+                const timer = setTimeout(() => {
+                    cacheResetAcks.delete(worker);
+                    reject(new Error(`Worker did not acknowledge the per-candidate cache reset (runId=${options.runId}).`));
+                }, 15_000);
+                cacheResetAcks.set(worker, {
+                    resolve: () => {
+                        clearTimeout(timer);
+                        resolve();
+                    },
+                    reject: (err) => {
+                        clearTimeout(timer);
+                        reject(err);
+                    },
+                });
+                worker.postMessage({ type: "clear_caches" } as TopMeanWorkerMessage);
+            });
 
+        // finder_arm sweep reuse: retained workers are re-attached for every
+        // execution. Each call builds FRESH handler closures over THIS run's
+        // options/counters/free-list and removes the previous execution's
+        // listeners first, so a late reply from a previous child can never
+        // observe or settle the wrong execution's state.
         const attachWorkerHandlers = (worker: Worker): void => {
+            worker.removeAllListeners("message");
+            worker.removeAllListeners("error");
+            worker.removeAllListeners("exit");
             this.activeWorkers.add(worker);
 
             const failInFlight = (worker: Worker, error: Error): void => {
@@ -659,6 +716,12 @@ export class TopMeanWorkerPool {
             };
 
             const onMessage = (msg: TopMeanWorkerMessage): void => {
+                if (msg.type === "caches_cleared") {
+                    const pending = cacheResetAcks.get(worker);
+                    cacheResetAcks.delete(worker);
+                    pending?.resolve();
+                    return;
+                }
                 if (msg.type === "progress") {
                     if (msg.status === "completed") {
                         // Audit (retry-accounting finding): "completed" progress
@@ -805,6 +868,7 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
+                rejectCacheResetAck(worker, new Error("Worker died during the per-candidate cache reset."));
                 this.terminateWorker(worker);
             };
             worker.on("error", onError);
@@ -833,6 +897,7 @@ export class TopMeanWorkerPool {
                 const freeIdx = freeWorkers.indexOf(worker);
                 if (freeIdx >= 0) freeWorkers.splice(freeIdx, 1);
                 this.activeWorkers.delete(worker);
+                rejectCacheResetAck(worker, new Error("Worker exited during the per-candidate cache reset."));
                 // Audit (all-workers-dead hang): when the LAST worker dies,
                 // any task sitting in pendingTasks (e.g. a retry queued while
                 // the other workers were busy) can never be dispatched, so its
@@ -947,11 +1012,32 @@ export class TopMeanWorkerPool {
         // with its own whole-universe parsed-seed cache; the auto worker
         // count's memory ceiling (resolveTopMeanWorkerCount) bounds the sum
         // of those caches to 75% of actual system RAM.
-        const spawned: Worker[] = [];
+        // A sweep-scoped pool (finder_arm) seeds `spawned` with the live
+        // workers retained from the previous candidate (their handlers were
+        // just rebound above) and spawns only the missing tail; standalone
+        // pools start empty and spawn the full count as before.
+        const spawned: Worker[] = [...this.activeWorkers];
+        const preexistingWorkerCount = spawned.length;
+        // Re-attach retained workers for THIS execution: fresh handler
+        // closures (removing the previous execution's listeners) and entry
+        // into this run's free-list, so dispatch can reach them again.
+        for (const retained of spawned) {
+            attachWorkerHandlers(retained);
+            freeWorkers.push(retained);
+        }
+        // Per-candidate cache reset (finder_arm sweep reuse, audit P1): the
+        // leg/pair LRUs and the fingerprint memo are keyed without a source
+        // version, so retained workers must DROP their module-level dataset
+        // caches before the new child's tasks are dispatched — source files
+        // can change between candidates. Standalone pools never have
+        // pre-existing workers, so this engages only on reuse.
+        if (preexistingWorkerCount > 0) {
+            await Promise.all(spawned.map((worker) => resetWorkerCaches(worker)));
+        }
         let spawnedWorkerCount = 0;
         const workerStartupStartedAt = performance.now();
         try {
-            for (let i = freeWorkers.length; i < workerCount; i++) {
+            for (let i = spawned.length; i < workerCount; i++) {
                 if (this.isCancelled) break;
                 const worker = new Worker(workerScriptPath);
                 attachWorkerHandlers(worker);
@@ -960,8 +1046,9 @@ export class TopMeanWorkerPool {
                 spawnedWorkerCount += 1;
             }
         } catch (err) {
-            // If spawn failed mid-loop, terminate what we got and rethrow.
-            for (const w of spawned) {
+            // If spawn failed mid-loop, terminate the freshly spawned workers
+            // (pre-existing ones stay owned by this pool) and rethrow.
+            for (const w of spawned.slice(preexistingWorkerCount)) {
                 this.terminateWorker(w);
                 this.activeWorkers.delete(w);
             }
@@ -1073,8 +1160,12 @@ export class TopMeanWorkerPool {
         await settleInFlightShardWrites();
         await requireManifestFlush();
         dispatchHalted = true;
-        // Terminate the persistent workers now that the run is done.
-        this.cancel();
+        // finder_arm sweep reuse: execute() leaves the workers ALIVE on
+        // success so the next sequential candidate reuses the warm workers.
+        // Teardown ownership moved to the pool's consumers — standalone
+        // coordinators cancel in their run() finally (as before), and the
+        // Finder runner's finally calls dispose(). Cancellation still
+        // terminates immediately through cancel() on every failure path.
         return {
             ...engineUsage,
             failedPairDetails: [...failedPairDetails.values()].sort((a, b) => a.pairIndex - b.pairIndex),

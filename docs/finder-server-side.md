@@ -29,10 +29,21 @@ candidates. If no pair loads for a candidate, that candidate cannot be scored.
 
 The Finder plugin holds Finder ownership and the shared Batch/TOP_MEAN
 reservation for the whole sweep, including the gaps between candidates and
-child teardown. It runs one TOP_MEAN coordinator at a time, using its existing
-worker pool for pair backtests. Child archive logging and resume are disabled;
-after worker termination and pending writes drain, the runner removes only
-that validated child's artifact directory. Cleanup failure stops the sweep
+child teardown. It runs one TOP_MEAN coordinator at a time. Worker reuse is OPT-IN
+(`enableWorkerReuse` on the sweep request), off by default pending the
+optimization plan's Phase 0 measurements. When enabled, the runner owns a
+single sweep-scoped TOP_MEAN worker pool lent to every child: a successful
+child execution leaves the workers alive so the next candidate skips worker
+startup, and before each reused execution the pool makes every retained
+worker drop its module-level dataset caches (the leg/pair LRUs key without a
+source version, so stale candles must never survive a candidate boundary) — the same worker-count and 75%-RAM
+memory budgets as standalone runs, retained across candidates instead of
+re-spawned. A child failure, fatal, or Stop cancels the pool - including a Stop
+landing in the artifact-cleanup gap, which the runner forwards from its abort
+signal - and the sweep never lends it again; the runner's `finally` disposes the pool (cancel +
+worker-termination drain) on every sweep exit before owner release. Child
+archive logging and resume are disabled; after worker-termination drainage,
+the runner removes only that validated child's artifact directory. Cleanup failure stops the sweep
 before another child starts and leaves earlier compact result rows available.
 Batch Stop or TOP_MEAN child Stop delegates to the parent Finder run and keeps
 both reservations until teardown finishes. A mismatched run id does not stop

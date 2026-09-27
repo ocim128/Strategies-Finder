@@ -33,7 +33,7 @@ import {
     type TopMeanStatusResponse,
 } from "../batch-backtest/sp500-top-mean-coordinator-engine";
 import type { ReplayComparison } from "../batch-backtest/batch-open-score-usd-replay-engine";
-import type { TopMeanPairFailure } from "../batch-backtest/sp500-top-mean-worker-pool";
+import { TopMeanWorkerPool, type TopMeanPairFailure } from "../batch-backtest/sp500-top-mean-worker-pool";
 import type { EnumerationResult } from "../batch-backtest/sp500-pair-enumerator";
 import type { CapitalSettings } from "../types/backtest";
 
@@ -80,6 +80,14 @@ export interface FinderArmPerformanceRunnerInput {
     signal: AbortSignal;
     isCancelled(): boolean;
     plans?: readonly FinderArmPerformanceCandidatePlan[];
+    /**
+     * Phase 3 measurement gate (plan): sweep-scoped worker reuse is OFF by
+     * default — enable only after Phase 0 cold/warm timings, cache counters,
+     * and memory numbers prove the benefit within the existing budget. Off =
+     * one pool per candidate (the pre-reuse behavior), still with the
+     * finder_arm profile savings from phases 1-2.
+     */
+    enableWorkerReuse?: boolean;
 }
 
 export interface FinderArmPerformanceRunnerCallbacks {
@@ -100,6 +108,8 @@ export interface FinderArmPerformanceRunnerDeps {
     ) => FinderArmPerformanceCoordinator;
     removeChildArtifacts?: (childRunId: string, baseDir: string) => Promise<void>;
     generatePlans?: typeof buildFinderCandidatePlans;
+    /** Test seam: provide the sweep-scoped worker pool instead of constructing it. */
+    createWorkerPool?: () => TopMeanWorkerPool;
 }
 
 export class FinderArmPerformanceChildError extends Error {
@@ -282,14 +292,80 @@ export async function runFinderArmPerformance(
         options: input.options,
         generateParamSets: deps.generatePlans,
     });
-    const candidates: FinderArmPerformanceCandidate[] = [];
-    const createCoordinator = deps.createCoordinator
-        ?? ((request, baseDir, context) => new TopMeanCoordinatorEngine(request, baseDir, context));
-    const removeArtifacts = deps.removeChildArtifacts ?? removeOwnedChildArtifacts;
     const horizon = input.options.armPerformance?.horizon;
     if (!horizon) throw new Error("Arm Performance horizon is missing.");
     if (plans.length === 0) throw new Error("Finder produced no candidate configurations for this search.");
 
+    // Sweep-scoped worker pool (phase 3): one construction serves every
+    // sequential child, amortizing worker startup and retaining each worker's
+    // bounded parsed-seed cache across candidates. execute() intentionally
+    // leaves workers alive on success; the finally below disposes the pool on
+    // every sweep exit — success, child failure, Stop, and fatal — so no
+    // worker thread outlives the sweep or the plugin's owner-release path.
+    const pool = input.enableWorkerReuse
+        ? (deps.createWorkerPool?.() ?? new TopMeanWorkerPool())
+        : null;
+    const sweepState = { poolUsable: true };
+    const cancelSweepPool = (): void => {
+        if (!pool) return;
+        pool.cancel();
+        sweepState.poolUsable = false;
+    };
+    // Audit (P2): a Stop landing in the artifact-cleanup gap reaches no
+    // active coordinator (the runner already detached it), so forward the
+    // runner abort signal to the borrowed pool immediately.
+    if (pool) {
+        if (input.signal.aborted) cancelSweepPool();
+        else input.signal.addEventListener("abort", cancelSweepPool, { once: true });
+    }
+    try {
+        return await runFinderArmPerformanceCandidates(
+            input,
+            callbacks,
+            deps,
+            plans,
+            pool,
+            sweepState,
+        );
+    } finally {
+        input.signal.removeEventListener("abort", cancelSweepPool);
+        // The runner owns final termination (phase 3): dispose (cancel +
+        // drain) runs on EVERY sweep exit — success, child failure, Stop,
+        // and fatal — before control returns to the plugin's owner-release
+        // path, so no worker thread outlives the sweep.
+        sweepState.poolUsable = false;
+        await pool?.dispose();
+    }
+}
+
+/**
+ * Sequential candidate sweep (phase 3): each child coordinator is lent the
+ * sweep-scoped worker pool and never tears it down; a child failure or Stop
+ * latches `sweepState.poolUsable` false so no later child borrows it again.
+ * Moved verbatim from runFinderArmPerformance — behavior unchanged apart
+ * from the pool lending and the sweep-state latch.
+ */
+async function runFinderArmPerformanceCandidates(
+    input: FinderArmPerformanceRunnerInput,
+    callbacks: FinderArmPerformanceRunnerCallbacks,
+    deps: FinderArmPerformanceRunnerDeps,
+    plans: readonly FinderArmPerformanceCandidatePlan[],
+    pool: TopMeanWorkerPool | null,
+    sweepState: { poolUsable: boolean },
+): Promise<FinderArmPerformanceCandidate[]> {
+    // Validated by the outer entrypoint; re-read here because the helper is
+    // also the only place request construction needs it.
+    const horizon = input.options.armPerformance?.horizon;
+    if (!horizon) throw new Error("Arm Performance horizon is missing.");
+    const candidates: FinderArmPerformanceCandidate[] = [];
+    const createCoordinator = deps.createCoordinator
+        ?? ((request, baseDir, context) => new TopMeanCoordinatorEngine(request, baseDir, context));
+    const removeArtifacts = deps.removeChildArtifacts ?? removeOwnedChildArtifacts;
+    const cancelSweepPool = (): void => {
+        if (!pool) return;
+        pool.cancel();
+        sweepState.poolUsable = false;
+    };
     for (const plan of plans) {
         if (input.isCancelled() || input.signal.aborted) break;
         const candidateId = `${input.runId}:candidate-${plan.candidateOrdinal}`;
@@ -313,9 +389,15 @@ export async function runFinderArmPerformance(
         const coordinator = createCoordinator(request, input.baseDir, {
             enumeration: input.enumeration,
             evaluationNowSec: input.evaluationCutoffSec,
+            // Trusted-runner profile: children skip annual replays, the
+            // current snapshot, per-row details, and result.json — the
+            // compact candidate result reads only horizon armComparisons.
+            executionProfile: "finder_arm",
+            // Sweep-scoped pool (enableWorkerReuse): executed (but never torn
+            // down) by the child; final termination stays with this runner's
+            // finally. Off by default pending the plan's Phase 0 measurements.
+            ...(pool && sweepState.poolUsable ? { pool } : {}),
         });
-        callbacks.setActiveCoordinator(coordinator, childRunId);
-
         type ChildTerminal =
             | { type: "done"; result: TopMeanResultSummary }
             | { type: "fatal"; error: string }
@@ -324,8 +406,30 @@ export async function runFinderArmPerformance(
         let childStatus: TopMeanStatusResponse | null = null;
         let stagedCandidate: FinderArmPerformanceCandidate | null = null;
         let childError: Error | null = null;
+        // Audit (P0): TopMeanCoordinatorEngine keeps run()/waitForTeardown()/
+        // getStatus() on its PROTOTYPE, so an object spread silently drops
+        // them and the child run would throw at runtime. Bind every member
+        // explicitly; only stop() is wrapped.
+        const coordinatorWithSweepStop: FinderArmPerformanceCoordinator = {
+            request: coordinator.request,
+            run: (...args) => coordinator.run(...args),
+            // Parent Stop (Batch or TOP_MEAN child Stop delegating to Finder)
+            // must reach the BORROWED pool even between children: cancel
+            // latches it, and the finally below drains + refuses to reuse it.
+            stop() {
+                cancelSweepPool();
+                coordinator.stop();
+            },
+            waitForTeardown: () => coordinator.waitForTeardown(),
+            getStatus: () => coordinator.getStatus(),
+            ...(typeof coordinator.getFailedPairDetails === "function"
+                ? { getFailedPairDetails: () => coordinator.getFailedPairDetails!() }
+                : {}),
+        };
+        callbacks.setActiveCoordinator(coordinatorWithSweepStop, childRunId);
+
         try {
-            await coordinator.run((eventRaw) => {
+            await coordinatorWithSweepStop.run((eventRaw) => {
                 if (!eventRaw || typeof eventRaw !== "object") return;
                 const event = eventRaw as Record<string, unknown>;
                 if (event.type === "done") {
@@ -411,6 +515,10 @@ export async function runFinderArmPerformance(
         callbacks.setActiveCoordinator(null, null);
 
         if (childError) {
+            // Stop/fatal errors cancel and drain the whole pool; a failed
+            // pool is never handed to another candidate. dispose() in the
+            // finally below performs the final termination.
+            if (pool) sweepState.poolUsable = false;
             throw new FinderArmPerformanceChildError(
                 `Candidate ${candidateId} failed: ${childError.message}`,
                 candidateId,

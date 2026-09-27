@@ -1,11 +1,17 @@
 const { isMainThread, parentPort } = require("node:worker_threads");
 
+// finder_arm sweep reuse audit (P1): count cache-reset control messages so
+// the pool spec can observe that a retained worker received its reset BEFORE
+// the next candidate's shards. Surfaced through performance.loadMs (unused by
+// this deterministic worker).
+let cacheResetCount = 0;
+
 function timing(data) {
     return {
         attemptedPairs: data.pairs.length,
         completedPairs: data.pairs.length,
         failedPairs: 0,
-        loadMs: 0,
+        loadMs: cacheResetCount,
         prepareMs: 0,
         backtestMs: 0,
         signalGenerationMs: 0,
@@ -55,6 +61,11 @@ if (!isMainThread && parentPort) {
     }
 
     parentPort.on("message", (data) => {
+        if (data.type === "clear_caches") {
+            cacheResetCount += 1;
+            parentPort.postMessage({ type: "caches_cleared" });
+            return;
+        }
         if (data.strategyKey === "__test_retry__") {
             parentPort.postMessage({
                 type: "error",

@@ -456,6 +456,25 @@ export interface TopMeanCoordinatorEngineDeps {
     enumeration?: EnumerationResult;
     /** One sweep-wide cutoff; standalone runs continue to capture their own. */
     evaluationNowSec?: number;
+    /**
+     * Internal execution profile. "finder_arm" — supplied only by the trusted
+     * Finder Arm Performance runner — runs the single full-window replay and
+     * skips what the compact candidate result never reads: annual calendar
+     * replays, the current-position snapshot, per-row event details, and both
+     * result.json writes (the child directory is deleted after the sweep).
+     * Absent (standalone TOP_MEAN) preserves every existing behavior,
+     * including single-year deduplication and the pre-replay snapshot
+     * persistence that the /status reattach path serves.
+     */
+    executionProfile?: "finder_arm";
+    /**
+     * Sweep-scoped worker pool lent by the Finder Arm Performance runner
+     * (phase 3): reused across sequential children, so execute() leaves the
+     * workers alive on success and this engine's finally must NOT tear the
+     * pool down — the runner's dispose() owns final termination. Absent =
+     * standalone; the engine owns (and cancels) its own pool as before.
+     */
+    pool?: TopMeanWorkerPool;
 }
 
 export class TopMeanCoordinatorEngine {
@@ -795,6 +814,10 @@ export class TopMeanCoordinatorEngine {
         // artifacts with different closed-candle cutoffs. One timestamp per
         // coordinator run is threaded through every worker task instead.
         const runNowSec = this.deps?.evaluationNowSec ?? Math.floor(Date.now() / 1000);
+        // Internal execution profile (finder_arm): trusted Finder Arm
+        // Performance children run the full-window replay only — see the
+        // TopMeanCoordinatorEngineDeps comment for everything it skips.
+        const finderArmProfile = this.deps?.executionProfile === "finder_arm";
         activeEngineInstance = this;
         this.archiveRoot = this.archiveRequested
             ? resolveTopMeanArchiveLogDir(this.baseDir ?? process.cwd())
@@ -963,7 +986,10 @@ export class TopMeanCoordinatorEngine {
             this.currentPhase = "backtesting";
             this.progressText = `Running backtests across ${enumRes.canonicalPairs.length} pairs...`;
 
-            this.pool = new TopMeanWorkerPool();
+            // A lent pool (deps.pool, finder_arm) is reused across sequential
+            // children and torn down by its owner; standalone runs construct
+            // — and in run()'s finally cancel — their own pool as before.
+            this.pool = this.deps?.pool ?? new TopMeanWorkerPool();
             const backtestingStartedAt = performance.now();
 
             const usage = await this.pool.execute({
@@ -1011,11 +1037,12 @@ export class TopMeanCoordinatorEngine {
             // open at the latest common closed candle, directly from completed
             // compact artifacts. Independent of the historical replay below;
             // does not load pair candles or signals.
+            // The finder_arm profile skips the snapshot entirely: the Finder
+            // runner reads only horizon armComparisons and deletes the child
+            // directory, so nothing can ever consume it (its currentSnapshot
+            // stays null and no current_snapshot event or result.json exists).
             this.currentPhase = "replay";
-            this.progressText = "Computing current TOP_MEAN snapshot from artifacts...";
-            emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
 
-            const snapshotStartedAt = performance.now();
             // Shared artifact corpus (corpus-sharing finding): the Phase-1
             // snapshot, the replay-target derivation, and every replay pass
             // read the same immutable compact artifacts. Parse the shards
@@ -1028,37 +1055,45 @@ export class TopMeanCoordinatorEngine {
                 if (this.isStopped) break;
                 runArtifactCorpus.push(artifact);
             }
-            const currentSnapshotResult = await computeCurrentTopMeanSnapshot(
-                () => (async function* () {
-                    for (const artifact of runArtifactCorpus) yield artifact;
-                })(),
-                { shouldStop: () => this.isStopped },
-            );
-            this.performanceDiagnostic.phases.snapshotMs = performance.now() - snapshotStartedAt;
-            this.currentSnapshotResult = currentSnapshotResult;
 
-            if (this.isStopped) {
-                this.emitInterrupted(emitNdjson);
-                return;
+            const resultJsonPath = join(getRunDir(this._request.runId, this.baseDir), "result.json");
+            if (!finderArmProfile) {
+                this.progressText = "Computing current TOP_MEAN snapshot from artifacts...";
+                emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
+
+                const snapshotStartedAt = performance.now();
+                const currentSnapshotResult = await computeCurrentTopMeanSnapshot(
+                    () => (async function* () {
+                        for (const artifact of runArtifactCorpus) yield artifact;
+                    })(),
+                    { shouldStop: () => this.isStopped },
+                );
+                this.performanceDiagnostic.phases.snapshotMs = performance.now() - snapshotStartedAt;
+                this.currentSnapshotResult = currentSnapshotResult;
+
+                if (this.isStopped) {
+                    this.emitInterrupted(emitNdjson);
+                    return;
+                }
+
+                // PERSIST + EMIT THE SNAPSHOT BEFORE THE REPLAY PHASE. The replay
+                // is an independent historical study that can fail (target-loader
+                // outages, dataset gaps) without invalidating the current
+                // snapshot. Writing result.json now and emitting a
+                // `current_snapshot` event means:
+                //   - the /status reattach path can return the snapshot even if
+                //     the replay never completes;
+                //   - the UI can render the current decision before the (slow)
+                //     historical replay finishes;
+                //   - a replay failure cannot lose the current snapshot.
+                // The replay's later write merges its fields into the same file
+                // via `{ ...replayResult, currentSnapshot }`.
+                const snapshotWriteStartedAt = performance.now();
+                atomicWriteJsonSync(resultJsonPath, { currentSnapshot: currentSnapshotResult });
+                this.performanceDiagnostic.phases.resultWriteMs += performance.now() - snapshotWriteStartedAt;
+                emitNdjson({ type: "current_snapshot", currentSnapshot: currentSnapshotResult });
             }
 
-            // PERSIST + EMIT THE SNAPSHOT BEFORE THE REPLAY PHASE. The replay
-            // is an independent historical study that can fail (target-loader
-            // outages, dataset gaps) without invalidating the current
-            // snapshot. Writing result.json now and emitting a
-            // `current_snapshot` event means:
-            //   - the /status reattach path can return the snapshot even if
-            //     the replay never completes;
-            //   - the UI can render the current decision before the (slow)
-            //     historical replay finishes;
-            //   - a replay failure cannot lose the current snapshot.
-            // The replay's later write merges its fields into the same file
-            // via `{ ...replayResult, currentSnapshot }`.
-            const resultJsonPath = join(getRunDir(this._request.runId, this.baseDir), "result.json");
-            const snapshotWriteStartedAt = performance.now();
-            atomicWriteJsonSync(resultJsonPath, { currentSnapshot: currentSnapshotResult });
-            this.performanceDiagnostic.phases.resultWriteMs += performance.now() - snapshotWriteStartedAt;
-            emitNdjson({ type: "current_snapshot", currentSnapshot: currentSnapshotResult });
 
             // 3. Replay & Asset Selector Study Phase
             this.progressText = "Running OPEN_SCORE USD replay and asset selection analysis...";
@@ -1289,7 +1324,11 @@ export class TopMeanCoordinatorEngine {
                         interval: this._request.interval,
                         slippageRate,
                         commissionRate,
-                        includeEventDetails: true,
+                        // finder_arm: the compact candidate result never reads
+                        // per-row details — the replay engine's own guards
+                        // suppress event and ongoing-detail rows when this is
+                        // false. Standalone keeps them for the details UI.
+                        includeEventDetails: !finderArmProfile,
                         ...(includePhase0bDiagnostics
                             ? {
                                 includePoolSnapshots: true,
@@ -1406,56 +1445,59 @@ export class TopMeanCoordinatorEngine {
 
             const buildHorizonSummaries = buildTopMeanHorizonSummaries;
             const annualReports: TopMeanAnnualReplaySummary[] = [];
-            // Audit (annual-cutoff finding): thread the ONE run-level cutoff
-            // (the same runNowSec every worker task carries) into the annual
-            // window derivation. The default fresh Date.now() made a run that
-            // crossed a UTC day/year boundary derive annual report windows
-            // from a different temporal cutoff than the rest of the run.
-            const annualWindows = buildTopMeanAnnualReplayWindows(
-                this._request.sampleFromSec,
-                this._request.sampleToSec,
-                runNowSec,
-            );
-            // Audit (single-year dedupe): when the explicit From/To bounds
-            // fall within ONE calendar year, buildTopMeanAnnualReplayWindows
-            // returns exactly one window whose bounds EQUAL the explicit
-            // full-window bounds (strict equality below — a clamped or
-            // defaulted bound never matches). Re-running runReplayForWindow
-            // for that window would repeat an identical scan/merge/aggregate;
-            // build the annual report from the full-window result instead.
-            const reuseFullWindowForSingleAnnual = annualWindows.length === 1
-                && typeof this._request.sampleFromSec === "number"
-                && typeof this._request.sampleToSec === "number"
-                && annualWindows[0]!.sampleFromSec === this._request.sampleFromSec
-                && annualWindows[0]!.sampleToSec === this._request.sampleToSec;
-            for (let index = 0; index < annualWindows.length; index += 1) {
-                const window = annualWindows[index]!;
-                if (reuseFullWindowForSingleAnnual) {
+            if (!finderArmProfile) {
+                // Audit (annual-cutoff finding): thread the ONE run-level cutoff
+                // (the same runNowSec every worker task carries) into the annual
+                // window derivation. The default fresh Date.now() made a run that
+                // crossed a UTC day/year boundary derive annual report windows
+                // from a different temporal cutoff than the rest of the run.
+                const annualWindows = buildTopMeanAnnualReplayWindows(
+                    this._request.sampleFromSec,
+                    this._request.sampleToSec,
+                    runNowSec,
+                );
+                // Audit (single-year dedupe): when the explicit From/To bounds
+                // fall within ONE calendar year, buildTopMeanAnnualReplayWindows
+                // returns exactly one window whose bounds EQUAL the explicit
+                // full-window bounds (strict equality below — a clamped or
+                // defaulted bound never matches). Re-running runReplayForWindow
+                // for that window would repeat an identical scan/merge/aggregate;
+                // build the annual report from the full-window result instead.
+                const reuseFullWindowForSingleAnnual = annualWindows.length === 1
+                    && typeof this._request.sampleFromSec === "number"
+                    && typeof this._request.sampleToSec === "number"
+                    && annualWindows[0]!.sampleFromSec === this._request.sampleFromSec
+                    && annualWindows[0]!.sampleToSec === this._request.sampleToSec;
+                for (let index = 0; index < annualWindows.length; index += 1) {
+                    const window = annualWindows[index]!;
+                    if (reuseFullWindowForSingleAnnual) {
+                        annualReports.push({
+                            ...window,
+                            horizons: buildHorizonSummaries(replayResult),
+                            eventDetails: replayResult.eventDetails,
+                            warnings: replayResult.warnings,
+                            reportLines: replayResult.reportLines,
+                        });
+                        continue;
+                    }
+                    this.progressText = `Running OPEN_SCORE USD replay for ${window.year} (${index + 1}/${annualWindows.length})...`;
+                    emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
+                    const annualResult = await runReplayForWindow(window.sampleFromSec, window.sampleToSec);
+                    finishActiveReplayPhase();
+                    if (this.isStopped) {
+                        this.emitInterrupted(emitNdjson);
+                        return;
+                    }
                     annualReports.push({
                         ...window,
-                        horizons: buildHorizonSummaries(replayResult),
-                        eventDetails: replayResult.eventDetails,
-                        warnings: replayResult.warnings,
-                        reportLines: replayResult.reportLines,
+                        horizons: buildHorizonSummaries(annualResult),
+                        eventDetails: annualResult.eventDetails,
+                        warnings: annualResult.warnings,
+                        reportLines: annualResult.reportLines,
                     });
-                    continue;
                 }
-                this.progressText = `Running OPEN_SCORE USD replay for ${window.year} (${index + 1}/${annualWindows.length})...`;
-                emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
-                const annualResult = await runReplayForWindow(window.sampleFromSec, window.sampleToSec);
-                finishActiveReplayPhase();
-                if (this.isStopped) {
-                    this.emitInterrupted(emitNdjson);
-                    return;
-                }
-                annualReports.push({
-                    ...window,
-                    horizons: buildHorizonSummaries(annualResult),
-                    eventDetails: annualResult.eventDetails,
-                    warnings: annualResult.warnings,
-                    reportLines: annualResult.reportLines,
-                });
             }
+
             this.performanceDiagnostic.phases.replayMs = performance.now() - replayStartedAt;
 
             // Save replay output json. Merges the historical replay fields
@@ -1467,14 +1509,21 @@ export class TopMeanCoordinatorEngine {
             this.performanceDiagnostic.failedPairs = manifest.failedPairsCount;
             this.performanceDiagnostic.completedAt = new Date().toISOString();
             this.performanceDiagnostic.totalMs = performance.now() - this.performanceStartedAtMs;
-            const finalWriteStartedAt = performance.now();
-            atomicWriteJsonSync(resultJsonPath, {
-                ...replayResult,
-                annualReports,
-                currentSnapshot: currentSnapshotResult,
-                performance: this.performanceSnapshot(),
-            });
-            this.performanceDiagnostic.phases.resultWriteMs += performance.now() - finalWriteStartedAt;
+            // finder_arm skips BOTH result.json writes: the child directory
+            // is deleted after the candidate, Finder reattachment reads the
+            // parent's retained scalar state instead, and nothing else can
+            // query a child run id. Standalone keeps the merged write.
+            if (!finderArmProfile) {
+                const finalWriteStartedAt = performance.now();
+                atomicWriteJsonSync(resultJsonPath, {
+                    ...replayResult,
+                    annualReports,
+                    currentSnapshot: this.currentSnapshotResult,
+                    performance: this.performanceSnapshot(),
+                });
+                this.performanceDiagnostic.phases.resultWriteMs += performance.now() - finalWriteStartedAt;
+            }
+
             this.performanceDiagnostic.completedAt = new Date().toISOString();
             this.performanceDiagnostic.totalMs = performance.now() - this.performanceStartedAtMs;
             const performanceLines = formatTopMeanPerformanceLines(this.performanceDiagnostic);
@@ -1516,7 +1565,7 @@ export class TopMeanCoordinatorEngine {
                 ],
                 latestSelections: replayResult.latestSelections,
                 performance: this.performanceDiagnostic,
-                currentSnapshot: currentSnapshotResult,
+                ...(this.currentSnapshotResult ? { currentSnapshot: this.currentSnapshotResult } : {}),
                 replayTargetLoadFailureCount,
                 targetDataBoundary: {
                     earliestBarTimeSec: this.earliestTargetBarTimeSec,
@@ -1634,7 +1683,13 @@ export class TopMeanCoordinatorEngine {
             });
         } finally {
             this.replayAbortController = null;
-            await this.pool?.waitForTeardown();
+            // Standalone: terminate the workers exactly as before. A lent
+            // (finder_arm sweep) pool stays alive for the next candidate —
+            // its owner, the Finder runner's finally, calls dispose().
+            if (!this.deps?.pool) {
+                this.pool?.cancel();
+                await this.pool?.waitForTeardown();
+            }
             if (phase0bWriter) {
                 await phase0bWriter.dispose().catch(() => undefined);
             }

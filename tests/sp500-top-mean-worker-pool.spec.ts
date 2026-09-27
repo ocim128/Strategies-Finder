@@ -281,8 +281,9 @@ async function testPersistentWorkerPoolEndToEnd(): Promise<void> {
         assert.equal(typeof usage.rust, "number");
         assert.equal(typeof usage.typescript, "number");
     } finally {
-        // execute() already calls cancel() internally on success; calling it
-        // again here must be a no-op (idempotent) and must not throw.
+        // Standalone consumers own teardown (phase 3): execute() leaves the
+        // workers alive on success, so cancel() here is what terminates them.
+        // It must be idempotent-safe on every path and must not throw.
         pool.cancel();
     }
 
@@ -847,6 +848,148 @@ async function testRealWorkerTransfersSerializedBytes(): Promise<void> {
     }
 }
 
+
+/**
+ * Finder Arm Performance phase 3: a sweep-scoped pool must reuse the workers
+ * retained from a previous execute() — the second execution reports the same
+ * worker count with ZERO new spawns — and must still process every shard
+ * with fresh per-execution state (manifest, counters, handler bindings).
+ */
+async function testPoolReuseAcrossSequentialExecutions(): Promise<void> {
+    const pairs = ["FAKE_A\u2022+FAKE_B\u2022", "FAKE_C\u2022+FAKE_D\u2022"];
+    const mkManifest = (runId: string): TopMeanRunManifest => ({
+        schema: "top_mean_run_manifest.v1",
+        runId,
+        status: "running",
+        fingerprint: "smoke-reuse",
+        strategyKey: "__test_success__",
+        interval: "4h",
+        pairCount: pairs.length,
+        shardSize: 1,
+        totalShards: 2,
+        completedShards: [],
+        failedShards: [],
+        completedPairsCount: 0,
+        failedPairsCount: 0,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+    });
+    const pool = new TopMeanWorkerPool();
+    try {
+        const manifest1 = mkManifest("smoke_reuse_exec_1");
+        const usage1 = await pool.execute({
+            runId: manifest1.runId,
+            manifest: manifest1,
+            canonicalPairs: pairs,
+            strategyKey: "__test_success__",
+            strategyParams: { lookback: 20 },
+            backtestSettings: { direction: "long" } as any,
+            capitalSettings: { initialCapital: 10000 } as any,
+            interval: "4h",
+            workerCount: 1,
+            shardSize: 1,
+            useRustEnginePreference: false,
+            workerPath: testWorkerPath,
+        });
+        assert.equal(usage1.performance.workers, 1);
+        assert.equal(usage1.performance.spawnedWorkers, 1);
+
+        const manifest2 = mkManifest("smoke_reuse_exec_2");
+        const usage2 = await pool.execute({
+            runId: manifest2.runId,
+            manifest: manifest2,
+            canonicalPairs: pairs,
+            strategyKey: "__test_success__",
+            strategyParams: { lookback: 20 },
+            backtestSettings: { direction: "long" } as any,
+            capitalSettings: { initialCapital: 10000 } as any,
+            interval: "4h",
+            workerCount: 1,
+            shardSize: 1,
+            useRustEnginePreference: false,
+            workerPath: testWorkerPath,
+        });
+        assert.equal(
+            usage2.performance.workers,
+            1,
+            "the second execution must run on the retained worker",
+        );
+        assert.equal(
+            usage2.performance.spawnedWorkers,
+            0,
+            "a warm sweep pool must not spawn a new worker for the next candidate",
+        );
+        assert.equal(
+            manifest2.completedShards.length,
+            2,
+            "the reused execution must still complete every shard with fresh state",
+        );
+        assert.equal(manifest2.completedPairsCount, 2);
+        // Audit (P1): the retained worker must have received exactly ONE
+        // per-candidate cache reset for the second execution (the helper
+        // reports its reset count via performance.loadMs; the pool sums it
+        // across this execution's two shards).
+        assert.equal(
+            usage2.performance.loadMs,
+            2,
+            "each second-execution shard must run after exactly one cache reset",
+        );
+        assert.equal(
+            usage1.performance.loadMs,
+            0,
+            "a cold execution must not pay the cache-reset path",
+        );
+    } finally {
+        await pool.dispose();
+    }
+    assert.equal(pool.disposed, true, "dispose() must flag final termination");
+    console.log("PASS: sweep-scoped pool reuses workers across sequential executions");
+}
+
+/**
+ * finder_arm sweep reuse safety: cancel() latches the pool permanently, so a
+ * cancelled pool must refuse a later execute() instead of resurrecting
+ * cancelled workers.
+ */
+async function testCancelledPoolRefusesLaterExecution(): Promise<void> {
+    const pool = new TopMeanWorkerPool();
+    pool.cancel();
+    await assert.rejects(
+        () => pool.execute({
+            runId: "smoke_cancelled_reuse",
+            manifest: {
+                schema: "top_mean_run_manifest.v1",
+                runId: "smoke_cancelled_reuse",
+                status: "running",
+                fingerprint: "smoke",
+                strategyKey: "__test_success__",
+                interval: "4h",
+                pairCount: 1,
+                shardSize: 1,
+                totalShards: 1,
+                completedShards: [],
+                failedShards: [],
+                completedPairsCount: 0,
+                failedPairsCount: 0,
+                createdAt: Date.now(),
+                updatedAt: Date.now(),
+            },
+            canonicalPairs: ["FAKE_A\u2022+FAKE_B\u2022"],
+            strategyKey: "__test_success__",
+            strategyParams: {},
+            backtestSettings: { direction: "long" } as any,
+            capitalSettings: {} as any,
+            interval: "4h",
+            workerCount: 1,
+            useRustEnginePreference: false,
+            workerPath: testWorkerPath,
+        }),
+        /Operation cancelled/,
+    );
+    await pool.dispose();
+    console.log("PASS: cancelled pool refuses a later execute()");
+}
+
 async function main(): Promise<void> {
     testWorkerCountResolution();
     testShardSizeFeedsEveryWorker();
@@ -864,6 +1007,8 @@ async function main(): Promise<void> {
     await testRetrySuccessClearsFailedShard();
     await testShardArtifactPersistenceShape();
     await testRealWorkerTransfersSerializedBytes();
+    await testPoolReuseAcrossSequentialExecutions();
+    await testCancelledPoolRefusesLaterExecution();
     console.log("PASS: sp500-top-mean-worker-pool.spec.ts");
 }
 

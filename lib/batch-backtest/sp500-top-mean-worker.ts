@@ -2,7 +2,7 @@ import { parentPort, isMainThread } from "node:worker_threads";
 import { performance } from "node:perf_hooks";
 import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
-import { getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
+import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import { stripIbkrMarker } from "../local-daily-datasets";
@@ -83,6 +83,14 @@ export type TopMeanWorkerMessage =
           failureKind?: "missing_data" | "backtest";
           /** Engine that actually executed the pair backtest (not the preference). */
           engineUsed?: "rust" | "typescript";
+      }
+      | {
+          /** Pool -> worker (finder_arm sweep reuse): drop module-level dataset caches before a new candidate. */
+          type: "clear_caches";
+      }
+      | {
+          /** Worker -> pool acknowledgement for clear_caches. */
+          type: "caches_cleared";
       }
     | {
           type: "shard_complete";
@@ -424,6 +432,15 @@ if (!isMainThread && parentPort) {
     };
 
     parentPort.on("message", (msg: TopMeanWorkerTaskData) => {
+        // finder_arm sweep reuse: retained workers carry module-level dataset
+        // caches from the previous candidate. The leg/pair LRUs key without a
+        // source version, so a later candidate must start from empty caches —
+        // source files can change between children.
+        if ((msg as { type?: string }).type === "clear_caches") {
+            clearServerBatchDatasetCaches();
+            parentPort?.postMessage({ type: "caches_cleared" } as TopMeanWorkerMessage);
+            return;
+        }
         processTopMeanShard(msg).then(
             (result) => {
                 // A throw inside this fulfillment handler would NOT reach the
