@@ -40,10 +40,6 @@ import {
 } from "./balanced-pair-list-generator";
 import { fnv1a64Hex } from "./max-active-research-contract";
 import { isActiveCapTiltWeight } from "./cap-tilt-contract";
-import {
-    parseTopMeanMenuHorizons,
-    parseTopMeanMenuOptionalPositiveInt,
-} from "./sp500-top-mean-request-limits";
 // The template blob lives in the lazy-loaded batch feature chunk (via ?raw),
 // so it never lands in the cold-start bundle.
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
@@ -67,73 +63,34 @@ import {
 import type { BatchDatasetCacheStats } from "./batch-dataset-loader-core";
 import type { BatchBacktestPerformance, BatchStatusResponse, BatchStreamEvent } from "./batch-backtest-stream-types";
 import type { LedgerSweepCatalogResponse } from "./trade-ledger-sweep-stream-types";
-import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "./sp500-top-mean-stream-types";
-import type { CoverageCounts } from "./sp500-pair-enumerator";
-import type { TopMeanResultSummary, TopMeanStatusResponse } from "./sp500-top-mean-coordinator-engine";
-import {
-    approxJsonByteLength,
-    clearTopMeanDiagnosticLog,
-    compactTopMeanDiagnosticData,
-    readTopMeanDiagnosticLogSnapshot,
-    sampleTopMeanHeap,
-    writeTopMeanDiagnosticLogSnapshot,
-    type TopMeanDiagnosticEntry,
-} from "./sp500-top-mean-diagnostic-log";
-import { formatTopMeanPerformanceLines } from "./sp500-top-mean-performance";
-import type {
-    OpenScoreUsdEventDetailSelector,
-    OpenScoreUsdLatestSelections,
-    OpenScoreUsdLatestSelectorName,
-    OpenScoreUsdReplayResult,
-} from "./batch-open-score-usd-replay-engine";
+import type { OpenScoreUsdLatestSelections, OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
-import { escapeHtml } from "../html-escape";
-import { debounce } from "../debounce";
 import {
     BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
     BATCH_TRADE_GATE_STORAGE,
     BATCH_TRADE_LEDGER_STORAGE,
     clearPersistedActiveServerRun,
     clearPersistedLatestResults,
-    clearPersistedLatestTopMeanResult,
-    clearTopMeanActiveRun,
     loadPersistedActiveServerRun,
     persistActiveServerRun,
-    persistLatestTopMeanResult,
-    persistTopMeanActiveRun,
     readLatestResultsSnapshot,
-    readLatestTopMeanResult,
     readPersistedTradeGateOptions,
     readPersistedTradeLedgerOptions,
-    readTopMeanActiveRun,
     saveLatestResultsSnapshot,
     type BatchPersistedActiveServerRun,
     type BatchTradeGateOptions,
     type BatchTradeLedgerOptions,
 } from "./browser/batch-browser-store";
+import { TopMeanController } from "./browser/top-mean-controller";
+import type { TopMeanResultSummary } from "./sp500-top-mean-coordinator-engine";
 import {
     createBatchResultsView,
     type BatchResultsView,
 } from "./browser/batch-results-view";
-import {
-    formatCurrentTopMeanLines,
-    formatLatestOpenScoreSelectionLines,
-    formatTopMeanCompletionMessage,
-    LATEST_ARM_SELECTOR_ID,
-    mergeTopMeanArchiveStatus,
-    normalizeLatestArm,
-    renderCurrentTopMeanBanner,
-    renderTopMeanResults as renderTopMeanResultsView,
-} from "./browser/top-mean-results-view";
-import {
-    getTopMeanOpenScoreDetailSelector,
-    getTopMeanOpenScoreDetailYear,
-    renderTopMeanOpenScoreEventDetails,
-    resetTopMeanOpenScoreDetails,
-    syncTopMeanOpenScoreDetailsControl,
-} from "./browser/top-mean-event-details-view";
+import { LATEST_ARM_SELECTOR_ID } from "./browser/top-mean-results-view";
+import type { OpenScoreUsdEventDetailSelector } from "./batch-open-score-usd-replay-engine";
 
 export { formatTopMeanCompletionMessage } from "./browser/top-mean-results-view";
 
@@ -215,20 +172,6 @@ export class BatchBacktestService {
      * the active run id while another action is mid-preflight.
      */
     private batchActionInFlight = false;
-    /** True while the TOP_MEAN reattach serial poll loop owns the UI. */
-    private topMeanReattachInFlight = false;
-    /**
-     * TOP_MEAN reattach cancellation + transient-failure backoff (mirrors the
-     * normal-Batch reattach fields of the same pattern). The prior TOP_MEAN
-     * reattach loop had no backoff — a single non-2xx or thrown fetch
-     * abandoned the entire reattach and cleared the persisted run marker — and
-     * no cancellation hook, so Stop had to wait for the in-flight 2s delay to
-     * elapse before the loop noticed. These fields close both gaps.
-     */
-    private topMeanReattachTimer: ReturnType<typeof setTimeout> | null = null;
-    private topMeanReattachTimerResolve: (() => void) | null = null;
-    // Audit Finding 1: shared transient-failure backoff state machine.
-    private readonly topMeanReattachBackoff = new ReattachBackoffController();
     // Browser-generated server run id (audit Finding 5). Sent on the /run body
     // and the /stop body so the server can scope Stop to THIS run: a stale tab
     // cannot cancel a newer run. Reattach also matches this against the
@@ -278,42 +221,39 @@ export class BatchBacktestService {
 
     // Audit Finding 2: typed (was `any`) so a shape drift between the
     // coordinator engine emissions and the UI renderers is a compile failure.
-    private latestTopMeanResult: TopMeanResultSummary | null = null;
-    /** Arm shown in the Latest OPEN_SCORE Selector Picks card (one at a time). */
-    private latestOpenScoreArm: OpenScoreUsdLatestSelectorName = "TOP_MEAN";
-    private activeTopMeanRunId: string | null = null;
-    private topMeanDiagnosticRunId: string | null = null;
-    private topMeanDiagnosticEntries: TopMeanDiagnosticEntry[] = [];
-    private topMeanDiagnosticProgressSeen = 0;
-    // The diagnostic panel is a debugging surface — the per-event DOM rewrite
-    // previously ran `JSON.stringify` over the ENTIRE accumulated entries
-    // array on every NDJSON event, turning a multi-hour run into O(N²) string
-    // work. Bound the retained history and coalesce the DOM updates.
-    private static readonly TOP_MEAN_DIAGNOSTIC_MAX_ENTRIES = 500;
-    private static readonly TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS = 250;
-    private readonly renderTopMeanDiagnosticDebounced = debounce(() => {
-        const dom = this.dom;
-        if (!dom) return;
-        dom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
-    }, BatchBacktestService.TOP_MEAN_DIAGNOSTIC_RENDER_DEBOUNCE_MS);
-    // Crash-safety: the in-memory ring dies with the tab, and the failure mode
-    // under investigation is a tab-killing OOM. Progress bursts persist on a
-    // debounce; every lifecycle event (run.start, ndjson.done, ndjson.fatal,
-    // run.error, stop.*, reattach.*) persists immediately — see
-    // recordTopMeanDiagnostic — so the log survives a crash or reload.
-    private static readonly TOP_MEAN_DIAGNOSTIC_PERSIST_DEBOUNCE_MS = 1_500;
-    private readonly persistTopMeanDiagnosticDebounced = debounce(() => {
-        this.writeTopMeanDiagnosticLogNow();
-    }, BatchBacktestService.TOP_MEAN_DIAGNOSTIC_PERSIST_DEBOUNCE_MS);
+    // TOP_MEAN lifecycle state lives on the controller; these typed accessors
+    // keep the facade's own wiring (and the facade-visible surface) working.
+    public get latestTopMeanResult(): TopMeanResultSummary | null {
+        return this.topMean.getLatestTopMeanResult();
+    }
+    public set latestTopMeanResult(result: TopMeanResultSummary | null) {
+        this.topMean.setLatestTopMeanResult(result);
+    }
+    public get activeTopMeanRunId(): string | null {
+        return this.topMean.getActiveTopMeanRunId();
+    }
+    public set activeTopMeanRunId(runId: string | null) {
+        this.topMean.setActiveTopMeanRunId(runId);
+    }
+    public get topMeanDiagnosticEntries() {
+        return this.topMean.getDiagnosticEntries();
+    }
+    public get topMeanDiagnosticRunId(): string | null {
+        return this.topMean.getDiagnosticRunId();
+    }
+    public set topMeanDiagnosticRunId(runId: string | null) {
+        this.topMean.setDiagnosticRunId(runId);
+    }
+    // TOP_MEAN workflow owner: run/stop/reattach lifecycle, diagnostic ring,
+    // result/copy/download actions. Created lazily-closed over this facade;
+    // see browser/top-mean-controller.ts.
+    private readonly topMean = new TopMeanController({
+        getDom: () => this.getDom(),
+        peekDom: () => this.dom,
+    });
 
     private writeTopMeanDiagnosticLogNow(): void {
-        writeTopMeanDiagnosticLogSnapshot(
-            this.topMeanDiagnosticRunId,
-            this.topMeanDiagnosticEntries,
-            (error) => debugLogger.warn("sp500_top_mean.diagnostic_log_save_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            }),
-        );
+        this.topMean.writeTopMeanDiagnosticLogNow();
     }
 
     private getDom(): BatchBacktestDom {
@@ -439,7 +379,7 @@ export class BatchBacktestService {
         dom.batchBacktestSp500TopMeanResults.addEventListener("change", (event) => {
             const target = event?.target as { id?: string; value?: string } | null | undefined;
             if (!target || target.id !== LATEST_ARM_SELECTOR_ID) return;
-            this.latestOpenScoreArm = normalizeLatestArm(target.value);
+            this.topMean.setLatestArm(target.value);
             if (this.latestTopMeanResult) {
                 this.renderTopMeanResults(dom, this.latestTopMeanResult);
             }
@@ -708,8 +648,7 @@ export class BatchBacktestService {
             || this.analysisInFlight
             || this.serverRunActive
             || this.pendingStopPromise !== null
-            || this.activeTopMeanRunId !== null
-            || this.topMeanReattachInFlight
+            || this.topMean.isUiOwned()
             || this.reattachTimer !== null
         );
     }
@@ -2297,30 +2236,11 @@ export class BatchBacktestService {
         return Math.max(min, Math.min(max, Math.floor(value)));
     }
 
-    public async runSp500TopMeanCoordinator(): Promise<void> {
-        const dom = this.getDom();
-        // Shared single-flight: must run before the first await so rapid clicks
-        // cannot stack multiple coordinator POSTs or replace activeTopMeanRunId.
-        if (this.isBatchUiBusy()) {
-            dom.batchBacktestSp500TopMeanProgressText.textContent =
-                "Batch action already in progress — wait for it to finish.";
-            return;
-        }
-        this.batchActionInFlight = true;
-        try {
-            await this.runSp500TopMeanCoordinatorInner(dom);
-        } finally {
-            this.batchActionInFlight = false;
-        }
-    }
-
     /**
-     * Audit Finding 6: the coordinator preflight parsers share the strategy
-     * gate, the workerCount/maxPairs integer parse, and the runId generation.
-     * These three helpers keep that duplication from drifting (a typo in one
-     * path's error message was the documented footgun).
+     * Audit Finding 6: the coordinator preflight strategy gate. Kept on the
+     * facade so the shared preflight seam stays in one place (and overridable
+     * by the lifecycle regression suite).
      */
-
     private async resolveTopMeanBuiltInStrategy(
         dom: BatchBacktestDom,
     ): Promise<{ strategyKey: string; strategy: NonNullable<ReturnType<typeof strategyRegistry.get>> } | undefined> {
@@ -2335,382 +2255,55 @@ export class BatchBacktestService {
         return { strategyKey, strategy };
     }
 
-    private generateTopMeanRunId(): string {
-        return `sp500_top_mean_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    }
-
-    private async runSp500TopMeanCoordinatorInner(dom: BatchBacktestDom): Promise<void> {
-        const resolved = await this.resolveTopMeanBuiltInStrategy(dom);
-        if (!resolved) return;
-        const { strategyKey, strategy } = resolved;
-
-        // Audit (menu-numeric finding): strict input parsing. "0"/"12.5"/"abc"
-        // in Workers or Max Pairs used to fall through to "not set" — silently
-        // launching the auto-worker or full-universe workload — and invalid
-        // horizon tokens were silently dropped while valid ones remained.
-        const horizonsParsed = parseTopMeanMenuHorizons(dom.batchBacktestSp500TopMeanHorizons.value);
-        if (horizonsParsed.kind === "invalid") {
+    public async runSp500TopMeanCoordinator(): Promise<void> {
+        const dom = this.getDom();
+        // Shared single-flight: must run before the first await so rapid clicks
+        // cannot stack multiple coordinator POSTs or replace activeTopMeanRunId.
+        if (this.isBatchUiBusy()) {
             dom.batchBacktestSp500TopMeanProgressText.textContent =
-                `Error: Invalid horizons value "${horizonsParsed.token}". Use comma-separated positive integers, e.g. 12,24,48.`;
+                "Batch action already in progress — wait for it to finish.";
             return;
         }
-        const horizons = horizonsParsed.horizons;
-
-        const workersParsed = parseTopMeanMenuOptionalPositiveInt(dom.batchBacktestSp500TopMeanWorkers.value);
-        if (workersParsed.kind === "invalid") {
-            dom.batchBacktestSp500TopMeanProgressText.textContent =
-                "Error: Workers must be a positive whole number, or blank for automatic.";
-            return;
-        }
-        const maxPairsParsed = parseTopMeanMenuOptionalPositiveInt(dom.batchBacktestSp500TopMeanMaxPairs.value);
-        if (maxPairsParsed.kind === "invalid") {
-            dom.batchBacktestSp500TopMeanProgressText.textContent =
-                "Error: Max Pairs must be a positive whole number, or blank for the full universe.";
-            return;
-        }
-        const workerCount = workersParsed.kind === "valid" ? workersParsed.value : undefined;
-        const maxPairs = maxPairsParsed.kind === "valid" ? maxPairsParsed.value : undefined;
-
-        const runId = this.generateTopMeanRunId();
-        this.activeTopMeanRunId = runId;
-        this.topMeanDiagnosticRunId = runId;
-        this.topMeanDiagnosticEntries = [];
-        this.topMeanDiagnosticProgressSeen = 0;
-        // A new run starts a fresh durable log. The previous run's evidence
-        // was copyable up to this point (Copy Diagnostic after a reload); from
-        // here the new run's timeline replaces it.
-        clearTopMeanDiagnosticLog((error) => debugLogger.warn("sp500_top_mean.diagnostic_log_clear_failed", {
-            error: error instanceof Error ? error.message : String(error),
-        }));
-        this.latestTopMeanResult = null;
-        this.clearPersistedLatestTopMeanResult();
-        persistTopMeanActiveRun(runId);
-
-        setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
-        setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
-        dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
-        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
-        this.resetTopMeanOpenScoreDetails(dom);
-        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
-
-        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML = "";
-        dom.batchBacktestSp500TopMeanProgressText.textContent = "Starting TOP_MEAN coordinator...";
-        dom.batchBacktestSp500TopMeanResults.innerHTML = "";
-        this.recordTopMeanDiagnostic("ui.started", {
-            runButtonDisplay: dom.batchBacktestSp500TopMeanRunBtn.style.display,
-            stopButtonDisplay: dom.batchBacktestSp500TopMeanStopBtn.style.display,
-        });
-
-        const pairListTextRaw = dom.batchBacktestSymbols ? dom.batchBacktestSymbols.value.trim() : "";
-        const pairListText = pairListTextRaw.length > 0 ? pairListTextRaw : undefined;
-
-        // Optional decision-event date window for the phase-3 OPEN_SCORE USD
-        // replay (YYYY-MM-DD); blank = full history. Mirrors the OPEN_SCORE USD
-        // From/To controls. Pair backtests (phase 2) still cover full history.
-        const sampleFrom = dom.batchBacktestSp500TopMeanFrom.value.trim();
-        const sampleTo = dom.batchBacktestSp500TopMeanTo.value.trim();
-        const saveArchiveLog = dom.batchBacktestSp500TopMeanArchiveToggle.checked;
-        // Coordinator-owned cap-tilt weighting (docs/open-score-cap-tilt.md
-        // Phase 5) — independent of the standalone OPEN_SCORE USD section's
-        // select. "off" is omitted from the payload so baseline requests stay
-        // byte-identical to the pre-Phase-5 shape.
-        const capTiltWeight = dom.batchBacktestSp500TopMeanCapTilt.value;
-
-        const payload = {
-            runId,
-            strategyKey,
-            strategyParams: paramManager.getValues(strategy),
-            backtestSettings: backtestService.getBacktestSettings(),
-            capitalSettings: backtestService.getCapitalSettings(),
-            interval: pairListText ? state.currentInterval : "4h",
-            horizons,
-            workerCount,
-            maxPairs,
-            pairListText,
-            saveArchiveLog,
-            useRustEnginePreference: shouldUseRustEngine(),
-            ...(sampleFrom ? { sampleFrom } : {}),
-            ...(sampleTo ? { sampleTo } : {}),
-            ...(isActiveCapTiltWeight(capTiltWeight) ? { capTiltWeight } : {}),
-        };
-        const diagnosticPayload = {
-            ...payload,
-            pairListText: pairListText ? `${pairListText.split("\n").length} custom pair lines` : undefined,
-        };
-        this.recordTopMeanDiagnostic("run.start", {
-            endpoint: "/api/batch-backtest/sp500-top-mean/run",
-            request: diagnosticPayload,
-            page: typeof location === "undefined" ? null : { href: location.href },
-            userAgent: typeof navigator === "undefined" ? null : navigator.userAgent,
-        });
-
-        let reattachAfterError = false;
+        this.batchActionInFlight = true;
         try {
-            await postBatchNdjson<TopMeanStreamEvent>({
-                endpoint: "/api/batch-backtest/sp500-top-mean/run",
-                body: payload,
-                onResponse: (response) => {
-                    this.recordTopMeanDiagnostic("http.response", {
-                        status: response.status,
-                        ok: response.ok,
-                        url: response.url,
-                        contentType: response.headers.get("content-type"),
-                    });
-                },
-                onNonOkResponse: (status, errorPayload) => {
-                    this.recordTopMeanDiagnostic("http.error_response", {
-                        status,
-                        payload: errorPayload,
-                    });
-                },
-                onEvent: (event) => {
-                    this.recordTopMeanNdjsonEvent(event);
-                },
-                handlers: {
-                    onPreflight: (event: Extract<TopMeanStreamEvent, { type: "preflight" }>) => {
-                        this.renderTopMeanCoverageSummary(dom, event.counts);
-                    },
-                    onProgress: (event: Extract<TopMeanStreamEvent, { type: "progress" }>) => {
-                        dom.batchBacktestSp500TopMeanProgressText.textContent = `[${event.phase}] ${event.text}`;
-                    },
-                    onCurrentSnapshot: (event: Extract<TopMeanStreamEvent, { type: "current_snapshot" }>) => {
-                        // The algorithmic decision is complete before the slower
-                        // historical replay. Surface it immediately after the
-                        // current-snapshot phase instead of making the user wait
-                        // for the terminal leaderboard.
-                        dom.batchBacktestSp500TopMeanResults.innerHTML =
-                            this.renderCurrentTopMeanBanner(event.currentSnapshot);
-                    },
-                    onDone: (event: Extract<TopMeanStreamEvent, { type: "done" }>) => {
-                        if ("interrupted" in event) {
-                            this.latestTopMeanResult = null;
-                            dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
-                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
-                            this.resetTopMeanOpenScoreDetails(dom);
-                            dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
-                            dom.batchBacktestSp500TopMeanProgressText.textContent = "TOP_MEAN run stopped.";
-                            this.activeTopMeanRunId = null;
-                            clearTopMeanActiveRun();
-                            return;
-                        }
-                        this.latestTopMeanResult = event.result;
-                        this.persistLatestTopMeanResult(event.result);
-                        this.renderTopMeanResults(dom, event.result);
-                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-                        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
-                            !Array.isArray(event.result.reportLines) || event.result.reportLines.length === 0;
-                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
-                        dom.batchBacktestSp500TopMeanProgressText.textContent =
-                            formatTopMeanCompletionMessage(event.result);
-                        this.activeTopMeanRunId = null;
-                        clearTopMeanActiveRun();
-                    },
-                    onFatal: (event: Extract<TopMeanStreamEvent, { type: "fatal" }>) => {
-                        dom.batchBacktestSp500TopMeanProgressText.textContent = `Error: ${event.error}`;
-                        this.activeTopMeanRunId = null;
-                        clearTopMeanActiveRun();
-                    },
-                },
-            });
-        } catch (err) {
-            const message = err instanceof Error ? err.message : String(err);
-            // The server may have accepted the run before the stream failed.
-            // Keep the persisted run id and recover through the serialized
-            // status poll instead of leaving the UI permanently busy or
-            // orphaning a live coordinator.
-            reattachAfterError = this.activeTopMeanRunId === runId;
-            this.recordTopMeanDiagnostic("run.error", {
-                name: err instanceof Error ? err.name : typeof err,
-                message,
-                stack: err instanceof Error ? err.stack : undefined,
-            });
-            dom.batchBacktestSp500TopMeanProgressText.textContent = `Status: ${message}`;
+            await this.topMean.run({ resolveStrategy: (dom) => this.resolveTopMeanBuiltInStrategy(dom) });
         } finally {
-            if (reattachAfterError) {
-                void this.reattachToInProgressTopMeanRun();
-            } else {
-                setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-                setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-            }
-            this.recordTopMeanDiagnostic("ui.finally", {
-                runButtonDisplay: dom.batchBacktestSp500TopMeanRunBtn.style.display,
-                stopButtonDisplay: dom.batchBacktestSp500TopMeanStopBtn.style.display,
-                activeRunId: this.activeTopMeanRunId,
-                progressText: dom.batchBacktestSp500TopMeanProgressText.textContent,
-            });
+            this.batchActionInFlight = false;
         }
-    }
-
-    /** Safe coverage summary — all numeric counts, no untrusted strings. */
-    private renderTopMeanCoverageSummary(dom: BatchBacktestDom, counts: CoverageCounts): void {
-        const c = counts;
-        dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML =
-            `<strong>Universe Coverage:</strong> <strong>${escapeHtml(c.pairCount)} pairs</strong> | ` +
-            `${escapeHtml(c.usableTargetIntervalCount)} target-usable assets | ` +
-            `${escapeHtml(c.sp500AssetsCount)} total assets cataloged | ` +
-            `${escapeHtml(c.excludedAssetsCount)} excluded assets`;
     }
 
     public async stopSp500TopMeanCoordinator(): Promise<void> {
-        const runId = this.activeTopMeanRunId;
-        if (!runId) {
-            this.recordTopMeanDiagnostic("stop.ignored", { reason: "no active run id" });
-            return;
-        }
-        // Audit: cancel any in-flight reattach poll delay so the loop notices
-        // the Stop immediately instead of waiting up to the 15s backoff
-        // ceiling. The loop's post-await guard then sees activeTopMeanRunId
-        // change and exits cleanly.
-        this.stopTopMeanReattachPoll();
-        this.recordTopMeanDiagnostic("stop.request", { runId });
-        try {
-            const response = await fetch("/api/batch-backtest/sp500-top-mean/stop", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ runId }),
-            });
-            const body = await response.text().catch(() => "");
-            this.recordTopMeanDiagnostic("stop.response", {
-                runId,
-                status: response.status,
-                ok: response.ok,
-                body,
-            });
-            let stopped: boolean | null = null;
-            try {
-                const parsed = JSON.parse(body) as { stopped?: unknown };
-                stopped = typeof parsed.stopped === "boolean" ? parsed.stopped : null;
-            } catch {
-                // A non-JSON response is treated as a failed stop response.
-            }
-            if (!response.ok || stopped !== true) {
-                this.clearTopMeanRunAfterServerLoss(
-                    this.getDom(),
-                    "TOP_MEAN run is no longer active; local run state cleared.",
-                );
-            }
-        } catch (err) {
-            this.recordTopMeanDiagnostic("stop.error", {
-                runId,
-                name: err instanceof Error ? err.name : typeof err,
-                message: err instanceof Error ? err.message : String(err),
-            });
-            this.clearTopMeanRunAfterServerLoss(
-                this.getDom(),
-                "TOP_MEAN server is unavailable; local run state cleared.",
-            );
-        }
+        await this.topMean.stop();
     }
 
-    private clearTopMeanRunAfterServerLoss(dom: BatchBacktestDom, message: string): void {
-        this.activeTopMeanRunId = null;
-        clearTopMeanActiveRun();
-        setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-        setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-        dom.batchBacktestSp500TopMeanProgressText.textContent = message;
-    }
-
-    /**
-     * TOP_MEAN Coordinator tie-break mode from the TIE BREAK select.
-     *   off    - ties stay unresolved (TIE / SKIP), the historical default.
-     *   alpha  - the alphabetically-first tied asset is picked.
-     *   random - a seeded-random tied asset is picked, stable per event so
-     *            re-renders and copied output always agree.
-     */
-    private topMeanTieBreakMode(): "off" | "alpha" | "random" {
-        const value = this.dom?.batchBacktestSp500TopMeanTieBreak?.value;
-        return value === "alpha" || value === "random" ? value : "off";
-    }
-
-
-
-
-
-
-
-    private formatLatestOpenScoreSelectionLines(latestInput: OpenScoreUsdLatestSelections): string[] {
-        return formatLatestOpenScoreSelectionLines(latestInput, this.topMeanTieBreakMode());
-    }
 
     private renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
-        renderTopMeanResultsView(dom, summary, {
-            latestArm: this.latestOpenScoreArm,
-            tieMode: this.topMeanTieBreakMode(),
-        });
-        this.syncTopMeanOpenScoreDetailsControl(dom, summary);
+        this.topMean.renderTopMeanResults(dom, summary);
     }
 
-    private persistLatestTopMeanResult(result: TopMeanResultSummary): void {
-        persistLatestTopMeanResult(result);
+    public persistLatestTopMeanResult(result: TopMeanResultSummary): void {
+        this.topMean.persistLatestTopMeanResult(result);
     }
 
-    private clearPersistedLatestTopMeanResult(): void {
-        clearPersistedLatestTopMeanResult();
-    }
 
     private loadPersistedLatestTopMeanResult(dom: BatchBacktestDom): void {
-        const result = readLatestTopMeanResult();
-        if (!result) return;
-
-        this.latestTopMeanResult = result;
-        this.renderTopMeanResults(dom, result);
-        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
-            !Array.isArray(result.reportLines) || result.reportLines.length === 0;
-        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
-        dom.batchBacktestSp500TopMeanProgressText.textContent = formatTopMeanCompletionMessage(result);
+        this.topMean.loadPersistedLatestTopMeanResult(dom);
     }
 
-    private resetTopMeanOpenScoreDetails(dom: BatchBacktestDom): void {
-        resetTopMeanOpenScoreDetails(dom);
-    }
-
-    private syncTopMeanOpenScoreDetailsControl(
-        dom: BatchBacktestDom,
-        summary: TopMeanResultSummary,
-    ): void {
-        syncTopMeanOpenScoreDetailsControl(dom, summary);
-    }
 
     private toggleSp500TopMeanOpenScoreDetails(): void {
-        const dom = this.getDom();
-        if (!this.latestTopMeanResult || dom.batchBacktestSp500TopMeanDetailsBtn.disabled) {
-            return;
-        }
-        const show = dom.batchBacktestSp500TopMeanDetails.hidden;
-        dom.batchBacktestSp500TopMeanDetails.hidden = !show;
-        dom.batchBacktestSp500TopMeanDetailsBtn.textContent = show
-            ? "Hide OPEN_SCORE Details"
-            : "Show OPEN_SCORE Details";
-        if (show && !dom.batchBacktestSp500TopMeanDetails.innerHTML) {
-            // Recorded (and persisted) BEFORE rendering: if the details table
-            // render is what kills the tab, the log must already say so.
-            this.recordTopMeanDiagnostic("ui.details_render.start", {
-                selector: this.getTopMeanOpenScoreDetailSelector(dom),
-                fullWindowRows: this.latestTopMeanResult.openScoreEventDetails?.length ?? 0,
-                annualSections: this.latestTopMeanResult.annualReports?.length ?? 0,
-            });
-            dom.batchBacktestSp500TopMeanDetails.innerHTML =
-                this.renderTopMeanOpenScoreEventDetails(
-                    this.latestTopMeanResult,
-                    this.getTopMeanOpenScoreDetailSelector(dom),
-                    this.getTopMeanOpenScoreDetailYear(dom),
-                );
-            this.recordTopMeanDiagnostic("ui.details_render.done", {
-                htmlChars: dom.batchBacktestSp500TopMeanDetails.innerHTML.length,
-            });
-        }
+        this.topMean.toggleSp500TopMeanOpenScoreDetails();
     }
 
     private getTopMeanOpenScoreDetailSelector(
         dom: BatchBacktestDom,
     ): OpenScoreUsdEventDetailSelector {
-        return getTopMeanOpenScoreDetailSelector(dom);
+        return this.topMean.getTopMeanOpenScoreDetailSelector(dom);
     }
 
     /** Selected calendar year for the details table; null = full window. */
     private getTopMeanOpenScoreDetailYear(dom: BatchBacktestDom): number | null {
-        return getTopMeanOpenScoreDetailYear(dom);
+        return this.topMean.getTopMeanOpenScoreDetailYear(dom);
     }
 
     private renderTopMeanOpenScoreEventDetails(
@@ -2718,389 +2311,70 @@ export class BatchBacktestService {
         selector: OpenScoreUsdEventDetailSelector,
         year: number | null = null,
     ): string {
-        return renderTopMeanOpenScoreEventDetails(summary, selector, year);
+        return this.topMean.renderTopMeanOpenScoreEventDetails(summary, selector, year);
     }
 
-    private renderCurrentTopMeanBanner(currentSnapshot: TopMeanCurrentSnapshot): string {
-        return renderCurrentTopMeanBanner(currentSnapshot, this.topMeanTieBreakMode());
-    }
 
     /**
      * Phase-1 current snapshot lines for the Copy Results output. Mirrors the
      * banner content in plain text so the clipboard surface matches the UI.
      */
-    private formatCurrentTopMeanLines(currentSnapshot: any): string[] {
-        return formatCurrentTopMeanLines(currentSnapshot, this.topMeanTieBreakMode());
+
+    public formatLatestOpenScoreSelectionLines(latestInput: OpenScoreUsdLatestSelections): string[] {
+        return this.topMean.formatLatestOpenScoreSelectionLines(latestInput);
     }
 
     public async copySp500TopMeanResults(): Promise<void> {
-        if (!this.latestTopMeanResult) return;
-        this.recordTopMeanDiagnostic("ui.copy_result.start", {});
-        const res = this.latestTopMeanResult;
-
-        const lines: string[] = [
-            "======================================================================",
-            "🏆 TOP_MEAN ASSET LEADERBOARD SUMMARY",
-            "======================================================================",
-            `Run ID: ${res.runId || "--"}`,
-            `Coverage: ${res.counts?.usableTargetIntervalCount ?? "--"} target assets | ${res.counts?.pairCount ?? "--"} pairs`,
-            "",
-        ];
-
-        if (res.currentSnapshot) {
-            lines.push(...this.formatCurrentTopMeanLines(res.currentSnapshot));
-        }
-        if (res.latestSelections) {
-            lines.push(...this.formatLatestOpenScoreSelectionLines(res.latestSelections));
-        }
-        if (res.performance) {
-            lines.push(...formatTopMeanPerformanceLines(res.performance), "");
-        }
-
-        if (Array.isArray(res.horizons)) {
-            for (const h of res.horizons) {
-                lines.push(`--- HISTORICAL TOP_MEAN | Horizon ${h.horizon} Bars (${h.events?.toLocaleString()} decision events) ---`);
-                lines.push(`HISTORICAL TOP_MEAN | horizon=${h.horizon} | top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} deltaMed=${formatSignedPercent(h.topMean?.delta)}`);
-                lines.push("");
-                lines.push("Top Asset Rankings:");
-                const topAssets = Array.isArray(h.topAssets) ? h.topAssets : [];
-                for (let i = 0; i < Math.min(10, topAssets.length); i++) {
-                    const a = topAssets[i];
-                    const sharePct = ((a.share ?? 0) * 100).toFixed(1) + "%";
-                    lines.push(`  #${(i + 1).toString().padStart(2)} ${a.asset.padEnd(6)} | ${a.events?.toLocaleString().padStart(5)} events (${sharePct.padStart(5)} share) | top: ${formatSignedPercent(a.topMean)} | rand: ${formatSignedPercent(a.randomMean)} | delta: ${formatSignedPercent(a.delta)}`);
-                }
-                lines.push("");
-            }
-        }
-        lines.push("======================================================================");
-
-        const text = lines.join("\n");
-        await copyToClipboard(text);
-        const dom = this.getDom();
-        dom.batchBacktestSp500TopMeanProgressText.textContent = "Copied TOP_MEAN leaderboard summary to clipboard.";
+        await this.topMean.copySp500TopMeanResults();
     }
 
     public async copySp500TopMeanOpenScoreResults(): Promise<void> {
-        const text = this.buildTopMeanOpenScoreText();
-        if (!text) return;
-        this.recordTopMeanDiagnostic("ui.copy_open_score.start", { textChars: text.length });
-        const copied = await copyToClipboard(text);
-        const dom = this.getDom();
-        dom.batchBacktestSp500TopMeanProgressText.textContent = copied
-            ? "Copied TOP_MEAN OPEN_SCORE report to clipboard."
-            : "Copy OPEN_SCORE failed.";
+        await this.topMean.copySp500TopMeanOpenScoreResults();
     }
 
-    private buildTopMeanOpenScoreText(): string {
-        const lines = this.latestTopMeanResult?.reportLines;
-        return Array.isArray(lines) ? lines.join("\n") : "";
+    public buildTopMeanOpenScoreText(): string {
+        return this.topMean.buildTopMeanOpenScoreText();
     }
 
     public async copySp500TopMeanDiagnostic(): Promise<void> {
-        const text = this.buildTopMeanDiagnosticText();
-        this.recordTopMeanDiagnostic("ui.copy_diagnostic", {
-            textChars: text.length,
-            entries: this.topMeanDiagnosticEntries.length,
-        });
-        await copyToClipboard(text);
-        const dom = this.getDom();
-        dom.batchBacktestSp500TopMeanProgressText.textContent = "Copied TOP_MEAN diagnostic to clipboard.";
+        await this.topMean.copySp500TopMeanDiagnostic();
     }
 
-    private buildTopMeanDiagnosticText(): string {
-        const diagnostic = {
-            schema: "sp500_top_mean_diagnostic.v1",
-            runId: this.topMeanDiagnosticRunId,
-            copiedAt: new Date().toISOString(),
-            entries: this.topMeanDiagnosticEntries,
-        };
-        try {
-            return JSON.stringify(diagnostic, null, 2);
-        } catch (err) {
-            return JSON.stringify({
-                schema: diagnostic.schema,
-                runId: diagnostic.runId,
-                copiedAt: diagnostic.copiedAt,
-                entries: [{
-                    at: new Date().toISOString(),
-                    type: "diagnostic.serialization_error",
-                    data: { message: err instanceof Error ? err.message : String(err) },
-                }],
-            }, null, 2);
-        }
+    public buildTopMeanDiagnosticText(): string {
+        return this.topMean.buildTopMeanDiagnosticText();
     }
 
-    private recordTopMeanNdjsonEvent(event: any): void {
-        if (event?.type === "progress") {
-            this.topMeanDiagnosticProgressSeen += 1;
-            const completed = Number(event.completed);
-            const total = Number(event.total);
-            const progressOrdinal = this.topMeanDiagnosticProgressSeen;
-            if (progressOrdinal > 3 && progressOrdinal !== total && progressOrdinal % 1000 !== 0 &&
-                (!Number.isFinite(completed) || completed !== total) &&
-                (!Number.isFinite(completed) || completed % 1000 !== 0)) {
-                return;
-            }
-        }
-        // The approximate wire size of each event is the primary OOM evidence:
-        // it shows exactly which payload stressed the tab, and by how much.
-        this.recordTopMeanDiagnostic(`ndjson.${event?.type || "unknown"}`, event, approxJsonByteLength(event));
+    public recordTopMeanNdjsonEvent(event: any): void {
+        this.topMean.recordTopMeanNdjsonEvent(event);
     }
 
-    private recordTopMeanDiagnostic(type: string, data?: unknown, bytes?: number): void {
-        // Compact AT RECORD TIME: the ring must never retain multi-MB payload
-        // duplicates (a terminal reattach poll carries the whole wire-safe
-        // result). The diagnostic evidence is the timeline, the byte size,
-        // and the shape — full payloads live in Copy Result / Copy OPEN_SCORE.
-        const entry: TopMeanDiagnosticEntry = {
-            at: new Date().toISOString(),
-            type,
-            data: compactTopMeanDiagnosticData(data),
-        };
-        const heap = sampleTopMeanHeap();
-        if (heap) entry.heap = heap;
-        if (typeof bytes === "number" && Number.isFinite(bytes)) entry.bytes = bytes;
-        this.topMeanDiagnosticEntries.push(entry);
-        // Bound the retained history so a multi-hour run does not accumulate
-        // unbounded entries (each reattach poll previously appended a full
-        // /status payload). Ring-buffer: drop the oldest once over cap.
-        if (this.topMeanDiagnosticEntries.length > BatchBacktestService.TOP_MEAN_DIAGNOSTIC_MAX_ENTRIES) {
-            this.topMeanDiagnosticEntries.shift();
-        }
-        const dom = this.dom;
-        if (dom) {
-            dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled = false;
-            dom.batchBacktestSp500TopMeanDiagnostic.hidden = false;
-            // Coalesce rapid bursts (progress + per-window + reattach polls) into
-            // one DOM write per debounce window. The Copy button always reads the
-            // current array via `buildTopMeanDiagnosticText()`, so no data is lost.
-            this.renderTopMeanDiagnosticDebounced();
-        }
-        // Persist the ring so the log survives the tab dying. Progress events
-        // are the only high-frequency type and ride the debounce; everything
-        // else (run.start, ndjson.done/fatal, run.error, stop.*, reattach.*)
-        // is rare and written through immediately.
-        if (type === "ndjson.progress") {
-            this.persistTopMeanDiagnosticDebounced();
-        } else {
-            this.writeTopMeanDiagnosticLogNow();
-        }
+    public recordTopMeanDiagnostic(type: string, data?: unknown, bytes?: number): void {
+        this.topMean.recordTopMeanDiagnostic(type, data, bytes);
     }
 
-    /**
-     * Adopt the diagnostic log persisted by a previous session so Copy
-     * Diagnostic works after a reload — the expected flow after an OOM crash
-     * killed the tab. Live entries (an in-flight run) always win.
-     */
-    private restorePersistedTopMeanDiagnostics(): void {
-        if (this.topMeanDiagnosticEntries.length > 0) return;
-        const snapshot = readTopMeanDiagnosticLogSnapshot();
-        if (!snapshot || snapshot.entries.length === 0) return;
-        this.topMeanDiagnosticRunId = snapshot.runId;
-        this.topMeanDiagnosticEntries = snapshot.entries;
-        this.recordTopMeanDiagnostic("diagnostic.restored_from_previous_session", {
-            runId: snapshot.runId,
-            savedAt: snapshot.savedAt,
-            restoredEntries: snapshot.entries.length,
-        });
-        const dom = this.dom;
-        if (dom) {
-            dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled = false;
-            dom.batchBacktestSp500TopMeanDiagnostic.hidden = false;
-            dom.batchBacktestSp500TopMeanDiagnostic.textContent = this.buildTopMeanDiagnosticText();
-        }
+    public restorePersistedTopMeanDiagnostics(): void {
+        this.topMean.restorePersistedTopMeanDiagnostics();
     }
 
     public downloadSp500TopMeanResults(): void {
-        if (!this.latestTopMeanResult) return;
-        const text = JSON.stringify(this.latestTopMeanResult, null, 2);
-        this.recordTopMeanDiagnostic("ui.download_result", { jsonChars: text.length });
-        const blob = new Blob([text], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `sp500_top_mean_${this.latestTopMeanResult.runId || "result"}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+        this.topMean.downloadSp500TopMeanResults();
     }
 
     private async reattachToInProgressTopMeanRun(): Promise<void> {
-        const persisted = readTopMeanActiveRun();
-        if (!persisted?.runId) return;
-
-        const dom = this.getDom();
-        const runId = persisted.runId;
-        this.activeTopMeanRunId = runId;
-        this.topMeanDiagnosticRunId = runId;
-        this.topMeanReattachInFlight = true;
-        this.recordTopMeanDiagnostic("reattach.start", { runId });
-        setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
-        setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
-
-        // Serialized polling (mirrors normal Batch reattach). Never use
-        // setInterval(async ...) — overlapping status callbacks can restore
-        // buttons or replace results from a stale terminal response.
-        //
-        // Audit: this loop previously abandoned the reattach on the FIRST
-        // non-2xx response or thrown fetch, clearing the persisted run marker
-        // so even a transient dev-server hiccup lost the entire reattach. It
-        // also used a bare setTimeout with no cancellation hook (Stop had to
-        // wait the full 2s delay before the loop noticed). Both gaps are
-        // closed below by sharing the consecutive-failure backoff state machine
-        // (2s -> 5s -> 10s -> 15s, then a 60s low-cadence retry) with
-        // `reattachToInProgressServerRun` via ReattachBackoffController.
-        const healthyDelay = (): Promise<void> => new Promise<void>((resolve) => {
-            this.topMeanReattachTimerResolve = resolve;
-            this.topMeanReattachTimer = setTimeout(resolve, 2_000);
-        });
-        this.topMeanReattachBackoff.reset();
-        try {
-            while (this.activeTopMeanRunId === runId) {
-                try {
-                    const res = await fetch(
-                        `/api/batch-backtest/sp500-top-mean/status?runId=${encodeURIComponent(runId)}`,
-                        { cache: "no-store" },
-                    );
-                    if (this.activeTopMeanRunId !== runId) return;
-                    this.recordTopMeanDiagnostic("reattach.response", {
-                        runId,
-                        status: res.status,
-                        ok: res.ok,
-                    });
-                    if (res.status === 404) {
-                        this.clearTopMeanRunAfterServerLoss(
-                            dom,
-                            "TOP_MEAN run was lost when the server restarted; local run state cleared.",
-                        );
-                        return;
-                    }
-                    // Audit: a non-2xx status is a transient failure, not a
-                    // reason to abandon the reattach. Treat it like a thrown
-                    // fetch so the backoff path engages; the prior behavior
-                    // cleared the persisted run marker and tore down the
-                    // reattach on a single hiccup.
-                    if (!res.ok) {
-                        throw new Error(`status ${res.status}`);
-                    }
-                    const status = await res.json() as TopMeanStatusResponse;
-                    if (this.activeTopMeanRunId !== runId) return;
-                    this.recordTopMeanDiagnostic("reattach.status", status);
-                    dom.batchBacktestSp500TopMeanProgressText.textContent =
-                        `[${status.phase}] ${status.progressText}`;
-
-                    const terminal = status.status === "completed"
-                        || status.status === "failed"
-                        || status.status === "interrupted";
-                    if (terminal) {
-                        setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-                        setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-                        if (status.result) {
-                            const result = mergeTopMeanArchiveStatus(status.result, status);
-                            this.latestTopMeanResult = result;
-                            this.persistLatestTopMeanResult(result);
-                            this.renderTopMeanResults(dom, result);
-                            dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
-                                !Array.isArray(result.reportLines) || result.reportLines.length === 0;
-                            dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
-                        }
-                        if (status.status === "completed") {
-                            dom.batchBacktestSp500TopMeanProgressText.textContent =
-                                formatTopMeanCompletionMessage(status.result
-                                    ? mergeTopMeanArchiveStatus(status.result, status)
-                                    : status);
-                        }
-                        clearTopMeanActiveRun();
-                        this.activeTopMeanRunId = null;
-                        return;
-                    }
-                    // Successful poll resets the transient-failure counter.
-                    this.topMeanReattachBackoff.recordSuccess();
-                } catch (err) {
-                    if (this.activeTopMeanRunId !== runId) return;
-                    const outcome = this.topMeanReattachBackoff.recordFailure();
-                    this.recordTopMeanDiagnostic("reattach.error", {
-                        runId,
-                        consecutive: outcome.consecutive,
-                        name: err instanceof Error ? err.name : typeof err,
-                        message: err instanceof Error ? err.message : String(err),
-                    });
-                    if (outcome.gaveUp) {
-                        // Preserve ownership across a prolonged transient
-                        // outage. The server may still be running; only a
-                        // terminal response or HTTP 404 clears this marker.
-                        this.topMeanReattachBackoff.reset();
-                        dom.batchBacktestSp500TopMeanProgressText.textContent =
-                            `Server connection lost — retrying status in 60s. Stop remains available.`;
-                        await new Promise<void>((resolve) => {
-                            this.topMeanReattachTimerResolve = resolve;
-                            this.topMeanReattachTimer = setTimeout(resolve, 60_000);
-                        });
-                        this.topMeanReattachTimer = null;
-                        this.topMeanReattachTimerResolve = null;
-                        continue;
-                    }
-                    dom.batchBacktestSp500TopMeanProgressText.textContent =
-                        `Server connection interrupted — retrying (${outcome.consecutive}/${outcome.max})`;
-                    await new Promise<void>((resolve) => {
-                        this.topMeanReattachTimerResolve = resolve;
-                        this.topMeanReattachTimer = setTimeout(resolve, outcome.backoffDelayMs);
-                    });
-                    this.topMeanReattachTimer = null;
-                    this.topMeanReattachTimerResolve = null;
-                    continue;
-                }
-                await healthyDelay();
-                this.topMeanReattachTimer = null;
-                this.topMeanReattachTimerResolve = null;
-            }
-        } finally {
-            if (this.activeTopMeanRunId === runId) {
-                // Loop exited without a terminal status (e.g. Stop cleared id
-                // from another path). Leave button state to that path.
-            }
-            this.stopTopMeanReattachPoll();
-            this.topMeanReattachInFlight = false;
-        }
-    }
-
-    /**
-     * Cancel any in-flight TOP_MEAN reattach delay. Mirrors `stopReattachPoll`
-     * for the normal-Batch loop: clears the timer + resolves the pending delay
-     * promise so the loop wakes immediately, checks `activeTopMeanRunId`, and
-     * exits when Stop has cleared the id.
-     */
-    private stopTopMeanReattachPoll(): void {
-        if (this.topMeanReattachTimer) {
-            clearTimeout(this.topMeanReattachTimer);
-            this.topMeanReattachTimer = null;
-        }
-        if (this.topMeanReattachTimerResolve) {
-            this.topMeanReattachTimerResolve();
-            this.topMeanReattachTimerResolve = null;
-        }
+        await this.topMean.reattachToInProgressTopMeanRun();
     }
 
     public dispose(): void {
         // Detach this instance from server-owned work before resolving its
-        // polling delays. Otherwise the TOP_MEAN loop wakes, still sees the
-        // same run id, and immediately schedules another timer.
-        this.activeTopMeanRunId = null;
+        // polling delays. The TOP_MEAN controller clears its run id first (so
+        // its reattach loop wakes without rescheduling), then the Batch
+        // reattach poll stops, then pending render work is cancelled.
+        this.topMean.dispose();
         this.stopReattachPoll();
-        this.stopTopMeanReattachPoll();
         this.cancelLiveRenderRaf();
-        this.renderTopMeanDiagnosticDebounced.cancel();
-        this.persistTopMeanDiagnosticDebounced.cancel();
     }
 }
 
-function formatSignedPercent(value: number | null | undefined): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return "--";
-    }
-    const sign = value >= 0 ? "+" : "";
-    return `${sign}${value.toFixed(Math.abs(value) >= 10 ? 1 : 2)}%`;
-}
 
 /**
  * Compact one-line summary of a Balanced Generator result for the UI status
