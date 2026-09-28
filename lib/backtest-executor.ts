@@ -180,6 +180,20 @@ interface ExitStrategyOverrideSignalResolution {
     };
 }
 
+interface PrimarySignalReuse {
+    strategy: Strategy;
+    params: StrategyParams;
+    signals: Signal[];
+    confirmationData?: OHLCVData[];
+}
+
+function haveSameStrategyParams(left: StrategyParams, right: StrategyParams): boolean {
+    const leftKeys = Object.keys(left);
+    const rightKeys = Object.keys(right);
+    return leftKeys.length === rightKeys.length
+        && leftKeys.every((key) => Object.hasOwn(right, key) && Object.is(left[key], right[key]));
+}
+
 function buildExitSignalCacheKey(args: {
     interval: string;
     exitKey: string;
@@ -377,6 +391,14 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         forceDisableSignalExits: req.backtestRunOptions?.forceDisableSignalExits === true,
         collectTimings: executorTimings !== undefined,
         exitSignalCache: req.exitSignalCache,
+        primarySignalReuse: req.preGeneratedSignals === undefined
+            ? {
+                strategy,
+                params: normalizedParams,
+                signals,
+                confirmationData: req.confirmationDataOverride,
+            }
+            : undefined,
     });
     if (executorTimings) {
         const elapsed = performance.now() - exitStrategyStartedAt;
@@ -818,6 +840,7 @@ export async function resolveExitStrategyOverrideSignals(args: {
     forceDisableSignalExits?: boolean;
     collectTimings?: boolean;
     exitSignalCache?: BacktestExitSignalCache;
+    primarySignalReuse?: PrimarySignalReuse;
 }): Promise<ExitStrategyOverrideSignalResolution> {
     const timings = {
         loadMs: 0,
@@ -885,6 +908,22 @@ export async function resolveExitStrategyOverrideSignals(args: {
         ? exitStrategy.normalizeParams(exitParams)
         : exitParams;
     if (args.collectTimings) timings.normalizeMs += performance.now() - normalizeStartedAt;
+
+    const primarySignalReuse = args.primarySignalReuse;
+    if (
+        primarySignalReuse
+        && primarySignalReuse.strategy === exitStrategy
+        && (primarySignalReuse.confirmationData === undefined || primarySignalReuse.confirmationData === args.data)
+        && haveSameStrategyParams(primarySignalReuse.params, normalizedExitParams)
+    ) {
+        const signals = primarySignalReuse.signals;
+        return {
+            signals,
+            strategyLoaded: true,
+            skippedReason: signals.length === 0 ? "exit_strategy_zero_signals" : undefined,
+            timings,
+        };
+    }
 
     const signalGenerationStartedAt = args.collectTimings ? performance.now() : 0;
     const signals = resolveBacktestSignalsForData({

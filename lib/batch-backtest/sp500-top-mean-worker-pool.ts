@@ -304,6 +304,8 @@ function pairLegs(symbol: string): [string, string] {
  * shardOrder value so resumed runs keep their original partition.
  */
 export const TOP_MEAN_SHARD_TILE_ASSETS = 12;
+const TOP_MEAN_DENSE_TILE_MIN_PAIRS = 10_000;
+const TOP_MEAN_DENSE_TILE_MIN_DENSITY = 0.75;
 
 /**
  * Group pairs into asset-tile shards (asset_tile_v1 layout, cache-locality
@@ -356,6 +358,27 @@ export function buildTopMeanAssetTileShardTasks(canonicalPairs: string[]): Shard
         }
     }
     return tasks;
+}
+
+export function resolveDefaultTopMeanShardLayout(canonicalPairs: string[]): TopMeanShardLayout {
+    if (canonicalPairs.length < TOP_MEAN_DENSE_TILE_MIN_PAIRS) return "leg_affinity_v1";
+
+    const legs = new Set<string>();
+    const pairs = new Set<string>();
+    for (const symbol of canonicalPairs) {
+        const [left, right] = pairLegs(symbol);
+        if (left === right) continue;
+        legs.add(left);
+        legs.add(right);
+        pairs.add(`${left}\u0000${right}`);
+    }
+
+    const legCount = legs.size;
+    const possiblePairs = legCount * (legCount - 1) / 2;
+    return possiblePairs > 0
+        && pairs.size / possiblePairs >= TOP_MEAN_DENSE_TILE_MIN_DENSITY
+        ? "asset_tile_v1"
+        : "leg_affinity_v1";
 }
 
 /**
@@ -485,17 +508,16 @@ export class TopMeanWorkerPool {
         // Completed shard indexes are meaningful only under the partition
         // that created them. The persisted shardOrder pins that layout: a
         // resumed run must recompute exactly the partition its completed
-        // indexes refer to. New runs adopt leg_affinity_v1 (shard-overhead
-        // plan phase 1: sparse pair graphs fragment the tile layout — a real
-        // 39,943-pair run produced 21,156 shards at 1.89 pairs per shard and
-        // measurably worse leg-cache reuse); manifests stamped asset_tile_v1
-        // keep their tile partition, and legacy manifests keep input order.
+        // indexes refer to. Large dense pair graphs use asset_tile_v1 to keep
+        // both legs inside the worker's bounded LRU; sparse graphs retain
+        // leg_affinity_v1 because tile partitioning can create one tiny shard
+        // per populated tile pair. Legacy manifests keep input order.
         const hasPersistedShardPartition = (
             options.manifest.completedShards.length > 0
             || options.manifest.failedShards.length > 0
         );
         if (!options.manifest.shardOrder && !hasPersistedShardPartition) {
-            options.manifest.shardOrder = "leg_affinity_v1";
+            options.manifest.shardOrder = resolveDefaultTopMeanShardLayout(options.canonicalPairs);
         }
         const shardLayout: TopMeanShardLayout = options.manifest.shardOrder === "asset_tile_v1"
             ? "asset_tile_v1"

@@ -125,6 +125,45 @@ async function main(): Promise<void> {
     assert.ok(measured.result.diagnostics);
     assert.ok(measured.result.diagnostics.timingsMs.total >= 0);
 
+    const sameStrategyExitSettings: BacktestSettings = {
+        ...backtestSettings,
+        exitStrategyOverrideEnabled: true,
+        exitStrategyKey: "parabolic_sar_confirmation",
+        exitStrategyParams: { ...parabolic_sar_confirmation.defaultParams },
+    };
+    const sameStrategyExitRequest = {
+        ...commonRequest,
+        backtestSettings: sameStrategyExitSettings,
+        preResolvedSettings: resolveExecutorBacktestSettings(sameStrategyExitSettings, interval),
+        backtestRunOptions: {
+            collectExecutorTimings: true,
+            includeAdvancedAnalytics: false,
+            includeSharpeRatio: false,
+            omitEquityCurve: true,
+            skipDrawdown: true,
+            skipResultPostProcessing: true,
+        },
+    };
+    const reusedExitSignals = await executeBacktest(sameStrategyExitRequest);
+    const separatelyGeneratedExitSignals = await executeBacktest({
+        ...sameStrategyExitRequest,
+        // A distinct confirmation array forces the authoritative exit path;
+        // no confirmation strategies are configured, so the resulting signal
+        // series and trades must still match the reusable case exactly.
+        confirmationDataOverride: data.map((candle) => ({ ...candle })),
+    });
+    assert.deepEqual(
+        reusedExitSignals.result.trades,
+        separatelyGeneratedExitSignals.result.trades,
+        "reusing the identical built-in signal stream must preserve exit fills",
+    );
+    assert.equal(reusedExitSignals.result.netProfit, separatelyGeneratedExitSignals.result.netProfit);
+    assert.equal(reusedExitSignals.executorTimings?.exitSignalGenerationMs, 0);
+    assert.ok(
+        (separatelyGeneratedExitSignals.executorTimings?.exitSignalGenerationMs ?? 0) > 0,
+        "distinct confirmation data retains the independent exit-signal generation path",
+    );
+
     console.log("PASS: backtest-executor-timings.spec.ts");
 }
 

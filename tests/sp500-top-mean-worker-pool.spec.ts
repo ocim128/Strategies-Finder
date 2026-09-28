@@ -9,6 +9,7 @@ import {
     buildTopMeanWorkerTaskData,
     resolveTopMeanShardSize,
     resolveTopMeanWorkerCount,
+    resolveDefaultTopMeanShardLayout,
     shouldBypassTopMeanSyntheticPairDiskCache,
     TOP_MEAN_DISK_CACHE_BYPASS_PAIR_THRESHOLD,
     TOP_MEAN_SHARD_TILE_ASSETS,
@@ -109,11 +110,9 @@ function testCacheAwareShardPlanning(): void {
         "Dâ€¢+Eâ€¢",
     ];
 
-    // Shard-overhead plan phase 1: the DEFAULT layout is back to
-    // leg_affinity_v1 — sparse pair graphs fragment the tile layout into
-    // disproportionate task/file counts (a real 39,943-pair run produced
-    // 21,156 shards at 1.89 pairs per shard). The affinity planner orders by
-    // one shared leg and chunks by the resolved shard size.
+    // Sparse pair graphs keep leg_affinity_v1 because tile layout can
+    // fragment them into disproportionate task/file counts. The affinity
+    // planner orders by one shared leg and chunks by the resolved shard size.
     const grouped = buildTopMeanShardTasks(pairs, 3);
     assert.deepEqual(
         grouped[0]!.pairs.map((pair) => pair.pairIndex),
@@ -170,6 +169,34 @@ function testCacheAwareShardPlanning(): void {
             "every tile shard stays inside the combined leg budget",
         );
     }
+
+    const largeDenseLegs = Array.from({ length: 150 }, (_, i) => `D${String(i).padStart(3, "0")}•`);
+    const largeDensePairs: string[] = [];
+    for (let i = 0; i < largeDenseLegs.length; i += 1) {
+        for (let j = i + 1; j < largeDenseLegs.length; j += 1) {
+            largeDensePairs.push(`${largeDenseLegs[i]!}+${largeDenseLegs[j]!}`);
+        }
+    }
+    assert.equal(
+        resolveDefaultTopMeanShardLayout(largeDensePairs),
+        "asset_tile_v1",
+        "large dense universes choose tile shards to keep both legs within the worker cache",
+    );
+
+    const largeSparsePairs: string[] = [];
+    const sparseLegs = Array.from({ length: 300 }, (_, i) => `S${String(i).padStart(3, "0")}•`);
+    for (let i = 0; i < sparseLegs.length && largeSparsePairs.length < 10_000; i += 1) {
+        for (let offset = 1; offset <= 68 && largeSparsePairs.length < 10_000; offset += 1) {
+            const j = (i + offset) % sparseLegs.length;
+            if (i < j) largeSparsePairs.push(`${sparseLegs[i]!}+${sparseLegs[j]!}`);
+        }
+    }
+    assert.equal(largeSparsePairs.length, 10_000);
+    assert.equal(
+        resolveDefaultTopMeanShardLayout(largeSparsePairs),
+        "leg_affinity_v1",
+        "large sparse universes keep coarse shards and avoid tile fragmentation",
+    );
 
     // The tile layout stays reachable for manifests explicitly stamped
     // asset_tile_v1, and remains deterministic.
