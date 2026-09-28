@@ -389,17 +389,17 @@ beforeEach(() => {
     m.reattachTimer = null;
     m.reattachTimerResolve = null;
     m.reattachAbortController = null;
-    m.latestResults = { scope: "current_chart", results: [] };
-    m.originalLatestResults = null;
-    m.symbolUniverseRunResults = [];
-    m.symbolUniverseDisplayLimit = 10;
-    m.assetOpportunityRunResults = [];
-    m.assetOpportunityDefaultResults = [];
-    m.armPerformanceRunResults = [];
-    m.armPerformanceDefaultResults = [];
-    m.armPerformanceRunContext = null;
-    m.armPerformanceInventoryComplete = true;
-    m.armPerformanceDisplayLimit = 10;
+    m.resultStore.latestResults = { scope: "current_chart", results: [] };
+    m.resultStore.originalLatestResults = null;
+    m.resultStore.symbolUniverseRunResults = [];
+    m.resultStore.symbolUniverseDisplayLimit = 10;
+    m.resultStore.assetOpportunityRunResults = [];
+    m.resultStore.assetOpportunityDefaultResults = [];
+    m.resultStore.armPerformanceRunResults = [];
+    m.resultStore.armPerformanceDefaultResults = [];
+    m.resultStore.armPerformanceRunContext = null;
+    m.resultStore.armPerformanceInventoryComplete = true;
+    m.resultStore.armPerformanceDisplayLimit = 10;
     m.uiState.scope = "current_chart";
     (m.ui as any).statusElement = null;
     (m.ui as any).lastStatusText = "";
@@ -498,7 +498,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         mockFetch.resolveFirst(terminalDoneSnapshot("done-run", [makeCandidate()]));
         await reattach;
 
-        const results = manager().latestResults;
+        const results = manager().resultStore.latestResults;
         expect(results.scope).to.equal("symbol_universe");
         expect(results.results).to.have.length(1);
         expect(results.results[0]!.strategyKey).to.equal("universe_test");
@@ -516,14 +516,14 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         mockFetch.resolveFirst(terminalDoneSnapshot("universe-resort-run", [lower, higher]));
         await reattach;
 
-        expect(manager().latestResults.results).to.have.length(1);
-        expect(manager().latestResults.results[0]!.params.threshold).to.equal(1);
+        expect(manager().resultStore.latestResults.results).to.have.length(1);
+        expect(manager().resultStore.latestResults.results[0]!.params.threshold).to.equal(1);
 
         manager().getDom().finderResort.value = "medianExpectancy";
         manager().applyResort();
 
-        expect(manager().latestResults.results).to.have.length(1);
-        expect(manager().latestResults.results[0]!.params.threshold).to.equal(2);
+        expect(manager().resultStore.latestResults.results).to.have.length(1);
+        expect(manager().resultStore.latestResults.results[0]!.params.threshold).to.equal(2);
     });
 
     it("reattaches the full Arm Performance inventory and repeatedly re-sorts every arm locally", async () => {
@@ -559,11 +559,11 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         mockFetch.resolveFirst(terminalArmPerformanceSnapshot(runId, rows, context));
         await reattach;
 
-        expect(manager().latestResults.scope).to.equal("arm_performance");
-        expect(manager().latestResults.results).to.have.length(1);
-        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(1);
-        expect(manager().armPerformanceRunResults).to.have.length(3);
-        expect(manager().armPerformanceRunContext.pairs).to.deep.equal(context.pairs);
+        expect(manager().resultStore.latestResults.scope).to.equal("arm_performance");
+        expect(manager().resultStore.latestResults.results).to.have.length(1);
+        expect(manager().resultStore.latestResults.results[0]!.candidateOrdinal).to.equal(1);
+        expect(manager().resultStore.armPerformanceRunResults).to.have.length(3);
+        expect(manager().resultStore.armPerformanceRunContext.pairs).to.deep.equal(context.pairs);
         expect(manager().getDom().finderCopyDiagnostics.disabled).to.equal(false);
 
         let copiedDiagnostics = "";
@@ -575,16 +575,16 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
 
         manager().getDom().finderResort.value = "TOP_RAW";
         manager().applyResort();
-        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(2);
+        expect(manager().resultStore.latestResults.results[0]!.candidateOrdinal).to.equal(2);
 
         manager().getDom().finderResort.value = "TOP_RAW_PROFIT_NOW";
         manager().applyResort();
-        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(1);
+        expect(manager().resultStore.latestResults.results[0]!.candidateOrdinal).to.equal(1);
 
         manager().getDom().finderResort.value = "";
         manager().applyResort();
-        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(1);
-        expect(manager().armPerformanceRunResults.map((row: FinderArmPerformanceCandidate) => row.candidateOrdinal))
+        expect(manager().resultStore.latestResults.results[0]!.candidateOrdinal).to.equal(1);
+        expect(manager().resultStore.armPerformanceRunResults.map((row: FinderArmPerformanceCandidate) => row.candidateOrdinal))
             .to.deep.equal([0, 1, 2]);
     });
 
@@ -628,23 +628,23 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         expect(manager().loadPersistedActiveServerRun()).to.equal(null);
 
         // Simulate a new Finder manager instance restoring the local preview.
-        manager().latestResults = { scope: "current_chart", results: [] };
-        manager().armPerformanceRunResults = [];
-        manager().armPerformanceDefaultResults = [];
-        manager().armPerformanceRunContext = null;
-        manager().armPerformanceInventoryComplete = true;
+        manager().resultStore.latestResults = { scope: "current_chart", results: [] };
+        manager().resultStore.armPerformanceRunResults = [];
+        manager().resultStore.armPerformanceDefaultResults = [];
+        manager().resultStore.armPerformanceRunContext = null;
+        manager().resultStore.armPerformanceInventoryComplete = true;
         manager().loadPersistedLatestResults();
-        expect(manager().latestResults.inventoryComplete).to.equal(false);
-        expect(manager().latestResults.runContext.uiBacktestSettings.riskSettingsToggle).to.equal(true);
+        expect(manager().resultStore.latestResults.inventoryComplete).to.equal(false);
+        expect(manager().resultStore.latestResults.runContext.uiBacktestSettings.riskSettingsToggle).to.equal(true);
         const reload = manager().reattachToActiveServerRun();
         expect(mockFetch.requests[0]?.url).to.include(encodeURIComponent(runId));
         mockFetch.resolveFirst(terminal);
         await reload;
 
-        expect(manager().armPerformanceRunResults).to.have.length(3);
+        expect(manager().resultStore.armPerformanceRunResults).to.have.length(3);
         manager().getDom().finderResort.value = "TOP_RAW";
         manager().applyResort();
-        expect(manager().latestResults.results[0]!.candidateOrdinal).to.equal(2);
+        expect(manager().resultStore.latestResults.results[0]!.candidateOrdinal).to.equal(2);
     });
 
     it("keeps Copy Diagnostics available when every Arm Performance candidate fails", async () => {
@@ -673,15 +673,15 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         mockFetch.resolveFirst(terminalArmPerformanceSnapshot(runId, [], context));
         await reattach;
 
-        expect(manager().latestResults.scope).to.equal("arm_performance");
-        expect(manager().armPerformanceRunResults).to.have.length(0);
+        expect(manager().resultStore.latestResults.scope).to.equal("arm_performance");
+        expect(manager().resultStore.armPerformanceRunResults).to.have.length(0);
         expect(manager().getDom().finderCopyDiagnostics.disabled).to.equal(false);
 
-        manager().latestResults = { scope: "current_chart", results: [] };
-        manager().armPerformanceRunContext = null;
+        manager().resultStore.latestResults = { scope: "current_chart", results: [] };
+        manager().resultStore.armPerformanceRunContext = null;
         manager().loadPersistedLatestResults();
-        expect(manager().latestResults.scope).to.equal("arm_performance");
-        expect(manager().armPerformanceRunContext.failedPairs).to.deep.equal(context.failedPairs);
+        expect(manager().resultStore.latestResults.scope).to.equal("arm_performance");
+        expect(manager().resultStore.armPerformanceRunContext.failedPairs).to.deep.equal(context.failedPairs);
         expect(manager().getDom().finderCopyDiagnostics.disabled).to.equal(false);
 
         let copiedDiagnostics = "";
@@ -696,7 +696,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         const runId = "arm-performance-expired-preview";
         const preview = makeArmCandidate(0, 10, 10);
         preview.candidateId = runId + ":candidate-0";
-        manager().latestResults = {
+        manager().resultStore.latestResults = {
             scope: "arm_performance",
             results: [preview],
             runContext: {
@@ -719,14 +719,14 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
             inventoryComplete: false,
         };
 
-        manager().latestResults.runContext = null;
+        manager().resultStore.latestResults.runContext = null;
         const recovery = manager().reattachToActiveServerRun();
         expect(mockFetch.requests[0]?.url).to.include(runId);
         mockFetch.resolveFirst({ ok: false }, 404);
         await recovery;
 
-        expect(manager().latestResults.results).to.deep.equal([preview]);
-        expect(manager().latestResults.inventoryComplete).to.equal(false);
+        expect(manager().resultStore.latestResults.results).to.deep.equal([preview]);
+        expect(manager().resultStore.latestResults.inventoryComplete).to.equal(false);
     });
 
     it("keeps Re-Sort available for an incomplete Arm Performance preview", () => {
@@ -737,10 +737,10 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         const m = manager();
         m.uiState.scope = "arm_performance";
         m.getDom().finderScope.value = "arm_performance";
-        m.armPerformanceRunResults = [...results];
-        m.armPerformanceDefaultResults = [...results];
-        m.armPerformanceInventoryComplete = false;
-        m.setArmPerformanceLatestResults(results, false, 20, false);
+        m.resultStore.armPerformanceRunResults = [...results];
+        m.resultStore.armPerformanceDefaultResults = [...results];
+        m.resultStore.armPerformanceInventoryComplete = false;
+        m.resultStore.setArmPerformanceLatestResults(results, false, 20, false);
         m.populateResortOptions();
 
         expect(m.getDom().finderResort.disabled).to.equal(false);
@@ -749,8 +749,8 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         m.getDom().finderResort.value = "TOP_RAW";
         m.applyResort();
 
-        expect(m.latestResults.results[0]!.candidateOrdinal).to.equal(1);
-        expect(m.latestResults.inventoryComplete).to.equal(false);
+        expect(m.resultStore.latestResults.results[0]!.candidateOrdinal).to.equal(1);
+        expect(m.resultStore.latestResults.inventoryComplete).to.equal(false);
     });
 });
 
@@ -927,12 +927,12 @@ describe("FinderManager result persistence (audit Finding 4)", () => {
 
         // Provisional mid-run render (persist = false): no storage write.
         for (let i = 0; i < 3; i += 1) {
-            manager().setLatestResults({ scope: "current_chart", results: [result] }, false);
+            manager().resultStore.setLatestResults({ scope: "current_chart", results: [result] }, false);
         }
         expect(writes(), "no snapshot writes during provisional updates").to.equal(0);
 
         // Terminal adoption (default persist = true): exactly one commit.
-        manager().setLatestResults({ scope: "current_chart", results: [result] });
+        manager().resultStore.setLatestResults({ scope: "current_chart", results: [result] });
         expect(writes()).to.equal(1);
         const stored = JSON.parse((globalThis as any).localStorage.getItem(key));
         expect(stored.schema).to.equal("finder.latest_results");
