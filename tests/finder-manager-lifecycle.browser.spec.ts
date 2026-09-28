@@ -2,13 +2,14 @@
  * Browser-side Finder lifecycle contract tests (audit Finding 8) plus the
  * regression tests for audit Findings 2 (reattach abort/ownership), 4
  * (persistence only at semantic checkpoints), and 6 (lazy Universe symbol
- * breakdowns).
+ * breakdowns), and for the Copy Diagnostics availability transitions
+ * (disabled at run start, enabled once a scope adopts diagnostics).
  *
- * The server protocol has its own spec; this file covers the browser state
- * machine in FinderManager: stale reattach responses, terminal fatal
- * snapshots, Stop during a pending status fetch, persisted run-id
- * restoration, and stream-failure status recovery. DOM rendering and strategy
- * execution stay outside these tests (fake elements only).
+ * Session behavior (ownership, Stop, recovery, stop rejection) is tested on
+ * fresh `FinderServerSession` instances against a recording host — no
+ * manager. The facade keeps a small set of integration tests that verify its
+ * terminal-adoption and stream wiring with fresh collaborators injected.
+ * DOM rendering stays outside these tests (fake elements only).
  */
 import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";
@@ -17,17 +18,30 @@ import { FinderUI } from "../lib/finder/finder-ui";
 import { clearDomElementCache } from "../lib/dom-utils";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
 import { ASSET_OPPORTUNITY_ALL_SORTS } from "../lib/finder/finder-asset-opportunity-metrics";
-import { createFakeFinderElement } from "./helpers/fake-finder-manager-dom";
+import { createFakeFinderElement, createFakeFinderManagerDom } from "./helpers/fake-finder-manager-dom";
+import { FinderServerSession, type FinderSessionHost } from "../lib/finder/browser/finder-server-session";
+import { FinderResultStore } from "../lib/finder/browser/finder-result-store";
+import { FinderControls } from "../lib/finder/browser/finder-controls";
+import { FinderRunController, type FinderRunControllerDeps } from "../lib/finder/browser/finder-run-controller";
+import { normalizeFinderUiState } from "../lib/finder/browser/finder-settings";
+import { readFinderActiveServerRun } from "../lib/finder/browser/finder-persistence";
+import { runUniverseFinder } from "../lib/finder/browser/workflows/symbol-universe";
+import { runCurrentChartFinder } from "../lib/finder/browser/workflows/current-chart";
+import { runStrategyQualityFinder } from "../lib/finder/browser/workflows/strategy-quality";
+import { runAssetOpportunityFinder } from "../lib/finder/browser/workflows/asset-opportunity";
+import type { FinderRunHost } from "../lib/finder/browser/workflows/finder-run-host";
 import type { FinderRunStatusSnapshot } from "../lib/finder/server/finder-stream-types";
 import type {
     FinderArmPerformanceCandidate,
     FinderArmPerformanceRunContext,
     FinderAssetOpportunityResult,
+    FinderDiagnostics,
+    FinderScope,
     FinderStrategyQualityResult,
     FinderUniverseCandidate,
     FinderUniverseSymbolResult,
 } from "../lib/types/finder";
-import type { Time } from "../lib/types/strategies";
+import type { OHLCVData, Strategy, Time } from "../lib/types/strategies";
 
 // ---------------------------------------------------------------------------
 // Fake browser environment
@@ -335,6 +349,145 @@ function terminalFatalSnapshot(runId: string, error: string): FinderRunStatusSna
     };
 }
 
+function makeAssetRow(symbol: string, strategyKey: string, expectancy: number): FinderAssetOpportunityResult {
+    const backtest = {
+        trades: [],
+        equityCurve: [],
+        netProfit: 10,
+        netProfitPercent: 1,
+        winRate: 50,
+        expectancy,
+        avgTrade: 1,
+        profitFactor: 2,
+        maxDrawdown: 1,
+        maxDrawdownPercent: 1,
+        totalTrades: 10,
+        winningTrades: 5,
+        losingTrades: 5,
+        avgWin: 2,
+        avgLoss: 1,
+        sharpeRatio: 1,
+    };
+    return {
+        symbol,
+        strategyKey,
+        strategyName: strategyKey,
+        params: {},
+        historicalRank: 1,
+        totalCandidatesEvaluated: 1,
+        isHistoricalBest: true,
+        freshStatus: "fresh",
+        direction: "long",
+        latestSignalTime: null,
+        signalAgeBars: 0,
+        fillTiming: "signal_close",
+        selectionResult: backtest,
+        medianBarsToTp: 3,
+        support: {
+            freshLongCandidates: 1,
+            freshShortCandidates: 0,
+            freshSameDirection: 1,
+            poolSize: 1,
+            bestFreshRank: 1,
+            directionAgreementRatio: 1,
+        },
+        grade: "select",
+    } as FinderAssetOpportunityResult;
+}
+
+function makeFakeStrategy(name: string): Strategy {
+    return {
+        name,
+        description: "deterministic test strategy",
+        defaultParams: { threshold: 1 },
+        paramLabels: { threshold: "Threshold" },
+        execute(data: OHLCVData[]) {
+            if (data.length < 3) return [];
+            return [
+                { time: data[0]!.time, type: "buy", price: data[0]!.close },
+                { time: data[data.length - 1]!.time, type: "sell", price: data[data.length - 1]!.close },
+            ];
+        },
+    } as unknown as Strategy;
+}
+
+function makeCandles(count: number): OHLCVData[] {
+    return Array.from({ length: count }, (_value, index) => ({
+        time: (1_700_000_000 + index * 300) as Time,
+        open: 100 + index,
+        high: 101 + index,
+        low: 99 + index,
+        close: 100.5 + index,
+        volume: 1000,
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Recording session host for fresh-session tests
+// ---------------------------------------------------------------------------
+
+interface RecordingSessionHost extends FinderSessionHost {
+    calls: {
+        setProgress: Array<[boolean, number, string]>;
+        status: string[];
+        restoreScope: FinderScope[];
+        resetForServerRunAdoption: number;
+        setRunning: boolean[];
+        interpretTerminal: Array<{ snapshot: FinderRunStatusSnapshot; persistedScope: string }>;
+    };
+}
+
+function makeRecordingSessionHost(): RecordingSessionHost {
+    const calls = {
+        setProgress: [] as Array<[boolean, number, string]>,
+        status: [] as string[],
+        restoreScope: [] as FinderScope[],
+        resetForServerRunAdoption: 0,
+        setRunning: [] as boolean[],
+        interpretTerminal: [] as Array<{ snapshot: FinderRunStatusSnapshot; persistedScope: string }>,
+    };
+    return {
+        calls,
+        setProgress: (active, percent, text) => { calls.setProgress.push([active, percent, text]); },
+        setStatus: (text) => { calls.status.push(text); },
+        restoreScope: (scope) => { calls.restoreScope.push(scope); },
+        resetForServerRunAdoption: () => { calls.resetForServerRunAdoption += 1; },
+        setRunning: (running) => { calls.setRunning.push(running); },
+        interpretTerminal: (snapshot, persistedScope) => { calls.interpretTerminal.push({ snapshot, persistedScope }); },
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Recording run host for workflow/controller tests
+// ---------------------------------------------------------------------------
+
+interface RecordingRunHost extends FinderRunHost {
+    calls: {
+        status: string[];
+        availability: boolean[];
+    };
+}
+
+function makeRecordingRunHost(): RecordingRunHost {
+    const calls = {
+        status: [] as string[],
+        availability: [] as boolean[],
+    };
+    return {
+        calls,
+        setProgress: () => {},
+        setStatus: (text) => { calls.status.push(text); },
+        isCancelled: () => false,
+        getAbortSignal: () => undefined,
+        yieldControl: async () => {},
+        renderRandomBenchmark: () => {},
+        renderLatestResults: () => {},
+        stashAndResetResort: () => {},
+        populateResortOptions: () => {},
+        showDiagnosticsAvailability: (available) => { calls.availability.push(available); },
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Setup / teardown
 // ---------------------------------------------------------------------------
@@ -380,29 +533,21 @@ function manager(): any {
     return finderManager as any;
 }
 
-beforeEach(() => {
+/**
+ * Give the facade fresh collaborators so integration tests cannot leak run
+ * ownership, inventories, or editable settings between tests.
+ */
+function resetFacadeCollaborators(): void {
     const m = manager();
-    m.session.activeRunId = null;
-    m.isRunning = false;
-    m.isCancelled = false;
-    m.session.pollingStopped = false;
-    m.session.timer = null;
-    m.session.timerResolve = null;
-    m.session.abortController = null;
-    m.resultStore.latestResults = { scope: "current_chart", results: [] };
-    m.resultStore.originalLatestResults = null;
-    m.resultStore.symbolUniverseRunResults = [];
-    m.resultStore.symbolUniverseDisplayLimit = 10;
-    m.resultStore.assetOpportunityRunResults = [];
-    m.resultStore.assetOpportunityDefaultResults = [];
-    m.resultStore.armPerformanceRunResults = [];
-    m.resultStore.armPerformanceDefaultResults = [];
-    m.resultStore.armPerformanceRunContext = null;
-    m.resultStore.armPerformanceInventoryComplete = true;
-    m.resultStore.armPerformanceDisplayLimit = 10;
-    m.controls.uiState.scope = "current_chart";
+    m.session = new FinderServerSession();
+    m.resultStore = new FinderResultStore((results) => m.saveLatestResultsSnapshot(results));
+    m.controls.uiState = normalizeFinderUiState(null);
+    m.controls.uiState.topN = 10;
     (m.ui as any).statusElement = null;
     (m.ui as any).lastStatusText = "";
+}
+
+beforeEach(() => {
     elsById.clear();
     (globalThis as any).localStorage._store.clear();
     (globalThis as any).localStorage._writes.clear();
@@ -411,87 +556,127 @@ beforeEach(() => {
 });
 
 // ---------------------------------------------------------------------------
-// Tests
+// Session behavior on fresh FinderServerSession instances
 // ---------------------------------------------------------------------------
 
-describe("FinderManager reattach lifecycle (audit Finding 2)", () => {
+describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
     it("does not adopt a delayed initial probe when a new run started during the await", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
         persistActiveServerRun("old-run");
-        const reattach = manager().reattachToActiveServerRun();
+        const reattach = session.reattachToActiveServerRun(host);
         // The probe is in flight (no response yet). A new run starts while we
         // wait — exactly what the old code raced on: the probe resolving AFTER
-        // runFinder() set activeServerRunId would overwrite the new run's
-        // ownership token.
-        manager().session.activeRunId = "new-run";
-        manager().isRunning = true;
+        // the new run took ownership would overwrite its ownership token.
+        session.activeRunId = "new-run";
 
         mockFetch.resolveFirst(runningSnapshot("old-run"));
         await reattach;
 
-        expect(manager().session.activeRunId, "new run ownership preserved").to.equal("new-run");
-        expect(manager().isRunning).to.equal(true);
-        // The reattach path never adopted the old run's scope either.
-        expect(manager().controls.uiState.scope).to.equal("current_chart");
+        expect(session.activeRunId, "new run ownership preserved").to.equal("new-run");
+        expect(host.calls.setRunning, "run/stop UI untouched").to.deep.equal([]);
+        expect(host.calls.restoreScope, "scope untouched").to.deep.equal([]);
+        expect(host.calls.interpretTerminal).to.deep.equal([]);
     });
 
     it("aborts an in-flight status fetch when Stop cancels the reattach poll", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
         persistActiveServerRun("hung-run");
-        const reattach = manager().reattachToActiveServerRun();
+        const reattach = session.reattachToActiveServerRun(host);
         // Probe hangs; the user presses Stop while it is pending.
         expect(mockFetch.requests.length).to.be.greaterThan(0);
-        manager().session.stopReattachPoll();
+        session.stopReattachPoll();
         expect(mockFetch.aborted(), "the pending status fetch was aborted").to.equal(true);
         await reattach;
-        expect(manager().session.abortController).to.equal(null);
+        expect(session.abortController).to.equal(null);
     });
 
-    it("ignores a stale recovery response after activeServerRunId changed mid-await", async () => {
-        manager().session.activeRunId = "run-a";
-        manager().isRunning = true;
-        const recovery = manager().session.recoverActiveServerRun("run-a", "symbol_universe", {
-            setProgress() {}, setStatus() {},
-        });
+    it("ignores a stale recovery response after the active run changed mid-await", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        session.activeRunId = "run-a";
+        const recovery = session.recoverActiveServerRun("run-a", "symbol_universe", host);
         expect(mockFetch.requests.length).to.be.greaterThan(0);
 
         // The stream-error handler is still awaiting; a new run takes over.
-        manager().session.activeRunId = "run-b";
+        session.activeRunId = "run-b";
         mockFetch.resolveFirst(terminalDoneSnapshot("run-a", [makeCandidate()]));
 
         const recovered = await recovery;
         expect(recovered, "stale terminal snapshot must not be adopted").to.equal(null);
-        expect(manager().session.activeRunId).to.equal("run-b");
+        expect(session.activeRunId).to.equal("run-b");
     });
 
     it("does not treat an HTTP-200 server stop rejection as success", async () => {
+        const session = new FinderServerSession();
         const runId = "server-rejected-stop";
         persistActiveServerRun(runId);
-        manager().isRunning = true;
+        const statusMessages: string[] = [];
 
-        const stop = manager().session.stopServerRun(runId, { setStatus: (text: string) => manager().setStatus(text) });
+        const stop = session.stopServerRun(runId, { setStatus: (text) => { statusMessages.push(text); } });
         mockFetch.resolveFirst(makeResponse({ ok: false, stopped: false }));
         await stop;
 
-        const stored = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_active_server_run"));
-        expect(stored.data.runId).to.equal(runId);
-        expect(elsById.get("finderStatus")?.textContent).to.include("rejected by the server");
+        expect(readFinderActiveServerRun()?.runId, "the persisted record survives a rejected stop").to.equal(runId);
+        expect(statusMessages.join(" ")).to.include("rejected by the server");
     });
-});
 
-describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
-    it("surfaces a terminal fatal snapshot and clears ownership + the persisted record", async () => {
+    it("surfaces a terminal fatal snapshot, skips result adoption, and clears the record", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
         persistActiveServerRun("fatal-run");
-        const reattach = manager().reattachToActiveServerRun();
+        const reattach = session.reattachToActiveServerRun(host);
         mockFetch.resolveFirst(terminalFatalSnapshot("fatal-run", "worker exploded"));
         await reattach;
 
-        const status = elsById.get("finderStatus");
-        expect(status?.textContent).to.include("worker exploded");
-        expect(manager().session.activeRunId).to.equal(null);
+        expect(host.calls.status.some((text) => text.includes("worker exploded"))).to.equal(true);
+        expect(host.calls.interpretTerminal.map((call) => call.snapshot.phase)).to.deep.equal(["fatal"]);
+        expect(session.activeRunId).to.equal(null);
+        expect(host.calls.setRunning[host.calls.setRunning.length - 1]).to.equal(false);
         // clearActiveServerRun writes a data:null envelope rather than
-        // removing the key; loadPersistedActiveServerRun treats it as absent.
+        // removing the key; readFinderActiveServerRun treats it as absent.
         const stored = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_active_server_run"));
         expect(stored.data).to.equal(null);
-        expect(manager().loadPersistedActiveServerRun()).to.equal(null);
+        expect(readFinderActiveServerRun()).to.equal(null);
+    });
+
+    it("clears a stale persisted record when the server no longer has the job", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        persistActiveServerRun("gone-run");
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst(makeResponse({ ok: false }, 404));
+        await reattach;
+
+        expect(readFinderActiveServerRun()).to.equal(null);
+        expect(host.calls.setRunning, "the facade UI is untouched without a matching job").to.deep.equal([]);
+        expect(host.calls.interpretTerminal).to.deep.equal([]);
+    });
+
+    it("hands a terminal done snapshot to the host with the persisted scope", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        persistActiveServerRun("done-run");
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst(terminalDoneSnapshot("done-run", [makeCandidate()]));
+        await reattach;
+
+        expect(host.calls.interpretTerminal).to.have.length(1);
+        expect(host.calls.interpretTerminal[0]!.persistedScope).to.equal("symbol_universe");
+        expect(host.calls.interpretTerminal[0]!.snapshot.terminalCandidates).to.have.length(1);
+        expect(session.activeRunId).to.equal(null);
+        expect(readFinderActiveServerRun()).to.equal(null);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Facade integration: terminal adoption, re-sort, and persistence
+// ---------------------------------------------------------------------------
+
+describe("Finder facade terminal adoption (integration)", () => {
+    beforeEach(() => {
+        resetFacadeCollaborators();
     });
 
     it("restores a terminal done snapshot from the persisted run id after a reload", async () => {
@@ -555,7 +740,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
             backtestSettings: {},
             capitalSettings: {},
             requestedEngineMode: "typescript",
-        } as FinderArmPerformanceRunContext;
+        } as unknown as FinderArmPerformanceRunContext;
 
         const reattach = manager().reattachToActiveServerRun();
         mockFetch.resolveFirst(terminalArmPerformanceSnapshot(runId, rows, context));
@@ -617,7 +802,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
             uiBacktestSettings: { riskSettingsToggle: true, stopLossEnabled: true, takeProfitEnabled: true } as any,
             capitalSettings: {},
             requestedEngineMode: "typescript",
-        } as FinderArmPerformanceRunContext;
+        } as unknown as FinderArmPerformanceRunContext;
 
         const terminal = terminalArmPerformanceSnapshot(runId, rows, context);
         const completion = manager().reattachToActiveServerRun();
@@ -669,7 +854,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
             backtestSettings: {},
             capitalSettings: {},
             requestedEngineMode: "typescript",
-        } as FinderArmPerformanceRunContext;
+        } as unknown as FinderArmPerformanceRunContext;
 
         const reattach = manager().reattachToActiveServerRun();
         mockFetch.resolveFirst(terminalArmPerformanceSnapshot(runId, [], context));
@@ -746,7 +931,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         m.populateResortOptions();
 
         expect(m.getDom().finderResort.disabled).to.equal(false);
-        expect(m.getDom().finderResort.children.some((option) => option.value === "TOP_RAW")).to.equal(true);
+        expect(m.getDom().finderResort.children.some((option: any) => option.value === "TOP_RAW")).to.equal(true);
 
         m.getDom().finderResort.value = "TOP_RAW";
         m.applyResort();
@@ -756,43 +941,14 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
     });
 });
 
-describe("FinderManager Arm Performance scope controls", () => {
-    it("visibly constrains incompatible search and window options without an arm selector", () => {
-        const m = manager();
-        const dom = m.getDom();
-        dom.finderMode.value = "genetic";
-        dom.finderMode.options = [
-            { value: "grid", disabled: false },
-            { value: "random", disabled: false },
-            { value: "genetic", disabled: false },
-        ];
-        dom.finderDataSlice.value = "half_newest";
-        dom.finderDataSlice.options = [
-            { value: "all", disabled: false },
-            { value: "date_range", disabled: false },
-            { value: "half_newest", disabled: false },
-        ];
-        dom.finderScope.value = "arm_performance";
-        m.controls.uiState.scope = "arm_performance";
-        m.controls.applyScopeUi();
-
-        expect(dom.finderMode.options[2].disabled).to.equal(true);
-        expect(dom.finderMode.value).to.equal("random");
-        expect(dom.finderDataSlice.options[0].disabled).to.equal(false);
-        expect(dom.finderDataSlice.options[1].disabled).to.equal(false);
-        expect(dom.finderDataSlice.options[2].disabled).to.equal(true);
-        expect(dom.finderDataSlice.value).to.equal("all");
-        expect(dom.finderUniverseSymbolsLabel.textContent).to.equal("Synthetic Pairs");
-        expect(dom.finderArmPerformanceSettings.style.display).to.equal("");
-        expect(dom.finderTradeFilterSection.style.display).to.equal("none");
-    });
-});
-
 describe("FinderManager Asset Opportunity batch stream contracts", () => {
+    beforeEach(() => {
+        resetFacadeCollaborators();
+    });
+
     it("does not turn a recovered batch fatal into a successful outcome", async () => {
         const runId = "batch-fatal-recovery";
         manager().session.activeRunId = runId;
-        manager().isRunning = true;
         const options: any = {
             mode: "random",
             scope: "asset_opportunity",
@@ -842,7 +998,6 @@ describe("FinderManager Asset Opportunity batch stream contracts", () => {
     it("retains the latest batch diagnostics and asset counts from terminal events", async () => {
         const runId = "batch-diagnostics";
         manager().session.activeRunId = runId;
-        manager().isRunning = true;
         const assetDiagnostics: any = {
             totalAssets: 2,
             assetsWithFreshEntry: 1,
@@ -916,6 +1071,10 @@ describe("FinderManager Asset Opportunity batch stream contracts", () => {
 });
 
 describe("FinderManager result persistence (audit Finding 4)", () => {
+    beforeEach(() => {
+        resetFacadeCollaborators();
+    });
+
     it("skips the persisted snapshot for provisional updates and writes once at terminal adoption", () => {
         const result: any = {
             key: "immutability_test",
@@ -943,6 +1102,311 @@ describe("FinderManager result persistence (audit Finding 4)", () => {
         expect(stored.data.results.results).to.have.length(1);
     });
 });
+
+describe("Finder Arm Performance scope controls", () => {
+    it("visibly constrains incompatible search and window options without an arm selector", () => {
+        // `any` so the test can seed select `options` arrays (readonly on the
+        // DOM types, plain arrays on the fake elements).
+        const dom: any = createFakeFinderManagerDom();
+        const controls = new FinderControls({
+            getDom: () => dom,
+            setStatus: () => {},
+            renderLatestResults: () => {},
+            populateResortOptions: () => {},
+            applyResort: () => {},
+            requestRun: () => {},
+            renderRandomBenchmark: () => {},
+            selection: { getVisibleStrategyKeys: () => [] } as any,
+        });
+        dom.finderMode.value = "genetic";
+        dom.finderMode.options = [
+            { value: "grid", disabled: false },
+            { value: "random", disabled: false },
+            { value: "genetic", disabled: false },
+        ];
+        dom.finderDataSlice.value = "half_newest";
+        dom.finderDataSlice.options = [
+            { value: "all", disabled: false },
+            { value: "date_range", disabled: false },
+            { value: "half_newest", disabled: false },
+        ];
+        dom.finderScope.value = "arm_performance";
+        controls.uiState.scope = "arm_performance";
+        controls.applyScopeUi();
+
+        expect(dom.finderMode.options[2].disabled).to.equal(true);
+        expect(dom.finderMode.value).to.equal("random");
+        expect(dom.finderDataSlice.options[0].disabled).to.equal(false);
+        expect(dom.finderDataSlice.options[1].disabled).to.equal(false);
+        expect(dom.finderDataSlice.options[2].disabled).to.equal(true);
+        expect(dom.finderDataSlice.value).to.equal("all");
+        expect(dom.finderUniverseSymbolsLabel.textContent).to.equal("Synthetic Pairs");
+        expect(dom.finderArmPerformanceSettings.style.display).to.equal("");
+        expect(dom.finderTradeFilterSection.style.display).to.equal("none");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Copy Diagnostics availability transitions (regression)
+// ---------------------------------------------------------------------------
+
+function makeStubControllerDeps(host: FinderRunHost, overrides: Partial<FinderRunControllerDeps> = {}): FinderRunControllerDeps {
+    return {
+        host: () => host,
+        store: () => new FinderResultStore(() => {}),
+        session: () => new FinderServerSession(),
+        isMultiAssetScope: () => true,
+        setRunningUI: () => {},
+        prepareRun: () => {},
+        captureRunSettings: () => ({}) as any,
+        readOptions: () => ({
+            scope: "current_chart",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 5,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 10,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            dataSlice: "all",
+        }) as any,
+        setLastFinderOptions: () => {},
+        getSelectedStrategies: async () => [],
+        getUniverseSelectedStrategies: async () => [],
+        resolveExitStrategyCandidates: async () => undefined,
+        generateParamSets: () => [{ threshold: 1 }],
+        retainEvaluationData: () => {},
+        setDiagnostics: () => {},
+        setAssetDiagnostics: () => {},
+        readBatchHoldoutRange: () => ({ start: 1, end: 5, error: null }),
+        isBatchMode: () => false,
+        getPairListText: () => "",
+        getSelectedArm: () => "TOP_RAW_PROFIT_NOW" as any,
+        ...overrides,
+    };
+}
+
+describe("Copy Diagnostics availability transitions", () => {
+    beforeEach(() => {
+        resetFacadeCollaborators();
+    });
+
+    it("disables the button when a run starts and re-enables it when failure diagnostics are built", async () => {
+        const host = makeRecordingRunHost();
+        const events: string[] = [];
+        const controller = new FinderRunController(makeStubControllerDeps(host, {
+            prepareRun: () => { events.push("prepareRun"); },
+            getSelectedStrategies: async () => { throw new Error("engine exploded"); },
+        }));
+        const originalAvailability = host.showDiagnosticsAvailability.bind(host);
+        (host as any).showDiagnosticsAvailability = (available: boolean) => {
+            events.push(`availability:${available}`);
+            originalAvailability(available);
+        };
+
+        await controller.runFinder();
+
+        expect(events[0]).to.equal("prepareRun");
+        expect(events).to.include("availability:false");
+        expect(events.indexOf("availability:false")).to.be.greaterThan(events.indexOf("prepareRun"));
+        expect(host.calls.availability[host.calls.availability.length - 1]).to.equal(true);
+    });
+
+    it("enables the button after a Symbol Universe run adopts terminal diagnostics", async () => {
+        const host = makeRecordingRunHost();
+        const session = new FinderServerSession();
+        const store = new FinderResultStore(() => {});
+        const strategy = makeFakeStrategy("Universe Test");
+        const options: any = {
+            scope: "symbol_universe",
+            mode: "random",
+            topN: 2,
+            universe: { symbols: ["AAA"], sortPriority: [], minActiveSymbols: 1, minTotalTrades: 0, minProfitableActiveRatio: 0 },
+            dataSlice: "all",
+            oosValidationEnabled: false,
+        };
+        const diagnostics = { runId: "diag-1", bottlenecks: [] } as unknown as FinderDiagnostics;
+
+        const run = runUniverseFinder({
+            host, store, session,
+            strategies: {
+                getSelectedStrategies: async () => [],
+                getUniverseSelectedStrategies: async () => [{ key: "universe_test", name: "Universe Test", strategy }],
+                resolveExitStrategyCandidates: async () => undefined,
+            },
+            options,
+            startTime: performance.now(),
+            getUniverseSelectedStrategies: async () => [{ key: "universe_test", name: "Universe Test", strategy }],
+            onDiagnostics: (value) => { expect(value).to.deep.equal(diagnostics); },
+        });
+        // The outer workflow awaits strategy loading before issuing the run
+        // request; yield a macrotask so the fetch lands in the mock.
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        expect(mockFetch.requests.length).to.be.greaterThan(0);
+        mockFetch.resolveFirst(makeNdjsonResponse([
+            { type: "start", runId: session.activeRunId, totalCandidates: 1, totalSymbols: 1, interval: "5m", strategyKeys: ["universe_test"] },
+            {
+                type: "done",
+                ok: true,
+                cancelled: false,
+                runId: session.activeRunId,
+                interval: "5m",
+                totals: { loadedSymbols: 1, failedSymbols: 0, survivors: 1, oosRemoved: 0 },
+                summary: "done",
+                candidates: [makeCandidate()],
+                diagnostics,
+            },
+        ]));
+
+        const completed = await run;
+        expect(completed).to.equal(true);
+        expect(store.latestResults.results).to.have.length(1);
+        expect(host.calls.availability).to.deep.equal([true]);
+    });
+
+    it("enables the button after an Asset Opportunity run adopts asset diagnostics", async () => {
+        const host = makeRecordingRunHost();
+        const session = new FinderServerSession();
+        const store = new FinderResultStore(() => {});
+        const strategy = makeFakeStrategy("Asset Test");
+        const options: any = {
+            scope: "asset_opportunity",
+            mode: "random",
+            topN: 5,
+            assetOpportunity: { symbols: ["AAA"] },
+            dataSlice: "all",
+        };
+        const assetDiagnostics = {
+            totalAssets: 1,
+            assetsWithFreshEntry: 1,
+            assetsWithNoFreshEntry: 0,
+            selectGradeAssets: 1,
+            watchGradeAssets: 0,
+            rejectGradeAssets: 0,
+            failedAssets: [] as Array<{ symbol: string; reason: string }>,
+        };
+
+        const run = runAssetOpportunityFinder({
+            host, store, session,
+            strategies: {
+                getSelectedStrategies: async () => [{ key: "asset_test", name: "Asset Test", strategy }],
+                getUniverseSelectedStrategies: async () => [],
+                resolveExitStrategyCandidates: async () => undefined,
+            },
+            options,
+            startTime: performance.now(),
+            getSelectedStrategies: async () => [{ key: "asset_test", name: "Asset Test", strategy }],
+            onDiagnostics: (diagnostics, adoptedAssetDiagnostics) => {
+                expect(diagnostics).to.equal(null);
+                expect(adoptedAssetDiagnostics?.totalAssets).to.equal(1);
+            },
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        mockFetch.resolveFirst(makeNdjsonResponse([
+            { type: "asset_done", runId: session.activeRunId, assets: [makeAssetRow("AAA", "asset_test", 2)], totals: { totalAssets: 1, assetsWithFreshEntry: 1, failedAssets: 0 }, diagnostics: null, assetDiagnostics },
+        ]));
+
+        const completed = await run;
+        expect(completed).to.equal(true);
+        expect(store.latestResults.results).to.have.length(1);
+        expect(host.calls.availability).to.deep.equal([true]);
+    });
+
+    it("enables the button after a current-chart run adopts diagnostics", async () => {
+        const host = makeRecordingRunHost();
+        const store = new FinderResultStore(() => {});
+        const { state } = await import("../lib/state");
+        const savedData = state.ohlcvData;
+        const savedInterval = (state as any).currentInterval;
+        const savedBlockRange = (state as any).blockRange;
+        state.set("ohlcvData", makeCandles(64));
+        state.set("currentInterval", "5m");
+        state.set("blockRange", null);
+
+        let retained: { interval: string; data: OHLCVData[] } | null = null;
+        let adoptedDiagnostics: unknown = null;
+
+        try {
+            const completed = await runCurrentChartFinder({
+                host, store,
+                strategies: {
+                    getSelectedStrategies: async () => [],
+                    getUniverseSelectedStrategies: async () => [],
+                    resolveExitStrategyCandidates: async () => undefined,
+                },
+                options: {
+                    scope: "current_chart",
+                    mode: "random",
+                    sortPriority: ["netProfit"],
+                    useAdvancedSort: false,
+                    topN: 5,
+                    steps: 1,
+                    rangePercent: 0,
+                    maxRuns: 10,
+                    tradeFilterEnabled: false,
+                    minTrades: 0,
+                    maxTrades: Number.POSITIVE_INFINITY,
+                    dataSlice: "all",
+                } as any,
+                startTime: performance.now(),
+                getSelectedStrategies: async () => [{ key: "cc_test", name: "Current Chart Test", strategy: makeFakeStrategy("Current Chart Test") }],
+                generateParamSets: () => [{ threshold: 1 }],
+                retainEvaluationData: (data) => { retained = data; },
+                onDiagnostics: (diagnostics) => { adoptedDiagnostics = diagnostics; },
+            });
+
+            expect(completed).to.equal(true);
+            expect(retained).to.not.equal(null);
+            expect(retained!.interval).to.equal("5m");
+            expect(adoptedDiagnostics).to.not.equal(null);
+            expect(host.calls.availability).to.deep.equal([true]);
+        } finally {
+            state.set("ohlcvData", savedData);
+            state.set("currentInterval", savedInterval);
+            state.set("blockRange", savedBlockRange);
+        }
+    });
+
+    it("enables the button after a Strategy Quality Audit produces diagnostics", async () => {
+        // Every dataset load fails offline; the audit must still finish with
+        // performance diagnostics so Copy Diagnostics stays meaningful.
+        (globalThis as any).fetch = async () => ({
+            ok: true,
+            status: 200,
+            text: async () => "[]",
+            json: async () => [],
+        });
+        const host = makeRecordingRunHost();
+        const store = new FinderResultStore(() => {});
+        const strategy = makeFakeStrategy("Quality Test");
+        let adoptedDiagnostics: unknown = null;
+
+        const completed = await runStrategyQualityFinder({
+            host, store,
+            options: {
+                scope: "strategy_quality",
+                mode: "random",
+                universe: { symbols: ["NOPE"], sortPriority: [], minActiveSymbols: 1, minTotalTrades: 0, minProfitableActiveRatio: 0 },
+                dataSlice: "all",
+                oosValidationEnabled: false,
+            } as any,
+            startTime: performance.now(),
+            getUniverseSelectedStrategies: async () => [{ key: "sq_test", name: "Quality Test", strategy }],
+            onDiagnostics: (diagnostics) => { adoptedDiagnostics = diagnostics; },
+        });
+
+        expect(completed).to.equal(true);
+        expect(adoptedDiagnostics).to.not.equal(null);
+        expect(host.calls.availability).to.deep.equal([true]);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// FinderUI rendering contracts (unchanged scope)
+// ---------------------------------------------------------------------------
 
 describe("FinderUI Arm Performance preview actions", () => {
     it("keeps Apply enabled when an incomplete cached preview has no run context", () => {

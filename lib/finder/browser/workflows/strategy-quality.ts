@@ -91,7 +91,7 @@ export async function runStrategyQualityFinder(args: StrategyQualityWorkflowArgs
 		elapsedMs: performance.now() - startTime,
 	});
 	args.onDiagnostics(diagnostics);
-	host.showDiagnosticsAvailability(!diagnostics);
+	host.showDiagnosticsAvailability(Boolean(diagnostics));
 	host.stashAndResetResort();
 	host.renderLatestResults();
 

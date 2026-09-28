@@ -180,6 +180,9 @@ export class FinderRunController {
 		}
 		this.deps.store().setRunDisplayLimits(options.topN);
 
+		// Copy Diagnostics belongs to the previous run until new diagnostics
+		// are adopted; starting a run invalidates it.
+		host.showDiagnosticsAvailability(false);
 		this.deps.setRunningUI(true);
 		host.setProgress(true, 0, 'Preparing...');
 		host.setStatus('Running strategy finder...');
@@ -208,7 +211,7 @@ export class FinderRunController {
 			const completed = options.scope === 'symbol_universe'
 				? await runUniverseFinder({
 					host, store: this.deps.store(), session: this.deps.session(), strategies, options, startTime,
-					getSelectedStrategies: () => this.deps.getSelectedStrategies(),
+					getUniverseSelectedStrategies: () => this.deps.getUniverseSelectedStrategies(),
 					onDiagnostics: (diagnostics) => { this.deps.setDiagnostics(diagnostics); },
 				})
 				: options.scope === 'asset_opportunity'
@@ -299,7 +302,7 @@ export class FinderRunController {
 						error: message,
 					});
 				this.deps.setDiagnostics(diagnostics);
-				host.showDiagnosticsAvailability(!diagnostics);
+				host.showDiagnosticsAvailability(Boolean(diagnostics));
 			}
 		} finally {
 			if (!progressFinalized) {

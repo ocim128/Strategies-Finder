@@ -132,7 +132,7 @@ export async function runCurrentChartFinder(args: CurrentChartWorkflowArgs): Pro
 		requiresTsEngine,
 	});
 	args.onDiagnostics(diagnostics);
-	host.showDiagnosticsAvailability(!diagnostics);
+	host.showDiagnosticsAvailability(Boolean(diagnostics));
 	host.stashAndResetResort();
 	host.populateResortOptions();
 	host.renderLatestResults();

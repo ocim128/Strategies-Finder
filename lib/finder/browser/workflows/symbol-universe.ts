@@ -44,14 +44,15 @@ export interface UniverseWorkflowArgs {
 	strategies: FinderStrategySource;
 	options: FinderOptions;
 	startTime: number;
-	getSelectedStrategies(): Promise<import("../../../finder/finder-runner").FinderSelectedStrategy[]>;
+	/** The UNIVERSE selection feeds Symbol Universe runs (not the chart list). */
+	getUniverseSelectedStrategies(): Promise<import("../../../finder/finder-runner").FinderSelectedStrategy[]>;
 	/** Store the terminal run diagnostics on the facade. */
 	onDiagnostics(diagnostics: FinderDiagnostics | null): void;
 }
 
 export async function runUniverseFinder(args: UniverseWorkflowArgs): Promise<boolean> {
 	const { host, store, session, options, startTime } = args;
-	const selectedStrategies = await args.getSelectedStrategies();
+	const selectedStrategies = await args.getUniverseSelectedStrategies();
 	if (selectedStrategies.length === 0) {
 		host.setStatus('Select at least one strategy for Symbol Universe mode.');
 		return false;
@@ -91,7 +92,7 @@ export async function runUniverseFinder(args: UniverseWorkflowArgs): Promise<boo
 	}
 
 	args.onDiagnostics(outcome.diagnostics);
-	host.showDiagnosticsAvailability(!outcome.diagnostics);
+	host.showDiagnosticsAvailability(Boolean(outcome.diagnostics));
 	host.renderRandomBenchmark(options.mode);
 
 	if (!host.isCancelled() && session.activeRunId === null) {
