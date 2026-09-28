@@ -305,6 +305,13 @@ export class TopMeanController {
                     });
                 },
                 onNonOkResponse: (status, errorPayload) => {
+                    // A client-error response rejects admission. There is no
+                    // run to recover, and a status 404 would hide this error.
+                    // Network/5xx failures and bodyless 2xx remain ambiguous.
+                    if (status >= 400 && status < 500) {
+                        this.activeTopMeanRunId = null;
+                        clearTopMeanActiveRun();
+                    }
                     this.recordTopMeanDiagnostic("http.error_response", {
                         status,
                         payload: errorPayload,

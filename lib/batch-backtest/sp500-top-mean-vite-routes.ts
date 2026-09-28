@@ -44,7 +44,7 @@ import {
     type TopMeanStatusResponse,
 } from "./sp500-top-mean-coordinator-engine";
 import { getRunDir, isValidRunId, loadManifest, saveManifest } from "./sp500-top-mean-artifact-store";
-import { validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
+import { TOP_MEAN_RUN_MAX_BODY_BYTES, validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
 import type { ResearchWorkloadToken } from "../server-research-job-coordinator";
 
 /**
@@ -90,7 +90,7 @@ export interface BatchOwnerToken {
  * shared helpers are added.
  */
 export interface Sp500TopMeanRouteDeps {
-    /** Body-size cap forwarded to `readJsonBody` on POST routes. */
+    /** Body-size cap for the small Stop control request; Run has its own pair-list upload cap. */
     maxBodyBytes: number;
     /**
      * Loopback-origin capture, run after the auth gate passes on the mutating
@@ -119,7 +119,7 @@ export function registerSp500TopMeanRoutes(
     registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/run", {
         methods: ["POST"],
         readBody: true,
-        maxBodyBytes: deps.maxBodyBytes,
+        maxBodyBytes: TOP_MEAN_RUN_MAX_BODY_BYTES,
         onAuthorizedRequest: (req) => deps.rememberLocalApiOriginFromRequest(req),
         unauthorizedMessage,
         onAuthorized: async ({ res, body }) => {

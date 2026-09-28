@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { TOP_MEAN_RUN_MAX_BODY_BYTES } from "../lib/batch-backtest/sp500-top-mean-request-limits";
 import { Readable } from "node:stream";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -834,6 +835,7 @@ async function testFinderArmProfileSkipsAnnualSnapshotAndResultJson(): Promise<v
  */
 async function postTopMeanRunBody(
     body: Record<string, unknown>,
+    headers: Record<string, string> = {},
 ): Promise<{ statusCode: number; payload: Record<string, unknown> }> {
     const routes = new Map<string, (req: any, res: any) => void | Promise<void>>();
     registerSp500TopMeanRoutes({
@@ -860,7 +862,7 @@ async function postTopMeanRunBody(
     const request: any = Readable.from([JSON.stringify(body)]);
     request.method = "POST";
     request.url = "/api/batch-backtest/sp500-top-mean/run";
-    request.headers = { host: "127.0.0.1:5173" };
+    request.headers = { host: "127.0.0.1:5173", ...headers };
     request.socket = { remoteAddress: "127.0.0.1" };
 
     await routes.get("/api/batch-backtest/sp500-top-mean/run")!(request, response);
@@ -918,6 +920,27 @@ async function testTopMeanRouteRejectsInvalidRunIdsAndDates(): Promise<void> {
     assert.match(String(reversed.payload.error), /reversed/);
 
     console.log("PASS: TOP_MEAN route rejects invalid run ids and date windows with 400");
+}
+
+async function testTopMeanLargePairListAdmission(): Promise<void> {
+    const body = {
+        runId: "spec_large_pair_list",
+        strategyKey: "missing_strategy_for_admission_test",
+        interval: "4h",
+        horizons: [12, 20],
+        pairListText: "IBKR:AAPL/IBKR:MSFT\n".repeat(173_166),
+    };
+    assert.ok(Buffer.byteLength(JSON.stringify(body)) > 2 * 1024 * 1024);
+    const admitted = await postTopMeanRunBody(body);
+    assert.equal(admitted.statusCode, 400);
+    assert.match(String(admitted.payload.error), /not a built-in strategy/,
+        "large list must reach semantic validation rather than fail with 413");
+
+    const oversized = await postTopMeanRunBody({}, {
+        "content-length": String(TOP_MEAN_RUN_MAX_BODY_BYTES + 1),
+    });
+    assert.equal(oversized.statusCode, 413);
+    assert.match(String(oversized.payload.error), new RegExp(String(TOP_MEAN_RUN_MAX_BODY_BYTES)));
 }
 
 /** POST a body to the registered stop route and capture the raw response. */
@@ -1457,6 +1480,7 @@ async function main(): Promise<void> {
     await testTopMeanRouteRejectsNonBooleanArchiveFlag();
     await testStaleRunningManifestReconcilesToInterrupted();
     await testTopMeanRouteRejectsInvalidRunIdsAndDates();
+    await testTopMeanLargePairListAdmission();
     await testStopRouteRequiresExactRunId();
     await testStopSurvivesManifestPersistenceFailure();
     testSingleYearWindowDedupePreconditions();

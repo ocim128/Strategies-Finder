@@ -369,6 +369,13 @@ value only when the machine must reserve capacity for another workload.
 - `GET /api/batch-backtest/sp500-top-mean/status`
 - `GET /api/batch-backtest/sp500-top-mean/result`
 
+TOP_MEAN Run accepts JSON bodies up to 64 MiB so large custom pair lists
+(including 173,166-pair universes) fit. Stop and other control routes retain
+their smaller limits. Oversized uploads still return HTTP 413. A rejected
+4xx Run request restores the Run button and preserves the server error without
+polling for a run that never started; ambiguous connection failures still
+reattach through status polling.
+
 The coordinator stream includes a `current_snapshot` event. The final result
 and status payloads carry the same optional `currentSnapshot` field.
 

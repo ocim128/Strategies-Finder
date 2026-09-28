@@ -10,6 +10,7 @@ import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom"
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
 import { state } from "../lib/state";
 import { backtestService } from "../lib/backtest-service";
+import { readTopMeanActiveRun } from "../lib/batch-backtest/browser/batch-browser-store";
 import {
     createFakeBatchBacktestDom,
     createFakeBatchElement,
@@ -494,6 +495,40 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(requestBody.capTiltWeight).to.equal("similarCap2x");
         expect(requestBody.pairListText).to.equal("BTCUSDT\nZEC+APT");
         expect(requestBody.saveArchiveLog).to.equal(false);
+    });
+
+    it("restores Run and preserves an HTTP 413 without reattaching a rejected TOP_MEAN run", async () => {
+        const dom = setupForAnalysis();
+        const service = svc();
+        service.resolveTopMeanBuiltInStrategy = async () => ({
+            strategyKey: "test", strategy: { defaultParams: {} },
+        });
+        const originalBacktestSettings = backtestService.getBacktestSettings;
+        const originalCapitalSettings = backtestService.getCapitalSettings;
+        backtestService.getBacktestSettings = () => ({});
+        backtestService.getCapitalSettings = () => ({
+            initialCapital: 10_000, positionSize: 100, commission: 0,
+            sizingMode: "fixed", fixedTradeAmount: 1_000,
+        });
+        const urls: string[] = [];
+        const message = "Request body too large. Limit is 67108864 bytes.";
+        try {
+            await withMockFetch((url) => {
+                urls.push(String(url));
+                return { ok: false, status: 413, text: JSON.stringify({ ok: false, error: message }) };
+            }, async () => {
+                await service.runSp500TopMeanCoordinator();
+            });
+        } finally {
+            backtestService.getBacktestSettings = originalBacktestSettings;
+            backtestService.getCapitalSettings = originalCapitalSettings;
+        }
+        expect(urls).to.deep.equal(["/api/batch-backtest/sp500-top-mean/run"]);
+        expect(dom.batchBacktestSp500TopMeanRunBtn.style.display).to.not.equal("none");
+        expect(dom.batchBacktestSp500TopMeanStopBtn.style.display).to.equal("none");
+        expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include(message);
+        expect(readTopMeanActiveRun()).to.equal(null);
+        expect(service.topMean.buildTopMeanDiagnosticText()).to.not.include("reattach.start");
     });
 
     it("submits standalone similar-cap mode independently of the coordinator select", async () => {

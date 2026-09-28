@@ -12,6 +12,8 @@ export const TOP_MEAN_WORKER_COUNT_MIN = 1;
 export const TOP_MEAN_WORKER_COUNT_MAX = 24;
 /** Matches the Balanced Generator UI clamp (1..1_000_000). */
 export const TOP_MEAN_MAX_PAIRS_MAX = 1_000_000;
+/** Custom pair universes can contain millions of characters; bound the JSON upload separately from small control requests. */
+export const TOP_MEAN_RUN_MAX_BODY_BYTES = 64 * 1024 * 1024;
 
 /** Cap-tilt weighting enum (docs/open-score-cap-tilt.md); "off" = baseline.
  *  Re-exported from the shared contract leaf so this route and the standalone
