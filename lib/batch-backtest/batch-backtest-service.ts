@@ -20,20 +20,24 @@ import { setVisible } from "../dom-utils";
 import { ensureLazyStylesheet } from "../lazy-styles";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
-import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { copyToClipboard } from "../browser-transfer";
-import { readPersistedJson, writePersistedJson } from "../persisted-json";
 import { parseJsonPreservingNonFinite } from "../json-utils";
+import { writePersistedJson } from "../persisted-json";
 import { buildBatchRunLedgerBodyField, parseTradeLedgerHorizons } from "./trade-ledger-wire";
 import { TRADE_LEDGER_DEFAULT_HORIZONS } from "./trade-ledger-schema";
-import { buildBatchRunTradeGateBodyField, type TradeGateRunOptions } from "./trade-gate-wire";
+import { buildBatchRunTradeGateBodyField } from "./trade-gate-wire";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { extractBatchServerError, postBatchNdjson } from "./batch-ndjson-post";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { buildBatchRunFingerprint, parseBatchSymbols, BATCH_MAX_SYMBOLS } from "./batch-run-contract";
-import { BALANCED_PAIR_LIST_MAX_PAIRS, generateBalancedPairList, type BalancedPairListResult, type PairListProvenanceV1 } from "./balanced-pair-list-generator";
+import {
+    BALANCED_PAIR_LIST_MAX_PAIRS,
+    generateBalancedPairList,
+    type BalancedPairListResult,
+    type PairListProvenanceV1,
+} from "./balanced-pair-list-generator";
 import { fnv1a64Hex } from "./max-active-research-contract";
 import { isActiveCapTiltWeight } from "./cap-tilt-contract";
 import {
@@ -43,23 +47,12 @@ import {
 // The template blob lives in the lazy-loaded batch feature chunk (via ?raw),
 // so it never lands in the cold-start bundle.
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
-import {
-    formatBatchOverallSummary,
-    buildBatchSummaryCells,
-    buildResultRowGrid,
-} from "./batch-backtest-summary";
+import { formatBatchOverallSummary } from "./batch-backtest-summary";
 import {
     isBatchResultSortKey,
-    sortBatchResults,
     type BatchResultSortKey,
     type BatchResultSortState,
 } from "./batch-results-sort";
-import {
-    compactBatchBacktestResultsSnapshot,
-    normalizeBatchBacktestResultsSnapshot,
-    BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT,
-    type BatchBacktestResultsSnapshot,
-} from "./batch-backtest-snapshot";
 import { ReattachBackoffController } from "./reattach-backoff";
 import {
     BATCH_BENCHMARK_SCHEMA,
@@ -88,128 +81,67 @@ import {
 } from "./sp500-top-mean-diagnostic-log";
 import { formatTopMeanPerformanceLines } from "./sp500-top-mean-performance";
 import type {
-    OpenScoreUsdEventDetail,
     OpenScoreUsdEventDetailSelector,
-    OpenScoreUsdLatestSelection,
     OpenScoreUsdLatestSelections,
     OpenScoreUsdLatestSelectorName,
-    OpenScoreUsdOngoingEventDetail,
     OpenScoreUsdReplayResult,
-    ReplayComparison,
 } from "./batch-open-score-usd-replay-engine";
 import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import { escapeHtml } from "../html-escape";
 import { debounce } from "../debounce";
-import { coalesceAnimationFrame } from "../render-scheduler";
+import {
+    BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
+    BATCH_TRADE_GATE_STORAGE,
+    BATCH_TRADE_LEDGER_STORAGE,
+    clearPersistedActiveServerRun,
+    clearPersistedLatestResults,
+    clearPersistedLatestTopMeanResult,
+    clearTopMeanActiveRun,
+    loadPersistedActiveServerRun,
+    persistActiveServerRun,
+    persistLatestTopMeanResult,
+    persistTopMeanActiveRun,
+    readLatestResultsSnapshot,
+    readLatestTopMeanResult,
+    readPersistedTradeGateOptions,
+    readPersistedTradeLedgerOptions,
+    readTopMeanActiveRun,
+    saveLatestResultsSnapshot,
+    type BatchPersistedActiveServerRun,
+    type BatchTradeGateOptions,
+    type BatchTradeLedgerOptions,
+} from "./browser/batch-browser-store";
+import {
+    createBatchResultsView,
+    type BatchResultsView,
+} from "./browser/batch-results-view";
+import {
+    formatCurrentTopMeanLines,
+    formatLatestOpenScoreSelectionLines,
+    formatTopMeanCompletionMessage,
+    LATEST_ARM_SELECTOR_ID,
+    mergeTopMeanArchiveStatus,
+    normalizeLatestArm,
+    renderCurrentTopMeanBanner,
+    renderTopMeanResults as renderTopMeanResultsView,
+} from "./browser/top-mean-results-view";
+import {
+    getTopMeanOpenScoreDetailSelector,
+    getTopMeanOpenScoreDetailYear,
+    renderTopMeanOpenScoreEventDetails,
+    resetTopMeanOpenScoreDetails,
+    syncTopMeanOpenScoreDetailsControl,
+} from "./browser/top-mean-event-details-view";
 
-type OngoingTopMeanEventDetail = OpenScoreUsdOngoingEventDetail;
-
-/**
- * The Latest OPEN_SCORE card's arm picker is GENERATED inside the card (it is
- * not a structural id): the card re-renders on every run/restore, so change
- * events are delegated to the persistent results container (see bindEvents).
- */
-const LATEST_ARM_SELECTOR_ID = "batchBacktestSp500TopMeanLatestArmSelector";
-const LATEST_ARM_SELECTOR_NAMES: readonly OpenScoreUsdLatestSelectorName[] = [
-    "TOP_MEAN",
-    "TOP_RAW",
-    "TOP_MEAN_RAW_UNIQUE",
-    "TOP_RAW_PROFIT_NOW",
-    "TOP_MEAN_PROFIT_NOW",
-    "TOP_RAW_PROFIT_NOW_CONF",
-    "TOP_Z",
-    "BOT_RAW",
-    "BOT_MEAN",
-    "BOT_MEAN_RAW_UNIQUE",
-    "BOT_RAW_PROFIT_NOW",
-    "BOT_MEAN_PROFIT_NOW",
-    "BOT_Z",
-];
-
-function normalizeLatestArm(value: string | null | undefined): OpenScoreUsdLatestSelectorName {
-    return LATEST_ARM_SELECTOR_NAMES.includes(value as OpenScoreUsdLatestSelectorName)
-        ? value as OpenScoreUsdLatestSelectorName
-        : "TOP_MEAN";
-}
+export { formatTopMeanCompletionMessage } from "./browser/top-mean-results-view";
 
 type BatchStatusRowsPage = {
     rows?: BatchBacktestSymbolResult[];
     rowOffset?: number;
     nextOffset?: number | null;
 };
-
-export function formatTopMeanCompletionMessage(summary: {
-    archiveComplete?: boolean;
-    archiveRequested?: boolean;
-    archiveDir?: string;
-    archiveError?: string;
-}): string {
-    const prefix = "TOP_MEAN run completed successfully.";
-    if (summary.archiveRequested === false) {
-        return `${prefix} Archive not saved (toggle off).`;
-    }
-    if (summary.archiveError) {
-        return `${prefix} Archive save failed: ${summary.archiveError}.`;
-    }
-    if (summary.archiveComplete === true) {
-        return summary.archiveDir
-            ? `${prefix} Archive saved: ${summary.archiveDir}.`
-            : `${prefix} Archive saved.`;
-    }
-    return `${prefix} Archive not saved (disabled by TOP_MEAN_ARCHIVE_LOG_DIR).`;
-}
-
-function mergeTopMeanArchiveStatus(
-    result: TopMeanResultSummary,
-    status: TopMeanStatusResponse,
-): TopMeanResultSummary {
-    return {
-        ...result,
-        ...(status.archiveComplete !== undefined ? { archiveComplete: status.archiveComplete } : {}),
-        ...(status.archiveRequested !== undefined ? { archiveRequested: status.archiveRequested } : {}),
-        ...(status.archiveDir !== undefined ? { archiveDir: status.archiveDir } : {}),
-        ...(status.archiveError !== undefined ? { archiveError: status.archiveError } : {}),
-    };
-}
-
-interface TopMeanOpenScoreDetailSection {
-    label: string;
-    rows: OpenScoreUsdEventDetail[];
-    ongoingRows: OngoingTopMeanEventDetail[];
-}
-
-const BATCH_RESULTS_STORAGE = {
-    key: "playground_batch_backtest_latest_results",
-    schema: "batch_backtest.latest_results",
-    version: 1,
-} as const;
-
-const BATCH_ACTIVE_SERVER_RUN_STORAGE = {
-    key: "playground_batch_backtest_active_server_run",
-    schema: "batch_backtest.active_server_run",
-    version: 1,
-} as const;
-
-/**
- * Trade-ledger export controls (Batch menu). Toggle, folder, and horizons are
- * persisted across reloads and threaded into the `/api/batch-backtest/run`
- * body so the server-side plugin writes the per-run ledger folder. These are BATCH-RUN
- * options, not backtest settings — deliberately NOT registered in
- * BACKTEST_SETTINGS_DOM_CONTRACTS (the settings-manager round-trips that
- * contract through engine settings, and its "string" parser uppercases
- * values, which would corrupt the folder path).
- */
-const BATCH_TRADE_LEDGER_STORAGE = {
-    key: "playground_batch_backtest_trade_ledger",
-    schema: "batch_backtest.trade_ledger",
-    version: 1,
-} as const;
-
-const BATCH_TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
-
-type BatchTradeLedgerOptions = { enabled: boolean; folder: string; ledgerHorizons: number[] };
 
 function parseBatchDateInputSec(raw: string, endOfDay: boolean, label: string): number | null {
     const trimmed = raw.trim();
@@ -218,14 +150,6 @@ function parseBatchDateInputSec(raw: string, endOfDay: boolean, label: string): 
     if (!Number.isFinite(milliseconds)) throw new Error(`Invalid ${label} date: "${trimmed}".`);
     return Math.floor(milliseconds / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
 }
-
-const BATCH_TRADE_GATE_STORAGE = {
-    key: "playground_batch_backtest_trade_gate",
-    schema: "batch_backtest.trade_gate",
-    version: 1,
-} as const;
-
-type BatchTradeGateOptions = TradeGateRunOptions;
 
 function formatGatePercent(value: number | null): string {
     return value !== null && Number.isFinite(value) ? value.toFixed(2) : "--";
@@ -239,122 +163,6 @@ function formatGateBytes(bytes: number): string {
 function formatGateSweepDate(modifiedAt: number): string {
     return Number.isFinite(modifiedAt) ? new Date(modifiedAt).toISOString().slice(0, 10) : "unknown date";
 }
-
-function readPersistedTradeGateOptions(): BatchTradeGateOptions {
-    return readPersistedJson<BatchTradeGateOptions>({
-        ...BATCH_TRADE_GATE_STORAGE,
-        fallback: { enabled: false, folderId: "", ruleIds: [] },
-        migrate: (ctx) => {
-            const data = ctx.data;
-            if (!data || typeof data !== "object" || Array.isArray(data)) {
-                return { enabled: false, folderId: "", ruleIds: [] };
-            }
-            const source = data as Partial<BatchTradeGateOptions>;
-            const ruleIds = Array.isArray(source.ruleIds)
-                ? source.ruleIds.filter((value): value is string => typeof value === "string").slice(0, 16)
-                : [];
-            return {
-                enabled: source.enabled === true,
-                folderId: typeof source.folderId === "string" ? source.folderId : "",
-                ruleIds,
-            };
-        },
-    });
-}
-
-function readPersistedTradeLedgerOptions(): BatchTradeLedgerOptions {
-    return readPersistedJson<BatchTradeLedgerOptions>({
-        ...BATCH_TRADE_LEDGER_STORAGE,
-        fallback: { enabled: false, folder: BATCH_TRADE_LEDGER_DEFAULT_FOLDER, ledgerHorizons: [...TRADE_LEDGER_DEFAULT_HORIZONS] },
-        migrate: (ctx) => {
-            const data = ctx.data;
-            if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-            const source = data as Partial<BatchTradeLedgerOptions>;
-            const folder = typeof source.folder === "string" && source.folder.trim()
-                ? source.folder.trim()
-                : BATCH_TRADE_LEDGER_DEFAULT_FOLDER;
-            const ledgerHorizons = Array.isArray(source.ledgerHorizons)
-                ? [...new Set(source.ledgerHorizons.filter((value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0))].sort((left, right) => left - right)
-                : [];
-            return {
-                enabled: source.enabled === true,
-                folder,
-                ledgerHorizons: ledgerHorizons.length > 0 ? ledgerHorizons : [...TRADE_LEDGER_DEFAULT_HORIZONS],
-            };
-        },
-    });
-}
-
-type BatchPersistedActiveServerRun = {
-    runId: string;
-    startedAt: number;
-};
-
-// Audit Finding 6: the TOP_MEAN active-run marker was written via 11 inline
-// `writePersistedJson({ key, schema, version, data })` copies (start, done
-// interrupted, done success, fatal, reattach terminal, reattach give-up, ...).
-// A shared storage constant + helpers make it impossible to clear the marker
-// in 5/6 paths and miss the 6th (the documented footgun).
-const TOP_MEAN_ACTIVE_RUN_STORAGE = {
-    key: "sp500_top_mean_active_run_id",
-    schema: "sp500_top_mean_active_run_id.v1",
-    version: 1,
-} as const;
-
-const TOP_MEAN_LATEST_RESULT_STORAGE = {
-    key: "playground_sp500_top_mean_latest_result",
-    schema: "sp500_top_mean.latest_result",
-    version: 1,
-} as const;
-
-type TopMeanPersistedActiveRun = { runId: string };
-
-/** Persist the active TOP_MEAN run id so a reload can reattach. */
-function persistTopMeanActiveRun(runId: string): void {
-    writePersistedJson({
-        ...TOP_MEAN_ACTIVE_RUN_STORAGE,
-        data: { runId },
-        onError: (error) => debugLogger.warn("sp500_top_mean.active_run_save_failed", {
-            error: error instanceof Error ? error.message : String(error),
-        }),
-    });
-}
-
-/** Clear the active TOP_MEAN run marker (terminal / give-up / interrupted). */
-function clearTopMeanActiveRun(): void {
-    writePersistedJson({
-        ...TOP_MEAN_ACTIVE_RUN_STORAGE,
-        data: null,
-        onError: (error) => debugLogger.warn("sp500_top_mean.active_run_clear_failed", {
-            error: error instanceof Error ? error.message : String(error),
-        }),
-    });
-}
-
-/** Read the active TOP_MEAN run marker; null when no run is tracked. */
-function readTopMeanActiveRun(): TopMeanPersistedActiveRun | null {
-    const persisted = readPersistedJson<TopMeanPersistedActiveRun | null>({
-        ...TOP_MEAN_ACTIVE_RUN_STORAGE,
-        fallback: null,
-        migrate: (ctx) => {
-            const data = ctx.data;
-            if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-            const source = data as Partial<TopMeanPersistedActiveRun>;
-            if (typeof source.runId !== "string" || !source.runId.trim()) return null;
-            return { runId: source.runId.trim() };
-        },
-    });
-    return persisted;
-}
-
-/**
- * Max rows buffered before a synchronous mid-stream flush (Finding 6). The
- * live stream queues DOM renders and flushes once per animation frame, but a
- * very fast cached run could queue hundreds of rows before the first frame;
- * this cap forces a flush so visible progress never lags too far behind the
- * streamed count. Terminal paths always flush regardless of queue size.
- */
-const LIVE_RENDER_MAX_BATCH = 50;
 
 export class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
@@ -438,23 +246,6 @@ export class BatchBacktestService {
     // `row.data !== undefined`, because in server-side mode the browser never
     // holds `row.data`).
     private serverHasArtifacts = false;
-    // Live-stream DOM render queue (Finding 6). The server stream emits one
-    // `symbol` event per row; appending each to the DOM synchronously caused
-    // one reflow per row (up to ~1000 on a large cached run). Rows are pushed
-    // to `lastResults` immediately (data stays current) but their DOM nodes
-    // are queued here and flushed once per animation frame (or when the batch
-    // hits LIVE_RENDER_MAX_BATCH, to keep very fast streams from deferring
-    // visible progress too long). Terminal paths flush synchronously so the
-    // final row count is always visible immediately on done/cancel/error.
-    private liveRenderQueue: BatchBacktestSymbolResult[] = [];
-    private pendingLiveRender: { dom: BatchBacktestDom; token: number } | null = null;
-    private readonly liveRenderFrame = coalesceAnimationFrame(() => {
-        const pending = this.pendingLiveRender;
-        this.pendingLiveRender = null;
-        if (pending) {
-            this.flushLiveRenderNow(pending.dom, pending.token);
-        }
-    });
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
     private reattachTimer: ReturnType<typeof setTimeout> | null = null;
@@ -478,6 +269,12 @@ export class BatchBacktestService {
     private pendingServerRunPerformance: BatchBacktestPerformance | null = null;
     private tradeGateCatalog: LedgerSweepCatalogResponse | null = null;
     private persistedTradeGateOptions = readPersistedTradeGateOptions();
+    // Results presentation (rows, sort header, summary/progress, live render
+    // queue). The view owns the queue and frame scheduling; run-token
+    // authorization stays here via the isRunTokenCurrent check below.
+    private readonly resultsView: BatchResultsView = createBatchResultsView({
+        isRunTokenCurrent: (token: number) => token === this.runToken,
+    });
 
     // Audit Finding 2: typed (was `any`) so a shape drift between the
     // coordinator engine emissions and the UI renderers is a compile failure.
@@ -568,7 +365,7 @@ export class BatchBacktestService {
                 return;
             }
             this.cancelLiveRenderRaf();
-            this.liveRenderQueue = [];
+            this.resultsView.dropQueuedRows();
             this.renderResultRows(dom);
             this.updateBatchResultSortHeader(dom);
         });
@@ -733,7 +530,7 @@ export class BatchBacktestService {
 
     private toggleBatchResultSort(dom: BatchBacktestDom, key: BatchResultSortKey): void {
         this.cancelLiveRenderRaf();
-        this.liveRenderQueue = [];
+        this.resultsView.dropQueuedRows();
         if (!this.batchResultSort || this.batchResultSort.key !== key) {
             this.batchResultSort = { key, direction: "desc" };
         } else if (this.batchResultSort.direction === "desc") {
@@ -746,19 +543,7 @@ export class BatchBacktestService {
     }
 
     private updateBatchResultSortHeader(dom: BatchBacktestDom): void {
-        const active = this.batchResultSort;
-        dom.batchBacktestResultsHeader.querySelectorAll<HTMLButtonElement>("button[data-batch-sort-key]").forEach((button) => {
-            const rawKey = button.dataset.batchSortKey;
-            const isActive = Boolean(active && rawKey === active.key);
-            button.classList.toggle("is-active", isActive);
-            button.classList.toggle("is-ascending", isActive && active?.direction === "asc");
-            button.classList.toggle("is-descending", isActive && active?.direction === "desc");
-            button.setAttribute("aria-pressed", String(isActive));
-            const column = button.parentElement;
-            if (column?.getAttribute("role") === "columnheader") {
-                column.setAttribute("aria-sort", isActive ? active!.direction : "none");
-            }
-        });
+        this.resultsView.updateBatchResultSortHeader(dom, this.batchResultSort);
     }
 
     /** Restore the persisted trade-ledger toggle + folder into the DOM. */
@@ -990,7 +775,7 @@ export class BatchBacktestService {
         // Finding 6: a previous run's pending live-render RAF must not fire
         // against this new run's freshly-cleared results list.
         this.cancelLiveRenderRaf();
-        this.liveRenderQueue = [];
+        this.resultsView.dropQueuedRows();
         this.cancelled = false;
         this.analysisCancelRequested = false;
         this.lastResults = [];
@@ -1248,7 +1033,7 @@ export class BatchBacktestService {
         if (token === this.runToken) {
             this.flushLiveRenderNow(dom, token);
         } else {
-            this.liveRenderQueue = [];
+            this.resultsView.dropQueuedRows();
         }
         if (token !== this.runToken) return;
         if (doneSummary === null) {
@@ -2276,16 +2061,7 @@ export class BatchBacktestService {
     }
 
     private loadPersistedLatestResults(dom: BatchBacktestDom): void {
-        const snapshot = readPersistedJson<BatchBacktestResultsSnapshot | null>({
-            ...BATCH_RESULTS_STORAGE,
-            fallback: null,
-            migrate: ({ data }) => normalizeBatchBacktestResultsSnapshot(data),
-            onError: (error) => {
-                debugLogger.error("batch_backtest.latest_results_load_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            },
-        });
+        const snapshot = readLatestResultsSnapshot();
         if (!snapshot) return;
 
         this.lastResults = snapshot.results;
@@ -2328,94 +2104,25 @@ export class BatchBacktestService {
     }
 
     private saveLatestResultsSnapshot(): void {
-        if (this.lastResults.length === 0) {
-            return;
-        }
-        const baseSnapshot = {
-            savedAt: Date.now(),
+        saveLatestResultsSnapshot({
+            results: this.lastResults,
             interval: this.lastRunInterval ?? state.currentInterval,
             fingerprint: this.lastRunFingerprint,
             strategyKey: this.lastRunStrategyKey,
             serverHasArtifacts: this.serverHasArtifacts,
-        };
-        // Tier 1: try the full compact snapshot.
-        const fullSnapshot = compactBatchBacktestResultsSnapshot({
-            ...baseSnapshot,
-            results: this.lastResults,
-        });
-        const fullOk = writePersistedJson({
-            ...BATCH_RESULTS_STORAGE,
-            data: fullSnapshot,
-            onError: (error) => {
-                debugLogger.error("batch_backtest.latest_results_save_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            },
-        });
-        if (fullOk) {
-            return;
-        }
-        // Tier 2 (audit Finding 5): the full snapshot exceeded the localStorage
-        // quota (typically 1000+ rows). Retry with the most recent rows capped
-        // at BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT so a reload still restores a
-        // useful table instead of silently losing the run. Previously a
-        // QuotaExceeded only hit a debug log and the next reload had nothing.
-        if (this.lastResults.length <= BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT) {
-            // Already under the truncated cap — truncation cannot help.
-            return;
-        }
-        const truncatedSnapshot = compactBatchBacktestResultsSnapshot({
-            ...baseSnapshot,
-            results: this.lastResults.slice(0, BATCH_RESULT_SNAPSHOT_TRUNCATED_LIMIT),
-            meta: { truncated: true, totalRows: this.lastResults.length },
-        });
-        writePersistedJson({
-            ...BATCH_RESULTS_STORAGE,
-            data: truncatedSnapshot,
-            onError: (error) => {
-                debugLogger.warn("batch_backtest.latest_results_truncated_save_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                    totalRows: this.lastResults.length,
-                });
-            },
         });
     }
 
     private clearPersistedLatestResults(): void {
-        if (typeof localStorage === "undefined") return;
-        try {
-            localStorage.removeItem(BATCH_RESULTS_STORAGE.key);
-        } catch (error) {
-            debugLogger.error("batch_backtest.latest_results_clear_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
+        clearPersistedLatestResults();
     }
 
     private persistActiveServerRun(runId: string): void {
-        writePersistedJson({
-            ...BATCH_ACTIVE_SERVER_RUN_STORAGE,
-            data: { runId, startedAt: Date.now() },
-            onError: (error) => debugLogger.warn("batch.active_server_run_save_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            }),
-        });
+        persistActiveServerRun(runId);
     }
 
     private loadPersistedActiveServerRun(): BatchPersistedActiveServerRun | null {
-        return readPersistedJson<BatchPersistedActiveServerRun | null>({
-            ...BATCH_ACTIVE_SERVER_RUN_STORAGE,
-            fallback: null,
-            migrate: ({ data }) => {
-                if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-                const source = data as Partial<BatchPersistedActiveServerRun>;
-                if (typeof source.runId !== "string" || !source.runId.trim()) return null;
-                return {
-                    runId: source.runId.trim(),
-                    startedAt: typeof source.startedAt === "number" ? source.startedAt : Date.now(),
-                };
-            },
-        });
+        return loadPersistedActiveServerRun();
     }
 
     private clearActiveServerRun(expectedRunId?: string, clearMemory = true): void {
@@ -2425,13 +2132,7 @@ export class BatchBacktestService {
             this.activeServerRunId = null;
             this.serverRunActive = false;
         }
-        writePersistedJson({
-            ...BATCH_ACTIVE_SERVER_RUN_STORAGE,
-            data: null,
-            onError: (error) => debugLogger.warn("batch.active_server_run_clear_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            }),
-        });
+        clearPersistedActiveServerRun();
     }
 
     /**
@@ -2448,49 +2149,36 @@ export class BatchBacktestService {
         dom.batchBacktestOpenScoreUsdBtn.disabled = !available;
     }
 
-    private updateBalancedGeneratorButtons(dom: BatchBacktestDom): void {
-        const blocked = this.runInFlight || this.analysisInFlight
-            || this.pendingStopPromise !== null || this.serverRunActive;
-        dom.batchBacktestBalancedGenerateBtn.disabled = blocked;
-        dom.batchBacktestBalancedCopyBtn.disabled = blocked || !this.lastBalancedPairListResult;
+    /** Balanced-generator lock inputs, computed from shared facade state. */
+    private balancedGeneratorLockState(): { blocked: boolean; hasResult: boolean } {
+        return {
+            blocked: this.runInFlight || this.analysisInFlight
+                || this.pendingStopPromise !== null || this.serverRunActive,
+            hasResult: this.lastBalancedPairListResult !== null,
+        };
     }
 
-    /**
-     * Queue a live-stream row for DOM rendering and schedule a flush once per
-     * animation frame (Finding 6). `lastResults` is already updated by the
-     * caller, so this only defers the DOM mutation. A synchronous flush fires
-     * when the queue hits LIVE_RENDER_MAX_BATCH so very fast cached streams
-     * don't defer visible progress too long. Terminal paths call
-     * `flushLiveRenderNow` to drain the queue synchronously.
-     */
+
     private queueLiveRender(dom: BatchBacktestDom, result: BatchBacktestSymbolResult, token: number): void {
-        this.liveRenderQueue.push(result);
-        if (this.liveRenderQueue.length >= LIVE_RENDER_MAX_BATCH) {
-            this.flushLiveRenderNow(dom, token);
-            return;
-        }
-        this.pendingLiveRender = { dom, token };
-        this.liveRenderFrame.schedule();
+        this.resultsView.queueLiveRender(
+            dom,
+            result,
+            token,
+            this.batchResultSort ? () => this.renderResultRows(dom) : undefined,
+        );
     }
 
     /**
-     * Drain the live render queue through `appendResultRows` (one
-     * DocumentFragment append). Guarded by the run token so a stale run that
-     * lost ownership mid-stream doesn't write DOM after a newer run started.
+     * Drain the live render queue synchronously. Token authorization lives in
+     * the view (via the run-owner check); a sorted re-render reads the current
+     * `lastResults` at flush time through the callback.
      */
     private flushLiveRenderNow(dom: BatchBacktestDom, token: number): void {
-        if (token !== this.runToken) {
-            this.liveRenderQueue = [];
-            return;
-        }
-        if (this.liveRenderQueue.length === 0) return;
-        const batch = this.liveRenderQueue;
-        this.liveRenderQueue = [];
-        if (this.batchResultSort) {
-            this.renderResultRows(dom);
-        } else {
-            this.appendResultRows(dom, batch);
-        }
+        this.resultsView.flushLiveRenderNow(
+            dom,
+            token,
+            this.batchResultSort ? () => this.renderResultRows(dom) : undefined,
+        );
     }
 
     /**
@@ -2499,34 +2187,16 @@ export class BatchBacktestService {
      * stale RAF callback can't fire against a newer run's DOM.
      */
     private cancelLiveRenderRaf(): void {
-        this.liveRenderFrame.cancel();
-        this.pendingLiveRender = null;
+        this.resultsView.cancelLiveRenderRaf();
     }
 
-    /**
-     * Append many result rows in one DocumentFragment so restore / reattach
-     * paths that render hundreds of rows synchronously do a single reflow
-     * instead of one per row. Output is identical to calling createResultRow
-     * per element; this is purely a layout-cost optimization for bulk paths.
-     * The live server stream is frame-batched separately via queueLiveRender
-     * (one reflow per animation frame, not one per row).
-     */
     private appendResultRows(dom: BatchBacktestDom, results: readonly BatchBacktestSymbolResult[]): void {
-        if (results.length === 0) return;
-        const fragment = document.createDocumentFragment();
-        for (const result of results) {
-            fragment.appendChild(this.createResultRow(result));
-        }
-        dom.batchBacktestResults.appendChild(fragment);
+        this.resultsView.appendResultRows(dom, results);
     }
 
     private renderResultRows(dom: BatchBacktestDom): void {
-        dom.batchBacktestResults.replaceChildren();
-        const rows = this.batchResultSort
-            ? sortBatchResults(this.lastResults, this.batchResultSort)
-            : this.lastResults;
-        this.appendResultRows(dom, rows);
-        this.appendedCount = rows.length;
+        this.resultsView.renderResultRows(dom, this.lastResults, this.batchResultSort);
+        this.appendedCount = this.lastResults.length;
     }
 
     private clearStaleResults(dom: BatchBacktestDom): void {
@@ -2554,105 +2224,22 @@ export class BatchBacktestService {
         dom.batchBacktestCopyBtn.disabled = true;
     }
 
-    private createResultRow(result: BatchBacktestSymbolResult): HTMLDivElement {
-        const line = document.createElement("div");
-        line.className = "batch-result-row";
-
-        const verdict = computePerformanceVerdict(result.result, result.status);
-        const grid = buildResultRowGrid(result);
-
-        // Column 1: verdict badge + symbol + status.
-        const identity = document.createElement("div");
-        identity.className = "batch-result-identity";
-        const badge = document.createElement("span");
-        badge.className = `finder-verdict ${verdict.cssClass}`;
-        badge.textContent = verdict.label;
-        const symbol = document.createElement("span");
-        symbol.className = "batch-result-symbol";
-        symbol.textContent = grid.symbol;
-        const status = document.createElement("span");
-        status.className = "batch-result-status";
-        status.textContent = grid.status;
-        identity.appendChild(badge);
-        identity.appendChild(symbol);
-        identity.appendChild(status);
-        line.appendChild(identity);
-
-        // Columns 2-5: stable metric columns (Net+Exp / PF+Sharpe / DD / Trades).
-        line.appendChild(this.createMetricCell("Net", grid.net.text, grid.net.sign));
-        line.appendChild(this.createMetricCell("Exp", grid.expectancy.text, grid.expectancy.sign));
-        line.appendChild(this.createMetricCell("PF", grid.profitFactor, "neutral", grid.sharpe, "Sharpe"));
-        line.appendChild(this.createMetricCell("DD", grid.drawdown, "neutral", grid.trades, "Trades"));
-
-        // Optional secondary metadata line: bars, hold, exposure, range.
-        if (grid.secondary.length > 0) {
-            const secondary = document.createElement("div");
-            secondary.className = "batch-result-secondary";
-            for (const [label, value] of grid.secondary) {
-                const pair = document.createElement("span");
-                pair.textContent = `${label} ${value}`;
-                secondary.appendChild(pair);
-            }
-            const yearly = document.createElement("span");
-            yearly.textContent = `Yearly ${grid.yearlyPnl}`;
-            secondary.appendChild(yearly);
-            line.appendChild(secondary);
-        }
-
-        if (grid.error) {
-            const errorEl = document.createElement("div");
-            errorEl.className = "batch-result-error";
-            errorEl.textContent = grid.error;
-            line.appendChild(errorEl);
-        }
-        return line;
-    }
-
-    /**
-     * One metric column for a result row. Accepts an optional second value/label
-     * so two tightly-related metrics (e.g. PF + Sharpe) share a column under a
-     * combined label, keeping the grid to five columns.
-     */
-    private createMetricCell(
-        label: string,
-        value: string,
-        sign: "profit" | "loss" | "neutral",
-        secondValue?: string,
-        secondLabel?: string,
-    ): HTMLDivElement {
-        const cell = document.createElement("div");
-        cell.className = "batch-result-metric";
-        const valueEl = document.createElement("span");
-        valueEl.className = `batch-result-metric-value${sign === "profit" ? " is-profit" : sign === "loss" ? " is-loss" : ""}`;
-        valueEl.textContent = secondValue ? `${value} / ${secondValue}` : value;
-        const labelEl = document.createElement("span");
-        labelEl.className = "batch-result-metric-label";
-        labelEl.textContent = secondLabel ? `${label} / ${secondLabel}` : label;
-        cell.appendChild(valueEl);
-        cell.appendChild(labelEl);
-        return cell;
-    }
-
     // --------------------------------------------------------------------
     // Progress / summary helpers
     // --------------------------------------------------------------------
 
     private setProgress(dom: BatchBacktestDom, percent: number, text: string): void {
-        dom.batchBacktestProgressFill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
-        dom.batchBacktestProgressText.textContent = text;
+        this.resultsView.setProgress(dom, percent, text);
     }
 
     /**
-     * Toggle the tab root's `is-running` class. The progress bar is hidden by
-     * default and only shown while this class is present (see
-     * styles/batch-backtest.css). The generic `.progress-container.active` path
-     * used by Finder is never toggled for the Batch tab, so without this class
-     * hook the Batch progress bar would stay invisible for the entire run.
+     * Toggle the tab root's `is-running` class and the balanced-generator
+     * buttons. The view owns the class hook; the balanced lock inputs are
+     * computed here from shared facade state at call time (matching the
+     * original call order inside the view).
      */
     private setRunBusy(dom: BatchBacktestDom, busy: boolean): void {
-        dom.batchbacktestTab.classList.toggle("is-running", busy);
-        dom.batchBacktestBalancedGenerateBtn.disabled = busy;
-        this.updateBalancedGeneratorButtons(dom);
+        this.resultsView.setRunBusy(dom, busy, this.balancedGeneratorLockState());
     }
 
     private beginAnalysisBusy(dom: BatchBacktestDom): void {
@@ -2692,16 +2279,7 @@ export class BatchBacktestService {
     }
 
     private updateSummary(dom: BatchBacktestDom): void {
-        if (this.lastResults.length > 0) {
-            const count = this.lastResults.length;
-            dom.batchBacktestSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
-            this.renderSummaryGrid(dom);
-            return;
-        }
-        const count = parseBatchSymbols(dom.batchBacktestSymbols.value).length;
-        dom.batchBacktestSummary.textContent = `${count} pair${count === 1 ? "" : "s"}`;
-        dom.batchBacktestSummaryGrid.replaceChildren();
-        dom.batchBacktestSummaryGrid.hidden = true;
+        this.resultsView.updateSummary(dom, this.lastResults);
     }
 
     /**
@@ -2710,28 +2288,7 @@ export class BatchBacktestService {
      * The full pipe summary stays the clipboard / Copy Results surface.
      */
     private renderSummaryGrid(dom: BatchBacktestDom): void {
-        const cells = buildBatchSummaryCells(this.lastResults);
-        if (cells === null) {
-            dom.batchBacktestSummaryGrid.replaceChildren();
-            dom.batchBacktestSummaryGrid.hidden = true;
-            return;
-        }
-        const fragment = document.createDocumentFragment();
-        for (const [label, value] of cells) {
-            const cell = document.createElement("div");
-            cell.className = "batch-summary-cell";
-            const labelEl = document.createElement("span");
-            labelEl.className = "batch-summary-cell-label";
-            labelEl.textContent = label;
-            const valueEl = document.createElement("span");
-            valueEl.className = "batch-summary-cell-value";
-            valueEl.textContent = value;
-            cell.appendChild(labelEl);
-            cell.appendChild(valueEl);
-            fragment.appendChild(cell);
-        }
-        dom.batchBacktestSummaryGrid.replaceChildren(fragment);
-        dom.batchBacktestSummaryGrid.hidden = false;
+        this.resultsView.renderSummaryGrid(dom, this.lastResults);
     }
 
     private readClampedInt(raw: string, fallback: number, min: number, max: number): number {
@@ -3065,340 +2622,34 @@ export class BatchBacktestService {
         return value === "alpha" || value === "random" ? value : "off";
     }
 
-    private pickTieBreakAsset(assets: readonly string[], mode: "alpha" | "random", seed: number): string | null {
-        if (assets.length === 0) return null;
-        const sorted = [...assets].sort((a, b) => a.localeCompare(b));
-        if (mode === "alpha") return sorted[0]!;
-        // Seeded murmur-style finalizer over the seed (decision time), so the
-        // pick is uniform across the tied set yet deterministic per event.
-        let x = (seed ^ 0x9e3779b9) >>> 0;
-        x = Math.imul(x ^ (x >>> 16), 2246822507) >>> 0;
-        x = Math.imul(x ^ (x >>> 13), 3266489909) >>> 0;
-        x = (x ^ (x >>> 16)) >>> 0;
-        return sorted[x % sorted.length]!;
-    }
 
-    /** Resolve `reason: "tied"` rows of the latest OPEN_SCORE picks per mode. */
-    private applyTieBreakToLatest(latest: OpenScoreUsdLatestSelections): OpenScoreUsdLatestSelections {
-        const mode = this.topMeanTieBreakMode();
-        if (mode === "off") return latest;
-        return {
-            ...latest,
-            selections: latest.selections.map((selection) => {
-                if (selection.reason !== "tied" || selection.tiedAssets.length === 0) return selection;
-                const picked = this.pickTieBreakAsset(selection.tiedAssets, mode, latest.decisionTime);
-                if (picked === null) return selection;
-                // Per-tied-asset score/mean are not in the tie row, so they
-                // stay null (rendered as n/a) — the pick is the decision.
-                return { ...selection, asset: picked, reason: "selected" as const };
-            }),
-        };
-    }
 
-    private topMeanTieBreakNote(mode: "alpha" | "random" | "off"): string {
-        return mode === "alpha"
-            ? "Tie-break ALPHABETICAL applied: tied picks resolved to the alphabetically-first tied asset."
-            : mode === "random"
-                ? "Tie-break RANDOM applied: tied picks resolved to a seeded random tied asset (stable per decision event)."
-                : "Tie-break off: ties stay unresolved (TIE / SKIP).";
-    }
 
-    /**
-     * When the current snapshot's top is tied and the mode resolves ties,
-     * return the one picked winner asset (seeded per decisionTime), else null.
-     */
-    private tieBreakPickedAsset(currentSnapshot: TopMeanCurrentSnapshot, mode: "alpha" | "random" | "off"): string | null {
-        if (mode === "off") return null;
-        const snap: any = currentSnapshot.snapshot;
-        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
-        if (winners.length < 2) return null;
-        const assets = winners.map((w) => String(w.asset ?? "")).filter((a) => a !== "");
-        const seed = currentSnapshot.decision?.decisionTime ?? snap?.asOf ?? 0;
-        return this.pickTieBreakAsset(assets, mode, seed);
-    }
 
-    /** Snapshot winners restricted to the tie-break pick (all of them when null). */
-    private winnersAfterTieBreak(currentSnapshot: TopMeanCurrentSnapshot, picked: string | null): any[] {
-        const snap: any = currentSnapshot.snapshot;
-        const winners: any[] = Array.isArray(snap?.winners) ? snap.winners : [];
-        if (picked === null) return winners;
-        return winners.filter((w) => String(w.asset ?? "") === picked);
-    }
 
-    /**
-     * A tied snapshot decision (reason "tied", asset null) resolves to the
-     * tie-break pick. The entry-window rule is re-checked for the picked
-     * asset: LONG only when the latest reconstructed decision event is not
-     * older than the common closed candle, mirroring the reducer.
-     */
-    private resolveTiedDecision(decision: TopMeanCurrentSnapshot["decision"], picked: string | null, asOfSec: number | null): TopMeanCurrentSnapshot["decision"] {
-        if (!decision || decision.reason !== "tied" || picked === null) return decision;
-        const entryWindowOpen = asOfSec !== null && decision.decisionTime !== null && decision.decisionTime >= asOfSec;
-        return {
-            ...decision,
-            status: entryWindowOpen ? "LONG_NEXT_BAR" : "NO_TRADE",
-            reason: entryWindowOpen ? "latest_decision_event" : "entry_window_expired",
-            asset: picked,
-        };
-    }
-
-    private renderLatestOpenScoreSelections(summary: TopMeanResultSummary): string {
-        const latestInput = summary.latestSelections;
-        if (!latestInput) return "";
-        const mode = this.topMeanTieBreakMode();
-        const latest = this.applyTieBreakToLatest(latestInput);
-        const decisionLabel = new Date(latest.decisionTime * 1000)
-            .toISOString()
-            .slice(0, 19)
-            .replace("T", " ") + " UTC";
-        // One arm at a time: every arm in one card was unusably long on large
-        // universes. The arm comes from the in-card dropdown; the full list
-        // stays available via Copy Result.
-        const selection = latest.selections.find((entry) => entry.selector === this.latestOpenScoreArm)
-            ?? latest.selections[0];
-        let html = `<div class="batch-report-card">`;
-        html += `<div class="batch-report-title">Latest OPEN_SCORE Selector Picks</div>`;
-        html += `<div class="batch-report-note">decision event: ${escapeHtml(decisionLabel)}</div>`;
-        html += this.renderLatestArmSelector();
-        if (selection) {
-            html += `<table class="finder-table batch-report-table"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
-            html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${selection.reason === "selected" && selection.direction === "long" ? "is-positive" : selection.reason === "selected" && selection.direction === "short" ? "is-negative" : ""}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(this.latestSelectionText(selection))}</td><td>${escapeHtml(this.formatLatestMean(selection.mean))}</td><td>${escapeHtml(this.formatLatestScore(selection.score))}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
-            html += `</tbody></table>`;
-            html += this.renderLatestOpenScoreTopCandidates(selection);
-            html += this.renderLatestArmYearPerformance(summary, selection.selector);
-        } else {
-            html += `<div class="batch-report-note">No selector arms in this result.</div>`;
-        }
-        html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(this.topMeanTieBreakNote(mode))} Research selectors only.</div>`;
-        html += `</div>`;
-        return html;
-    }
-
-    /**
-     * Generated (non-structural) arm picker inside the Latest OPEN_SCORE
-     * card. Change events are delegated to the results container in
-     * bindEvents because re-rendering the card replaces this element.
-     */
-    private renderLatestArmSelector(): string {
-        const options = LATEST_ARM_SELECTOR_NAMES
-            .map((name) => `<option value="${name}"${name === this.latestOpenScoreArm ? " selected" : ""}>${name}</option>`)
-            .join("");
-        return `<div class="batch-field batch-field--inline"><label class="batch-field-label" for="${LATEST_ARM_SELECTOR_ID}">Selector arm</label><select class="param-input batch-open-score-details-selector" id="${LATEST_ARM_SELECTOR_ID}" title="Pick which selector arm this card shows, including its top 3 ranked candidates at the decision event. The full arm list stays available via Copy Result.">${options}</select></div>`;
-    }
-
-    private latestSelectionText(selection: OpenScoreUsdLatestSelection): string {
-        return selection.reason === "selected"
-            ? selection.asset ?? "NO SELECTION"
-            : selection.reason === "tied"
-                ? `TIE / SKIP: ${selection.tiedAssets.join(", ")}`
-                : "NO SELECTION";
-    }
-
-    private formatLatestMean(mean: number | null): string {
-        return mean === null ? "--" : `${mean >= 0 ? "+" : ""}${mean.toFixed(3)}`;
-    }
-
-    private formatLatestScore(score: number | null): string {
-        return score === null ? "--" : `${score >= 0 ? "+" : ""}${score}`;
-    }
-
-    /**
-     * Ranked candidate detail for the latest event, capped at 3 by the
-     * engine. The current pick (including a tie-break resolution) is badged.
-     * Results produced before topCandidates existed render the fallback note.
-     */
-    private renderLatestOpenScoreTopCandidates(selection: OpenScoreUsdLatestSelection): string {
-        // The engine caps at 3; slice again so hand-built or future payloads
-        // cannot grow the card.
-        const candidates = (Array.isArray(selection.topCandidates) ? selection.topCandidates : []).slice(0, 3);
-        if (candidates.length === 0) {
-            return `<div class="batch-report-note">Top-candidate detail is unavailable for this result (produced by an older run).</div>`;
-        }
-        let html = `<div class="batch-report-subheading">Top ${candidates.length} candidates at this event | ranked by ${escapeHtml(selection.selector)}</div>`;
-        html += `<table class="finder-table batch-report-table"><thead><tr><th>Rank</th><th>Asset</th><th>Score</th><th>Mean</th><th>Active Pairs</th></tr></thead><tbody>`;
-        candidates.forEach((candidate, index) => {
-            const isPick = selection.asset !== null && candidate.asset === selection.asset;
-            html += `<tr${isPick ? ` class="batch-report-row-top"` : ""}>`;
-            html += `<td>${index + 1}</td>`;
-            html += `<td><strong>${escapeHtml(candidate.asset)}</strong>${isPick ? `<span class="batch-top-badge">PICK</span>` : ""}</td>`;
-            html += `<td>${escapeHtml(this.formatLatestScore(candidate.score))}</td>`;
-            html += `<td>${escapeHtml(this.formatLatestMean(candidate.mean))}</td>`;
-            html += `<td>${escapeHtml(candidate.activePairs)}</td>`;
-            html += `</tr>`;
-        });
-        html += `</tbody></table>`;
-        return html;
-    }
-
-    /** One report line in the shared OPEN_SCORE comparison format. */
-    private formatReplayComparisonLine(comparison: ReplayComparison): string {
-        const pct = (value: number | null): string =>
-            value === null ? "n/a" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-        return `n=${comparison.events}`
-            + ` top=${pct(comparison.topMean)}`
-            + ` rand=${pct(comparison.randomMean)}`
-            + ` deltaMed=${pct(comparison.delta)}`
-            + ` CI95=[${pct(comparison.ciLower)},${pct(comparison.ciUpper)}]`
-            + ` +blocks=${comparison.positiveBlocks}/${comparison.totalBlocks}`;
-    }
-
-    /**
-     * Per-year performance lines for the selected arm, in the same
-     * comparison format as the OPEN_SCORE report. "full" comes from the
-     * full-window horizons; the year lines from the coordinator's calendar-
-     * year replays (annualReports). Results produced before latestArms
-     * existed render nothing here.
-     */
-    private renderLatestArmYearPerformance(
-        summary: TopMeanResultSummary,
-        arm: OpenScoreUsdLatestSelectorName,
-    ): string {
-        const blocks: string[] = [];
-        for (const horizon of summary.horizons ?? []) {
-            const lines: string[] = [];
-            const full = horizon.latestArms?.[arm];
-            if (full && full.events > 0) {
-                lines.push(`full: ${this.formatReplayComparisonLine(full)}`);
-            }
-            for (const annual of summary.annualReports ?? []) {
-                const comparison = annual.horizons
-                    ?.find((annualHorizon) => annualHorizon.horizon === horizon.horizon)
-                    ?.latestArms?.[arm];
-                if (comparison && comparison.events > 0) {
-                    lines.push(`${annual.year}: ${this.formatReplayComparisonLine(comparison)}`);
-                }
-            }
-            if (lines.length > 0) {
-                blocks.push(
-                    `<div class="batch-report-subheading">Performance by year — Horizon ${escapeHtml(String(horizon.horizon))} bars</div>`
-                    + `<pre class="batch-report-pre">${escapeHtml(lines.join("\n"))}</pre>`,
-                );
-            }
-        }
-        return blocks.join("");
-    }
 
     private formatLatestOpenScoreSelectionLines(latestInput: OpenScoreUsdLatestSelections): string[] {
-        const latest = this.applyTieBreakToLatest(latestInput);
-        const lines = [
-            "----------------------------------------------------------------------",
-            "LATEST OPEN_SCORE SELECTOR PICKS",
-            "----------------------------------------------------------------------",
-            `decisionTime=${latest.decisionTime}`,
-        ];
-        for (const selection of latest.selections) {
-            const asset = selection.reason === "selected"
-                ? selection.asset ?? "NONE"
-                : selection.reason === "tied"
-                    ? `TIE_SKIP[${selection.tiedAssets.join(",")}]`
-                    : "NONE";
-            lines.push(
-                `${selection.selector} NOW | direction=${selection.direction.toUpperCase()} | asset=${asset} | ` +
-                `mean=${selection.mean ?? "n/a"} | score=${selection.score ?? "n/a"} | ` +
-                `activePairs=${selection.activePairs ?? "n/a"} | pool=${selection.eligibleCandidates} | reason=${selection.reason}`,
-            );
-        }
-        lines.push("");
-        return lines;
+        return formatLatestOpenScoreSelectionLines(latestInput, this.topMeanTieBreakMode());
     }
 
     private renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
-        if (!summary || !Array.isArray(summary.horizons)) return;
-
-        let html = "";
-
-        // 0. Current TOP_MEAN snapshot (Phase 1): positions open at the latest
-        // common closed candle. Surfaced separately from the historical
-        // OPEN_SCORE replay leaderboard below — the two answer different
-        // questions (cross-sectional "now" vs per-event historical edge).
-        if (summary.currentSnapshot) {
-            html += this.renderCurrentTopMeanBanner(summary.currentSnapshot);
-        }
-        if (summary.latestSelections) {
-            html += this.renderLatestOpenScoreSelections(summary);
-        }
-
-        if (summary.performance) {
-            const performanceLines = formatTopMeanPerformanceLines(summary.performance);
-            html += `<div class="batch-report-card">`;
-            html += `<div class="batch-report-title">Coordinator Performance</div>`;
-            html += `<pre class="batch-report-pre">${escapeHtml(performanceLines.join("\n"))}</pre>`;
-            html += `</div>`;
-        }
-
-        // No per-horizon asset leaderboard section here on purpose: it rendered
-        // every asset per horizon and became unusably long on large universes.
-        // Top assets remain available via the Copy button (top 10 per horizon).
-        const annualReports = Array.isArray(summary.annualReports) ? summary.annualReports : [];
-        if (annualReports.length > 0) {
-            html += `<div class="batch-report-subheading batch-report-subheading--accent">OPEN_SCORE USD Calendar-Year Reports</div>`;
-            for (const annual of annualReports) {
-                const fromLabel = new Date(annual.sampleFromSec * 1000).toISOString().slice(0, 10);
-                const toLabel = new Date(annual.sampleToSec * 1000).toISOString().slice(0, 10);
-                html += `<details class="batch-report-details">`;
-                html += `<summary>${escapeHtml(annual.year)} | ${escapeHtml(fromLabel)}..${escapeHtml(toLabel)}</summary>`;
-                html += `<pre class="batch-report-pre">${escapeHtml(annual.reportLines.join("\n"))}</pre>`;
-                html += `</details>`;
-            }
-        }
-        dom.batchBacktestSp500TopMeanResults.innerHTML = html;
+        renderTopMeanResultsView(dom, summary, {
+            latestArm: this.latestOpenScoreArm,
+            tieMode: this.topMeanTieBreakMode(),
+        });
         this.syncTopMeanOpenScoreDetailsControl(dom, summary);
     }
 
     private persistLatestTopMeanResult(result: TopMeanResultSummary): void {
-        const {
-            openScoreEventDetails: _openScoreEventDetails,
-            annualReports,
-            ...persistedResult
-        } = result;
-        const persistedAnnualReports = annualReports?.map((annual) => {
-            const { eventDetails: _eventDetails, ...persistedAnnual } = annual;
-            return persistedAnnual;
-        });
-        writePersistedJson({
-            ...TOP_MEAN_LATEST_RESULT_STORAGE,
-            data: {
-                ...persistedResult,
-                ...(persistedAnnualReports ? { annualReports: persistedAnnualReports } : {}),
-            },
-            onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_save_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            }),
-        });
+        persistLatestTopMeanResult(result);
     }
 
     private clearPersistedLatestTopMeanResult(): void {
-        writePersistedJson({
-            ...TOP_MEAN_LATEST_RESULT_STORAGE,
-            data: null,
-            onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_clear_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            }),
-        });
+        clearPersistedLatestTopMeanResult();
     }
 
     private loadPersistedLatestTopMeanResult(dom: BatchBacktestDom): void {
-        const result = readPersistedJson<TopMeanResultSummary | null>({
-            ...TOP_MEAN_LATEST_RESULT_STORAGE,
-            fallback: null,
-            migrate: ({ data }) => {
-                if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-                const source = data as Partial<TopMeanResultSummary>;
-                if (typeof source.runId !== "string" || !source.runId.trim()) return null;
-                if (source.completed !== true || !Array.isArray(source.horizons)) return null;
-                if (!source.horizons.every((horizon) =>
-                    horizon
-                    && typeof horizon === "object"
-                    && Array.isArray(horizon.topAssets)
-                )) {
-                    return null;
-                }
-                return source as TopMeanResultSummary;
-            },
-            onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_restore_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            }),
-        });
+        const result = readLatestTopMeanResult();
         if (!result) return;
 
         this.latestTopMeanResult = result;
@@ -3411,34 +2662,14 @@ export class BatchBacktestService {
     }
 
     private resetTopMeanOpenScoreDetails(dom: BatchBacktestDom): void {
-        dom.batchBacktestSp500TopMeanDetailsSelector.disabled = true;
-        dom.batchBacktestSp500TopMeanDetailsYear.disabled = true;
-        dom.batchBacktestSp500TopMeanDetailsYear.value = "";
-        dom.batchBacktestSp500TopMeanDetailsBtn.disabled = true;
-        dom.batchBacktestSp500TopMeanDetailsBtn.textContent = "Show OPEN_SCORE Details";
-        dom.batchBacktestSp500TopMeanDetails.hidden = true;
-        dom.batchBacktestSp500TopMeanDetails.innerHTML = "";
+        resetTopMeanOpenScoreDetails(dom);
     }
 
     private syncTopMeanOpenScoreDetailsControl(
         dom: BatchBacktestDom,
         summary: TopMeanResultSummary,
     ): void {
-        const annualHasDetails = summary.annualReports?.some(
-            (annual) => Array.isArray(annual.eventDetails) && annual.eventDetails.length > 0,
-        ) === true;
-        const fullRangeHasDetails =
-            Array.isArray(summary.openScoreEventDetails)
-            && summary.openScoreEventDetails.length > 0;
-        const hasOngoingRows = this.buildOngoingEventDetails(summary).length > 0;
-        const hasDetails = annualHasDetails || fullRangeHasDetails || hasOngoingRows;
-        dom.batchBacktestSp500TopMeanDetailsBtn.disabled = !hasDetails;
-        dom.batchBacktestSp500TopMeanDetailsSelector.disabled = !hasDetails;
-        dom.batchBacktestSp500TopMeanDetailsYear.disabled = !hasDetails;
-        this.syncTopMeanDetailYearOptions(dom, summary);
-        dom.batchBacktestSp500TopMeanDetailsBtn.textContent = "Show OPEN_SCORE Details";
-        dom.batchBacktestSp500TopMeanDetails.hidden = true;
-        dom.batchBacktestSp500TopMeanDetails.innerHTML = "";
+        syncTopMeanOpenScoreDetailsControl(dom, summary);
     }
 
     private toggleSp500TopMeanOpenScoreDetails(): void {
@@ -3474,113 +2705,12 @@ export class BatchBacktestService {
     private getTopMeanOpenScoreDetailSelector(
         dom: BatchBacktestDom,
     ): OpenScoreUsdEventDetailSelector {
-        return (dom.batchBacktestSp500TopMeanDetailsSelector.value || "TOP_MEAN") as
-            OpenScoreUsdEventDetailSelector;
+        return getTopMeanOpenScoreDetailSelector(dom);
     }
 
     /** Selected calendar year for the details table; null = full window. */
     private getTopMeanOpenScoreDetailYear(dom: BatchBacktestDom): number | null {
-        const value = dom.batchBacktestSp500TopMeanDetailsYear.value;
-        if (!value) return null;
-        const year = Number(value);
-        return Number.isInteger(year) && year >= 1970 && year <= 9999 ? year : null;
-    }
-
-    /**
-     * Rebuild the details year options from the rows the browser can actually
-     * show: distinct decision years of the shipped full-window rows plus the
-     * annual report windows. Selecting a year is a client-side slice of those
-     * rows — no additional server data is fetched (wire-safety keeps per-year
-     * rows off the wire), so "Full window" (blank) stays the default.
-     */
-    private syncTopMeanDetailYearOptions(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
-        const years = new Set<number>();
-        for (const row of summary.openScoreEventDetails ?? []) {
-            years.add(new Date(row.decisionTime * 1000).getUTCFullYear());
-        }
-        for (const annual of summary.annualReports ?? []) {
-            years.add(annual.year);
-        }
-        const previous = dom.batchBacktestSp500TopMeanDetailsYear.value;
-        const options = [
-            `<option value=""${!previous ? " selected" : ""}>Full window</option>`,
-            ...[...years].sort((a, b) => b - a).map((year) =>
-                `<option value="${year}"${String(year) === previous ? " selected" : ""}>${year}</option>`,
-            ),
-        ];
-        dom.batchBacktestSp500TopMeanDetailsYear.innerHTML = options.join("");
-    }
-
-    /**
-     * The historical replay intentionally omits right-censored horizons, but
-     * an unresolved selector pick is still useful before its holding period has
-     * completed. Every asset-picking arm reports these rows; keep them UI-only
-     * so incomplete returns never enter the research aggregates or either copy
-     * path. Legacy persisted results predate per-arm rows — synthesize the
-     * TOP_MEAN row from the latest selection snapshot for those.
-     */
-    private buildOngoingEventDetails(
-        summary: TopMeanResultSummary,
-    ): OngoingTopMeanEventDetail[] {
-        if (Array.isArray(summary.ongoingEventDetails)) {
-            return summary.ongoingEventDetails;
-        }
-
-        const latest = summary.latestSelections;
-        let decisionTime: number | null = null;
-        let asset: string | null = null;
-        let eligibleCandidates = 0;
-
-        if (latest) {
-            const selection = latest.selections.find((candidate) => candidate.selector === "TOP_MEAN");
-            if (selection?.reason !== "selected" || !selection.asset) return [];
-            decisionTime = latest.decisionTime;
-            asset = selection.asset;
-            eligibleCandidates = Number.isFinite(selection.eligibleCandidates)
-                ? Math.max(0, Math.floor(selection.eligibleCandidates))
-                : 0;
-        } else {
-            // Backward-compatible fallback for persisted results that have the
-            // current snapshot but predate latestSelections.
-            const decision = summary.currentSnapshot?.decision;
-            if (!decision?.asset || !Number.isFinite(decision.decisionTime)) return [];
-            decisionTime = decision.decisionTime;
-            asset = decision.asset;
-            eligibleCandidates = Array.isArray(decision.candidates)
-                ? decision.candidates.length
-                : 0;
-        }
-
-        if (decisionTime === null || asset === null) return [];
-
-        const horizonValues = summary.horizons
-            .map((horizon) => {
-                const source = horizon as unknown as { horizon?: unknown; bars?: unknown };
-                return Number(source.horizon ?? source.bars);
-            })
-            .filter((horizon) => Number.isFinite(horizon) && horizon >= 1)
-            .map((horizon) => Math.floor(horizon));
-        const horizons = [...new Set(horizonValues.length > 0 ? horizonValues : [24])];
-        const completedKeys = new Set(
-            [
-                ...(summary.openScoreEventDetails ?? []),
-                ...(summary.annualReports ?? []).flatMap((annual) => annual.eventDetails ?? []),
-            ]
-                .filter((row) => row.selector === "TOP_MEAN")
-                .map((row) => `${row.decisionTime}|${row.horizonBars}`),
-        );
-
-        return horizons
-            .filter((horizonBars) => !completedKeys.has(`${decisionTime}|${horizonBars}`))
-            .map((horizonBars) => ({
-                decisionTime: decisionTime!,
-                horizonBars,
-                selector: "TOP_MEAN" as const,
-                direction: "long" as const,
-                asset,
-                eligibleCandidates,
-                entryTime: null,
-            }));
+        return getTopMeanOpenScoreDetailYear(dom);
     }
 
     private renderTopMeanOpenScoreEventDetails(
@@ -3588,266 +2718,11 @@ export class BatchBacktestService {
         selector: OpenScoreUsdEventDetailSelector,
         year: number | null = null,
     ): string {
-        const annualReports = summary.annualReports ?? [];
-        const ongoingRows = this.buildOngoingEventDetails(summary);
-        // Year slice: a client-side filter on decision time (UTC). It narrows
-        // the rows the browser already holds — no additional server data.
-        const yearMatches = year === null
-            ? (): boolean => true
-            : (decisionTimeSec: number): boolean =>
-                new Date(decisionTimeSec * 1000).getUTCFullYear() === year;
-        // The wire payload bounds the per-row detail arrays to the most
-        // recent rows of the full window and drops per-year rows entirely
-        // (coordinator wire-safety; disk/archive keep all rows). The *Count
-        // scalars carry the pre-cap totals so the truncation is loud here
-        // instead of silent.
-        const fullWindowTruncated = (summary.openScoreEventDetailCount ?? 0)
-            > (summary.openScoreEventDetails?.length ?? 0);
-        const truncatedAnnual = annualReports.filter(
-            (annual) => Array.isArray(annual.eventDetails)
-                && (annual.eventDetailCount ?? 0) > annual.eventDetails!.length,
-        );
-        const annualRowsNotShipped = annualReports.some(
-            (annual) => !Array.isArray(annual.eventDetails) && (annual.eventDetailCount ?? 0) > 0,
-        );
-        const hasAnnualDetailData = annualReports.some(
-            (annual) => Array.isArray(annual.eventDetails) && annual.eventDetails.length > 0,
-        );
-        const annualSections = annualReports
-            .map((annual): TopMeanOpenScoreDetailSection => ({
-                label: `Calendar Year ${annual.year}`,
-                rows: (annual.eventDetails ?? []).filter((row) =>
-                    row.selector === selector
-                    && yearMatches(row.decisionTime)
-                    // A year selection only shows its own annual section.
-                    && (year === null || annual.year === year)
-                ),
-                ongoingRows: ongoingRows.filter((row) => {
-                    const rowYear = new Date(row.decisionTime * 1000).getUTCFullYear();
-                    return row.selector === selector
-                        && rowYear === annual.year
-                        && row.decisionTime >= annual.sampleFromSec
-                        && row.decisionTime <= annual.sampleToSec
-                        && yearMatches(row.decisionTime);
-                }),
-            }))
-            .filter((section) => section.rows.length > 0 || section.ongoingRows.length > 0);
-        const sections = hasAnnualDetailData
-            ? annualSections
-            : [{
-                label: year !== null
-                    ? `Selected Window — Calendar Year ${year}`
-                    : "Selected Window",
-                rows: (summary.openScoreEventDetails ?? []).filter(
-                    (row) => row.selector === selector && yearMatches(row.decisionTime),
-                ),
-                ongoingRows: ongoingRows.filter(
-                    (row) => row.selector === selector && yearMatches(row.decisionTime),
-                ),
-            } satisfies TopMeanOpenScoreDetailSection];
-        let html = `<div class="batch-open-score-details-heading">OPEN_SCORE Event Details — ${escapeHtml(selector)}</div>`;
-        html += `<div class="batch-open-score-details-note">Showing ${escapeHtml(selector)} only. Return is the selected asset's net USD return after configured slippage and commission; control is the selector-specific comparison pool (for TOP_MEAN_RAW_UNIQUE, the TOP_MEAN tied set, including the selected asset). Selections whose horizon is incomplete are shown as ONGOING for every arm; their Return column is the unrealized mark-to-market return at data end and Control/Delta are intentionally n/a. These rows are intentionally excluded from Copy OPEN_SCORE and Copy Result.</div>`;
-        if (fullWindowTruncated || truncatedAnnual.length > 0 || annualRowsNotShipped) {
-            const truncationParts: string[] = [];
-            if (fullWindowTruncated) {
-                truncationParts.push(
-                    `full window: most recent ${(summary.openScoreEventDetails?.length ?? 0).toLocaleString()} of ${(summary.openScoreEventDetailCount ?? 0).toLocaleString()} rows`,
-                );
-            }
-            for (const annual of truncatedAnnual) {
-                truncationParts.push(
-                    `${annual.year}: most recent ${(annual.eventDetails?.length ?? 0).toLocaleString()} of ${(annual.eventDetailCount ?? 0).toLocaleString()} rows`,
-                );
-            }
-            if (annualRowsNotShipped) {
-                truncationParts.push(
-                    "per-year detail rows are not included in the live result — see the research archive or the server result.json",
-                );
-            }
-            if (year !== null && fullWindowTruncated) {
-                truncationParts.push(
-                    `the ${year} slice filters the shipped most-recent full-window rows, so older events of ${year} may be missing`,
-                );
-            }
-            html += `<div class="batch-report-warning">TRUNCATED FOR THE UI — ${escapeHtml(truncationParts.join("; "))}.</div>`;
-        }
-        if (sections.length === 0 || sections.every((section) => section.rows.length === 0 && section.ongoingRows.length === 0)) {
-            html += `<div class="batch-open-score-details-empty">No eligible ${escapeHtml(selector)} events for this replay window.</div>`;
-            return html;
-        }
-        for (const section of sections) {
-            const rowCount = section.rows.length + section.ongoingRows.length;
-            html += `<details open class="batch-open-score-details-section">`;
-            html += `<summary>${escapeHtml(section.label)} | ${escapeHtml(rowCount.toLocaleString())} selector rows</summary>`;
-            html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table">`;
-            html += `<thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Horizon</th><th>Selector</th><th>Side</th><th>Asset</th><th>Return</th><th>Control</th><th>Delta</th><th>Pool</th></tr></thead><tbody>`;
-            const detailRows = [
-                ...section.rows.map((row) => ({ row, ongoing: false as const })),
-                ...section.ongoingRows.map((row) => ({ row, ongoing: true as const })),
-            ].sort((a, b) =>
-                a.row.decisionTime - b.row.decisionTime
-                || a.row.horizonBars - b.row.horizonBars
-                || Number(a.ongoing) - Number(b.ongoing),
-            );
-            for (const detailRow of detailRows) {
-                html += detailRow.ongoing
-                    ? this.renderOngoingTopMeanEventDetailRow(detailRow.row)
-                    : this.renderTopMeanOpenScoreEventDetailRow(detailRow.row);
-            }
-            html += `</tbody></table></div></details>`;
-        }
-        return html;
+        return renderTopMeanOpenScoreEventDetails(summary, selector, year);
     }
 
-    private renderTopMeanOpenScoreEventDetailRow(row: OpenScoreUsdEventDetail): string {
-        const formatTime = (timeSec: number): string =>
-            new Date(timeSec * 1000).toISOString().slice(0, 19).replace("T", " ");
-        const formatReturn = (value: number): string =>
-            `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
-        const sideClass = row.direction === "long" ? "is-positive" : "is-negative";
-        const returnClass = row.selectedReturn >= 0 ? "is-positive" : "is-negative";
-        const deltaClass = row.delta >= 0 ? "is-positive" : "is-negative";
-        return `<tr>` +
-            `<td>${escapeHtml(formatTime(row.decisionTime))}</td>` +
-            `<td>${escapeHtml(formatTime(row.entryTime))}</td>` +
-            `<td>${escapeHtml(formatTime(row.exitTime))}</td>` +
-            `<td>${escapeHtml(row.horizonBars)}</td>` +
-            `<td><strong>${escapeHtml(row.selector)}</strong></td>` +
-            `<td class="${sideClass}">${escapeHtml(row.direction.toUpperCase())}</td>` +
-            `<td><strong>${escapeHtml(row.asset)}</strong></td>` +
-            `<td class="${returnClass}">${escapeHtml(formatReturn(row.selectedReturn))}</td>` +
-            `<td>${escapeHtml(formatReturn(row.controlReturn))}</td>` +
-            `<td class="${deltaClass}">${escapeHtml(formatReturn(row.delta))}</td>` +
-            `<td>${escapeHtml(row.eligibleCandidates)}</td>` +
-            `</tr>`;
-    }
-
-    private renderOngoingTopMeanEventDetailRow(row: OngoingTopMeanEventDetail): string {
-        const formatTime = (timeSec: number): string =>
-            new Date(timeSec * 1000).toISOString().slice(0, 19).replace("T", " ");
-        const entryLabel = row.entryTime !== null && Number.isFinite(row.entryTime)
-            ? formatTime(row.entryTime)
-            : "NEXT BAR";
-        // Return column shows the unrealized mark-to-market return at the
-        // target dataset end when the engine computed one; n/a otherwise.
-        // Control/Delta have no realized comparison and stay n/a.
-        const unrealized = row.unrealizedReturn;
-        const unrealizedLabel = unrealized !== null && unrealized !== undefined && Number.isFinite(unrealized)
-            ? `${unrealized >= 0 ? "+" : ""}${(unrealized * 100).toFixed(2)}%`
-            : "n/a";
-        const unrealizedClass = unrealized !== null && unrealized !== undefined && unrealized >= 0
-            ? "is-positive"
-            : "is-negative";
-        return `<tr class="batch-open-score-details-row-ongoing">` +
-            `<td>${escapeHtml(formatTime(row.decisionTime))}</td>` +
-            `<td>${escapeHtml(entryLabel)}</td>` +
-            `<td><strong>${escapeHtml("ONGOING")}</strong></td>` +
-            `<td>${escapeHtml(row.horizonBars)}</td>` +
-            `<td><strong>${escapeHtml(row.selector)}</strong> <span class="batch-top-badge">ONGOING</span></td>` +
-            `<td class="is-positive">${escapeHtml(row.direction.toUpperCase())}</td>` +
-            `<td><strong>${escapeHtml(row.asset)}</strong></td>` +
-            `<td class="${unrealizedClass}">${escapeHtml(unrealizedLabel)}</td>` +
-            `<td>${escapeHtml("n/a")}</td>` +
-            `<td>${escapeHtml("n/a")}</td>` +
-            `<td>${escapeHtml(row.eligibleCandidates)}</td>` +
-            `</tr>`;
-    }
-
-    /**
-     * Phase-1 current snapshot banner. Renders the cross-sectional TOP_MEAN
-     * pick(s) at the latest common closed candle. Kept visually separate from
-     * the historical leaderboard — different question, different evidence.
-     * Reuses the existing results container; no new DOM id.
-     */
     private renderCurrentTopMeanBanner(currentSnapshot: TopMeanCurrentSnapshot): string {
-        const snap = currentSnapshot.snapshot;
-        const tieMode = this.topMeanTieBreakMode();
-        const tiePicked = this.tieBreakPickedAsset(currentSnapshot, tieMode);
-        const winners = this.winnersAfterTieBreak(currentSnapshot, tiePicked);
-        const asOfSec: number | null = snap?.asOf ?? null;
-        const asOfLabel = typeof asOfSec === "number"
-            ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
-            : "no common endpoint";
-        const reason: string = snap?.reason ?? "empty";
-        const stats = currentSnapshot.stats;
-        const decision = this.resolveTiedDecision(currentSnapshot.decision, tiePicked, asOfSec);
-        const decisionStatus = (decision as { status?: string } | undefined)?.status;
-
-        // Collapsible (default collapsed): the full banner is long on large
-        // universes, so the summary line carries the decision outcome and the
-        // user opens the card for the evidence.
-        const summaryLabel = decisionStatus === "LONG_NEXT_BAR" && decision?.asset
-            ? `TOP_MEAN ALGORITHMIC TRADE DECISION — LONG ${decision.asset}`
-            : "TOP_MEAN ALGORITHMIC TRADE DECISION — NO TRADE";
-        let html = `<details class="batch-report-card batch-report-details">`;
-        html += `<summary>${escapeHtml(summaryLabel)}</summary>`;
-        html += `<div class="batch-report-note">as-of: ${asOfLabel} | artifacts ${snap?.artifacts ?? 0} | open positions ${snap?.openPositions ?? 0} | candidates ${snap?.candidates?.length ?? 0} | stale ${stats.staleEndpoints ?? 0} | missing ${stats.missingEndpoints ?? 0}</div>`;
-
-        if (decisionStatus === "LONG_NEXT_BAR" && decision?.asset) {
-            const decisionLabel = typeof decision.decisionTime === "number"
-                ? new Date(decision.decisionTime * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
-                : "unknown";
-            html += `<div class="batch-report-decision">`;
-            html += `<strong>ALGORITHMIC TRADE DECISION — LONG ${escapeHtml(decision.asset)}:</strong> enter on the first target-asset bar strictly after the ${escapeHtml(decisionLabel)} decision event. Research case: $${escapeHtml(decision.researchNotionalUsd)} notional, hold ${escapeHtml(decision.researchHoldBars)} bars, exit at ${escapeHtml(decision.researchExitRule.replaceAll("_", " "))}.`;
-            html += `</div>`;
-        } else {
-            const reasonText = decision?.reason === "entry_window_expired"
-                ? `The latest unique ${escapeHtml(decision.asset ?? "TOP_MEAN")} decision event is older than the common data endpoint, so the algorithm will not chase the missed entry.`
-                : decision?.reason === "tied"
-                    ? "The latest decision event is tied, so the algorithm has no unique asset."
-                    : decision?.reason === "no_positive_candidates"
-                        ? "The latest decision event has no positive TOP_MEAN candidate."
-                        : decisionStatus === "VERIFY_ENTRY_WINDOW"
-                            ? "This is a legacy saved result. Run TOP_MEAN again to compute the algorithmic entry decision."
-                            : "The latest decision event is unavailable.";
-            html += `<div class="batch-report-decision batch-report-decision--flat">`;
-            html += `<strong>ALGORITHMIC TRADE DECISION — NO TRADE:</strong> ${reasonText}`;
-            html += `</div>`;
-        }
-        html += `<div class="batch-report-note"><strong>ASSUMPTION:</strong> This trade decision is built from one selected strategy configuration only. It does not combine or confirm multiple strategy configurations.</div>`;
-
-        if (winners.length === 0) {
-            const noPickMsg = reason === "tied"
-                ? "Tie at the top — no unique pick."
-                : reason === "no_positive_candidates"
-                    ? "No positive-score asset with an open position."
-                    : reason === "no_open_positions"
-                        ? "No open positions at the common endpoint."
-                        : "No provable current snapshot (missing or mixed endpoints).";
-            html += `<div class="batch-report-warning">${noPickMsg}</div>`;
-            html += `</details>`;
-            return html;
-        }
-
-        html += `<div class="batch-pick-row">`;
-        for (const w of winners) {
-            const mean = Number(w.mean ?? 0);
-            const meanSign = mean >= 0 ? "+" : "";
-            html += `<div class="batch-pick-card">`;
-            html += `<div class="batch-pick-label">${winners.length > 1 ? "Tied Winner" : tiePicked !== null ? "Current Pick (tie-break)" : "Current Pick"}</div>`;
-            html += `<div class="batch-pick-asset">${escapeHtml(w.asset)}</div>`;
-            html += `<div class="batch-pick-meta">mean=${meanSign}${mean.toFixed(2)} | score=${escapeHtml(w.score)} | activePairs=${escapeHtml(w.activePairs)}</div>`;
-            html += `</div>`;
-        }
-        html += `</div>`;
-        if (winners.length > 1) {
-            html += `<div class="batch-report-note batch-report-note--after">Tie shown as-is — no arbitrary asset-name tie-break. Treat as an unresolved decision.</div>`;
-        } else if (tiePicked !== null) {
-            html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(this.topMeanTieBreakNote(tieMode))}</div>`;
-        }
-
-        const leaderboard: any[] = Array.isArray(snap?.candidates) ? snap.candidates.slice(0, 10) : [];
-        html += `<div class="batch-report-subheading">CURRENT TOP_MEAN Leaderboard — top ${leaderboard.length}</div>`;
-        html += `<table class="finder-table batch-report-table"><thead><tr><th>Rank</th><th>Asset</th><th>Mean</th><th>Score</th><th>Active Pairs</th></tr></thead><tbody>`;
-        leaderboard.forEach((candidate, index) => {
-            const mean = Number(candidate.mean ?? 0);
-            const meanSign = mean >= 0 ? "+" : "";
-            const isTop = index === 0;
-            html += `<tr${isTop ? ` class="batch-report-row-top"` : ""}><td>${index + 1}</td><td><strong>${escapeHtml(candidate.asset)}</strong></td><td>${meanSign}${mean.toFixed(2)}</td><td>${escapeHtml(candidate.score)}</td><td>${escapeHtml(candidate.activePairs)}</td></tr>`;
-        });
-        html += `</tbody></table>`;
-        html += `</details>`;
-        return html;
+        return renderCurrentTopMeanBanner(currentSnapshot, this.topMeanTieBreakMode());
     }
 
     /**
@@ -3855,59 +2730,7 @@ export class BatchBacktestService {
      * banner content in plain text so the clipboard surface matches the UI.
      */
     private formatCurrentTopMeanLines(currentSnapshot: any): string[] {
-        const snap: any = currentSnapshot.snapshot ?? currentSnapshot;
-        const tieMode = this.topMeanTieBreakMode();
-        const tiePicked = this.tieBreakPickedAsset(currentSnapshot, tieMode);
-        const winners: any[] = this.winnersAfterTieBreak(currentSnapshot, tiePicked);
-        const asOfSec: number | null = snap?.asOf ?? null;
-        const asOfLabel = typeof asOfSec === "number"
-            ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
-            : "no common endpoint";
-        const reason: string = snap?.reason ?? "empty";
-        const stats: any = currentSnapshot.stats ?? {};
-        const decision: any = this.resolveTiedDecision(currentSnapshot.decision, tiePicked, asOfSec);
-
-        const lines: string[] = [];
-        lines.push("----------------------------------------------------------------------");
-        lines.push("TOP_MEAN ALGORITHMIC TRADE DECISION");
-        lines.push("----------------------------------------------------------------------");
-        lines.push(`as-of=${asOfLabel} | artifacts=${snap?.artifacts ?? 0} | openPositions=${snap?.openPositions ?? 0} | candidates=${snap?.candidates?.length ?? 0} | stale=${stats.staleEndpoints ?? 0} | missing=${stats.missingEndpoints ?? 0}`);
-        if (decision?.status === "LONG_NEXT_BAR" && decision.asset) {
-            lines.push(`ALGORITHMIC TRADE DECISION | LONG_NEXT_BAR | asset=${decision.asset} | decisionTime=${decision.decisionTime ?? "NONE"} | entryRule=${decision.entryRule} | researchNotionalUsd=${decision.researchNotionalUsd} | researchHoldBars=${decision.researchHoldBars} | researchExit=${decision.researchExitRule} | entryPairs=${decision.entryPairs}`);
-        } else {
-            lines.push(`ALGORITHMIC TRADE DECISION | NO_TRADE | reason=${decision?.reason ?? "legacy_snapshot_without_decision"} | asset=${decision?.asset ?? "NONE"} | decisionTime=${decision?.decisionTime ?? "NONE"}`);
-        }
-        lines.push("DECISION ASSUMPTION | built from one selected strategy configuration only; no multi-configuration confirmation");
-        if (winners.length === 0) {
-            const noPickMsg = reason === "tied"
-                ? "tied at top — no unique pick"
-                : reason === "no_positive_candidates"
-                    ? "no positive-score asset with an open position"
-                    : reason === "no_open_positions"
-                        ? "no open positions at the common endpoint"
-                        : "no provable current snapshot (missing or mixed endpoints)";
-            lines.push(`CURRENT TOP_MEAN | NO PICK | ${noPickMsg}`);
-        } else {
-            for (const w of winners) {
-                const mean = Number(w.mean ?? 0);
-                const meanSign = mean >= 0 ? "+" : "";
-                lines.push(`CURRENT TOP_MEAN | asOf=${asOfLabel} | winners=${w.asset} | mean=${meanSign}${mean.toFixed(2)} | score=${w.score} | activePairs=${w.activePairs}`);
-            }
-            if (winners.length > 1) {
-                lines.push(`CURRENT TOP_MEAN | tie across ${winners.length} assets — unresolved decision`);
-            } else if (tiePicked !== null) {
-                lines.push(`CURRENT TOP_MEAN | ${this.topMeanTieBreakNote(tieMode)}`);
-            }
-            const leaderboard: any[] = Array.isArray(snap?.candidates) ? snap.candidates.slice(0, 10) : [];
-            lines.push(`CURRENT TOP_MEAN LEADERBOARD | top ${leaderboard.length}`);
-            leaderboard.forEach((candidate, index) => {
-                const mean = Number(candidate.mean ?? 0);
-                const meanSign = mean >= 0 ? "+" : "";
-                lines.push(`CURRENT TOP_MEAN | rank=${index + 1} | asset=${candidate.asset} | mean=${meanSign}${mean.toFixed(2)} | score=${candidate.score} | activePairs=${candidate.activePairs}`);
-            });
-        }
-        lines.push("");
-        return lines;
+        return formatCurrentTopMeanLines(currentSnapshot, this.topMeanTieBreakMode());
     }
 
     public async copySp500TopMeanResults(): Promise<void> {
