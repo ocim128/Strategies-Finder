@@ -107,7 +107,7 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     const s = svc();
     s.dom = dom;
     s.bindEvents(dom);
-    s.serverHasArtifacts = true;
+    s.batchRun.setServerHasArtifacts(true);
     s.lastRunFingerprint = fingerprint;
     s.lastRunInterval = "5m";
     s.lastRunStrategyKey = "test";
@@ -122,7 +122,7 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     s.runInFlight = false;
     s.batchActionInFlight = false;
     s.topMeanReattachInFlight = false;
-    s.activeTopMeanRunId = null;
+    s.topMean.setActiveTopMeanRunId(null);
     s.serverRunActive = false;
     (globalThis as any).localStorage._store.clear();
     s.buildCurrentRunFingerprint = () => fingerprint;
@@ -190,11 +190,11 @@ describe("BatchBacktestService analysis lifecycle", () => {
             "config | window=2025-01-01..2025-12-31",
         ];
         svc().latestTopMeanResult = result;
-        svc().recordTopMeanDiagnostic("run.start", { workerCount: 4 });
+        svc().topMean.recordTopMeanDiagnostic("run.start", { workerCount: 4 });
 
-        expect(svc().buildTopMeanOpenScoreText()).to.equal(result.reportLines.join("\n"));
-        expect(svc().buildTopMeanOpenScoreText()).to.not.include("workerCount");
-        expect(svc().buildTopMeanDiagnosticText()).to.include("workerCount");
+        expect(svc().topMean.buildTopMeanOpenScoreText()).to.equal(result.reportLines.join("\n"));
+        expect(svc().topMean.buildTopMeanOpenScoreText()).to.not.include("workerCount");
+        expect(svc().topMean.buildTopMeanDiagnosticText()).to.include("workerCount");
     });
 
     it("shows per-event OPEN_SCORE details without adding them to copied reports", () => {
@@ -253,7 +253,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("+14.55%");
         expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.not.include("TOP_MEAN_ONLY_ASSET");
 
-        const copied = svc().buildTopMeanOpenScoreText();
+        const copied = svc().topMean.buildTopMeanOpenScoreText();
         expect(copied).to.equal("OPEN_SCORE USD | SUMMARY ONLY");
         expect(copied).to.not.include("TOP_MEAN_ONLY_ASSET");
         expect(copied).to.not.include("MAX_ACTIVE_ONLY_ASSET");
@@ -337,7 +337,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             }],
         }];
 
-        svc().persistLatestTopMeanResult(result);
+        svc().topMean.persistLatestTopMeanResult(result);
 
         const stored = [...(globalThis as any).localStorage._store.values()].join("\n");
         expect(stored).to.not.include("DETAIL_ONLY_ASSET");
@@ -351,10 +351,10 @@ describe("BatchBacktestService analysis lifecycle", () => {
         // next load with the Copy Diagnostic button enabled.
         const dom = setupForAnalysis();
         const dying = svc();
-        dying.topMeanDiagnosticRunId = "sp500_top_mean_crashed";
-        dying.recordTopMeanDiagnostic("run.start", { workerCount: 4 });
-        dying.recordTopMeanNdjsonEvent({ type: "preflight", counts: { pairCount: 20000 } });
-        dying.recordTopMeanNdjsonEvent({ type: "done", result: { runId: "sp500_top_mean_crashed" } });
+        dying.topMean.setDiagnosticRunId("sp500_top_mean_crashed");
+        dying.topMean.recordTopMeanDiagnostic("run.start", { workerCount: 4 });
+        dying.topMean.recordTopMeanNdjsonEvent({ type: "preflight", counts: { pairCount: 20000 } });
+        dying.topMean.recordTopMeanNdjsonEvent({ type: "done", result: { runId: "sp500_top_mean_crashed" } });
         dying.writeTopMeanDiagnosticLogNow();
 
         // Simulate the reload: fresh service instance, empty in-memory state.
@@ -364,9 +364,9 @@ describe("BatchBacktestService analysis lifecycle", () => {
         fresh.dom = dom;
         fresh.restorePersistedTopMeanDiagnostics();
 
-        expect(fresh.topMeanDiagnosticRunId).to.equal("sp500_top_mean_crashed");
+        expect(fresh.topMean.getDiagnosticRunId()).to.equal("sp500_top_mean_crashed");
         expect(dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled).to.equal(false);
-        const text = fresh.buildTopMeanDiagnosticText();
+        const text = fresh.topMean.buildTopMeanDiagnosticText();
         expect(text).to.include("sp500_top_mean_crashed");
         expect(text).to.include("ndjson.preflight");
         expect(text).to.include("20000");
@@ -377,8 +377,8 @@ describe("BatchBacktestService analysis lifecycle", () => {
         // Intent: payload size per event is the primary OOM evidence the user
         // can copy and share; it must be captured at receipt time.
         setupForAnalysis();
-        svc().recordTopMeanNdjsonEvent({ type: "preflight", counts: { pairCount: 20000 } });
-        const entry = svc().topMeanDiagnosticEntries.find(
+        svc().topMean.recordTopMeanNdjsonEvent({ type: "preflight", counts: { pairCount: 20000 } });
+        const entry = svc().topMean.getDiagnosticEntries().find(
             (e: any) => e.type === "ndjson.preflight",
         );
         expect(entry, "preflight event must be recorded").to.not.equal(undefined);
@@ -393,18 +393,19 @@ describe("BatchBacktestService analysis lifecycle", () => {
         // evidence is the timeline + byte size + shape, not the payload.
         setupForAnalysis();
         const s = svc();
-        s.recordTopMeanDiagnostic("ndjson.done", {
+        s.topMean.recordTopMeanDiagnostic("ndjson.done", {
             result: { runId: "sp500_top_mean_big", blob: "x".repeat(200_000) },
         });
 
         // The ring entry is compacted to a shape summary, not the payload.
-        const entry = s.topMeanDiagnosticEntries[s.topMeanDiagnosticEntries.length - 1];
+        const entries = s.topMean.getDiagnosticEntries();
+        const entry = entries[entries.length - 1];
         expect(entry.data.diagnosticDataTruncated).to.equal(true);
         expect(entry.data.result.runId).to.equal("sp500_top_mean_big");
         expect(JSON.stringify(entry.data).length).to.be.lessThan(2_000);
 
         // The copied diagnostic stays small.
-        const copied = s.buildTopMeanDiagnosticText();
+        const copied = s.topMean.buildTopMeanDiagnosticText();
         expect(copied).to.include("sp500_top_mean_big");
         expect(copied.length).to.be.lessThan(20_000);
 
@@ -419,8 +420,9 @@ describe("BatchBacktestService analysis lifecycle", () => {
         // progress counts, error messages, request options stay readable.
         setupForAnalysis();
         const s = svc();
-        s.recordTopMeanDiagnostic("ndjson.progress", { completed: 1000, total: 20000 });
-        const entry = s.topMeanDiagnosticEntries[s.topMeanDiagnosticEntries.length - 1];
+        s.topMean.recordTopMeanDiagnostic("ndjson.progress", { completed: 1000, total: 20000 });
+        const entries = s.topMean.getDiagnosticEntries();
+        const entry = entries[entries.length - 1];
         expect(entry.data.completed).to.equal(1000);
         expect(entry.data.total).to.equal(20000);
         expect(entry.data.diagnosticDataTruncated).to.equal(undefined);
@@ -572,7 +574,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
     it("persists the active run id and restores it after a tab-style reset", () => {
         setupForAnalysis();
-        svc().persistActiveServerRun("batch-owned");
+        svc().batchRun.persistActiveServerRun("batch-owned");
         svc().activeServerRunId = null;
 
         expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-owned");
@@ -592,7 +594,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             warnings: [],
             reportLines: ["RESTORE_MARKER_ANNUAL_REPORT"],
         }];
-        svc().persistLatestTopMeanResult(result);
+        svc().topMean.persistLatestTopMeanResult(result);
 
         svc().latestTopMeanResult = null;
         dom.batchBacktestSp500TopMeanResults.innerHTML = "";
@@ -612,7 +614,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
     it("clears the stale TOP_MEAN Stop state immediately after a server restart", async () => {
         const dom = setupForAnalysis();
-        svc().activeTopMeanRunId = "lost-after-restart";
+        svc().topMean.setActiveTopMeanRunId("lost-after-restart");
         persistTopMeanRunForTest("lost-after-restart");
         dom.batchBacktestSp500TopMeanRunBtn.style.display = "none";
         dom.batchBacktestSp500TopMeanStopBtn.style.display = "block";
@@ -625,7 +627,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             await svc().reattachToInProgressTopMeanRun();
         });
 
-        expect(svc().activeTopMeanRunId).to.equal(null);
+        expect(svc().topMean.getActiveTopMeanRunId()).to.equal(null);
         expect(JSON.parse((globalThis as any).localStorage.getItem("sp500_top_mean_active_run_id")).data).to.equal(null);
         expect(dom.batchBacktestSp500TopMeanRunBtn.style.display).to.equal("block");
         expect(dom.batchBacktestSp500TopMeanStopBtn.style.display).to.equal("none");
@@ -634,7 +636,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
     it("clears local TOP_MEAN state when Stop confirms no matching server run", async () => {
         const dom = setupForAnalysis();
-        svc().activeTopMeanRunId = "stale-stop-run";
+        svc().topMean.setActiveTopMeanRunId("stale-stop-run");
         persistTopMeanRunForTest("stale-stop-run");
         dom.batchBacktestSp500TopMeanRunBtn.style.display = "none";
         dom.batchBacktestSp500TopMeanStopBtn.style.display = "block";
@@ -647,7 +649,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             await svc().stopSp500TopMeanCoordinator();
         });
 
-        expect(svc().activeTopMeanRunId).to.equal(null);
+        expect(svc().topMean.getActiveTopMeanRunId()).to.equal(null);
         expect(JSON.parse((globalThis as any).localStorage.getItem("sp500_top_mean_active_run_id")).data).to.equal(null);
         expect(dom.batchBacktestSp500TopMeanRunBtn.style.display).to.equal("block");
         expect(dom.batchBacktestSp500TopMeanStopBtn.style.display).to.equal("none");
@@ -747,7 +749,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("<strong>TOP_RAW</strong>");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("<strong>TOP_MEAN_RAW_UNIQUE</strong>");
-        const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
+        const copiedLines = svc().topMean.formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
             "TOP_MEAN_PROFIT_NOW NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
         );
@@ -783,7 +785,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(html).to.include("Tie-break ALPHABETICAL applied");
         // Alphabetically-first tied asset wins even though CCC was listed first.
         expect(html).to.include(">AAA</td>");
-        const copiedLines = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
+        const copiedLines = svc().topMean.formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
             "TOP_MEAN_PROFIT_NOW NOW | direction=LONG | asset=AAA | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=selected",
         );
@@ -987,8 +989,8 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(html1).to.equal(html2);
         expect(html1).to.include("Tie-break RANDOM applied");
 
-        const copied1 = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
-        const copied2 = svc().formatLatestOpenScoreSelectionLines(result.latestSelections);
+        const copied1 = svc().topMean.formatLatestOpenScoreSelectionLines(result.latestSelections);
+        const copied2 = svc().topMean.formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copied1).to.deep.equal(copied2);
         const pick = copied1.find((l: string) => l.startsWith("TOP_MEAN_PROFIT_NOW NOW"))!;
         expect(pick).to.include("reason=selected");
@@ -1134,7 +1136,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
     it("keeps ownership after a rejected Stop and clears it after an accepted Stop", async () => {
         setupForAnalysis();
         svc().activeServerRunId = "batch-owned";
-        svc().persistActiveServerRun("batch-owned");
+        svc().batchRun.persistActiveServerRun("batch-owned");
         const bodies: Array<{ runId?: string }> = [];
         let accepted = false;
 
@@ -1155,7 +1157,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
     it("surfaces a terminal server failure when reattaching after reload", async () => {
         const dom = setupForAnalysis();
         svc().activeServerRunId = "batch-fatal";
-        svc().persistActiveServerRun("batch-fatal");
+        svc().batchRun.persistActiveServerRun("batch-fatal");
         svc().lastResults = [];
 
         await withMockFetch(() => ({
@@ -1184,7 +1186,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
     it("disables OPEN_SCORE USD after clearStaleResults (audit artifact-action-gating finding)", () => {
         const dom = setupForAnalysis();
-        svc().serverHasArtifacts = true;
+        svc().batchRun.setServerHasArtifacts(true);
         svc().lastRunFingerprint = "fp-test";
         svc().updateArtifactActionButtons(dom);
         expect(dom.batchBacktestOpenScoreUsdBtn.disabled, "OPEN_SCORE USD enabled before clear").to.equal(false);
@@ -1232,7 +1234,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             return { ok: false, status: 400, text: "test stop before server run" };
         }, async () => {
             try {
-                await svc().runBatchServer(
+                await svc().batchRun.runBatchServer(
                     dom,
                     0,
                     ["A+B"],
@@ -1284,7 +1286,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             { symbol: "DDD", status: "profitable", barCount: 100 },
             { symbol: "EEE", status: "profitable", barCount: 100 },
         ] as any;
-        const accepted = svc().reconcileStatusRows(dom, recovery, 0);
+        const accepted = svc().batchRun.reconcileStatusRows(dom, recovery, 0);
         expect(accepted.length, "only the 2 unseen rows are accepted").to.equal(2);
         expect(accepted.map((r: any) => r.symbol)).to.deep.equal(["DDD", "EEE"]);
         expect(svc().lastResults.length, "lastResults has 5 rows total").to.equal(5);
@@ -1314,7 +1316,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                 }),
             };
         }, async () => {
-            await svc().drainStatusRows(
+            await svc().batchRun.drainStatusRows(
                 dom,
                 { rows: firstPage, rowOffset: 0, nextOffset: 2 },
                 "batch-pagination",
@@ -1339,7 +1341,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         const dom = setupForAnalysis();
         svc().lastResults = [];
         svc().activeServerRunId = "batch-recovered";
-        svc().persistActiveServerRun("batch-recovered");
+        svc().batchRun.persistActiveServerRun("batch-recovered");
 
         const rows = [
             { symbol: "AAA+BBB", status: "profitable", barCount: 100 },

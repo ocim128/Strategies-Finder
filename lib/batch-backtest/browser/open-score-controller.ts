@@ -58,8 +58,12 @@ export class OpenScoreController {
         return this.analysisInFlight;
     }
 
-    /** Facade-visible state seeding (regression suite preflight stubs). */
-    setBusyForTests(value: boolean): void {
+    /**
+     * Facade-visible write path for the shared analysis lock. The facade's
+     * finishAnalysisBusy clears it (mirroring the original single-class flow),
+     * and the regression suite seeds it through the facade accessor.
+     */
+    setAnalysisInFlight(value: boolean): void {
         this.analysisInFlight = value;
     }
 

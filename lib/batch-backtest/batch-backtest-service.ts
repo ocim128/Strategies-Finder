@@ -26,10 +26,7 @@ import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 // so it never lands in the cold-start bundle.
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import { isBatchResultSortKey } from "./batch-results-sort";
-import type { BatchBenchmarkRunOutcome } from "./batch-benchmark-snapshot";
-import type { OpenScoreUsdLatestSelections, OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
-import type { StrategyParams, BacktestSettings } from "../types/strategies";
-import type { CapitalSettings } from "../types/backtest";
+import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import {
     BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
     BATCH_TRADE_LEDGER_STORAGE,
@@ -52,12 +49,6 @@ import { LATEST_ARM_SELECTOR_ID } from "./browser/top-mean-results-view";
 import type { OpenScoreUsdEventDetailSelector } from "./batch-open-score-usd-replay-engine";
 
 export { formatTopMeanCompletionMessage } from "./browser/top-mean-results-view";
-
-type BatchStatusRowsPage = {
-    rows?: BatchBacktestSymbolResult[];
-    rowOffset?: number;
-    nextOffset?: number | null;
-};
 
 export class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
@@ -89,22 +80,16 @@ export class BatchBacktestService {
     private set lastRunFingerprint(fingerprint: string | null) {
         this.batchRun.setLastRunFingerprint(fingerprint);
     }
-    public get serverHasArtifacts(): boolean {
-        return this.batchRun.getServerHasArtifacts();
-    }
-    public set serverHasArtifacts(value: boolean) {
-        this.batchRun.setServerHasArtifacts(value);
-    }
-    public get activeServerRunId(): string | null {
+    private get activeServerRunId(): string | null {
         return this.batchRun.getActiveServerRunId();
     }
-    public set activeServerRunId(runId: string | null) {
+    private set activeServerRunId(runId: string | null) {
         this.batchRun.setActiveServerRunId(runId);
     }
-    public get runInFlight(): boolean {
+    private get runInFlight(): boolean {
         return this.batchRun.getRunInFlight();
     }
-    public set runInFlight(value: boolean) {
+    private set runInFlight(value: boolean) {
         this.batchRun.setRunInFlight(value);
     }
     /**
@@ -120,7 +105,7 @@ export class BatchBacktestService {
         return this.openScore.isBusy();
     }
     private set analysisInFlight(value: boolean) {
-        this.openScore.setBusyForTests(value);
+        this.openScore.setAnalysisInFlight(value);
     }
     private get analysisCancelRequested(): boolean {
         return this.openScore.isCancelRequested();
@@ -177,26 +162,11 @@ export class BatchBacktestService {
     // coordinator engine emissions and the UI renderers is a compile failure.
     // TOP_MEAN lifecycle state lives on the controller; these typed accessors
     // keep the facade's own wiring (and the facade-visible surface) working.
-    public get latestTopMeanResult(): TopMeanResultSummary | null {
+    private get latestTopMeanResult(): TopMeanResultSummary | null {
         return this.topMean.getLatestTopMeanResult();
     }
-    public set latestTopMeanResult(result: TopMeanResultSummary | null) {
+    private set latestTopMeanResult(result: TopMeanResultSummary | null) {
         this.topMean.setLatestTopMeanResult(result);
-    }
-    public get activeTopMeanRunId(): string | null {
-        return this.topMean.getActiveTopMeanRunId();
-    }
-    public set activeTopMeanRunId(runId: string | null) {
-        this.topMean.setActiveTopMeanRunId(runId);
-    }
-    public get topMeanDiagnosticEntries() {
-        return this.topMean.getDiagnosticEntries();
-    }
-    public get topMeanDiagnosticRunId(): string | null {
-        return this.topMean.getDiagnosticRunId();
-    }
-    public set topMeanDiagnosticRunId(runId: string | null) {
-        this.topMean.setDiagnosticRunId(runId);
     }
     // TOP_MEAN workflow owner: run/stop/reattach lifecycle, diagnostic ring,
     // result/copy/download actions. Created lazily-closed over this facade;
@@ -257,7 +227,7 @@ export class BatchBacktestService {
             }
         });
         dom.batchBacktestRunBtn.addEventListener("click", () => {
-            void this.batchRun.runBatch();
+            void this.runBatch();
         });
         dom.batchBacktestStopBtn.addEventListener("click", () => {
             // The same button also stops normal Batch runs and analysis.
@@ -274,10 +244,10 @@ export class BatchBacktestService {
             void this.copyBenchmarkPerformance();
         });
         dom.batchBacktestOpenScoreUsdBtn.addEventListener("click", () => {
-            void this.openScore.run();
+            void this.runOpenScoreUsdReplay();
         });
         dom.batchBacktestCopyOpenScoreUsdBtn.addEventListener("click", () => {
-            void this.openScore.copyResults();
+            void this.copyOpenScoreUsdResults();
         });
         dom.batchBacktestSp500TopMeanRunBtn.addEventListener("click", () => {
             void this.runSp500TopMeanCoordinator();
@@ -383,10 +353,10 @@ export class BatchBacktestService {
             this.updateSummary(dom);
         });
         dom.batchBacktestBalancedGenerateBtn.addEventListener("click", () => {
-            void this.balanced.generateAndApply();
+            void this.generateAndApplyBalancedPairList();
         });
         dom.batchBacktestBalancedCopyBtn.addEventListener("click", () => {
-            void this.balanced.copyGenerated();
+            void this.copyBalancedPairList();
         });
         dom.batchBacktestTradeLedgerToggle.addEventListener("change", () => {
             this.persistTradeLedgerOptions(dom);
@@ -499,54 +469,18 @@ export class BatchBacktestService {
         };
     }
 
-    public async runBatch(): Promise<void> {
+    private async runBatch(): Promise<void> {
         await this.batchRun.runBatch();
     }
 
-    public async runBatchServer(
-        dom: BatchBacktestDom,
-        token: number,
-        symbols: string[],
-        strategyKey: string,
-        strategyParams: StrategyParams,
-        backtestSettings: BacktestSettings,
-        capitalSettings: CapitalSettings,
-        interval: string,
-        runFingerprint: string,
-        tradeGateOptions: BatchTradeGateOptions,
-        onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
-    ): Promise<void> {
-        await this.batchRun.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint, tradeGateOptions, onTerminal);
-    }
 
-    public async drainStatusRows(
-        dom: BatchBacktestDom,
-        initial: BatchStatusRowsPage,
-        scopeRunId: string | undefined,
-        pageKey: "run" | "lastRun",
-        options: {
-            limit: number;
-            maxRows: number;
-            stopWhenPollingStopped?: boolean;
-        },
-    ): Promise<void> {
-        await this.batchRun.drainStatusRows(dom, initial, scopeRunId, pageKey, options);
-    }
 
-    public reconcileStatusRows(
-        dom: BatchBacktestDom,
-        rows: readonly BatchBacktestSymbolResult[] | undefined,
-        rowOffsetRaw: number | undefined,
-        expectedRunId?: string,
-    ): BatchBacktestSymbolResult[] {
-        return this.batchRun.reconcileStatusRows(dom, rows, rowOffsetRaw, expectedRunId);
-    }
 
-    public async copyBenchmarkPerformance(): Promise<void> {
+    private async copyBenchmarkPerformance(): Promise<void> {
         await this.batchRun.copyBenchmarkPerformance();
     }
 
-    public async copyResults(): Promise<void> {
+    private async copyResults(): Promise<void> {
         await this.batchRun.copyResults(this.lastOpenScoreUsdResult?.reportLines ?? []);
     }
 
@@ -585,7 +519,7 @@ export class BatchBacktestService {
         return request;
     }
 
-    public async stopServerWork(): Promise<void> {
+    private async stopServerWork(): Promise<void> {
         await this.batchRun.stopServerWork();
     }
 
@@ -601,11 +535,11 @@ export class BatchBacktestService {
         await this.batchRun.reattachToInProgressServerRun();
     }
 
-    public async runOpenScoreUsdReplay(): Promise<void> {
+    private async runOpenScoreUsdReplay(): Promise<void> {
         await this.openScore.run();
     }
 
-    public async copyOpenScoreUsdResults(): Promise<void> {
+    private async copyOpenScoreUsdResults(): Promise<void> {
         await this.openScore.copyResults();
     }
 
@@ -629,11 +563,11 @@ export class BatchBacktestService {
         );
     }
 
-    public async generateAndApplyBalancedPairList(): Promise<void> {
+    private async generateAndApplyBalancedPairList(): Promise<void> {
         await this.balanced.generateAndApply();
     }
 
-    public async copyBalancedPairList(): Promise<void> {
+    private async copyBalancedPairList(): Promise<void> {
         await this.balanced.copyGenerated();
     }
 
@@ -649,16 +583,13 @@ export class BatchBacktestService {
 
 
 
-    public persistActiveServerRun(runId: string): void {
-        this.batchRun.persistActiveServerRun(runId);
-    }
 
-    public loadPersistedActiveServerRun(): BatchPersistedActiveServerRun | null {
+    private loadPersistedActiveServerRun(): BatchPersistedActiveServerRun | null {
         return this.batchRun.loadPersistedActiveServerRun();
     }
 
 
-    public updateArtifactActionButtons(dom: BatchBacktestDom): void {
+    private updateArtifactActionButtons(dom: BatchBacktestDom): void {
         this.batchRun.updateArtifactActionButtons(dom);
     }
 
@@ -767,9 +698,6 @@ export class BatchBacktestService {
         this.topMean.renderTopMeanResults(dom, summary);
     }
 
-    public persistLatestTopMeanResult(result: TopMeanResultSummary): void {
-        this.topMean.persistLatestTopMeanResult(result);
-    }
 
 
     private loadPersistedLatestTopMeanResult(dom: BatchBacktestDom): void {
@@ -806,9 +734,6 @@ export class BatchBacktestService {
      * banner content in plain text so the clipboard surface matches the UI.
      */
 
-    public formatLatestOpenScoreSelectionLines(latestInput: OpenScoreUsdLatestSelections): string[] {
-        return this.topMean.formatLatestOpenScoreSelectionLines(latestInput);
-    }
 
     public async copySp500TopMeanResults(): Promise<void> {
         await this.topMean.copySp500TopMeanResults();
@@ -818,27 +743,15 @@ export class BatchBacktestService {
         await this.topMean.copySp500TopMeanOpenScoreResults();
     }
 
-    public buildTopMeanOpenScoreText(): string {
-        return this.topMean.buildTopMeanOpenScoreText();
-    }
 
     public async copySp500TopMeanDiagnostic(): Promise<void> {
         await this.topMean.copySp500TopMeanDiagnostic();
     }
 
-    public buildTopMeanDiagnosticText(): string {
-        return this.topMean.buildTopMeanDiagnosticText();
-    }
 
-    public recordTopMeanNdjsonEvent(event: any): void {
-        this.topMean.recordTopMeanNdjsonEvent(event);
-    }
 
-    public recordTopMeanDiagnostic(type: string, data?: unknown, bytes?: number): void {
-        this.topMean.recordTopMeanDiagnostic(type, data, bytes);
-    }
 
-    public restorePersistedTopMeanDiagnostics(): void {
+    private restorePersistedTopMeanDiagnostics(): void {
         this.topMean.restorePersistedTopMeanDiagnostics();
     }
 

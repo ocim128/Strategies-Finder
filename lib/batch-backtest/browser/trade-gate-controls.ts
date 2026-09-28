@@ -151,4 +151,3 @@ export class TradeGateControls {
         return options;
     }
 }
-
