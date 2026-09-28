@@ -16,38 +16,23 @@ import { strategyRegistry } from "../../strategyRegistry";
 import { setVisible } from "../dom-utils";
 import { ensureLazyStylesheet } from "../lazy-styles";
 import { debugLogger } from "../debug-logger";
-import { uiManager } from "../ui-manager";
-import { copyToClipboard } from "../browser-transfer";
 import { writePersistedJson } from "../persisted-json";
 import { TRADE_LEDGER_DEFAULT_HORIZONS } from "./trade-ledger-schema";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
-import { postBatchNdjson } from "./batch-ndjson-post";
 import { parseTradeLedgerHorizons } from "./trade-ledger-wire";
-import { parseBatchSymbols } from "./batch-run-contract";
-import {
-    BALANCED_PAIR_LIST_MAX_PAIRS,
-    generateBalancedPairList,
-    type BalancedPairListResult,
-    type PairListProvenanceV1,
-} from "./balanced-pair-list-generator";
-import { fnv1a64Hex } from "./max-active-research-contract";
-import { isActiveCapTiltWeight } from "./cap-tilt-contract";
+import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 // The template blob lives in the lazy-loaded batch feature chunk (via ?raw),
 // so it never lands in the cold-start bundle.
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import { isBatchResultSortKey } from "./batch-results-sort";
 import type { BatchBenchmarkRunOutcome } from "./batch-benchmark-snapshot";
-import type { LedgerSweepCatalogResponse } from "./trade-ledger-sweep-stream-types";
 import type { OpenScoreUsdLatestSelections, OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
-import type { OpenScoreUsdReplayStreamEvent } from "./batch-open-score-usd-replay-stream-types";
 import type { StrategyParams, BacktestSettings } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import {
     BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
-    BATCH_TRADE_GATE_STORAGE,
     BATCH_TRADE_LEDGER_STORAGE,
-    readPersistedTradeGateOptions,
     readPersistedTradeLedgerOptions,
     type BatchPersistedActiveServerRun,
     type BatchTradeGateOptions,
@@ -55,6 +40,9 @@ import {
 } from "./browser/batch-browser-store";
 import { TopMeanController } from "./browser/top-mean-controller";
 import { BatchRunController } from "./browser/batch-run-controller";
+import { OpenScoreController } from "./browser/open-score-controller";
+import { TradeGateControls } from "./browser/trade-gate-controls";
+import { BalancedPairListControls } from "./browser/balanced-pair-list-controls";
 import type { TopMeanResultSummary } from "./sp500-top-mean-coordinator-engine";
 import {
     createBatchResultsView,
@@ -71,37 +59,21 @@ type BatchStatusRowsPage = {
     nextOffset?: number | null;
 };
 
-function formatGatePercent(value: number | null): string {
-    return value !== null && Number.isFinite(value) ? value.toFixed(2) : "--";
-}
-
-function formatGateBytes(bytes: number): string {
-    if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-    return `${Math.max(0, Math.round(bytes / 1024))} KB`;
-}
-
-function formatGateSweepDate(modifiedAt: number): string {
-    return Number.isFinite(modifiedAt) ? new Date(modifiedAt).toISOString().slice(0, 10) : "unknown date";
-}
-
 export class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
     private initialized = false;
-    private lastOpenScoreUsdResult: OpenScoreUsdReplayResult | null = null;
+    private get lastOpenScoreUsdResult(): OpenScoreUsdReplayResult | null {
+        return this.openScore.getResult();
+    }
+    private set lastOpenScoreUsdResult(result: OpenScoreUsdReplayResult | null) {
+        this.openScore.setResult(result);
+    }
     /**
      * Last successful Balanced Generator result. Used by Copy Generated so a
      * user can copy the displayed list without re-running the generator. The
      * pair list is NOT applied to the textarea on Copy; only Generate-and-Apply
      * writes the textarea (and dispatches the existing input invalidation).
      */
-    private lastBalancedPairListResult: BalancedPairListResult | null = null;
-    /**
-     * Provenance of the pair list CURRENTLY applied to the textarea, retained
-     * only while the textarea's content still matches `provenance.emittedPairListHash`.
-     * Cleared by manual edits, Generate failure, or any other textarea mutation
-     * that does not come from the generator's apply path.
-     */
-    private activePairListProvenance: PairListProvenanceV1 | null = null;
     // Batch run state (run token, results, fingerprints, server-run id,
     // benchmark, reattach loop) lives on the controller; the typed accessors
     // below keep the facade wiring and regression-suite surface intact.
@@ -117,10 +89,10 @@ export class BatchBacktestService {
     private set lastRunFingerprint(fingerprint: string | null) {
         this.batchRun.setLastRunFingerprint(fingerprint);
     }
-    private get serverHasArtifacts(): boolean {
+    public get serverHasArtifacts(): boolean {
         return this.batchRun.getServerHasArtifacts();
     }
-    private set serverHasArtifacts(value: boolean) {
+    public set serverHasArtifacts(value: boolean) {
         this.batchRun.setServerHasArtifacts(value);
     }
     public get activeServerRunId(): string | null {
@@ -132,12 +104,6 @@ export class BatchBacktestService {
     public get runInFlight(): boolean {
         return this.batchRun.getRunInFlight();
     }
-    private get lastRunInterval(): string | null {
-        return this.batchRun.getLastRunInterval();
-    }
-    private set lastRunInterval(interval: string | null) {
-        this.batchRun.setLastRunInterval(interval);
-    }
     public set runInFlight(value: boolean) {
         this.batchRun.setRunInFlight(value);
     }
@@ -148,14 +114,22 @@ export class BatchBacktestService {
      * the active run id while another action is mid-preflight.
      */
     private batchActionInFlight = false;
-    // Serializes OPEN_SCORE USD Replay (and any future server-side analysis).
-    private analysisInFlight = false;
-    // Set when Stop races analysis preflight or POST establishment.
-    private analysisCancelRequested = false;
+    // OPEN_SCORE USD analysis state (lock, cancel flag, retained result) lives
+    // on the controller; the accessors keep the facade wiring unchanged.
+    private get analysisInFlight(): boolean {
+        return this.openScore.isBusy();
+    }
+    private set analysisInFlight(value: boolean) {
+        this.openScore.setBusyForTests(value);
+    }
+    private get analysisCancelRequested(): boolean {
+        return this.openScore.isCancelRequested();
+    }
+    private set analysisCancelRequested(value: boolean) {
+        this.openScore.setCancelRequested(value);
+    }
     // /stop is not operation-scoped, so new work must wait for every request.
     private pendingStopPromise: Promise<void> | null = null;
-    private tradeGateCatalog: LedgerSweepCatalogResponse | null = null;
-    private persistedTradeGateOptions = readPersistedTradeGateOptions();
     // Results presentation (rows, sort header, summary/progress, live render
     // queue). The view owns the queue and frame scheduling; run-token
     // authorization stays here via the isRunTokenCurrent check below.
@@ -173,8 +147,29 @@ export class BatchBacktestService {
         balancedLock: () => this.balancedGeneratorLockState(),
         resolveTradeGate: (dom) => this.resolveTradeGateForRun(dom),
         readTradeLedgerOptions: (dom) => this.readTradeLedgerOptions(dom),
-        getPairListProvenance: () => this.activePairListProvenance,
+        getPairListProvenance: () => this.balanced.getActiveProvenance(),
         requestServerStop: () => this.requestServerStop(),
+    });
+    // OPEN_SCORE USD analysis owner (browser/open-score-controller.ts).
+    private readonly openScore: OpenScoreController = new OpenScoreController({
+        getDom: () => this.getDom(),
+        requestServerStop: () => this.requestServerStop(),
+        beginAnalysisBusy: (dom) => this.beginAnalysisBusy(dom),
+        finishAnalysisBusy: (dom) => this.finishAnalysisBusy(dom),
+        updateArtifactActionButtons: (dom) => this.updateArtifactActionButtons(dom),
+        serverHasArtifacts: () => this.batchRun.getServerHasArtifacts(),
+        lastRunFingerprint: () => this.batchRun.getLastRunFingerprint(),
+        lastRunInterval: () => this.batchRun.getLastRunInterval(),
+        reissueStopIfNeeded: () => this.reissueStopIfNeeded(),
+    });
+    // Trade Gate form controls (catalog + persisted options).
+    private readonly tradeGate = new TradeGateControls();
+    // Balanced Generator controls (generate/copy + applied-list provenance).
+    private readonly balanced = new BalancedPairListControls({
+        getDom: () => this.getDom(),
+        actionGuard: () => this.balancedGeneratorActionGuard(),
+        clearStaleResults: (dom) => this.clearStaleResults(dom),
+        updateSummary: (dom) => this.updateSummary(dom),
     });
 
 
@@ -279,10 +274,10 @@ export class BatchBacktestService {
             void this.copyBenchmarkPerformance();
         });
         dom.batchBacktestOpenScoreUsdBtn.addEventListener("click", () => {
-            void this.runOpenScoreUsdReplay();
+            void this.openScore.run();
         });
         dom.batchBacktestCopyOpenScoreUsdBtn.addEventListener("click", () => {
-            void this.copyOpenScoreUsdResults();
+            void this.openScore.copyResults();
         });
         dom.batchBacktestSp500TopMeanRunBtn.addEventListener("click", () => {
             void this.runSp500TopMeanCoordinator();
@@ -380,18 +375,18 @@ export class BatchBacktestService {
                 || this.lastResults.length > 0
                 || this.lastOpenScoreUsdResult !== null
                 || this.activeServerRunId !== null
-                || this.activePairListProvenance !== null;
+                || this.balanced.getActiveProvenance() !== null;
             if (hasDerivedState) {
                 this.clearStaleResults(dom);
-                this.clearActivePairListProvenanceIfStale(dom);
+                this.balanced.clearActiveProvenanceIfStale(dom);
             }
             this.updateSummary(dom);
         });
         dom.batchBacktestBalancedGenerateBtn.addEventListener("click", () => {
-            void this.generateAndApplyBalancedPairList();
+            void this.balanced.generateAndApply();
         });
         dom.batchBacktestBalancedCopyBtn.addEventListener("click", () => {
-            void this.copyBalancedPairList();
+            void this.balanced.copyGenerated();
         });
         dom.batchBacktestTradeLedgerToggle.addEventListener("change", () => {
             this.persistTradeLedgerOptions(dom);
@@ -459,115 +454,24 @@ export class BatchBacktestService {
     }
 
     private restoreTradeGateOptions(dom: BatchBacktestDom): void {
-        dom.batchBacktestTradeGateToggle.checked = this.persistedTradeGateOptions.enabled;
+        this.tradeGate.restoreOptions(dom);
     }
 
-    private readTradeGateOptions(dom: BatchBacktestDom): BatchTradeGateOptions {
-        return {
-            enabled: dom.batchBacktestTradeGateToggle.checked,
-            folderId: dom.batchBacktestTradeGateFolder.value.trim(),
-            ruleIds: Array.from(dom.batchBacktestTradeGateRules.selectedOptions).map((option) => option.value),
-        };
-    }
 
     private persistTradeGateOptions(dom: BatchBacktestDom): void {
-        this.persistedTradeGateOptions = this.readTradeGateOptions(dom);
-        writePersistedJson({
-            ...BATCH_TRADE_GATE_STORAGE,
-            data: this.persistedTradeGateOptions,
-            onError: (error) => debugLogger.warn("batch_backtest.trade_gate_save_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            }),
-        });
+        this.tradeGate.persistOptions(dom);
     }
 
     private async refreshTradeGateCatalog(): Promise<boolean> {
-        try {
-            const response = await fetch("/api/trade-ledger-sweep/catalog");
-            if (!response.ok) throw new Error(`catalog request failed (${response.status})`);
-            const payload = await response.json() as LedgerSweepCatalogResponse;
-            if (payload.ok !== true) throw new Error("catalog response was not successful");
-            this.tradeGateCatalog = payload;
-            const dom = this.dom;
-            if (dom) {
-                const eligibleFolders = payload.folders.filter((folder) => folder.runnable && folder.latestSweep !== null);
-                dom.batchBacktestTradeGateFolder.replaceChildren(...eligibleFolders.map((folder) => {
-                    const option = document.createElement("option");
-                    option.value = folder.folderId;
-                    option.textContent = `${folder.name} · ${formatGateBytes(folder.ledgerBytes)} · sweep ${formatGateSweepDate(folder.latestSweep?.modifiedAt ?? Number.NaN)} · ${folder.latestSweep?.edgeRules.length ?? 0} EDGE rules`;
-                    return option;
-                }));
-                if (eligibleFolders.some((folder) => folder.folderId === this.persistedTradeGateOptions.folderId)) {
-                    dom.batchBacktestTradeGateFolder.value = this.persistedTradeGateOptions.folderId;
-                } else if (eligibleFolders[0]) {
-                    dom.batchBacktestTradeGateFolder.value = eligibleFolders[0].folderId;
-                }
-                this.renderTradeGateSelection(dom);
-            }
-            return true;
-        } catch (error) {
-            this.tradeGateCatalog = null;
-            if (this.dom) {
-                this.getDom().batchBacktestTradeGateWarning.textContent = "Trade Gate is server-side only; the local sweep catalog is unavailable.";
-            }
-            debugLogger.warn("batch_backtest.trade_gate_catalog_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            });
-            return false;
-        }
+        return this.tradeGate.refreshCatalog(() => this.getDom());
     }
 
     private renderTradeGateSelection(dom: BatchBacktestDom): void {
-        const folder = this.tradeGateCatalog?.folders.find((entry) => entry.folderId === dom.batchBacktestTradeGateFolder.value) ?? null;
-        const edgeRules = [...(folder?.latestSweep?.edgeRules ?? [])].sort((a, b) =>
-            (b.holdoutMeanPnlDeltaPp ?? Number.NEGATIVE_INFINITY) - (a.holdoutMeanPnlDeltaPp ?? Number.NEGATIVE_INFINITY)
-            || a.ruleId.localeCompare(b.ruleId));
-        const selectedRuleIds = new Set(this.persistedTradeGateOptions.ruleIds);
-        dom.batchBacktestTradeGateRules.replaceChildren(...edgeRules.map((rule) => {
-            const option = document.createElement("option");
-            option.value = rule.ruleId;
-            option.textContent = `${rule.ruleName} · kept ${formatGatePercent(rule.keptPct)}% · IS ${formatGatePercent(rule.isMeanPnlDeltaPp)}pp · holdout ${formatGatePercent(rule.holdoutMeanPnlDeltaPp)}pp`;
-            option.selected = selectedRuleIds.has(rule.ruleId);
-            return option;
-        }));
-        const selected = Array.from(dom.batchBacktestTradeGateRules.selectedOptions);
-        if (!dom.batchBacktestTradeGateToggle.checked) {
-            dom.batchBacktestTradeGateEstimate.textContent = "Trade Gate off. Batch results use the ordinary engine path.";
-            dom.batchBacktestTradeGateWarning.textContent = "";
-            return;
-        }
-        if (!folder || edgeRules.length === 0) {
-            dom.batchBacktestTradeGateEstimate.textContent = "No completed sweep with EDGE-CANDIDATE rules is available.";
-            dom.batchBacktestTradeGateWarning.textContent = "Enable the gate only after selecting a current local sweep folder and rule.";
-            return;
-        }
-        const selectedRules = edgeRules.filter((rule) => selected.some((option) => option.value === rule.ruleId));
-        if (selectedRules.length === 0) {
-            dom.batchBacktestTradeGateEstimate.textContent = "Select at least one EDGE-CANDIDATE rule.";
-            dom.batchBacktestTradeGateWarning.textContent = "The estimate is based on sweep kept rates and is not a measured admission rate.";
-            return;
-        }
-        const estimatedAdmission = 100 * (1 - selectedRules.reduce(
-            (product, rule) => product * (1 - Math.max(0, Math.min(100, rule.keptPct ?? 0)) / 100),
-            1,
-        ));
-        const estimatedRejection = Math.max(0, 100 - estimatedAdmission);
-        dom.batchBacktestTradeGateEstimate.textContent = `Rule rejects ~${estimatedRejection.toFixed(1)}% of signals (from sweep) · ${selectedRules.length} rule${selectedRules.length === 1 ? "" : "s"} selected.`;
-        dom.batchBacktestTradeGateWarning.textContent = selectedRules.length > 1
-            ? "OR semantics: a signal is admitted if any selected rule passes. Overlapping rules can stack admissions; this is not diversification."
-            : "Server-side only. The run performs a causal feature pre-pass and records gate counters.";
+        this.tradeGate.renderSelection(dom);
     }
 
     private validateTradeGateSelection(dom: BatchBacktestDom): BatchTradeGateOptions | null {
-        const options = this.readTradeGateOptions(dom);
-        if (!options.enabled) return options;
-        const folder = this.tradeGateCatalog?.folders.find((entry) => entry.folderId === options.folderId);
-        const edgeRuleIds = new Set(folder?.latestSweep?.edgeRules.map((rule) => rule.ruleId) ?? []);
-        if (!folder || options.ruleIds.length === 0 || options.ruleIds.some((ruleId) => !edgeRuleIds.has(ruleId))) {
-            dom.batchBacktestStatus.textContent = "Trade Gate is server-side only; select a current sweep folder and at least one EDGE-CANDIDATE rule.";
-            return null;
-        }
-        return options;
+        return this.tradeGate.validateSelection(dom);
     }
 
     /**
@@ -591,7 +495,7 @@ export class BatchBacktestService {
         return {
             blocked: this.runInFlight || this.analysisInFlight
                 || this.pendingStopPromise !== null || this.batchRun.isServerRunActive(),
-            hasResult: this.lastBalancedPairListResult !== null,
+            hasResult: this.balanced.hasResult(),
         };
     }
 
@@ -654,7 +558,7 @@ export class BatchBacktestService {
      */
     private async resolveTradeGateForRun(dom: BatchBacktestDom): Promise<BatchTradeGateOptions | null> {
         let tradeGateOptions = this.validateTradeGateSelection(dom);
-        if (dom.batchBacktestTradeGateToggle.checked && !this.tradeGateCatalog) {
+        if (dom.batchBacktestTradeGateToggle.checked && !this.tradeGate.getCatalog()) {
             await this.refreshTradeGateCatalog();
             tradeGateOptions = this.validateTradeGateSelection(dom);
         }
@@ -697,126 +601,12 @@ export class BatchBacktestService {
         await this.batchRun.reattachToInProgressServerRun();
     }
 
-    /**
-     * OPEN_SCORE USD Replay: at each historical synthetic-pair decision event,
-     * did selecting the highest positive OPEN_SCORE asset (traded vs USD at the
-     * next bar's open, fixed-horizon) beat a uniform random pick among the
-     * other positive candidates? Read-only on artifacts — no Batch result
-     * change, no orders. v1 is an event-level selector study, not a portfolio
-     * replay; the report labels TOP_RAW and TOP_ADJUSTED separately and never
-     * picks the better-looking formula after seeing results.
-     */
-    private async runOpenScoreUsdReplay(): Promise<void> {
-        if (this.analysisInFlight) return;
-        this.analysisInFlight = true;
-        this.analysisCancelRequested = false;
-        const dom = this.getDom();
-        try {
-            if (!this.serverHasArtifacts) {
-                dom.batchBacktestOpenScoreUsdSummary.textContent = "Run Batch first.";
-                return;
-            }
-            if (!this.lastRunFingerprint) {
-                dom.batchBacktestOpenScoreUsdSummary.textContent = "Rerun Batch; settings or symbols changed.";
-                dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
-                return;
-            }
-            if (this.analysisCancelRequested) return;
-            // Horizons: comma-separated positive bar counts. Required in v1.
-            const horizonsRaw = dom.batchBacktestOpenScoreUsdHorizons.value.trim();
-            const horizons = horizonsRaw
-                ? horizonsRaw.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 1).map((n) => Math.floor(n))
-                : [];
-            if (horizons.length === 0) {
-                dom.batchBacktestOpenScoreUsdSummary.textContent = "Enter at least one positive horizon (e.g. 12,24,48).";
-                dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
-                return;
-            }
-            // Optional decision-event date window (YYYY-MM-DD); blank = full side.
-            const sampleFrom = dom.batchBacktestOpenScoreUsdFrom.value.trim();
-            const sampleTo = dom.batchBacktestOpenScoreUsdTo.value.trim();
-            // Cap-tilt weighting (docs/open-score-cap-tilt.md). "off" is
-            // omitted from the body so baseline requests stay byte-identical
-            // to the pre-cap-tilt shape.
-            const capTiltWeight = dom.batchBacktestOpenScoreUsdCapTilt.value;
-            // Slippage/commission are NOT request fields: the server derives
-            // them from the retained Batch run's slippageBps / commission so
-            // the OPEN_SCORE USD replay uses the same execution-cost
-            // assumptions as the artifacts it reads.
-
-            this.beginAnalysisBusy(dom);
-            dom.batchBacktestOpenScoreUsdBtn.disabled = true;
-            dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
-            dom.batchBacktestOpenScoreUsdSummary.textContent = "Replaying OPEN_SCORE events on server...";
-            await postBatchNdjson<OpenScoreUsdReplayStreamEvent>({
-                endpoint: "/api/batch-backtest/open-score-usd",
-                body: {
-                    fingerprint: this.lastRunFingerprint,
-                    interval: this.lastRunInterval,
-                    horizons,
-                    ...(sampleFrom ? { sampleFrom } : {}),
-                    ...(sampleTo ? { sampleTo } : {}),
-                    ...(isActiveCapTiltWeight(capTiltWeight) ? { capTiltWeight } : {}),
-                },
-                onResponse: () => this.reissueStopIfNeeded(),
-                handlers: {
-                    onStart: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "start" }>) => {
-                        dom.batchBacktestOpenScoreUsdSummary.textContent =
-                            `OPEN_SCORE USD — ${event.pairs} pairs / ${event.assets} assets / horizons [${event.horizons.join(",")}]`;
-                    },
-                    onPhase: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "phase" }>) => {
-                        const pct = event.total > 0 ? Math.round((event.completed / event.total) * 100) : 0;
-                        dom.batchBacktestOpenScoreUsdSummary.textContent =
-                            `OPEN_SCORE USD — ${event.phase}: ${event.detail} (${pct}%, ${(event.elapsedMs / 1000).toFixed(1)}s)`;
-                    },
-                    onProgress: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "progress" }>) => {
-                        const pct = event.total > 0 ? Math.round((event.completed / event.total) * 100) : 0;
-                        const extra = [];
-                        if (event.events !== undefined) extra.push(`${event.events} events`);
-                        if (event.omitted !== undefined) extra.push(`${event.omitted} omitted`);
-                        const tail = extra.length > 0 ? ` (${extra.join(", ")})` : "";
-                        dom.batchBacktestOpenScoreUsdSummary.textContent =
-                            `OPEN_SCORE USD — ${event.phase}: ${event.detail} (${pct}%, ${(event.elapsedMs / 1000).toFixed(1)}s)${tail}`;
-                    },
-                    onDone: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "done" }>) => {
-                        if (event.ok === true && "result" in event && event.result) {
-                            this.lastOpenScoreUsdResult = event.result;
-                            dom.batchBacktestOpenScoreUsdSummary.textContent = event.result.reportLines.join("\n");
-                            dom.batchBacktestCopyOpenScoreUsdBtn.disabled = event.result.reportLines.length === 0;
-                        } else if (event.ok === false && "summary" in event) {
-                            dom.batchBacktestOpenScoreUsdSummary.textContent = event.summary ?? "OPEN_SCORE USD cancelled.";
-                        } else {
-                            dom.batchBacktestOpenScoreUsdSummary.textContent = "OPEN_SCORE USD finished.";
-                        }
-                    },
-                    onFatal: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "fatal" }>) => {
-                        throw new Error(event.error);
-                    },
-                },
-            });
-        } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            this.lastOpenScoreUsdResult = null;
-            dom.batchBacktestOpenScoreUsdSummary.textContent = `OPEN_SCORE USD error: ${message}`;
-            dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
-            debugLogger.error("batch_open_score_usd.server_failed", { error: message });
-        } finally {
-            await this.finishAnalysisBusy(dom);
-        }
+    public async runOpenScoreUsdReplay(): Promise<void> {
+        await this.openScore.run();
     }
 
-    private async copyOpenScoreUsdResults(): Promise<void> {
-        if (!this.lastOpenScoreUsdResult) {
-            uiManager.showToast("No OPEN_SCORE USD report to copy", "info");
-            return;
-        }
-        const text = this.lastOpenScoreUsdResult.reportLines.join("\n");
-        const copied = await copyToClipboard(text);
-        if (copied) {
-            uiManager.showToast("OPEN_SCORE USD report copied", "success");
-        } else {
-            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
-        }
+    public async copyOpenScoreUsdResults(): Promise<void> {
+        await this.openScore.copyResults();
     }
 
     /**
@@ -839,101 +629,18 @@ export class BatchBacktestService {
         );
     }
 
-    /**
-     * Balanced Generator — Generate-and-Apply. Reads the assets textarea,
-     * maxPairs, and seed; runs the pure generator; on success writes the
-     * generated pair list to the existing Pairs textarea and dispatches its
-     * input event so the existing fingerprint/result invalidation path runs
-     * exactly as if the user had pasted the list manually. On failure the
-     * textarea and provenance are left untouched and actionable errors are
-     * shown in the summary area.
-     */
-    private async generateAndApplyBalancedPairList(): Promise<void> {
-        const dom = this.getDom();
-        // Authoritative guard fires before any work; the disabled button is
-        // the visual signal but cannot be the only gate (a stale tab could
-        // re-enable it via reattach).
-        if (this.balancedGeneratorActionGuard()) {
-            dom.batchBacktestBalancedSummary.textContent =
-                "Generator unavailable while a Batch run, analysis, or Stop transition is in progress.";
-            return;
-        }
-        const rawAssets = dom.batchBacktestBalancedAssets.value;
-        const assets = rawAssets.split(/\r?\n/).map((l) => l.trim()).filter((l) => l.length > 0);
-        const maxPairs = this.readClampedInt(dom.batchBacktestBalancedMaxPairs.value, BALANCED_PAIR_LIST_MAX_PAIRS, 1, BALANCED_PAIR_LIST_MAX_PAIRS);
-        const seedRaw = Number.parseInt(dom.batchBacktestBalancedSeed.value, 10);
-        const seed = Number.isFinite(seedRaw) ? Math.max(1, Math.floor(seedRaw)) : 1;
-        // The pure generator is synchronous; wrap in await so future async
-        // extensions (canonicalization that needs a loader) plug in cleanly.
-        const result = generateBalancedPairList({ assets, maxPairs, seed });
-        if (!result.ok) {
-            // Leave the textarea AND the provenance untouched.
-            const errors = result.errors.length > 0 ? result.errors : ["Generation failed."];
-            dom.batchBacktestBalancedSummary.textContent = errors.join("\n");
-            dom.batchBacktestBalancedCopyBtn.disabled = true;
-            return;
-        }
-        // Apply: write the textarea and dispatch the input event so the
-        // existing fingerprint/result invalidation path runs identically to
-        // a manual paste. Set the remembered provenance BEFORE the dispatch
-        // so the input listener's stale-check sees the matching hash and
-        // keeps it.
-        this.lastBalancedPairListResult = result;
-        this.activePairListProvenance = result.provenance;
-        dom.batchBacktestSymbols.value = result.pairs.join("\n");
-        dom.batchBacktestBalancedCopyBtn.disabled = false;
-        dom.batchBacktestBalancedSummary.textContent = formatBalancedPairListSummary(result);
-        // Dispatch the existing input invalidation path. Fall back to a
-        // plain Event when InputEvent is not available (older Node test
-        // harnesses without a DOM polyfill); the bound handler does not read
-        // any InputEvent-specific field.
-        const EventCtor = typeof InputEvent !== "undefined" ? InputEvent : Event;
-        dom.batchBacktestSymbols.dispatchEvent(new EventCtor("input", { bubbles: true }));
-        // The dispatched input handler runs clearStaleResults + updateSummary;
-        // we then re-affirm the provenance (clearActivePairListProvenanceIfStale
-        // inside the input handler keeps it because the hash matches).
+    public async generateAndApplyBalancedPairList(): Promise<void> {
+        await this.balanced.generateAndApply();
     }
 
-    private async copyBalancedPairList(): Promise<void> {
-        const result = this.lastBalancedPairListResult;
-        if (!result || !result.ok) {
-            uiManager.showToast("No balanced pair list to copy", "info");
-            return;
-        }
-        const text = [
-            ...formatBalancedPairListReportLines(result),
-            "",
-            ...result.pairs,
-        ].join("\n");
-        const copied = await copyToClipboard(text);
-        if (copied) {
-            uiManager.showToast(`Copied ${result.pairs.length} generated pairs`, "success");
-        } else {
-            this.getDom().batchBacktestStatus.textContent = "Copy failed.";
-        }
+    public async copyBalancedPairList(): Promise<void> {
+        await this.balanced.copyGenerated();
     }
 
-    /**
-     * If the textarea's content no longer matches the active provenance hash,
-     * clear the remembered provenance. Called from the input handler so a
-     * manual edit (or any other mutation) drops the link while a generator
-     * apply re-sets it before the dispatch reaches here.
-     */
-    private clearActivePairListProvenanceIfStale(dom: BatchBacktestDom): void {
-        if (!this.activePairListProvenance) return;
-        const currentText = dom.batchBacktestSymbols.value;
-        // Recompute the emitted-list hash with the same normalization the
-        // generator used (parseBatchSymbols dedupes + uppercases + trims).
-        const normalized = parseBatchSymbols(currentText);
-        const currentHash = fnv1a64Hex(normalized.join("\n"));
-        if (currentHash !== this.activePairListProvenance.emittedPairListHash) {
-            this.activePairListProvenance = null;
-        }
-    }
 
     /** Server-side access to the active provenance (Phase 3 Batch run submission). */
     getActivePairListProvenance(): PairListProvenanceV1 | null {
-        return this.activePairListProvenance;
+        return this.balanced.getActiveProvenance();
     }
 
     private loadPersistedLatestResults(dom: BatchBacktestDom): void {
@@ -1014,11 +721,6 @@ export class BatchBacktestService {
      * The full pipe summary stays the clipboard / Copy Results surface.
      */
 
-    private readClampedInt(raw: string, fallback: number, min: number, max: number): number {
-        const parsed = Number.parseInt(raw, 10);
-        const value = Number.isFinite(parsed) ? parsed : fallback;
-        return Math.max(min, Math.min(max, Math.floor(value)));
-    }
 
     /**
      * Audit Finding 6: the coordinator preflight strategy gate. Kept on the
@@ -1164,22 +866,6 @@ export class BatchBacktestService {
  * area. Surfaces the effective seed/maxPairs, asset/relationship counts,
  * degree range, orientation imbalance, omitted count, and asset-list hash.
  */
-function formatBalancedPairListSummary(result: BalancedPairListResult): string {
-    if (!result.ok) {
-        return result.errors.length > 0 ? result.errors.join("; ") : "Generation failed.";
-    }
-    const p = result.provenance;
-    const omitted = result.omittedPairCount > 0 ? ` omitted=${result.omittedPairCount}` : "";
-    const aliases = result.aliasCollisions.length > 0 ? ` aliases=${result.aliasCollisions.length}` : "";
-    const invalid = result.invalidTokens.length > 0 ? ` invalid=${result.invalidTokens.length}` : "";
-    return [
-        `Balanced | seed=${p.effectiveSeed} max=${p.effectiveMaxPairs}`,
-        `assets=${p.assetCount} pairs=${p.pairCount}`,
-        `deg=${p.degree.min}-${p.degree.median.toFixed(1)}-${p.degree.max}`,
-        `orientImbalance=${p.orientationImbalanceMax}`,
-        `hash=${p.emittedPairListHash.slice(0, 12)}`,
-    ].join(" ") + omitted + aliases + invalid;
-}
 
 /**
  * Multi-line report for Copy Generated. Mirrors the summary plus any warnings
@@ -1187,23 +873,6 @@ function formatBalancedPairListSummary(result: BalancedPairListResult): string {
  * is appended separately by the caller so the report and the list stay
  * separable.
  */
-function formatBalancedPairListReportLines(result: BalancedPairListResult): string[] {
-    if (!result.ok) {
-        return ["Balanced Generator failed.", ...result.errors];
-    }
-    const p = result.provenance;
-    const lines: string[] = [
-        `Balanced Generator | ${p.schema} | ${p.algorithm}`,
-        `seed=${p.effectiveSeed} max=${p.effectiveMaxPairs} assets=${p.assetCount} pairs=${p.pairCount}`,
-        `degree min=${p.degree.min} median=${p.degree.median.toFixed(2)} max=${p.degree.max}`,
-        `orientationImbalanceMax=${p.orientationImbalanceMax}`,
-        `candidatePairCount=${result.candidatePairCount} omitted=${result.omittedPairCount}`,
-        `assetListHash=${p.canonicalAssetListHash}`,
-        `pairListHash=${p.emittedPairListHash}`,
-    ];
-    for (const w of result.warnings) lines.push(`WARN: ${w}`);
-    return lines;
-}
 
 export function createBatchBacktestService(): BatchBacktestService {
     return new BatchBacktestService();
