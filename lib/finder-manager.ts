@@ -1,8 +1,7 @@
 import { StrategyParams, type OHLCVData } from "./strategies/index";
-import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, ensureStrategyKeysLoaded, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
+import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, ensureStrategyKeysLoaded } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
-import { paramManager } from "./param-manager";
 import { uiManager } from "./ui-manager";
 import { setVisible } from "./dom-utils";
 import { dataManager } from "./data-manager";
@@ -21,7 +20,6 @@ import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrat
 import { formatCapturedConfiguration } from "./finder/finder-config-capture";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
-import { buildFinderArmPerformanceApplySettings } from "./finder/finder-arm-performance-settings";
 import {
 	buildFinderOptions,
 	buildFinderUniverseOptions,
@@ -32,9 +30,6 @@ import {
 	sliceFinderDataWindow,
 } from "./finder/finder-manager-logic";
 import { sortFinderResults } from "./finder/finder-engine";
-import {
-	mergeFinderRiskParamsIntoBacktestSettings,
-} from "./finder/finder-runner-core";
 import { runCandidateOosPass } from "./finder/finder-candidate-oos";
 import {
 	runStrategyQualityAudit,
@@ -52,8 +47,7 @@ import {
 import { debugLogger } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
-import { strategyPanelController } from "./strategy-panel-controller";
-import { setCurrentInterval, setCurrentStrategyKey } from "./state-actions";
+import { setCurrentInterval } from "./state-actions";
 import { createTaskYielder } from "./task-yield";
 import {
 	createFinderManagerDom,
@@ -94,6 +88,8 @@ import {
 	type FinderPersistedActiveServerRun,
 } from "./finder/browser/finder-persistence";
 import { FinderResultStore } from "./finder/browser/finder-result-store";
+import { FinderStrategySelection } from "./finder/browser/finder-strategy-selection";
+import { FinderResultActions } from "./finder/browser/finder-result-actions";
 import {
 	buildArmPerformanceDiagnosticsPayload,
 	buildArmPerformanceRunConfigurationPayload,
@@ -215,22 +211,31 @@ import type {
 export class FinderManager {
 	private isRunning = false;
 	private runStartupInFlight = false;
-	private applyInFlight = false;
 	private isCancelled = false;
 	private finderRunAbortController: AbortController | null = null;
 	/** Owns every result inventory, display limit, and the run-sort baseline. */
 	private readonly resultStore = new FinderResultStore(
 		(results) => this.saveLatestResultsSnapshot(results),
 	);
+	/** Owns the per-scope strategy selection sets and their checkbox DOM. */
+	private readonly selection = new FinderStrategySelection({
+		getDom: () => this.getDom(),
+		getUiState: () => this.uiState,
+		isUniverseSelectionScope: () => this.usesUniverseStrategySelection(),
+		persist: () => this.saveUiState(),
+	});
+	/** Owns candidate Apply flows and the apply-in-flight guard. */
+	private readonly resultActions = new FinderResultActions({
+		getResultStore: () => this.resultStore,
+		getLastRunBacktestSettings: () => this.lastFinderRunBacktestSettings,
+		getLastFinderOptions: () => this.lastFinderOptions,
+		getLastFinderEvaluationData: () => this.lastFinderEvaluationData,
+	});
 	private latestDiagnostics: FinderDiagnostics | null = null;
 	private latestAssetOpportunityDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
 	private lastFinderRunBacktestSettings: ReturnType<typeof settingsManager.getBacktestSettings> | null = null;
 	private lastFinderOptions: FinderOptions | null = null;
 	private lastFinderEvaluationData: { interval: string; data: OHLCVData[] } | null = null;
-	private strategyToggles: Map<string, HTMLInputElement> = new Map();
-	private strategyItems: Map<string, HTMLDivElement> = new Map();
-	private strategyOrder: string[] = [];
-	private lastStrategyToggleKey: string | null = null;
 	private uiState: FinderPersistedUiState = normalizeFinderUiState(null);
 	private readonly ui = new FinderUI();
 	private readonly persistUiStateDebounced = debounce(() => this.saveUiState(), 300);
@@ -497,6 +502,12 @@ export class FinderManager {
 		}
 	}
 
+	private readFinderNumberInput(input: HTMLInputElement, fallback: number, min?: number): number {
+		const value = parseInputNumber(input.value);
+		if (value === null) return fallback;
+		return min === undefined ? value : Math.max(min, value);
+	}
+
 	private applyPersistedUiStateToDom(): void {
 		const dom = this.getDom();
 		dom.finderScope.value = this.uiState.scope;
@@ -601,21 +612,21 @@ export class FinderManager {
 			if (this.resultStore.latestResults.scope === "current_chart") {
 				const result = this.resultStore.latestResults.results[index];
 				if (result) {
-					void this.runFinderApply(() => this.applyCurrentChartResult(result));
+					void this.resultActions.runFinderApply(() => this.resultActions.applyCurrentChartResult(result));
 				}
 				return;
 			}
 			if (this.resultStore.latestResults.scope === "asset_opportunity") {
 				const assetResult = this.resultStore.latestResults.results[index];
 				if (assetResult) {
-					void this.runFinderApply(() => this.applyAssetOpportunityResult(assetResult));
+					void this.resultActions.runFinderApply(() => this.resultActions.applyAssetOpportunityResult(assetResult));
 				}
 				return;
 			}
 			if (this.resultStore.latestResults.scope === "arm_performance") {
 				const candidate = this.resultStore.latestResults.results[index];
 				if (candidate) {
-					void this.runFinderApply(() => this.applyArmPerformanceCandidate(candidate));
+					void this.resultActions.runFinderApply(() => this.resultActions.applyArmPerformanceCandidate(candidate));
 				}
 				return;
 			}
@@ -624,11 +635,11 @@ export class FinderManager {
 			}
 			const candidate = this.resultStore.latestResults.results[index];
 			if (candidate) {
-				void this.runFinderApply(() => this.applyUniverseCandidate(candidate));
+				void this.resultActions.runFinderApply(() => this.resultActions.applyUniverseCandidate(candidate));
 			}
 		});
 
-		this.renderStrategySelection();
+		this.selection.renderStrategySelection();
 		this.initStrategySelectionUI();
 
 		this.initSortingUI();
@@ -800,7 +811,7 @@ export class FinderManager {
 			if (!checkbox || !strategyKey || !dom.finderStrategyList.contains(checkbox)) {
 				return;
 			}
-			this.handleStrategyToggleClick(strategyKey, event as MouseEvent);
+			this.selection.handleStrategyToggleClick(strategyKey, event as MouseEvent);
 		});
 
 		dom.finderStrategyList.addEventListener('change', (event) => {
@@ -810,39 +821,39 @@ export class FinderManager {
 			if (!checkbox || !strategyKey || !dom.finderStrategyList.contains(checkbox)) {
 				return;
 			}
-			this.handleStrategyToggleChange(strategyKey);
+			this.selection.handleStrategyToggleChange(strategyKey);
 		});
 
 		dom.finderStrategiesToggleAll.addEventListener('change', (event) => {
-			this.setStrategySelection(this.strategyOrder, (event.target as HTMLInputElement).checked);
+			this.selection.setStrategySelection(this.selection.strategyOrder, (event.target as HTMLInputElement).checked);
 		});
 
 		dom.finderStrategySearch.addEventListener('input', () => {
-			this.applyStrategyFilter();
+			this.selection.applyStrategyFilter();
 		});
 
 		dom.finderStrategySelectAll.addEventListener('click', () => {
-			this.setStrategySelection(this.strategyOrder, true);
+			this.selection.setStrategySelection(this.selection.strategyOrder, true);
 		});
 
 		dom.finderStrategySelectNone.addEventListener('click', () => {
-			this.setStrategySelection(this.strategyOrder, false);
+			this.selection.setStrategySelection(this.selection.strategyOrder, false);
 		});
 
 		dom.finderStrategyInvertVisible.addEventListener('click', () => {
-			this.invertStrategySelection(this.getVisibleStrategyKeys());
+			this.selection.invertStrategySelection(this.selection.getVisibleStrategyKeys());
 		});
 
 		dom.finderStrategySelectVisible.addEventListener('click', () => {
-			this.setStrategySelection(this.getVisibleStrategyKeys(), true);
+			this.selection.setStrategySelection(this.selection.getVisibleStrategyKeys(), true);
 		});
 
 		dom.finderStrategySelectFollow.addEventListener('click', () => {
-			this.replaceStrategySelection(FINDER_FOLLOW_STRATEGY_KEYS);
+			this.selection.replaceStrategySelection(FINDER_FOLLOW_STRATEGY_KEYS);
 		});
 
 		dom.finderStrategySelectReversion.addEventListener('click', () => {
-			this.replaceStrategySelection(FINDER_REVERSION_STRATEGY_KEYS);
+			this.selection.replaceStrategySelection(FINDER_REVERSION_STRATEGY_KEYS);
 		});
 	}
 
@@ -852,8 +863,8 @@ export class FinderManager {
 		dom.finderScope.addEventListener("change", () => {
 			this.uiState.scope = normalizeFinderScope(dom.finderScope.value);
 			this.applyScopeUi();
-			this.syncStrategyToggleInputsFromState();
-			this.syncStrategySelectionUi();
+			this.selection.syncStrategyToggleInputsFromState();
+			this.selection.syncStrategySelectionUi();
 			this.ui.renderRandomBenchmark("grid");
 			this.renderLatestResults();
 			this.saveUiState();
@@ -960,8 +971,8 @@ export class FinderManager {
 		dom.finderStrategiesToggleAll.disabled = false;
 		dom.finderStrategySelectAll.disabled = false;
 		dom.finderStrategySelectNone.disabled = false;
-		dom.finderStrategyInvertVisible.disabled = this.getVisibleStrategyKeys().length === 0;
-		dom.finderStrategySelectVisible.disabled = this.getVisibleStrategyKeys().length === 0;
+		dom.finderStrategyInvertVisible.disabled = this.selection.getVisibleStrategyKeys().length === 0;
+		dom.finderStrategySelectVisible.disabled = this.selection.getVisibleStrategyKeys().length === 0;
 		modeInput.disabled = modeLockedScope;
 		const geneticOption = Array.from(modeInput.options).find((option) => option.value === "genetic");
 		if (geneticOption) geneticOption.disabled = armPerformanceScope;
@@ -1188,8 +1199,8 @@ const applicable = oosCapableWindow;
 		};
 		this.renderSortList();
 		this.applyPersistedUiStateToDom();
-		this.syncStrategyToggleInputsFromState();
-		this.syncStrategySelectionUi();
+		this.selection.syncStrategyToggleInputsFromState();
+		this.selection.syncStrategySelectionUi();
 		this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
 		this.applyScopeUi();
 		this.saveUiState();
@@ -1229,229 +1240,6 @@ const applicable = oosCapableWindow;
 				button.disabled = disabled;
 			});
 		}
-	}
-
-	private getCurrentChartSelectedStrategyKeys(): Set<string> {
-		return new Set(this.uiState.currentChartSelectedStrategyKeys);
-	}
-
-	private getUniverseSelectedStrategyKeys(): Set<string> {
-		return new Set(this.uiState.universeSelectedStrategyKeys);
-	}
-
-	private syncStrategyToggleInputsFromState(): void {
-		this.strategyToggles.forEach((toggle, key) => {
-			toggle.checked = this.isStrategySelected(key);
-		});
-	}
-
-	private isStrategySelected(key: string): boolean {
-		return this.usesUniverseStrategySelection()
-			? this.getUniverseSelectedStrategyKeys().has(key)
-			: this.getCurrentChartSelectedStrategyKeys().has(key);
-	}
-
-	private renderStrategySelection(): void {
-		const container = this.getDom().finderStrategyList;
-		container.innerHTML = '';
-		this.strategyToggles.clear();
-		this.strategyItems.clear();
-		this.strategyOrder = [];
-		this.lastStrategyToggleKey = null;
-
-		const strategies = strategyRegistry.getAll();
-		const allStrategies = getStrategyList();
-		const fragment = document.createDocumentFragment();
-
-		for (const { key, name } of allStrategies) {
-			const strategy = strategies[key];
-			const displayName = strategy?.name ?? name;
-			const kind = getStrategyKind(key, strategy);
-			const item = document.createElement('div');
-			item.className = 'strategy-list-item';
-			item.dataset.strategyKey = key;
-			item.dataset.strategyName = displayName.toLowerCase();
-			item.dataset.strategyKind = kind;
-			item.title = getStrategyKindTitle(kind);
-
-			const checkbox = document.createElement('input');
-			checkbox.type = 'checkbox';
-			checkbox.id = `finder-strategy-${key}`;
-			checkbox.checked = this.isStrategySelected(key);
-			checkbox.dataset.strategyKey = key;
-
-			const label = document.createElement('label');
-			label.htmlFor = `finder-strategy-${key}`;
-			label.textContent = displayName;
-
-			item.appendChild(checkbox);
-			item.appendChild(label);
-			fragment.appendChild(item);
-
-			this.strategyToggles.set(key, checkbox);
-			this.strategyItems.set(key, item);
-			this.strategyOrder.push(key);
-		}
-		container.appendChild(fragment);
-
-		this.applyStrategyFilter();
-		this.syncStrategySelectionUi();
-	}
-
-	private readFinderNumberInput(input: HTMLInputElement, fallback: number, min?: number): number {
-		const value = parseInputNumber(input.value);
-		if (value === null) return fallback;
-		return min === undefined ? value : Math.max(min, value);
-	}
-
-	private handleStrategyToggleClick(strategyKey: string, event: MouseEvent): void {
-		const checkbox = this.strategyToggles.get(strategyKey);
-		if (!checkbox) return;
-
-		if (event.shiftKey && this.lastStrategyToggleKey) {
-			const orderedKeys = this.getStrategyKeysForRangeSelection();
-			const startIndex = orderedKeys.indexOf(this.lastStrategyToggleKey);
-			const endIndex = orderedKeys.indexOf(strategyKey);
-
-			if (startIndex !== -1 && endIndex !== -1) {
-				const [from, to] = startIndex < endIndex ? [startIndex, endIndex] : [endIndex, startIndex];
-				this.setStrategySelection(orderedKeys.slice(from, to + 1), checkbox.checked, false);
-			}
-		}
-
-		this.lastStrategyToggleKey = strategyKey;
-		this.syncStrategySelectionUi();
-	}
-
-	private handleStrategyToggleChange(strategyKey: string): void {
-		const checkbox = this.strategyToggles.get(strategyKey);
-		if (!checkbox) {
-			return;
-		}
-
-		const selected = this.usesUniverseStrategySelection()
-			? this.getUniverseSelectedStrategyKeys()
-			: this.getCurrentChartSelectedStrategyKeys();
-		if (checkbox.checked) {
-			selected.add(strategyKey);
-		} else {
-			selected.delete(strategyKey);
-		}
-		if (this.usesUniverseStrategySelection()) {
-			this.uiState.universeSelectedStrategyKeys = [...selected];
-		} else {
-			this.uiState.currentChartSelectedStrategyKeys = [...selected];
-		}
-		this.saveUiState();
-		this.syncStrategySelectionUi();
-	}
-
-	private getStrategyKeysForRangeSelection(): string[] {
-		const visibleKeys = this.getVisibleStrategyKeys();
-		return visibleKeys.length > 0 ? visibleKeys : this.strategyOrder;
-	}
-
-	private getVisibleStrategyKeys(): string[] {
-		return this.strategyOrder.filter((key) => {
-			const item = this.strategyItems.get(key);
-			return item ? !item.hidden : false;
-		});
-	}
-
-	private setStrategySelection(strategyKeys: Iterable<string>, checked: boolean, syncUi = true): void {
-		const selected = this.usesUniverseStrategySelection()
-			? this.getUniverseSelectedStrategyKeys()
-			: this.getCurrentChartSelectedStrategyKeys();
-		for (const key of strategyKeys) {
-			const toggle = this.strategyToggles.get(key);
-			if (toggle) {
-				toggle.checked = checked;
-				if (checked) {
-					selected.add(key);
-				} else {
-					selected.delete(key);
-				}
-			}
-		}
-		if (this.usesUniverseStrategySelection()) {
-			this.uiState.universeSelectedStrategyKeys = [...selected];
-		} else {
-			this.uiState.currentChartSelectedStrategyKeys = [...selected];
-		}
-		this.saveUiState();
-
-		if (syncUi) {
-			this.syncStrategySelectionUi();
-		}
-	}
-
-	private replaceStrategySelection(strategyKeys: readonly string[]): void {
-		const availableKeys = strategyKeys.filter((key) => this.strategyToggles.has(key));
-		this.setStrategySelection(this.strategyOrder, false, false);
-		this.setStrategySelection(availableKeys, true);
-	}
-
-	private invertStrategySelection(strategyKeys: Iterable<string>): void {
-		const selected = this.usesUniverseStrategySelection()
-			? this.getUniverseSelectedStrategyKeys()
-			: this.getCurrentChartSelectedStrategyKeys();
-		for (const key of strategyKeys) {
-			const toggle = this.strategyToggles.get(key);
-			if (toggle) {
-				toggle.checked = !toggle.checked;
-				if (toggle.checked) {
-					selected.add(key);
-				} else {
-					selected.delete(key);
-				}
-			}
-		}
-		if (this.usesUniverseStrategySelection()) {
-			this.uiState.universeSelectedStrategyKeys = [...selected];
-		} else {
-			this.uiState.currentChartSelectedStrategyKeys = [...selected];
-		}
-		this.saveUiState();
-
-		this.syncStrategySelectionUi();
-	}
-
-	private applyStrategyFilter(): void {
-		const { finderStrategySearch: searchInput } = this.getDom();
-		const query = searchInput.value.trim().toLowerCase();
-
-		this.strategyItems.forEach((item) => {
-			const strategyName = item.dataset.strategyName ?? '';
-			item.hidden = query.length > 0 && !strategyName.includes(query);
-		});
-
-		this.syncStrategySelectionUi();
-	}
-
-	private syncStrategySelectionUi(): void {
-		const dom = this.getDom();
-		const totalCount = this.strategyOrder.length;
-		const visibleKeys = this.getVisibleStrategyKeys();
-		const visibleSet = new Set(visibleKeys);
-		let selectedCount = 0;
-		let visibleSelectedCount = 0;
-
-		this.strategyToggles.forEach((toggle, key) => {
-			if (!toggle.checked) return;
-			selectedCount += 1;
-			if (visibleSet.has(key)) {
-				visibleSelectedCount += 1;
-			}
-		});
-
-		const hasFilter = dom.finderStrategySearch.value.trim().length > 0;
-		dom.finderStrategiesToggleAll.checked = totalCount > 0 && selectedCount === totalCount;
-		dom.finderStrategiesToggleAll.indeterminate = selectedCount > 0 && selectedCount < totalCount;
-		dom.finderStrategySelectVisible.disabled = visibleKeys.length === 0;
-		dom.finderStrategyInvertVisible.disabled = visibleKeys.length === 0;
-		dom.finderStrategySummary.textContent = hasFilter
-			? `${selectedCount} selected | ${visibleKeys.length} visible | ${visibleSelectedCount} visible selected`
-			: `${selectedCount} selected`;
 	}
 
 	private async loadSelectedStrategy(strategyKey: string): Promise<FinderSelectedStrategy | null> {
@@ -3598,251 +3386,6 @@ if (oosWindowActive) {
 		}
 	}
 
-	/**
-	 * Resolve a Finder result's strategy, lazy-loading the built-in if it isn't
-	 * registered yet (the common case after a tab reload — only the
-	 * startup/current built-ins are eagerly registered, so restored Finder rows
-	 * for other built-ins reference strategies that aren't loaded). Returns
-	 * `null` if the strategy genuinely does not exist (deleted custom strategy
-	 * or unknown key) so Apply can surface a visible error instead of silently
-	 * no-op'ing (audit finding 4).
-	 *
-	 * Both Apply paths (current-chart + Universe) share this seam so the
-	 * lazy-load + missing-strategy behavior is identical.
-	 */
-	private async resolveFinderResultStrategy(strategyKey: string): Promise<NonNullable<ReturnType<typeof strategyRegistry.get>> | null> {
-		const strategy = strategyRegistry.get(strategyKey)
-			?? await loadBuiltInStrategyByKey(strategyKey);
-		return strategy ?? null;
-	}
-
-	private async runFinderApply(work: () => Promise<void>): Promise<void> {
-		if (this.applyInFlight) {
-			uiManager.showToast('A Finder result is already being applied. Wait for it to finish.', 'info');
-			return;
-		}
-		this.applyInFlight = true;
-		try {
-			await work();
-		} finally {
-			this.applyInFlight = false;
-		}
-	}
-
-	private async applyArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate): Promise<void> {
-		const runContext = this.resultStore.armPerformanceRunContext
-			?? (this.resultStore.latestResults.scope === 'arm_performance' ? this.resultStore.latestResults.runContext : null);
-		const savedInterval = (candidate.backtestSettings as unknown as { interval?: unknown }).interval;
-		const context = runContext
-			?? this.resultStore.armPerformanceApplyContext
-			?? {
-				interval: typeof savedInterval === 'string' ? savedInterval : state.currentInterval,
-				uiBacktestSettings: settingsManager.getBacktestSettings(),
-				capitalSettings: backtestService.getCapitalSettings(),
-			};
-		const interval = runContext?.interval
-			?? this.resultStore.armPerformanceApplyContext?.interval
-			?? (typeof savedInterval === 'string' ? savedInterval : state.currentInterval);
-		const usedFallbackContext = !runContext && !this.resultStore.armPerformanceApplyContext;
-		const strategy = await this.resolveFinderResultStrategy(candidate.strategyKey);
-		if (!strategy) {
-			uiManager.showToast(`Strategy no longer available: ${candidate.strategyKey}. Apply aborted.`, 'error');
-			return;
-		}
-
-		try {
-			if (state.currentInterval !== interval) {
-				setCurrentInterval(interval);
-				await dataManager.loadData(state.currentSymbol, interval);
-			}
-			setCurrentStrategyKey(candidate.strategyKey);
-			uiManager.updateStrategyDropdown(candidate.strategyKey);
-			paramManager.render(strategy);
-			paramManager.setValues(strategy, candidate.params);
-			settingsManager.applyBacktestSettings(buildFinderArmPerformanceApplySettings(context, candidate));
-			strategyPanelController.switchTab('trades');
-			await backtestService.runCurrentBacktest();
-			uiManager.showToast(
-				`Applied ${candidate.strategyName} from Arm Performance. The normal backtest is running on the current chart; the pair-universe replay is not a chart P&L result.`,
-				'info',
-			);
-			if (usedFallbackContext) {
-				uiManager.showToast('Original Arm Performance context was unavailable; used saved candidate settings and current capital settings.', 'info');
-			}
-		} catch (error) {
-			debugLogger.error('finder.apply_arm_performance_backtest_failed', {
-				candidateId: candidate.candidateId,
-				strategyKey: candidate.strategyKey,
-				error: error instanceof Error ? error.message : String(error),
-			});
-			uiManager.showToast('Unable to apply the Arm Performance configuration to the current chart.', 'error');
-		}
-	}
-
-	private async applyCurrentChartResult(result: FinderResult): Promise<void> {
-
-		// Load the strategy BEFORE mutating currentStrategyKey / dropdown so a
-		// missing strategy leaves the prior selection unchanged (audit finding
-		// 4). Previously the key was flipped first and Apply then silently
-		// returned if the registry lookup failed, leaving the UI in a
-		// half-updated state with the wrong strategy active.
-		const strategy = await this.resolveFinderResultStrategy(result.key);
-		if (!strategy) {
-			uiManager.showToast(
-				`Strategy no longer available: ${result.key}. Apply aborted; current strategy unchanged.`,
-				'error',
-			);
-			debugLogger.warn('finder.apply_strategy_missing', { strategyKey: result.key });
-			return;
-		}
-		setCurrentStrategyKey(result.key);
-		uiManager.updateStrategyDropdown(result.key);
-		paramManager.render(strategy);
-		paramManager.setValues(strategy, result.params);
-
-this.applyFinderBacktestSettings(result.params, result.exitStrategyKey, result.exitStrategyParams);
-		strategyPanelController.switchTab('trades');
-
-		if (result.endpointAdjusted) {
-			uiManager.showToast(
-				'Finder ranked this row on an endpoint-adjusted selection snapshot. Running the raw backtest now.',
-				'info'
-			);
-		}
-
-		try {
-			const snapshot = this.lastFinderEvaluationData?.interval === state.currentInterval
-				? this.cloneOhlcvData(this.lastFinderEvaluationData.data)
-				: null;
-			await backtestService.runCurrentBacktest(snapshot
-				? { dataOverride: snapshot, reason: 'finder_apply_snapshot' }
-				: undefined);
-		} catch (error) {
-			debugLogger.error('finder.apply_result_backtest_failed', {
-				strategyKey: result.key,
-				strategyName: result.name,
-				error: error instanceof Error ? error.message : String(error),
-			});
-			uiManager.showToast('Backtest rerun failed after applying Finder result.', 'error');
-		}
-	}
-
-	private async applyUniverseCandidate(candidate: FinderUniverseCandidate): Promise<void> {
-		// Load the strategy BEFORE mutating currentStrategyKey / dropdown (same
-		// reasoning as `applyCurrentChartResult`; audit finding 4).
-		const strategy = await this.resolveFinderResultStrategy(candidate.strategyKey);
-		if (!strategy) {
-			uiManager.showToast(
-				`Strategy no longer available: ${candidate.strategyKey}. Apply aborted; current strategy unchanged.`,
-				'error',
-			);
-			debugLogger.warn('finder.apply_universe_strategy_missing', { strategyKey: candidate.strategyKey });
-			return;
-		}
-		setCurrentStrategyKey(candidate.strategyKey);
-		uiManager.updateStrategyDropdown(candidate.strategyKey);
-
-		paramManager.render(strategy);
-		paramManager.setValues(strategy, candidate.params);
-this.applyFinderBacktestSettings(candidate.params, candidate.exitStrategyKey, candidate.exitStrategyParams);
-		strategyPanelController.switchTab('trades');
-
-		try {
-			await backtestService.runCurrentBacktest();
-			uiManager.showToast(
-				`Applied Symbol Universe survivor: ${candidate.profitableSymbols}/${candidate.activeSymbols} profitable active symbols, ${candidate.totalTrades} total trades.`,
-				'success'
-			);
-		} catch (error) {
-			debugLogger.error('finder.apply_universe_result_backtest_failed', {
-				strategyKey: candidate.strategyKey,
-				strategyName: candidate.strategyName,
-				error: error instanceof Error ? error.message : String(error),
-			});
-			uiManager.showToast('Backtest rerun failed after applying Symbol Universe result.', 'error');
-		}
-	}
-
-	/**
-	 * Apply an Asset Opportunity result. Sets the selected asset as the current
-	 * symbol, selects the winning strategy, applies its parameters through the
-	 * existing state/settings actions, and runs the normal backtest. Mirrors the
-	 * universe Apply path.
-	 */
-	private async applyAssetOpportunityResult(result: FinderAssetOpportunityResult): Promise<void> {
-		const strategy = await this.resolveFinderResultStrategy(result.strategyKey);
-		if (!strategy) {
-			uiManager.showToast(
-				`Strategy no longer available: ${result.strategyKey}. Apply aborted; current strategy unchanged.`,
-				'error',
-			);
-			debugLogger.warn('finder.apply_asset_opportunity_strategy_missing', { strategyKey: result.strategyKey });
-			return;
-		}
-		// Load the asset through the existing data-loading path so provider
-		// classification is preserved (current-chart Apply assumes the symbol is
-		// already loaded; the asset-opportunity symbol may not be).
-		try {
-			await this.loadAssetForApply(result.symbol);
-		} catch (error) {
-			debugLogger.error('finder.apply_asset_opportunity_load_failed', {
-				symbol: result.symbol,
-				error: error instanceof Error ? error.message : String(error),
-			});
-			uiManager.showToast(`Failed to load ${result.symbol} for Apply.`, 'error');
-			return;
-		}
-		setCurrentStrategyKey(result.strategyKey);
-		uiManager.updateStrategyDropdown(result.strategyKey);
-		paramManager.render(strategy);
-		paramManager.setValues(strategy, result.params);
-this.applyFinderBacktestSettings(result.params, result.exitStrategyKey, result.exitStrategyParams);
-		strategyPanelController.switchTab('trades');
-		try {
-			await backtestService.runCurrentBacktest();
-			uiManager.showToast(
-				`Applied Asset Opportunity: ${result.symbol} (${result.grade}) — rank ${result.historicalRank}, expectancy ${result.selectionResult.expectancy.toFixed(2)}.`,
-				'success',
-			);
-		} catch (error) {
-			debugLogger.error('finder.apply_asset_opportunity_backtest_failed', {
-				symbol: result.symbol,
-				strategyKey: result.strategyKey,
-				error: error instanceof Error ? error.message : String(error),
-			});
-			uiManager.showToast('Backtest rerun failed after applying Asset Opportunity result.', 'error');
-		}
-	}
-
-	/**
-	 * Loads the given symbol through the existing data-loading path so an Asset
-	 * Opportunity Apply preserves provider classification.
-	 */
-	private async loadAssetForApply(symbol: string): Promise<void> {
-		if (symbol === state.currentSymbol) return;
-		await dataManager.loadData(symbol, state.currentInterval);
-	}
-
-	private applyFinderBacktestSettings(
-		params: StrategyParams,
-		exitStrategyKey?: string,
-		exitStrategyParams?: StrategyParams
-	): void {
-		const baseSettings = this.lastFinderRunBacktestSettings
-			? this.cloneBacktestSettings(this.lastFinderRunBacktestSettings)
-			: settingsManager.getBacktestSettings();
-		// `params` is already entry-only: buildFinderResult split exit params into
-		// exitStrategyParams when it built the result. Merge directly.
-		const mergedSettings = mergeFinderRiskParamsIntoBacktestSettings(baseSettings, params, this.lastFinderOptions ?? undefined);
-		if (exitStrategyKey) {
-			mergedSettings.disableSignalExits = true;
-			mergedSettings.exitStrategyOverrideEnabled = true;
-			mergedSettings.exitStrategyKey = exitStrategyKey;
-			mergedSettings.exitStrategyParams = { ...(exitStrategyParams ?? {}) };
-		}
-		settingsManager.applyBacktestSettings(mergedSettings);
-	}
-
 	private setProgress(active: boolean, percent: number, text: string): void {
 		this.ui.setProgress(active, percent, text);
 	}
@@ -3853,10 +3396,6 @@ this.applyFinderBacktestSettings(result.params, result.exitStrategyKey, result.e
 
 	private cloneBacktestSettings<T>(settings: T): T {
 		return cloneJsonCompatible(settings);
-	}
-
-	private cloneOhlcvData(data: OHLCVData[]): OHLCVData[] {
-		return data.map((candle) => ({ ...candle }));
 	}
 
 	public getLatestResults(): FinderLatestResults {
