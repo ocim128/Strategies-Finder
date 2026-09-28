@@ -240,6 +240,9 @@ export class BatchBacktestService {
         dom.batchBacktestCopyBtn.addEventListener("click", () => {
             void this.copyResults();
         });
+        dom.batchBacktestCopyOpenPositionsBtn.addEventListener("click", () => {
+            void this.copyOpenPositionPairs();
+        });
         dom.batchBacktestCopyBenchmarkBtn.addEventListener("click", () => {
             void this.copyBenchmarkPerformance();
         });
@@ -482,6 +485,10 @@ export class BatchBacktestService {
 
     private async copyResults(): Promise<void> {
         await this.batchRun.copyResults(this.lastOpenScoreUsdResult?.reportLines ?? []);
+    }
+
+    private async copyOpenPositionPairs(): Promise<void> {
+        await this.batchRun.copyOpenPositionPairs();
     }
 
     /**

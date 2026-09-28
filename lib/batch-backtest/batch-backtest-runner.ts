@@ -31,6 +31,7 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { isTradeGateEvaluationError, type TradeGate } from "./trade-gate";
 import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
+import { computeOpenPosition, type OpenPositionInfo } from "./batch-open-positions";
 import type { BatchDatasetLoadResult } from "./batch-dataset-loader-core";
 export { parseBatchSymbols } from "./batch-run-contract";
 
@@ -83,6 +84,13 @@ export interface BatchBacktestSymbolResult {
      */
     strategyComparisonPct?: number;
     openTradeAssetScores?: { asset: string; score: number }[];
+    /**
+     * Scalar describing the position still open at the end of this pair's data
+     * (last trade force-closed by `end_of_data`); undefined when the last
+     * trade exited normally. Rides the wire so Copy Open Positions works
+     * without `result.trades`. See `computeOpenPosition`.
+     */
+    openPosition?: OpenPositionInfo;
     /** Compact per-exit-year PnL/trade-count summary for Copy Results. */
     yearlyPnl?: string;
     error?: string;
@@ -493,6 +501,10 @@ function buildSymbolResult(
     // so drop it to free the per-row Signal[] allocation across large batches.
     const isSyntheticPair = parsePortfolioSyntheticPairSymbol(symbol) !== null;
 
+    // Only rows whose position is still open at end of data carry the scalar;
+    // closed rows omit it entirely (undefined on the type).
+    const openPosition = computeOpenPosition(result);
+
     return {
         symbol,
         status,
@@ -504,6 +516,7 @@ function buildSymbolResult(
         signals: isSyntheticPair ? signals : undefined,
         tradeSummary: buildTradeSummary(data, result),
         strategyComparisonPct: resolveStrategyComparisonPct(result, capitalSettings),
+        ...(openPosition ? { openPosition } : {}),
         yearlyPnl: formatYearlyPnl(groupTradesByExitYear(result.trades)),
     };
 }

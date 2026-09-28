@@ -14,6 +14,7 @@ import {
     summarizeRobustness,
 } from "../lib/batch-backtest/batch-backtest-summary";
 import { containsNonEmptyNestedArrays, toScalarRow } from "../lib/batch-backtest/batch-backtest-stream-types";
+import { collectOpenPositionSymbols, computeOpenPosition } from "../lib/batch-backtest/batch-open-positions";
 import { formatYearlyPnl, getBatchRowYearlyPnl, groupTradesByExitYear } from "../lib/batch-backtest/batch-yearly-pnl";
 import { sortBatchResults } from "../lib/batch-backtest/batch-results-sort";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
@@ -274,6 +275,47 @@ describe("computeCurrentMaxActiveCandidates", () => {
     });
 });
 
+describe("computeOpenPosition", () => {
+    it("returns the side of a position still open at end of data", () => {
+        expect(computeOpenPosition(openTradeRow("WLD+BTC", "long").result)).to.deep.equal({ side: "long" });
+        expect(computeOpenPosition(openTradeRow("ETHUSDT", "short").result)).to.deep.equal({ side: "short" });
+    });
+
+    it("returns null when the last trade exited normally", () => {
+        const closed = openTradeRow("WLD+BTC", "long");
+        closed.result!.trades[0]!.exitReason = "signal";
+        expect(computeOpenPosition(closed.result)).to.equal(null);
+    });
+
+    it("returns null when there are no trades or no result", () => {
+        expect(computeOpenPosition(undefined)).to.equal(null);
+        expect(computeOpenPosition({ trades: [] })).to.equal(null);
+    });
+});
+
+describe("collectOpenPositionSymbols", () => {
+    it("lists pairs whose last trade was force-closed at end of data, in run order", () => {
+        expect(collectOpenPositionSymbols([
+            openTradeRow("WLD+BTC", "long"),
+            resultRow("CLOSED", { netProfit: 1, totalTrades: 1 }),
+            openTradeRow("ETHUSDT", "short"),
+        ])).to.deep.equal(["WLD+BTC", "ETHUSDT"]);
+    });
+
+    it("returns empty when every last trade exited normally", () => {
+        const closed = openTradeRow("WLD+BTC", "long");
+        closed.result!.trades[0]!.exitReason = "signal";
+        expect(collectOpenPositionSymbols([closed])).to.deep.equal([]);
+    });
+
+    it("uses the wire scalar when result.trades were stripped server-side", () => {
+        const stripped = openTradeRow("WLD+BTC", "long");
+        stripped.openPosition = { side: "long" };
+        stripped.result!.trades = [];
+        expect(collectOpenPositionSymbols([stripped])).to.deep.equal(["WLD+BTC"]);
+    });
+});
+
 describe("buildBuyHoldRows", () => {
     it("computes alpha = netProfitPercent - buyHoldPct per row", () => {
         // 100 -> 110 = +10% B&H; strategy netProfitPercent 25 -> alpha +15.
@@ -446,6 +488,24 @@ describe("server scalar batch rows", () => {
         // whenever MAX_ACTIVE NOW renders (positives pool is non-empty).
         expect(lines.some((line) => line.startsWith("TOP_RAW NOW |"))).to.equal(true);
         expect(lines.some((line) => line.startsWith("TOP_MEAN NOW |"))).to.equal(true);
+    });
+
+    it("carries the openPosition scalar through toScalarRow only when a position is open", () => {
+        // Full row without the runner scalar: toScalarRow computes the
+        // fallback from the trades (older-runner parity).
+        expect(toScalarRow(openTradeRow("WLD+BTC", "long")).openPosition).to.deep.equal({ side: "long" });
+        expect(toScalarRow(openTradeRow("ETHUSDT", "short")).openPosition).to.deep.equal({ side: "short" });
+
+        // Closed position: the field must not ride the wire at all.
+        const closed = openTradeRow("WLD+BTC", "long");
+        closed.result!.trades[0]!.exitReason = "signal";
+        expect(toScalarRow(closed).openPosition).to.equal(undefined);
+
+        // Runner-computed scalar survives trades stripping (scalar-only rows).
+        const stripped = openTradeRow("WLD+BTC", "long");
+        stripped.openPosition = { side: "long" };
+        stripped.result!.trades = [];
+        expect(toScalarRow(stripped).openPosition).to.deep.equal({ side: "long" });
     });
 
     it("TOP_RAW NOW and TOP_MEAN NOW pick by score and score/activePairs respectively", () => {

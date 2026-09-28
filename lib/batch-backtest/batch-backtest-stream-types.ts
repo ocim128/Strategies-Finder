@@ -12,8 +12,8 @@
  * left `undefined`.
  *
  * Copy parity is preserved by adding tiny derived scalars (`buyHoldPct`,
- * `strategyComparisonPct`, `openTradeAssetScores`, and compact `yearlyPnl`)
- * before stripping the heavy arrays.
+ * `strategyComparisonPct`, `openTradeAssetScores`, `openPosition`, and compact
+ * `yearlyPnl`) before stripping the heavy arrays.
  *
  * Failures (load_failed / run_failed) are transported as ordinary `symbol`
  * events with the failing `status` set on the row; there is no separate
@@ -44,6 +44,7 @@ import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import type { BatchRunPairListProvenanceMeta, BatchUniverseCounts } from "./batch-run-contract";
 import type { MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
+import { computeOpenPosition } from "./batch-open-positions";
 import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
 import type { BacktestResult } from "../types/strategies";
 import type { TradeGateProvenance, TradeGateStats } from "./trade-gate";
@@ -298,6 +299,7 @@ export type BatchTerminalRunStatus = {
  * localStorage paths.
  */
 export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbolResult {
+    const openPosition = row.openPosition ?? computeOpenPosition(row.result);
     return {
         symbol: row.symbol,
         status: row.status,
@@ -311,6 +313,9 @@ export function toScalarRow(row: BatchBacktestSymbolResult): BatchBacktestSymbol
         buyHoldPct: row.buyHoldPct ?? computeBuyAndHoldPct(row.data),
         strategyComparisonPct: row.strategyComparisonPct,
         openTradeAssetScores: row.openTradeAssetScores ?? computeOpenTradeAssetScores([row]),
+        // Copy Open Positions pair list: rides only when a position is still
+        // open at the end of the pair's data.
+        ...(openPosition ? { openPosition } : {}),
         ...(row.yearlyPnl !== undefined
             ? { yearlyPnl: row.yearlyPnl }
             : row.result?.trades?.length

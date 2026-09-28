@@ -177,6 +177,41 @@ describe("runBatchBacktest", () => {
         expect(row.result!.netProfitPercent).to.be.closeTo(2, 1e-9);
     });
 
+    it("flags pairs whose position is still open at end of data with openPosition", async () => {
+        // Enters once and never exits: the engine force-closes the position
+        // at the last candle with `exitReason: "end_of_data"`, which the
+        // Copy Open Positions pair list keys on.
+        const openAtEndStrategy: Strategy = {
+            name: "Open At End",
+            description: "Buys once and never exits.",
+            defaultParams: { threshold: 1 },
+            paramLabels: { threshold: "Threshold" },
+            execute(data) {
+                if (data.length < 2) return [];
+                return [{ time: data[1]!.time, type: "buy", price: data[1]!.close }];
+            },
+        };
+        const output = await runBatchBacktest(
+            {
+                interval: "5m",
+                strategyKey: "batch_test",
+                strategy: openAtEndStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP"],
+                loadDataset: () => Promise.resolve(makeCandles([100, 105, 110, 115, 120])),
+                minUsableBars: 1,
+            },
+            { setProgress: () => {}, setStatus: () => {}, isCancelled: () => false },
+        );
+
+        const row = output.results[0]!;
+        expect(row.result!.totalTrades).to.equal(1);
+        expect(row.result!.trades[0]!.exitReason).to.equal("end_of_data");
+        expect(row.openPosition).to.deep.equal({ side: "long" });
+    });
+
     it("preloads confirmation strategies before replaying the batch", async () => {
         const output = await runBatchBacktest(
             {

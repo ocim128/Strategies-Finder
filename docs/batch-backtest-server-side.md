@@ -225,6 +225,13 @@ In server-side mode, the `symbol` event still strips `data`, `signals`, and
 - `yearlyPnl` preserves per-symbol exit-year PnL and trade counts as one compact
   string (for example, `2020:+120.5(14)|2021:-31.0(9)`). It contains no arrays;
   the browser parses it to build the portfolio yearly section.
+- `openPosition` preserves whether the pair's position was still open at the
+  end of its data (`{ side: "long" | "short" }`; the engine force-closes such
+  positions with `exitReason: end_of_data` on the last trade — the same signal
+  the OPEN_SCORE sections use). It feeds the **Copy Open Positions** button:
+  it copies those pair symbols, one per line (paste-ready into the Pairs
+  textarea). Rows without the scalar (runs made before it existed) cannot be
+  recovered from the browser and are omitted from the list.
 
 The OPEN_SCORE USD replay (POST `/api/batch-backtest/open-score-usd`) produces
 a `reportLines` text array that the engine builds. Both the dedicated
@@ -295,7 +302,9 @@ The `row` sent in `symbol` events contains ONLY scalars — never `data`,
 `signals`, or `result.trades`. Those arrays stay server-side. This is the
 contract that keeps the browser tab bounded regardless of pair count. The
 optional scalar `yearlyPnl` field is the only per-trade-derived yearly payload
-and is encoded as a string; old rows may omit it and render as `n/a`.
+and is encoded as a string; old rows may omit it and render as `n/a`. The
+optional `openPosition` scalar (`{ side }`) is the only per-trade-derived
+open-position payload and feeds Copy Open Positions; old rows may omit it.
 
 ## S&P 500 TOP_MEAN UI Coordinator
 

@@ -30,6 +30,7 @@ import {
     buildBatchRunFingerprint,
 } from "../batch-run-contract";
 import type { BatchBacktestSymbolResult } from "../batch-backtest-runner";
+import { collectOpenPositionSymbols } from "../batch-open-positions";
 import type { PairListProvenanceV1 } from "../balanced-pair-list-generator";
 import { formatBatchOverallSummary } from "../batch-backtest-summary";
 import type { BatchResultSortKey, BatchResultSortState } from "../batch-results-sort";
@@ -396,6 +397,7 @@ export class BatchRunController {
         dom.batchBacktestRunBtn.disabled = true;
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestCopyBtn.disabled = true;
+        dom.batchBacktestCopyOpenPositionsBtn.disabled = true;
         dom.batchBacktestCopyBenchmarkBtn.disabled = true;
         this.setRunBusy(dom, true);
         this.clearStaleRows(dom);
@@ -446,6 +448,7 @@ export class BatchRunController {
                 dom.batchBacktestRunBtn.disabled = false;
                 setVisible(dom.batchBacktestStopBtn, false);
                 dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
+                dom.batchBacktestCopyOpenPositionsBtn.disabled = this.lastResults.length === 0;
                 // In server-side mode the artifacts stay on the server; the
                 // OPEN_SCORE USD button must be gated on the `serverHasArtifacts`
                 // flag (set by the `done` event), not on `row.data !== undefined`
@@ -1015,6 +1018,27 @@ export class BatchRunController {
         }
     }
 
+    /**
+     * Copy Open Positions: the pair symbols whose position was still open at
+     * the end of the run, one per line (paste-ready into the Pairs textarea).
+     * The server stream carries the tiny `openPosition` scalar per row because
+     * `result.trades` never reaches the browser (see `toScalarRow`).
+     */
+    public async copyOpenPositionPairs(): Promise<void> {
+        if (this.lastResults.length === 0) return;
+        const pairs = collectOpenPositionSymbols(this.lastResults);
+        if (pairs.length === 0) {
+            uiManager.showToast("No open positions in the latest run", "info");
+            return;
+        }
+        const copied = await copyToClipboard(pairs.join("\n"));
+        if (copied) {
+            uiManager.showToast(`Copied ${pairs.length} pair${pairs.length === 1 ? "" : "s"} with open positions`, "success");
+        } else {
+            this.deps.getDom().batchBacktestStatus.textContent = "Copy failed.";
+        }
+    }
+
     // ── Stop plumbing ───────────────────────────────────────────────────
 
     /** Local Cancel flag for the active Batch run (Stop button). */
@@ -1084,6 +1108,7 @@ export class BatchRunController {
         this.renderResultRows(dom);
         setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
         dom.batchBacktestCopyBtn.disabled = this.lastResults.length === 0;
+        dom.batchBacktestCopyOpenPositionsBtn.disabled = this.lastResults.length === 0;
         // Audit Mine-Prediction-gating finding: route every artifact-action
         // button (Mine, Stability, OPEN_SCORE USD) through the same helper so
         // a tab that reloads into restored-but-not-current state keeps all
@@ -1176,6 +1201,7 @@ export class BatchRunController {
         dom.batchBacktestResults.replaceChildren();
         setVisible(dom.batchBacktestEmpty, true);
         dom.batchBacktestCopyBtn.disabled = true;
+        dom.batchBacktestCopyOpenPositionsBtn.disabled = true;
     }
 
     // ── Reattach polling ────────────────────────────────────────────────

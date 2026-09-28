@@ -326,6 +326,11 @@ export interface ResultRowGrid {
 export function buildResultRowGrid(result: BatchBacktestSymbolResult): ResultRowGrid {
     const r = result.result;
     const secondary: Array<[string, string]> = [[ "Bars", `${result.barCount}` ]];
+    if (result.openPosition) {
+        // Visible counterpart of the Copy Open Positions list: the position
+        // was still open at the end of this pair's data.
+        secondary.push(["Open", result.openPosition.side]);
+    }
     if (r) {
         secondary.push(["Hold", formatHold(result)]);
         secondary.push(["Exposure", formatPercent(result.tradeSummary?.exposurePercent)]);
