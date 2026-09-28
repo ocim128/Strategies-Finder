@@ -2,7 +2,6 @@ import { StrategyParams, type OHLCVData } from "./strategies/index";
 import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, ensureStrategyKeysLoaded, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
 import { state } from "./state";
 import { backtestService } from "./backtest-service";
-import { builtInStrategyKeys } from "./strategies/manifest-keys";
 import { paramManager } from "./param-manager";
 import { uiManager } from "./ui-manager";
 import { setVisible } from "./dom-utils";
@@ -21,7 +20,7 @@ import {
 	UNIVERSE_METRIC_FULL_LABELS,
 } from "./finder/constants";
 import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
-import { buildFinderArmPerformanceRunConfiguration, captureTradeFilter, formatCapturedConfiguration } from "./finder/finder-config-capture";
+import { formatCapturedConfiguration } from "./finder/finder-config-capture";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
 import { buildFinderArmPerformanceApplySettings } from "./finder/finder-arm-performance-settings";
@@ -77,12 +76,6 @@ import {
 	type FinderAssetOpportunityArchiveSort,
 	type FinderAssetOpportunityResortMetric,
 } from "./finder/finder-asset-opportunity-metrics";
-import {
-	buildFinderDiagnostics,
-	buildCompactFinderDiagnostics,
-	createEmptyFinderDiagnosticsTimings,
-	createFinderRunId,
-} from "./finder/finder-diagnostics";
 import { debugLogger } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -102,7 +95,6 @@ import {
 	normalizeFinderAssetOosHorizons,
 	normalizeFinderAssetOosIgnoreLastBars,
 } from "./finder/finder-asset-opportunity-oos";
-import { buildAssetOpportunityMetadataPayload } from "./finder/finder-asset-opportunity-metadata";
 import {
 	DEFAULT_FINDER_UI_STATE,
 	emptyFinderLatestResults,
@@ -128,6 +120,20 @@ import {
 	writeFinderUiState,
 	type FinderPersistedActiveServerRun,
 } from "./finder/browser/finder-persistence";
+import {
+	buildArmPerformanceDiagnosticsPayload,
+	buildArmPerformanceRunConfigurationPayload,
+	buildAssetOpportunityDiagnosticsPayload,
+	buildCompactFinderDiagnosticsPayload,
+	buildFinderRunConfigurationPayload,
+	buildFinderTopResultsPayload,
+	copyTextToClipboard,
+} from "./finder/browser/finder-export";
+import {
+	buildFailureDiagnostics,
+	buildFallbackDiagnostics,
+	buildStrategyQualityDiagnostics,
+} from "./finder/browser/finder-run-diagnostics";
 import type {
     FinderArmPerformanceCandidate,
     FinderArmPerformanceRunContext,
@@ -139,7 +145,6 @@ import type {
 	FinderScope,
 	FinderResult,
 	FinderAssetOpportunityResult,
-	FinderStrategyQualityDiagnostics,
 	FinderStrategyQualityMetric,
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
@@ -1661,14 +1666,14 @@ const applicable = oosCapableWindow;
 					// a bottleneck line.
 					const loadFailures = (error as Error & { loadFailures?: Map<string, { error?: string }> }).loadFailures;
 					if (loadFailures && loadFailures.size > 0) {
-						this.latestDiagnostics = this.buildFailureDiagnostics({
+						this.latestDiagnostics = buildFailureDiagnostics({
 							kind: 'load',
 							options,
 							elapsedMs: performance.now() - startTime,
 							loadFailures,
 						});
 					} else {
-						this.latestDiagnostics = this.buildFailureDiagnostics({
+						this.latestDiagnostics = buildFailureDiagnostics({
 							kind: 'run',
 							options,
 							elapsedMs: performance.now() - startTime,
@@ -1770,7 +1775,7 @@ const applicable = oosCapableWindow;
 			? sortFinderResults(finalResults, options.sortPriority, { useOosValues: true })
 			: finalResults;
 		this.setLatestResults({ scope: 'current_chart', results: finalSortedResults });
-		this.latestDiagnostics = output.diagnostics ?? this.buildFallbackDiagnostics({
+		this.latestDiagnostics = output.diagnostics ?? buildFallbackDiagnostics({
 			options,
 			results: finalSortedResults,
 			selectedStrategies,
@@ -3213,7 +3218,7 @@ gate is not applicable (toggle off, non-half window, cancelled).
 		);
 		this.setLatestResults({ scope: 'strategy_quality', results });
 		output.performance.timingsMs.providerResolution = Number(providerResolutionMs.toFixed(2));
-		this.latestDiagnostics = this.buildStrategyQualityDiagnostics({
+		this.latestDiagnostics = buildStrategyQualityDiagnostics({
 			options,
 			results,
 			performance: output.performance,
@@ -3239,56 +3244,6 @@ gate is not applicable (toggle off, non-half window, cancelled).
 			);
 		}
 		return true;
-	}
-
-	private buildStrategyQualityDiagnostics(args: {
-		options: FinderOptions;
-		results: FinderStrategyQualityResult[];
-		performance: FinderStrategyQualityDiagnostics;
-		failedSymbolDetails: Array<{ symbol: string; error: string }>;
-		elapsedMs: number;
-	}): FinderDiagnostics {
-		const quality = args.performance;
-		const timings = createEmptyFinderDiagnosticsTimings();
-		timings.total = args.elapsedMs;
-		timings.dataLoading = quality.timingsMs.providerResolution + quality.timingsMs.dataLoading;
-		timings.preparedData = quality.timingsMs.dataPreparation;
-		timings.backtest = quality.timingsMs.strategyExecution + quality.timingsMs.oosExecution;
-		timings.resultRanking = quality.timingsMs.resultReduction;
-		timings.yielding = quality.timingsMs.yielding;
-		const diagnostics = buildFinderDiagnostics({
-			runId: createFinderRunId('finder-strategy-quality'),
-			symbol: state.currentSymbol,
-			interval: state.currentInterval,
-			mode: args.options.mode,
-			engineMode: 'auto',
-			inputBars: quality.data.averageBars,
-			evaluationBars: quality.data.averageBars,
-			selectedStrategies: quality.selectedStrategies,
-			totalParamRuns: quality.runs.planned,
-			batchSize: 1,
-			processedRuns: quality.runs.completed,
-			filteredRuns: 0,
-			shownResults: args.results.length,
-			endpointAdjusted: 0,
-			failedRuns: quality.runs.failed,
-			skippedRuns: quality.runs.noTrade,
-			timings,
-			strategyBreakdown: [],
-			universeDiagnostics: {
-				totalSymbols: quality.requestedSymbols,
-				loadedSymbols: quality.loadedSymbols,
-				failedSymbols: args.failedSymbolDetails.map(({ symbol, error }) => ({ symbol, reason: error })),
-			},
-		});
-		diagnostics.strategyQuality = {
-			...quality,
-			timingsMs: {
-				...quality.timingsMs,
-				total: args.elapsedMs,
-			},
-		};
-		return diagnostics;
 	}
 
 private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'executionModel' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
@@ -3550,185 +3505,6 @@ if (oosWindowActive) {
 		return this.latestResults.scope === 'arm_performance' ? this.latestResults.results : [];
 	}
 
-	/**
-	 * Minimal diagnostics for the "No universe symbols could be loaded" path.
-	 * The full diagnostics builder lives deep inside the runner and never runs
-	 * when the universe load throws, so without this the Copy Diagnostics
-	 * button stays disabled and the user has no way to share why symbols
-	 * failed. Populates `universe.failedSymbols` from the thrown error's
-	 * attached loadFailures map.
-	 */
-	/**
-	 * Resolve the engine-mode label used by the diagnostics builders.
-	 */
-	private resolveDiagnosticsEngineMode(options: FinderOptions): string {
-		return options.mode === 'genetic'
-			? 'genetic'
-			: 'typescript';
-	}
-
-	/**
-	 * Minimal diagnostics for failure paths. `kind: 'load'` is used when the
-	 * universe symbols failed to load (richer per-symbol failure detail);
-	 * `kind: 'run'` covers any other mid-run failure (engine throw, OOS
-	 * re-load error, etc.). Without this, latestDiagnostics stays null on a
-	 * mid-run failure and the Copy Diagnostics button is silently disabled.
-	 * The error reason is surfaced as the first bottleneck line so the user
-	 * can copy and share why the run failed.
-	 */
-	private buildFailureDiagnostics(args: {
-		kind: 'load' | 'run';
-		options: FinderOptions;
-		elapsedMs: number;
-		error?: string;
-		loadFailures?: Map<string, { error?: string }>;
-		totalSymbols?: number;
-		loadedSymbols?: number;
-	}): FinderDiagnostics {
-		const failedSymbols = args.loadFailures
-			? [...args.loadFailures.entries()].map(([symbol, result]) => ({
-				symbol,
-				reason: result.error ?? 'unknown error',
-			}))
-			: [];
-		const timings = createEmptyFinderDiagnosticsTimings();
-		timings.total = args.elapsedMs;
-		if (args.kind === 'load') {
-			timings.dataLoading = args.elapsedMs;
-		}
-		const universeDiagnostics = args.kind === 'load'
-			? {
-				totalSymbols: args.totalSymbols ?? failedSymbols.length,
-				loadedSymbols: args.loadedSymbols ?? 0,
-				failedSymbols,
-			}
-			: (args.options.scope === 'symbol_universe' || args.options.scope === 'strategy_quality') && args.options.universe
-				? {
-					totalSymbols: args.options.universe.symbols.length,
-					loadedSymbols: 0,
-					failedSymbols: [] as Array<{ symbol: string; reason: string }>,
-				}
-				: undefined;
-		const base = buildFinderDiagnostics({
-			runId: createFinderRunId(args.kind === 'load' ? 'finder-load-failure' : 'finder-run-failure'),
-			symbol: state.currentSymbol,
-			interval: state.currentInterval,
-			mode: args.options.mode,
-			engineMode: this.resolveDiagnosticsEngineMode(args.options),
-			inputBars: 0,
-			evaluationBars: 0,
-			selectedStrategies: 0,
-			totalParamRuns: 0,
-			batchSize: 0,
-			processedRuns: 0,
-			filteredRuns: 0,
-			shownResults: 0,
-			endpointAdjusted: 0,
-			failedRuns: 0,
-			skippedRuns: 0,
-			timings,
-			strategyBreakdown: [],
-			universeDiagnostics,
-		});
-		if (args.error) {
-			// buildFinderDiagnostics already emits a fallback bottleneck line; prepend
-			// the error reason so it is the first thing the user sees when copying.
-			const truncatedError = args.error.length > 220 ? `${args.error.slice(0, 217)}...` : args.error;
-			base.bottlenecks = [`Finder run failed: ${truncatedError}`, ...base.bottlenecks];
-		}
-		return base;
-	}
-
-	private buildFallbackDiagnostics(args: {
-		options: FinderOptions;
-		results: FinderResult[];
-		selectedStrategies: FinderSelectedStrategy[];
-		ohlcvData: OHLCVData[];
-		elapsedMs: number;
-		requiresTsEngine: boolean;
-	}): FinderDiagnostics {
-		const engineMode = (args.options.mode === 'genetic')
-			? this.resolveDiagnosticsEngineMode(args.options)
-			: args.requiresTsEngine
-				? 'typescript'
-				: 'unknown';
-		return {
-			runId: `finder-fallback-${Date.now().toString(36)}`,
-			symbol: state.currentSymbol,
-			interval: state.currentInterval,
-			mode: args.options.mode,
-			engineMode,
-			data: {
-				inputBars: args.ohlcvData.length,
-				evaluationBars: args.ohlcvData.length,
-				selectedStrategies: args.selectedStrategies.length,
-				totalParamRuns: args.options.maxRuns,
-				batchSize: 0,
-			},
-			counts: {
-				processedRuns: args.options.maxRuns,
-				filteredRuns: args.results.length,
-				shownResults: args.results.length,
-				rustCompletedRuns: 0,
-				rustFallbackRuns: 0,
-				endpointAdjusted: args.results.filter((result) => result.endpointAdjusted).length,
-				failedRuns: 0,
-				skippedRuns: 0,
-			},
-			timingsMs: {
-				total: Number(args.elapsedMs.toFixed(2)),
-				paramGeneration: 0,
-				dataLoading: 0,
-				pricePointLoading: 0,
-				closedDataSelection: 0,
-				indicatorPrecompute: 0,
-				preparedData: 0,
-				signalGeneration: 0,
-				backtest: 0,
-				rustRequest: 0,
-				resultEnrichment: 0,
-				resultRanking: 0,
-				reconciliation: 0,
-				uiUpdates: 0,
-				yielding: 0,
-			},
-			timingPct: {
-				paramGeneration: 0,
-				dataLoading: 0,
-				pricePointLoading: 0,
-				closedDataSelection: 0,
-				indicatorPrecompute: 0,
-				preparedData: 0,
-				signalGeneration: 0,
-				backtest: 0,
-				rustRequest: 0,
-				resultEnrichment: 0,
-				resultRanking: 0,
-				reconciliation: 0,
-				uiUpdates: 0,
-				yielding: 0,
-			},
-			strategyBreakdown: args.selectedStrategies.map((selection) => ({
-				key: selection.key,
-				name: selection.name,
-				runs: 0,
-				failedRuns: 0,
-				skippedRuns: 0,
-				zeroSignalRuns: 0,
-				avgSignalMs: 0,
-				avgBacktestMs: 0,
-				avgTotalMs: 0,
-				totalMs: 0,
-				runtimePct: 0,
-				usedPreparedData: Boolean(selection.strategy.prepareFinderData && selection.strategy.executePrepared),
-			})),
-			bottlenecks: [
-				`${engineMode} runner returned path-level diagnostics only`,
-				`Total run time was ${Math.round(args.elapsedMs)}ms`,
-			],
-		};
-	}
-
 
 	/**
 	 * Populate the post-run re-sort dropdown options for the current scope.
@@ -3957,148 +3733,6 @@ if (oosWindowActive) {
 		this.ui.renderResults(results);
 	}
 
-	private buildCurrentChartMetadataPayload(result: FinderResult, rank: number) {
-		const strategy = strategyRegistry.get(result.key);
-		const displayedResult = result.selectionResult;
-		return {
-			scope: 'current_chart' as const,
-			rank,
-			strategyId: result.key,
-			strategyName: result.name,
-			params: result.params,
-			metadata: strategy?.metadata ?? null,
-			metrics: {
-				netProfit: displayedResult.netProfit,
-				netProfitPercent: displayedResult.netProfitPercent,
-				expectancy: displayedResult.expectancy,
-				avgTrade: displayedResult.avgTrade,
-				winRate: displayedResult.winRate,
-				profitFactor: displayedResult.profitFactor,
-				totalTrades: displayedResult.totalTrades,
-				maxDrawdownPercent: displayedResult.maxDrawdownPercent,
-				winningTrades: displayedResult.winningTrades,
-				losingTrades: displayedResult.losingTrades,
-				avgWin: displayedResult.avgWin,
-				avgLoss: displayedResult.avgLoss,
-				sharpeRatio: displayedResult.sharpeRatio,
-				...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
-				...(Number.isFinite(result.oosExitAlpha) ? { oosExitAlpha: result.oosExitAlpha } : {}),
-			},
-			rawMetrics: {
-				netProfit: result.result.netProfit,
-				netProfitPercent: result.result.netProfitPercent,
-				expectancy: result.result.expectancy,
-				avgTrade: result.result.avgTrade,
-				winRate: result.result.winRate,
-				profitFactor: result.result.profitFactor,
-				totalTrades: result.result.totalTrades,
-				maxDrawdownPercent: result.result.maxDrawdownPercent,
-				winningTrades: result.result.winningTrades,
-				losingTrades: result.result.losingTrades,
-				avgWin: result.result.avgWin,
-				avgLoss: result.result.avgLoss,
-				sharpeRatio: result.result.sharpeRatio,
-				...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
-			},
-			selectionMetrics: {
-				netProfit: result.selectionResult.netProfit,
-				netProfitPercent: result.selectionResult.netProfitPercent,
-				expectancy: result.selectionResult.expectancy,
-				avgTrade: result.selectionResult.avgTrade,
-				winRate: result.selectionResult.winRate,
-				profitFactor: result.selectionResult.profitFactor,
-				totalTrades: result.selectionResult.totalTrades,
-				maxDrawdownPercent: result.selectionResult.maxDrawdownPercent,
-				winningTrades: result.selectionResult.winningTrades,
-				losingTrades: result.selectionResult.losingTrades,
-				avgWin: result.selectionResult.avgWin,
-				avgLoss: result.selectionResult.avgLoss,
-				sharpeRatio: result.selectionResult.sharpeRatio,
-				...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
-			},
-			endpointAdjusted: result.endpointAdjusted,
-			endpointRemovedTrades: result.endpointRemovedTrades,
-			exitStrategy: result.exitStrategyKey ? {
-				key: result.exitStrategyKey,
-				params: result.exitStrategyParams ?? {},
-			} : null,
-			...(Number.isFinite(result.exitAlpha) ? { exitAlpha: result.exitAlpha } : {}),
-			...(Number.isFinite(result.oosExitAlpha) ? { oosExitAlpha: result.oosExitAlpha } : {}),
-		};
-	}
-
-	private buildUniverseMetadataPayload(result: FinderUniverseCandidate, rank: number) {
-		const strategy = strategyRegistry.get(result.strategyKey);
-		return {
-			scope: 'symbol_universe' as const,
-			rank,
-			strategyId: result.strategyKey,
-			strategyName: result.strategyName,
-			interval: state.currentInterval,
-			params: result.params,
-			metadata: strategy?.metadata ?? null,
-			summary: {
-				activeSymbols: result.activeSymbols,
-				profitableSymbols: result.profitableSymbols,
-				losingSymbols: result.losingSymbols,
-				flatSymbols: result.flatSymbols,
-				noTradeSymbols: result.noTradeSymbols,
-				totalSymbols: result.symbols.length,
-				totalTrades: result.totalTrades,
-				profitableActiveRatio: result.profitableActiveRatio,
-				medianExpectancy: result.medianExpectancy,
-				medianSharpe: result.medianSharpe,
-				medianSharpeAvailable: result.medianSharpeAvailable,
-				medianNetProfit: result.medianNetProfit,
-				worstNetProfit: result.worstNetProfit,
-				bestNetProfit: result.bestNetProfit,
-				...(Number.isFinite(result.medianExitAlpha) ? { medianExitAlpha: result.medianExitAlpha } : {}),
-				...(Number.isFinite(result.medianOosExitAlpha) ? { medianOosExitAlpha: result.medianOosExitAlpha } : {}),
-				evaluationStoppedEarly: Boolean(result.evaluationStoppedEarly),
-				stoppedReason: result.stoppedReason ?? null,
-			},
-			symbols: result.symbols.map((symbolResult) => ({
-				symbol: symbolResult.symbol,
-				status: symbolResult.status,
-				barCount: symbolResult.barCount,
-				firstTime: symbolResult.firstTime ?? null,
-				lastTime: symbolResult.lastTime ?? null,
-				error: symbolResult.error ?? null,
-				metrics: symbolResult.result ? {
-					netProfit: symbolResult.result.netProfit,
-					netProfitPercent: symbolResult.result.netProfitPercent,
-					expectancy: symbolResult.result.expectancy,
-					avgTrade: symbolResult.result.avgTrade,
-					winRate: symbolResult.result.winRate,
-					profitFactor: symbolResult.result.profitFactor,
-					totalTrades: symbolResult.result.totalTrades,
-					maxDrawdownPercent: symbolResult.result.maxDrawdownPercent,
-					drawdownAvailable: symbolResult.result.drawdownAvailable === true,
-					winningTrades: symbolResult.result.winningTrades,
-					losingTrades: symbolResult.result.losingTrades,
-					avgWin: symbolResult.result.avgWin,
-					avgLoss: symbolResult.result.avgLoss,
-					sharpeRatio: symbolResult.result.sharpeRatio,
-					sharpeRatioAvailable: symbolResult.result.sharpeRatioAvailable === true,
-					...(Number.isFinite(symbolResult.result.exitAlpha) ? { exitAlpha: symbolResult.result.exitAlpha } : {}),
-				} : null,
-				oosExitAlpha: Number.isFinite(symbolResult.oosResult?.exitAlpha)
-					? symbolResult.oosResult?.exitAlpha
-					: null,
-			})),
-		};
-	}
-
-	private buildAssetOpportunityMetadataPayload(result: FinderAssetOpportunityResult, rank: number) {
-		const strategy = strategyRegistry.get(result.strategyKey);
-		return buildAssetOpportunityMetadataPayload({
-			result,
-			rank,
-			interval: state.currentInterval,
-			strategyMetadata: strategy?.metadata ?? null,
-		});
-	}
-
 	private async copyTopResultsMetadata(): Promise<void> {
 		const chartResults = this.getCurrentChartResults();
 		const universeResults = this.getUniverseResults();
@@ -4110,62 +3744,12 @@ if (oosWindowActive) {
 			return;
 		}
 
-		const payload = this.latestResults.scope === 'arm_performance'
-			? {
-				scope: 'arm_performance' as const,
-				selectedArm: (this.getDom().finderResort.value || 'TOP_RAW_PROFIT_NOW') as FinderArmPerformanceArm,
-				rankingMetric: 'topMean',
-				runContext: this.armPerformanceRunContext,
-				inventoryComplete: this.armPerformanceInventoryComplete,
-				results: armResults.map((candidate, index) => {
-					const arm = (this.getDom().finderResort.value || 'TOP_RAW_PROFIT_NOW') as FinderArmPerformanceArm;
-					return {
-						rank: index + 1,
-						runId: this.armPerformanceRunContext?.runId ?? null,
-						candidateId: candidate.candidateId,
-						candidateOrdinal: candidate.candidateOrdinal,
-						strategyKey: candidate.strategyKey,
-						strategyName: candidate.strategyName,
-						interval: this.armPerformanceRunContext?.interval ?? null,
-						horizon: candidate.horizon,
-						params: candidate.params,
-						backtestSettings: candidate.backtestSettings,
-						exitStrategyKey: candidate.exitStrategyKey ?? null,
-						exitStrategyParams: candidate.exitStrategyParams ?? null,
-						pairCoverage: candidate.pairCoverage,
-						selectedArm: arm,
-						selectedArmMetric: candidate.metrics[arm],
-						allArmMetrics: candidate.metrics,
-					};
-				}),
-			}
-			: this.latestResults.scope === 'current_chart'
-			? chartResults.map((result, index) => this.buildCurrentChartMetadataPayload(result, index + 1))
-			: this.latestResults.scope === 'asset_opportunity'
-				? assetResults.map((result, index) => this.buildAssetOpportunityMetadataPayload(result, index + 1))
-				: this.latestResults.scope === 'strategy_quality'
-					? qualityResults.map((result, index) => ({
-						scope: 'strategy_quality' as const,
-						rank: index + 1,
-						strategyId: result.strategyKey,
-						strategyName: result.strategyName,
-						interval: state.currentInterval,
-						params: result.params,
-						metrics: {
-							averageExpectancy: result.averageExpectancy,
-							medianExpectancy: result.medianExpectancy,
-							profitFactor: result.profitFactor,
-							averageProfitFactor: result.averageProfitFactor,
-							averageSharpe: result.averageSharpe,
-							totalNetProfit: result.totalNetProfit,
-							totalTrades: result.totalTrades,
-							weightedWinRate: result.weightedWinRate,
-							activeSymbols: result.activeSymbols,
-							profitableSymbols: result.profitableSymbols,
-						},
-						oos: result.oos ?? null,
-					}))
-					: universeResults.map((result, index) => this.buildUniverseMetadataPayload(result, index + 1));
+		const payload = buildFinderTopResultsPayload({
+			latestResults: this.latestResults,
+			armRunContext: this.armPerformanceRunContext,
+			armInventoryComplete: this.armPerformanceInventoryComplete,
+			selectedArm: (this.getDom().finderResort.value || 'TOP_RAW_PROFIT_NOW') as FinderArmPerformanceArm,
+		});
 
 		try {
 			await this.copyTextToClipboard(JSON.stringify(payload, null, 2));
@@ -4176,39 +3760,20 @@ if (oosWindowActive) {
 		}
 	}
 
-	private async copyTextToClipboard(text: string): Promise<void> {
-		try {
-			if (navigator.clipboard?.writeText) {
-				await navigator.clipboard.writeText(text);
-				return;
-			}
-		} catch (_error) {
-			// Fall through to the textarea path for browsers that reject clipboard writes without focus.
-		}
-
-		const textarea = document.createElement('textarea');
-		textarea.value = text;
-		textarea.setAttribute('readonly', 'true');
-		textarea.style.position = 'fixed';
-		textarea.style.left = '-9999px';
-		textarea.style.top = '0';
-		document.body.appendChild(textarea);
-		textarea.focus();
-		textarea.select();
-		try {
-			if (!document.execCommand('copy')) {
-				throw new Error('Fallback clipboard copy returned false');
-			}
-		} finally {
-			textarea.remove();
-		}
+	/**
+	 * Clipboard transport seam. The implementation lives in
+	 * `finder-export.ts`; keeping the call on `this` lets tests stub the
+	 * transport without touching payload assembly.
+	 */
+	private copyTextToClipboard(text: string): Promise<void> {
+		return copyTextToClipboard(text);
 	}
 
 	/**
 	 * Copy the complete run configuration (Finder UI state + backtest settings) as
-	 * JSON. The AO batch archives a config.txt with backtest settings only; this
-	 * payload carries the Finder-side settings (strategies, universe, holdout,
-	 * eval window, trade filters) so archive runs are fully reproducible.
+	 * JSON. The AO batch archives a config.txt with backtest settings only; the
+	 * payload in `finder-export.ts` carries the Finder-side settings so archive
+	 * runs are fully reproducible.
 	 */
 	private async copyRunConfiguration(): Promise<void> {
 		if (this.latestResults.scope === 'arm_performance') {
@@ -4216,9 +3781,8 @@ if (oosWindowActive) {
 				uiManager.showToast('Arm Performance run context is unavailable in this cached preview.', 'error');
 				return;
 			}
-			const context = this.armPerformanceRunContext;
-			const payload = buildFinderArmPerformanceRunConfiguration(
-				context,
+			const payload = buildArmPerformanceRunConfigurationPayload(
+				this.armPerformanceRunContext,
 				this.armPerformanceRunResults.length,
 				this.armPerformanceInventoryComplete,
 			);
@@ -4232,29 +3796,11 @@ if (oosWindowActive) {
 			return;
 		}
 		this.captureFinderUiState();
-		// Deleted strategy libraries keep stale keys in persisted UI state; filter
-		// both selection lists against the live manifest so the copied config only
-		// references strategies that exist.
-		const knownKeys = new Set(builtInStrategyKeys);
-		const filterKeys = (keys: string[]) => keys.filter((key) => knownKeys.has(key));
-		// Null the trade-filter inputs when the toggle is off — stale values
-		// captured verbatim read as an enforced filter in archived configs.
-		const tradeFilter = captureTradeFilter(this.uiState);
-		const payload = {
-			finder: {
-				...this.uiState,
-				tradeFilterEnabled: tradeFilter.tradeFilterEnabled,
-				minTrades: tradeFilter.minTrades,
-				maxTradesText: tradeFilter.tradeFilterEnabled ? this.uiState.maxTradesText : null,
-				currentChartSelectedStrategyKeys: filterKeys(this.uiState.currentChartSelectedStrategyKeys),
-				universeSelectedStrategyKeys: filterKeys(this.uiState.universeSelectedStrategyKeys),
-			},
+		const payload = buildFinderRunConfigurationPayload({
+			uiState: this.uiState,
 			backtestSettings: backtestService.getBacktestSettings(),
-			// Capital settings live outside backtestSettings (commission is a
-			// capital setting) — without this line the copied config cannot prove
-			// whether commission was active.
 			capitalSettings: backtestService.getCapitalSettings(),
-		};
+		});
 		try {
 			await this.copyTextToClipboard(formatCapturedConfiguration(payload));
 			uiManager.showToast('Finder configuration copied', 'success');
@@ -4264,22 +3810,14 @@ if (oosWindowActive) {
 		}
 	}
 
-
 	private async copyFinderDiagnostics(): Promise<void> {
 		if (this.latestResults.scope === 'arm_performance') {
 			try {
-				await this.copyTextToClipboard(JSON.stringify({
-					scope: 'arm_performance',
+				await this.copyTextToClipboard(JSON.stringify(buildArmPerformanceDiagnosticsPayload({
 					runContext: this.armPerformanceRunContext,
 					inventoryComplete: this.armPerformanceInventoryComplete,
-					results: this.armPerformanceRunResults.map((candidate) => ({
-						candidateId: candidate.candidateId,
-						candidateOrdinal: candidate.candidateOrdinal,
-						strategyKey: candidate.strategyKey,
-						pairCoverage: candidate.pairCoverage,
-						metrics: candidate.metrics,
-					})),
-				}, null, 2));
+					results: this.armPerformanceRunResults,
+				}), null, 2));
 				uiManager.showToast('Arm Performance diagnostics copied', 'success');
 			} catch (error) {
 				debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
@@ -4289,10 +3827,11 @@ if (oosWindowActive) {
 		}
 		if (this.latestResults.scope === 'asset_opportunity' && this.latestAssetOpportunityDiagnostics) {
 			try {
-				await this.copyTextToClipboard(JSON.stringify({
-					scope: 'asset_opportunity',
-					assetOpportunity: this.latestAssetOpportunityDiagnostics,
-				}, null, 2));
+				await this.copyTextToClipboard(JSON.stringify(
+					buildAssetOpportunityDiagnosticsPayload(this.latestAssetOpportunityDiagnostics),
+					null,
+					2,
+				));
 				uiManager.showToast('Asset Opportunity diagnostics copied', 'success');
 			} catch (error) {
 				debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
@@ -4307,10 +3846,11 @@ if (oosWindowActive) {
 				return;
 			}
 			try {
-				await this.copyTextToClipboard(JSON.stringify({
-					scope: 'asset_opportunity',
-					assetOpportunity: this.latestAssetOpportunityDiagnostics,
-				}, null, 2));
+				await this.copyTextToClipboard(JSON.stringify(
+					buildAssetOpportunityDiagnosticsPayload(this.latestAssetOpportunityDiagnostics),
+					null,
+					2,
+				));
 				uiManager.showToast('Asset Opportunity diagnostics copied', 'success');
 			} catch (error) {
 				debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
@@ -4320,7 +3860,7 @@ if (oosWindowActive) {
 		}
 
 		try {
-			await this.copyTextToClipboard(JSON.stringify(buildCompactFinderDiagnostics(this.latestDiagnostics), null, 2));
+			await this.copyTextToClipboard(JSON.stringify(buildCompactFinderDiagnosticsPayload(this.latestDiagnostics), null, 2));
 			uiManager.showToast('Compact Finder diagnostics copied', 'success');
 		} catch (error) {
 			debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });
