@@ -382,13 +382,13 @@ function manager(): any {
 
 beforeEach(() => {
     const m = manager();
-    m.activeServerRunId = null;
+    m.session.activeRunId = null;
     m.isRunning = false;
     m.isCancelled = false;
-    m.reattachPollingStopped = false;
-    m.reattachTimer = null;
-    m.reattachTimerResolve = null;
-    m.reattachAbortController = null;
+    m.session.pollingStopped = false;
+    m.session.timer = null;
+    m.session.timerResolve = null;
+    m.session.abortController = null;
     m.resultStore.latestResults = { scope: "current_chart", results: [] };
     m.resultStore.originalLatestResults = null;
     m.resultStore.symbolUniverseRunResults = [];
@@ -422,13 +422,13 @@ describe("FinderManager reattach lifecycle (audit Finding 2)", () => {
         // wait — exactly what the old code raced on: the probe resolving AFTER
         // runFinder() set activeServerRunId would overwrite the new run's
         // ownership token.
-        manager().activeServerRunId = "new-run";
+        manager().session.activeRunId = "new-run";
         manager().isRunning = true;
 
         mockFetch.resolveFirst(runningSnapshot("old-run"));
         await reattach;
 
-        expect(manager().activeServerRunId, "new run ownership preserved").to.equal("new-run");
+        expect(manager().session.activeRunId, "new run ownership preserved").to.equal("new-run");
         expect(manager().isRunning).to.equal(true);
         // The reattach path never adopted the old run's scope either.
         expect(manager().uiState.scope).to.equal("current_chart");
@@ -442,22 +442,24 @@ describe("FinderManager reattach lifecycle (audit Finding 2)", () => {
         manager().stopReattachPoll();
         expect(mockFetch.aborted(), "the pending status fetch was aborted").to.equal(true);
         await reattach;
-        expect(manager().reattachAbortController).to.equal(null);
+        expect(manager().session.abortController).to.equal(null);
     });
 
     it("ignores a stale recovery response after activeServerRunId changed mid-await", async () => {
-        manager().activeServerRunId = "run-a";
+        manager().session.activeRunId = "run-a";
         manager().isRunning = true;
-        const recovery = manager().recoverActiveServerRun("run-a", "symbol_universe");
+        const recovery = manager().session.recoverActiveServerRun("run-a", "symbol_universe", {
+            setProgress() {}, setStatus() {},
+        });
         expect(mockFetch.requests.length).to.be.greaterThan(0);
 
         // The stream-error handler is still awaiting; a new run takes over.
-        manager().activeServerRunId = "run-b";
+        manager().session.activeRunId = "run-b";
         mockFetch.resolveFirst(terminalDoneSnapshot("run-a", [makeCandidate()]));
 
         const recovered = await recovery;
         expect(recovered, "stale terminal snapshot must not be adopted").to.equal(null);
-        expect(manager().activeServerRunId).to.equal("run-b");
+        expect(manager().session.activeRunId).to.equal("run-b");
     });
 
     it("does not treat an HTTP-200 server stop rejection as success", async () => {
@@ -484,7 +486,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
 
         const status = elsById.get("finderStatus");
         expect(status?.textContent).to.include("worker exploded");
-        expect(manager().activeServerRunId).to.equal(null);
+        expect(manager().session.activeRunId).to.equal(null);
         // clearActiveServerRun writes a data:null envelope rather than
         // removing the key; loadPersistedActiveServerRun treats it as absent.
         const stored = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_active_server_run"));
@@ -502,7 +504,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
         expect(results.scope).to.equal("symbol_universe");
         expect(results.results).to.have.length(1);
         expect(results.results[0]!.strategyKey).to.equal("universe_test");
-        expect(manager().activeServerRunId).to.equal(null);
+        expect(manager().session.activeRunId).to.equal(null);
         const stored = JSON.parse((globalThis as any).localStorage.getItem("playground_finder_active_server_run"));
         expect(stored.data).to.equal(null);
     });
@@ -789,7 +791,7 @@ describe("FinderManager Arm Performance scope controls", () => {
 describe("FinderManager Asset Opportunity batch stream contracts", () => {
     it("does not turn a recovered batch fatal into a successful outcome", async () => {
         const runId = "batch-fatal-recovery";
-        manager().activeServerRunId = runId;
+        manager().session.activeRunId = runId;
         manager().isRunning = true;
         const options: any = {
             mode: "random",
@@ -839,7 +841,7 @@ describe("FinderManager Asset Opportunity batch stream contracts", () => {
 
     it("retains the latest batch diagnostics and asset counts from terminal events", async () => {
         const runId = "batch-diagnostics";
-        manager().activeServerRunId = runId;
+        manager().session.activeRunId = runId;
         manager().isRunning = true;
         const assetDiagnostics: any = {
             totalAssets: 2,

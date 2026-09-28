@@ -9,44 +9,31 @@ import { settingsManager } from "./settings-manager";
 import { getLocalDailyAssets } from "./local-daily-datasets";
 import { cloneJsonCompatible, parseJsonPreservingNonFinite } from "./json-utils";
 import { debounce } from "./debounce";
-import { coalesceAnimationFrame } from "./render-scheduler";
 
 import {
 	FINDER_SORT_OPTIONS,
 	METRIC_FULL_LABELS,
 	UNIVERSE_METRIC_FULL_LABELS,
 } from "./finder/constants";
-import { buildFinderEvaluationData, runFinderExecution, type FinderSelectedStrategy } from "./finder/finder-runner";
 import { formatCapturedConfiguration } from "./finder/finder-config-capture";
-import { FinderParamSpace } from "./finder/finder-param-space";
-import { FinderUI } from "./finder/finder-ui";
 import {
 	buildFinderOptions,
 	buildFinderUniverseOptions,
 	normalizeFinderDataSlice,
 	normalizeFinderDateInput,
-	normalizeFinderDateRange,
-	resolveOosDataSlice,
-	sliceFinderDataWindow,
 } from "./finder/finder-manager-logic";
-import { sortFinderResults } from "./finder/finder-engine";
-import { runCandidateOosPass } from "./finder/finder-candidate-oos";
+import type { FinderSelectedStrategy } from "./finder/finder-runner";
+import { FinderParamSpace } from "./finder/finder-param-space";
+import { FinderUI } from "./finder/finder-ui";
 import {
-	runStrategyQualityAudit,
 } from "./finder/finder-strategy-quality";
-import { getBatchDatasetCacheStats, loadBatchDataset } from "./batch-backtest/batch-backtest-loader";
-import {
-	sortFinderUniverseCandidates,
-} from "./finder/finder-universe-metrics";
 import {
 	ASSET_OPPORTUNITY_ALL_SORTS,
 	deduplicateAssetOpportunityResultsBySymbol,
 	sortAssetOpportunityResults,
-	retainAssetOpportunityResultsForSymbols,	type FinderAssetOpportunityArchiveSort,
 } from "./finder/finder-asset-opportunity-metrics";
 import { debugLogger } from "./debug-logger";
 import { parseInputNumber } from "./dom-input-readers";
-import { sliceOhlcvByBlock } from "./block-selector";
 import { setCurrentInterval } from "./state-actions";
 import { createTaskYielder } from "./task-yield";
 import {
@@ -77,12 +64,10 @@ import {
 	type FinderPersistedUiState,
 } from "./finder/browser/finder-settings";
 import {
-	clearFinderActiveServerRun,
 	clearFinderLatestResultsSnapshot,
 	readFinderActiveServerRun,
 	readFinderLatestResultsSnapshot,
 	readFinderUiState,
-	writeFinderActiveServerRun,
 	writeFinderLatestResultsSnapshot,
 	writeFinderUiState,
 	type FinderPersistedActiveServerRun,
@@ -90,6 +75,18 @@ import {
 import { FinderResultStore } from "./finder/browser/finder-result-store";
 import { FinderStrategySelection } from "./finder/browser/finder-strategy-selection";
 import { FinderResultActions } from "./finder/browser/finder-result-actions";
+import { FinderServerSession, createFinderStatusRequestSignal, type FinderSessionHost } from "./finder/browser/finder-server-session";
+import { runCurrentChartFinder } from "./finder/browser/workflows/current-chart";
+import { runUniverseFinder } from "./finder/browser/workflows/symbol-universe";
+import {
+	runAssetOpportunityFinder,
+	runAssetOpportunityBatchFinder,
+	runAssetOpportunityBatchFinderServer,
+	type BatchHoldoutRange,
+} from "./finder/browser/workflows/asset-opportunity";
+import { runArmPerformanceFinder } from "./finder/browser/workflows/arm-performance";
+import { runStrategyQualityFinder } from "./finder/browser/workflows/strategy-quality";
+import type { FinderRunHost } from "./finder/browser/workflows/finder-run-host";
 import {
 	buildArmPerformanceDiagnosticsPayload,
 	buildArmPerformanceRunConfigurationPayload,
@@ -101,8 +98,6 @@ import {
 } from "./finder/browser/finder-export";
 import {
 	buildFailureDiagnostics,
-	buildFallbackDiagnostics,
-	buildStrategyQualityDiagnostics,
 } from "./finder/browser/finder-run-diagnostics";
 import type {
     FinderArmPerformanceCandidate,
@@ -118,13 +113,7 @@ import type {
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 } from './types/finder';
-import {
-    FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
-    sortFinderArmPerformanceResults,
-    type FinderArmPerformanceArm,
-} from "./finder/finder-arm-performance-metrics";
-import { isRustSupportedTradeSizingMode, type CapitalSettings } from "./types/backtest";
-import type { BacktestSettings } from "./types/strategies";
+import type { FinderArmPerformanceArm } from "./finder/finder-arm-performance-metrics";
 
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
 const FINDER_FOLLOW_STRATEGY_KEYS = [
@@ -144,68 +133,7 @@ const FINDER_REVERSION_STRATEGY_KEYS = [
 	"probability_boundary_eigen_shift",
 ] as const;
 
-const FINDER_STATUS_REQUEST_TIMEOUT_MS = 15_000;
-
-/**
- * Trailing-edge flush interval for provisional Asset Opportunity rows.
- * Streamed rows can arrive in the thousands; sorting + re-rendering the full
- * list per row is O(n^2 log n) plus a DOM rebuild per event. State stays
- * event-accurate — only the render is coalesced.
- */
-const ASSET_PROVISIONAL_RENDER_FLUSH_MS = 150;
-
-function createFinderStatusRequestSignal(parentSignal: AbortSignal): {
-	signal: AbortSignal;
-	cleanup: () => void;
-} {
-	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), FINDER_STATUS_REQUEST_TIMEOUT_MS);
-	const abortFromParent = () => controller.abort();
-	if (parentSignal.aborted) {
-		abortFromParent();
-	} else {
-		parentSignal.addEventListener("abort", abortFromParent, { once: true });
-	}
-	return {
-		signal: controller.signal,
-		cleanup: () => {
-			clearTimeout(timer);
-			parentSignal.removeEventListener("abort", abortFromParent);
-		},
-	};
-}
-
-/**
- * Outcome of a server-owned Finder Universe job, returned by
- * `runUniverseFinderServer`. The server owns IS evaluation, survivor merge,
- * and OOS; the browser only renders. `oosRemoved` reflects the server-side
- * OOS aggregate-fail filter count (0 when OOS is disabled).
- */
-interface ServerUniverseRunOutcome {
-	results: FinderUniverseCandidate[];
-	diagnostics: FinderDiagnostics | null;
-	loadedSymbols: number;
-	failedSymbolCount: number;
-	oosRemoved: number;
-}
-
-interface ServerAssetOpportunityRunOutcome {
-	results: FinderAssetOpportunityResult[];
-	diagnostics: FinderDiagnostics | null;
-	assetDiagnostics: FinderDiagnostics['assetOpportunity'] | null;
-	assetsWithFreshEntry: number;
-	failedAssets: number;
-}
-
-import { finderSortRequiresTradeTimingQuality } from "./trade-timing-quality";
-import { consumeNdjsonStream } from "./ndjson-stream";
-import { shouldUseRustEngine } from "./engine-preferences";
-import type {
-	FinderAssetOpportunityBatchStreamEvent,
-	FinderAssetOpportunityStreamEvent,
-	FinderRunStatusSnapshot,
-	FinderStreamEvent,
-} from "./finder/server/finder-stream-types";
+import type { FinderRunStatusSnapshot } from "./finder/server/finder-stream-types";
 
 
 export class FinderManager {
@@ -224,6 +152,8 @@ export class FinderManager {
 		isUniverseSelectionScope: () => this.usesUniverseStrategySelection(),
 		persist: () => this.saveUiState(),
 	});
+	/** Owns server run ownership, scoped Stop, and reattach/recovery polling. */
+	private readonly session = new FinderServerSession();
 	/** Owns candidate Apply flows and the apply-in-flight guard. */
 	private readonly resultActions = new FinderResultActions({
 		getResultStore: () => this.resultStore,
@@ -243,31 +173,6 @@ export class FinderManager {
 	private readonly paramSpace = new FinderParamSpace();
 	private readonly taskYielder = createTaskYielder();
 	private dom: FinderManagerDom | null = null;
-	/**
-	 * Active server-run id for the Symbol Universe job currently in flight
-	 * (or null). Acts as the ownership token: every stream + poll callback
-	 * checks `this.activeServerRunId === runId` before mutating UI state so a
-	 * stale tab cannot clobber a newer run.
-	 */
-	private activeServerRunId: string | null = null;
-	/**
-	 * Reattach poller state. `reattachPollingStopped` is the cancel token;
-	 * `reattachTimerResolve` lets Stop / a new Run unblock a pending poll
-	 * sleep immediately. `reattachAbortController` aborts any in-flight
-	 * `/api/finder/status` fetch so Stop / a new Run cannot leave a hung
-	 * status request pending (and its late response adopting stale run state).
-	 */
-	private reattachPollingStopped = false;
-	private reattachTimer: ReturnType<typeof setTimeout> | null = null;
-	private reattachTimerResolve: (() => void) | null = null;
-	private reattachAbortController: AbortController | null = null;
-
-	private releaseReattachAbortController(controller: AbortController): void {
-		if (this.reattachAbortController === controller) {
-			this.reattachAbortController = null;
-		}
-	}
-
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
 	}
@@ -370,75 +275,17 @@ export class FinderManager {
 		clearFinderLatestResultsSnapshot();
 	}
 
-	/**
-	 * Generate a unique browser-side run id for a server Finder job. Used
-	 * as the ownership token + persisted before fetch so a reload can
-	 * identify the same server job.
-	 */
-	private generateServerRunId(): string {
-		const rand = Math.random().toString(36).slice(2, 10);
-		return `finder-${Date.now().toString(36)}-${rand}`;
-	}
-
-	/** Persist the active run id BEFORE fetch so a reload can reattach. */
-	private persistActiveServerRun(
-		runId: string,
-		startTime: number,
-		scope: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch' | 'arm_performance',
-	): void {
-		writeFinderActiveServerRun({ runId, scope, startedAt: startTime });
-	}
-
-	/** Clear the persisted active-run record (terminal / stop / missing). */
-	private clearActiveServerRun(): void {
-		clearFinderActiveServerRun();
-	}
-
-	/** Read the persisted active-run record (or null). */
 	private loadPersistedActiveServerRun(): FinderPersistedActiveServerRun | null {
 		return readFinderActiveServerRun();
 	}
 
 	/** Cancel any in-flight reattach poll loop immediately. */
 	private stopReattachPoll(): void {
-		this.reattachPollingStopped = true;
-		// Abort a hung status fetch so the reattach/recovery loop cannot wait
-		// on a request that will never resolve while the UI is being stopped.
-		this.reattachAbortController?.abort();
-		this.reattachAbortController = null;
-		if (this.reattachTimer) {
-			clearTimeout(this.reattachTimer);
-			this.reattachTimer = null;
-		}
-		if (this.reattachTimerResolve) {
-			this.reattachTimerResolve();
-			this.reattachTimerResolve = null;
-		}
+		this.session.stopReattachPoll();
 	}
 
 	private async stopActiveServerRun(runId: string): Promise<void> {
-		try {
-			const response = await fetch('/api/finder/stop', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ runId }),
-			});
-			if (!response.ok) {
-				throw new Error(`status ${response.status}`);
-			}
-			const payload = await response.json() as { ok?: unknown; stopped?: unknown };
-			if (payload.ok !== true) {
-				throw new Error('server rejected the stop request');
-			}
-			// The matching run was stopped or was already terminal.
-			this.clearActiveServerRun();
-		} catch (error) {
-			debugLogger.warn('finder.server.stop_failed', {
-				runId,
-				error: error instanceof Error ? error.message : String(error),
-			});
-			this.setStatus('Finder Stop was rejected by the server; reload to reattach.');
-		}
+		await this.session.stopServerRun(runId, { setStatus: (text) => this.setStatus(text) });
 	}
 
 	private parseUniverseSymbols(rawText = this.getDom().finderUniverseSymbols.value): string[] {
@@ -576,12 +423,12 @@ export class FinderManager {
 			// run id (Stop is scoped by run id so a stale tab cannot cancel a
 			// newer run). Fire-and-forget; only POST when a run is in flight
 			// AND the active run id is known.
-			const activeRunId = this.activeServerRunId;
+			const activeRunId = this.session.activeRunId;
 			if (this.isRunning && activeRunId) {
 				// Drop local ownership immediately so late stream callbacks cannot
 				// mutate the stopped view. Keep the persisted marker until the server
 				// confirms Stop; on a network failure a reload can still reattach.
-				this.activeServerRunId = null;
+				this.session.activeRunId = null;
 				void this.stopActiveServerRun(activeRunId);
 			}
 		});
@@ -1279,7 +1126,7 @@ const applicable = oosCapableWindow;
 		// UI ownership so late poll updates cannot mutate the new run's state.
 		try {
 			this.stopReattachPoll();
-			this.activeServerRunId = null;
+			this.session.activeRunId = null;
 			if (!this.isUniverseScope() && !this.isAssetOpportunityScope() && !this.isStrategyQualityScope() && !this.isArmPerformanceScope() && state.ohlcvData.length === 0) {
 				this.setStatus('Data not loaded. Attempting to load...');
 				await dataManager.loadData();
@@ -1354,17 +1201,57 @@ const applicable = oosCapableWindow;
 		this.renderLatestResults();
 
 		try {
+			const host = this.runHost();
+			const strategies = this.strategySource();
+			const store = this.resultStore;
+			const session = this.session;
 			const completed = options.scope === 'symbol_universe'
-				? await this.runUniverseFinder(options, startTime)
+				? await runUniverseFinder({
+					host, store, session, strategies, options, startTime,
+					getSelectedStrategies: () => this.getUniverseSelectedStrategies(),
+					onDiagnostics: (diagnostics) => { this.latestDiagnostics = diagnostics; },
+				})
 				: options.scope === 'asset_opportunity'
 					? this.isAssetOpportunityBatchMode()
-						? await this.runAssetOpportunityBatchFinder(options, startTime)
-						: await this.runAssetOpportunityFinder(options, startTime)
+						? await runAssetOpportunityBatchFinder({
+							host, store, session, strategies, options, startTime,
+							getSelectedStrategies: () => this.getSelectedStrategies(),
+							onDiagnostics: (diagnostics, assetDiagnostics) => {
+								this.latestDiagnostics = diagnostics;
+								this.latestAssetOpportunityDiagnostics = assetDiagnostics;
+							},
+							range: this.readBatchHoldoutRange(),
+						})
+						: await runAssetOpportunityFinder({
+							host, store, session, strategies, options, startTime,
+							getSelectedStrategies: () => this.getSelectedStrategies(),
+							onDiagnostics: (diagnostics, assetDiagnostics) => {
+								this.latestDiagnostics = diagnostics;
+								this.latestAssetOpportunityDiagnostics = assetDiagnostics;
+							},
+						})
 					: options.scope === 'arm_performance'
-						? await this.runArmPerformanceFinder(options, startTime)
+						? await runArmPerformanceFinder({
+							host, store, session, options, startTime,
+							getUniverseSelectedStrategies: () => this.getUniverseSelectedStrategies(),
+							resolveExitStrategyCandidates: (finderOptions, selected) => this.resolveExitStrategyCandidates(finderOptions, selected),
+							getPairListText: () => this.getDom().finderUniverseSymbols.value,
+							getSelectedArm: () => this.getDom().finderResort.value as FinderArmPerformanceArm,
+							onCancelled: () => { this.isCancelled = true; },
+						})
 					: options.scope === 'strategy_quality'
-						? await this.runStrategyQualityFinder(options, startTime)
-						: await this.runCurrentChartFinder(options, startTime);
+						? await runStrategyQualityFinder({
+							host, store, options, startTime,
+							getUniverseSelectedStrategies: () => this.getUniverseSelectedStrategies(),
+							onDiagnostics: (diagnostics) => { this.latestDiagnostics = diagnostics; },
+						})
+						: await runCurrentChartFinder({
+							host, store, strategies, options, startTime,
+							getSelectedStrategies: () => this.getSelectedStrategies(),
+							generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
+							retainEvaluationData: (data) => { this.lastFinderEvaluationData = data; },
+							onDiagnostics: (diagnostics) => { this.latestDiagnostics = diagnostics; },
+						});
 
 			if (!completed) {
 				finalizeProgress(0, '');
@@ -1427,173 +1314,6 @@ const applicable = oosCapableWindow;
 		}
 	}
 
-	private async runCurrentChartFinder(options: FinderOptions, startTime: number): Promise<boolean> {
-		const selectedStrategies = await this.getSelectedStrategies();
-		if (selectedStrategies.length === 0) {
-			this.setStatus('No strategies selected.');
-			return false;
-		}
-		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
-		if (options.mode === "genetic" && finderSortRequiresTradeTimingQuality(options.sortPriority)) {
-			this.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
-			return false;
-		}
-
-		const capitalSettings = backtestService.getCapitalSettings();
-		const settings = backtestService.getBacktestSettings();
-		const requiresTsEngine = backtestService.requiresTypescriptEngine(settings) || !isRustSupportedTradeSizingMode(capitalSettings.sizingMode);
-
-		const blockSlicedData = sliceOhlcvByBlock(state.ohlcvData, state.blockRange);
-		const windowSlicedData = sliceFinderDataWindow(
-			blockSlicedData,
-			options.dataSlice ?? "all",
-			normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo),
-		);
-		const ohlcvData = buildFinderEvaluationData(windowSlicedData, state.currentInterval, settings);
-		if (ohlcvData.length === 0) {
-			this.setStatus('No candles available for finder run.');
-			return false;
-		}
-		// Retain the evaluation reference WITHOUT cloning: Finder execution
-		// treats the OHLCV input as read-only (enforced by the frozen-input
-		// test), so the upfront clone only duplicated ~5-10MB per 100k-bar
-		// run. The defensive copy is made at the Apply boundary instead, where
-		// the backtest actually consumes the data.
-		this.lastFinderEvaluationData = {
-			interval: state.currentInterval,
-			data: ohlcvData,
-		};
-
-		const output = await runFinderExecution(
-			{
-				ohlcvData,
-				symbol: state.currentSymbol,
-				interval: state.currentInterval,
-				options,
-				settings,
-				requiresTsEngine,
-				selectedStrategies,
-				capitalSettings,
-				exitStrategyCandidates,
-				signal: this.finderRunAbortController?.signal,
-				generateParamSets: (defaultParams, finderOptions) => this.generateParamSets(defaultParams, finderOptions),
-			},
-			{
-				setProgress: (percent, text) => this.setProgress(true, percent, text),
-				setStatus: (text) => this.setStatus(text),
-				yieldControl: () => this.taskYielder.yieldControl(),
-				isCancelled: () => this.isCancelled,
-				onResultsUpdate: (results: FinderResult[]) => {
-					const sorted = sortFinderResults(results, options.sortPriority);
-					// Provisional mid-run render — no persistence until the final
-					// adoption below.
-					this.resultStore.setLatestResults({ scope: 'current_chart', results: sorted }, false);
-					this.renderLatestResults();
-				},
-			}
-		);
-
-		const sortedResults = sortFinderResults(output.results, options.sortPriority);
-		const oosReport = await this.applyOosValidationIfNeeded({
-			results: sortedResults,
-			blockSlicedData,
-			selectedStrategies,
-			settings,
-			capitalSettings,
-			options,
-			startTime,
-		});
-		const finalResults = oosReport?.filtered ?? sortedResults;
-		const finalSortedResults = oosReport
-			? sortFinderResults(finalResults, options.sortPriority, { useOosValues: true })
-			: finalResults;
-		this.resultStore.setLatestResults({ scope: 'current_chart', results: finalSortedResults });
-		this.latestDiagnostics = output.diagnostics ?? buildFallbackDiagnostics({
-			options,
-			results: finalSortedResults,
-			selectedStrategies,
-			ohlcvData,
-			elapsedMs: performance.now() - startTime,
-			requiresTsEngine,
-		});
-		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
-		this.stashAndResetResort();
-		this.populateResortOptions();
-		this.renderLatestResults();
-		this.ui.renderRandomBenchmark(options.mode, output.randomBenchmark);
-
-		if (!this.isCancelled) {
-			const elapsed = Math.round(performance.now() - startTime);
-			if (oosReport && oosReport.removedCount > 0) {
-				this.setStatus(
-					`Finder complete. ${finalResults.length} result${finalResults.length === 1 ? '' : 's'}`
-					+ ` (${oosReport.removedCount} filtered by OOS gate) in ${elapsed}ms.`
-				);
-			} else {
-				this.setStatus(`Finder complete. ${finalResults.length} result${finalResults.length === 1 ? '' : 's'} in ${elapsed}ms.`);
-			}
-		}
-		return true;
-	}
-
-	/**
-	 * Out-of-sample gate. After the normal Finder ranking produces its top-N survivors,
-	 * each survivor is re-backtested on the complementary half of the data window. Any
-	 * candidate that degrades (netProfit < 0 or profitFactor < 1.0) is filtered out;
-	 * inconclusive OOS runs (too few trades) are kept and flagged. Returns null when the
-gate is not applicable (toggle off, non-half window, cancelled).
-	 *
-	 * Delegates to the extracted `runCandidateOosPass` leaf so the Asset Opportunity
-	 * server job reuses the identical OOS semantics.
-	 */
-	private async applyOosValidationIfNeeded(args: {
-		results: FinderResult[];
-		blockSlicedData: OHLCVData[];
-		selectedStrategies: FinderSelectedStrategy[];
-		settings: BacktestSettings;
-		capitalSettings: CapitalSettings;
-		options: FinderOptions;
-		startTime: number;
-	}): Promise<{ filtered: FinderResult[]; removedCount: number } | null> {
-		const { results, blockSlicedData, selectedStrategies, settings, capitalSettings, options } = args;
-		const dataSlice = options.dataSlice ?? 'all';
-		if (!options.oosValidationEnabled) return null;
-		const oosSlice = resolveOosDataSlice(dataSlice);
-		if (!oosSlice) return null;
-		if (results.length === 0) return { filtered: results, removedCount: 0 };
-
-		const oosWindowData = sliceFinderDataWindow(
-			blockSlicedData,
-			oosSlice,
-			normalizeFinderDateRange(options.dataRangeFrom, options.dataRangeTo),
-		);
-		const oosData = buildFinderEvaluationData(oosWindowData, state.currentInterval, settings);
-		if (oosData.length === 0) {
-			return { filtered: results, removedCount: 0 };
-		}
-
-		const strategyByKey = new Map(selectedStrategies.map((item) => [item.key, item.strategy]));
-		const exitCandidatesForOos = await this.resolveExitStrategyCandidates(options, selectedStrategies);
-		const exitStrategyByKey = new Map((exitCandidatesForOos ?? []).map((item) => [item.key, item.strategy]));
-
-		const report = await runCandidateOosPass({
-			results,
-			strategyByKey,
-			exitStrategyByKey,
-			settings,
-			options,
-			capitalSettings,
-			interval: state.currentInterval,
-			oosData,
-			isCancelled: () => this.isCancelled,
-			onProgress: (percent, text) => this.setProgress(true, percent, text),
-			yieldControl: () => this.taskYielder.yieldControl(),
-		});
-
-		if (!report.applied) return null;
-		return { filtered: report.filtered, removedCount: report.removedCount };
-	}
-
 	/**
 	 * Reattach to an in-flight or terminal server-owned Finder job after a
 	 * tab reload. Called from `init()` (Finder is lazy-loaded, so reattach
@@ -1609,253 +1329,111 @@ gate is not applicable (toggle off, non-half window, cancelled).
 	 * remains alive; a Vite restart loses the in-memory job and the reattach
 	 * clears its record.
 	 */
+	/**
+	 * Reattach to an in-flight or terminal server-owned Finder job after a
+	 * tab reload (Finder is lazy-loaded, so this runs on first Finder
+	 * activation). The session owns the poll loop; the facade supplies the
+	 * scope/UI/terminal-interpretation capabilities.
+	 */
 	private async reattachToActiveServerRun(): Promise<void> {
-		const persisted = this.loadPersistedActiveServerRun();
-		if (!persisted) {
+		if (!this.loadPersistedActiveServerRun()) {
 			await this.restoreSavedArmPerformanceInventory();
 			return;
 		}
-		const runId = persisted.runId;
+		await this.session.reattachToActiveServerRun(this.reattachHost());
+	}
 
-		// Probe whether the server still has this job. The controller is
-		// shared with stopReattachPoll so Stop can abort a hung probe.
-		const abortController = new AbortController();
-		this.reattachAbortController = abortController;
-		const initialRequest = createFinderStatusRequestSignal(abortController.signal);
-		let initial: FinderRunStatusSnapshot | null = null;
-		let confirmedMissing = false;
-		try {
-			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
-				cache: "no-store",
-				signal: initialRequest.signal,
-			});
-			if (response.ok) {
-				initial = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
-			} else if (response.status === 404) {
-				confirmedMissing = true;
-			} else {
-				this.releaseReattachAbortController(abortController);
-				return;
-			}
-		} catch {
-			// Transient network error (or an abort from Stop) on the probe —
-			// leave the persisted record intact; the user can reload again.
-			// Do not claim completion.
-			this.releaseReattachAbortController(abortController);
-			return;
-		} finally {
-			initialRequest.cleanup();
-		}
-		// Ownership check after the probe's await: a delayed response must not
-		// adopt an old run after a new Run has started (or Stop was pressed)
-		// while the probe was in flight — that would clobber the new run's
-		// activeServerRunId and make every later callback mis-scope.
-		if (this.reattachPollingStopped || this.activeServerRunId !== null) {
-			this.releaseReattachAbortController(abortController);
-			return;
-		}
-		if (confirmedMissing || !initial || !initial.ok) {
-			// Server has no matching job (Vite restart, or a different run
-			// already completed). Clear the stale record so reattach doesn't
-			// loop forever.
-			this.releaseReattachAbortController(abortController);
-			this.clearActiveServerRun();
-			return;
-		}
-
-		// The server job exists. Adopt it as the active run.
-		this.activeServerRunId = runId;
-		this.isRunning = true;
-		this.isCancelled = false;
-		this.reattachPollingStopped = false;
+	/** Restore the persisted job's scope before any terminal snapshot lands. */
+	private restoreServerRunScope(scope: FinderScope): void {
 		const dom = this.getDom();
-		// The persisted ownership record identifies the job kind. Restore
-		// that scope before any terminal snapshot is adopted so it cannot replace
-		// a current-chart view while the UI still claims current-chart scope.
-		// A batch job reattaches as the same asset_opportunity scope (the batch
-		// is an orchestration detail, not a distinct render scope).
-		const uiScope: FinderScope = persisted.scope === 'asset_opportunity_batch'
-			? 'asset_opportunity'
-			: persisted.scope;
-		if (this.uiState.scope !== uiScope) {
-			this.uiState.scope = uiScope;
-			dom.finderScope.value = uiScope;
+		if (this.uiState.scope !== scope) {
+			this.uiState.scope = scope;
+			dom.finderScope.value = scope;
 			this.applyScopeUi();
 			this.saveUiState();
 		}
-		dom.runFinder.disabled = true;
-		dom.stopFinder.style.display = "";
-		// The persisted result snapshot belongs to the previous completed view,
-		// not to this server job. Clear it before showing reattach progress so a
-		// reload cannot display stale asset rows while the job is still running.
+	}
+
+	private resetForServerRunAdoption(): void {
 		this.resultStore.resetForNewRun();
 		this.resultStore.setRunDisplayLimits(this.uiState.topN);
 		this.clearLatestResultsSnapshot();
 		// Volatile reattach progress view — the snapshot was cleared above and
 		// is only re-persisted at a terminal snapshot.
-		this.resultStore.setLatestResults(emptyFinderLatestResults(uiScope), false);
+		this.resultStore.setLatestResults(emptyFinderLatestResults(this.uiState.scope), false);
 		this.renderLatestResults();
-		debugLogger.event("finder.server.reattach_started", {
-			runId,
-			phase: initial.phase,
-			terminal: initial.terminal,
-		});
+	}
 
-		const setRunningUI = (running: boolean) => {
-			dom.runFinder.disabled = running;
-			dom.runFinder.classList.toggle("is-loading", running);
-			dom.runFinder.setAttribute("aria-busy", running ? "true" : "false");
-			dom.stopFinder.style.display = running ? "" : "none";
-		};
-
-		this.setProgress(true, initial.progressPercent, initial.statusText);
-		const jobLabel = persisted.scope === 'asset_opportunity' || persisted.scope === 'asset_opportunity_batch'
-			? 'Asset Opportunity'
-			: persisted.scope === 'arm_performance' ? 'Arm Performance' : 'Universe Finder';
-		this.setStatus(`Reattached to ${jobLabel}: ${initial.statusText}`);
-		let clearPersistedRecord = false;
-		let terminalReached = false;
-		const applyTerminalSnapshot = (snapshot: FinderRunStatusSnapshot): void => {
-			if (!snapshot.terminal || this.activeServerRunId !== runId) return;
-			terminalReached = true;
-			clearPersistedRecord = true;
-			if (persisted.scope === 'arm_performance' && snapshot.terminalArmPerformanceResults) {
-				this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.uiState.topN);
-				this.adoptArmPerformanceResults(
-					snapshot.terminalArmPerformanceResults,
-					snapshot.armPerformanceRunContext ?? null,
-					true,
-				);
-				this.populateResortOptions();
-				this.stashAndResetResort();
-				this.renderLatestResults();
-			} else if ((persisted.scope === 'asset_opportunity' || persisted.scope === 'asset_opportunity_batch')
-				&& snapshot.terminalAssets) {
-				this.resultStore.assetOpportunityRunResults = sortAssetOpportunityResults([...snapshot.terminalAssets]);
-				this.resultStore.assetOpportunityDefaultResults = [...this.resultStore.assetOpportunityRunResults];
-				this.resultStore.setAssetOpportunityLatestResults(this.resultStore.assetOpportunityRunResults);
-				this.stashAndResetResort();
-				this.renderLatestResults();
-				this.latestDiagnostics = snapshot.diagnostics;
-				this.latestAssetOpportunityDiagnostics = snapshot.assetDiagnostics ?? (snapshot.assetTotals
-					? {
-						totalAssets: snapshot.assetTotals.totalAssets,
-						assetsWithFreshEntry: snapshot.assetTotals.assetsWithFreshEntry,
-						assetsWithNoFreshEntry: Math.max(0, snapshot.assetTotals.totalAssets - snapshot.assetTotals.assetsWithFreshEntry - snapshot.assetTotals.failedAssets),
-						selectGradeAssets: snapshot.assetTotals.selectGradeAssets,
-						watchGradeAssets: snapshot.assetTotals.watchGradeAssets,
-						rejectGradeAssets: snapshot.assetTotals.rejectGradeAssets,
-						failedAssets: [],
-						...(snapshot.assetTotals.engineUsage ? { engineUsage: snapshot.assetTotals.engineUsage } : {}),
-					}
-					: null);
-				dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics && !this.latestAssetOpportunityDiagnostics;
-			} else if (snapshot.phase === "done" && snapshot.terminalCandidates) {
-				// The terminal snapshot is the full scalar run inventory. Keep it
-				// for post-run re-sort and display only the persisted topN.
-				this.resultStore.adoptSymbolUniverseResults(snapshot.terminalCandidates);
-				this.populateResortOptions();
-				this.renderLatestResults();
-				this.latestDiagnostics = snapshot.diagnostics;
-				dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics;
-			}
-			this.setStatus(snapshot.error ?? snapshot.summary ?? snapshot.statusText);
-			debugLogger.event("finder.server.reattach_terminal", {
-				runId,
-				phase: snapshot.phase,
-				candidates: snapshot.terminalCandidates?.length ?? 0,
-				assets: snapshot.terminalAssets?.length ?? 0,
-			arms: snapshot.terminalArmPerformanceResults?.length ?? 0,
-			});
-		};
-		applyTerminalSnapshot(initial);
-
-		const POLL_INTERVAL_MS = 2000;
-		const LONG_POLL_INTERVAL_MS = 5000;
-		const FAST_POLL_COUNT = 150; // 5 min at 2s before stepping down
-		const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
-		const MAX_REATTACH_CONSECUTIVE_FAILURES = 20;
-		let consecutiveFailures = 0;
-
-		const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
-			this.reattachTimerResolve = resolve;
-			this.reattachTimer = setTimeout(resolve, ms);
-		});
-
-		for (let poll = 0; !terminalReached; poll += 1) {
-			if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
-			const delay = poll >= FAST_POLL_COUNT ? LONG_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
-			await sleep(delay);
-			if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
-
-			let snapshot: FinderRunStatusSnapshot | null = null;
-			const statusRequest = createFinderStatusRequestSignal(abortController.signal);
-			try {
-				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
-					cache: "no-store",
-					signal: statusRequest.signal,
-				});
-				if (!response.ok) {
-					// 404 means the server job is gone (restart). Stop polling
-					// and clear the record; don't claim completion.
-					if (response.status === 404) {
-						clearPersistedRecord = true;
-						this.setStatus("Server Finder run lost (dev server restarted).");
-						break;
-					}
-					throw new Error(`status ${response.status}`);
-				}
-				snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
-			} catch (error) {
-				if (this.reattachPollingStopped || this.activeServerRunId !== runId) break;
-				consecutiveFailures += 1;
-				debugLogger.warn("finder.server.reattach_poll_failed", {
-					runId,
-					consecutive: consecutiveFailures,
-					error: error instanceof Error ? error.message : String(error),
-				});
-				if (consecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) {
-					this.setStatus("Server connection lost — reload to retry Universe Finder reattach.");
-					break;
-				}
-				const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
-				poll -= 1; // don't advance into long-poll step-down due to retries
-				await sleep(FAILURE_BACKOFF_MS[backoffIndex]!);
-				continue;
-			} finally {
-				statusRequest.cleanup();
-			}
-
-			consecutiveFailures = 0;
-			if (!snapshot || !snapshot.ok) {
-				// Server no longer has this run id — stop and clear.
-				clearPersistedRecord = true;
-				this.setStatus("Server Finder run no longer active.");
-				break;
-			}
-
-			// Update progress from the summary-only snapshot (no candidate
-			// payload while running).
-			this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-			this.setStatus(`${jobLabel}: ${snapshot.statusText}`);
-
-			applyTerminalSnapshot(snapshot);
-		}
-
-		// Teardown: only the reattach path that still owns the run id clears it.
-		if (this.activeServerRunId === runId) {
-			this.activeServerRunId = null;
-			if (clearPersistedRecord) {
-				this.clearActiveServerRun();
-			}
-		}
-		this.reattachTimer = null;
-		this.reattachTimerResolve = null;
-		this.releaseReattachAbortController(abortController);
-		this.isRunning = false;
+	private setServerRunRunning(running: boolean): void {
+		this.isRunning = running;
 		this.isCancelled = false;
-		setRunningUI(false);
-		this.setProgress(false, 0, "");
+		const dom = this.getDom();
+		dom.runFinder.disabled = running;
+		dom.runFinder.classList.toggle("is-loading", running);
+		dom.runFinder.setAttribute("aria-busy", running ? "true" : "false");
+		dom.stopFinder.style.display = running ? "" : "none";
+	}
+
+	/**
+	 * Adopt a terminal reattach snapshot for its scope. Ownership (run id +
+	 * terminal) has already been re-checked by the session.
+	 */
+	private interpretTerminalServerRunSnapshot(
+		snapshot: Parameters<FinderSessionHost['interpretTerminal']>[0],
+		persistedScope: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch' | 'arm_performance',
+	): void {
+		const dom = this.getDom();
+		if (persistedScope === 'arm_performance' && snapshot.terminalArmPerformanceResults) {
+			this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.uiState.topN);
+			this.adoptArmPerformanceResults(
+				snapshot.terminalArmPerformanceResults,
+				snapshot.armPerformanceRunContext ?? null,
+				true,
+			);
+			this.populateResortOptions();
+			this.stashAndResetResort();
+			this.renderLatestResults();
+		} else if ((persistedScope === 'asset_opportunity' || persistedScope === 'asset_opportunity_batch')
+			&& snapshot.terminalAssets) {
+			this.resultStore.assetOpportunityRunResults = sortAssetOpportunityResults([...snapshot.terminalAssets]);
+			this.resultStore.assetOpportunityDefaultResults = [...this.resultStore.assetOpportunityRunResults];
+			this.resultStore.setAssetOpportunityLatestResults(this.resultStore.assetOpportunityRunResults);
+			this.stashAndResetResort();
+			this.renderLatestResults();
+			this.latestDiagnostics = snapshot.diagnostics;
+			this.latestAssetOpportunityDiagnostics = snapshot.assetDiagnostics ?? (snapshot.assetTotals
+				? {
+					totalAssets: snapshot.assetTotals.totalAssets,
+					assetsWithFreshEntry: snapshot.assetTotals.assetsWithFreshEntry,
+					assetsWithNoFreshEntry: Math.max(0, snapshot.assetTotals.totalAssets - snapshot.assetTotals.assetsWithFreshEntry - snapshot.assetTotals.failedAssets),
+					selectGradeAssets: snapshot.assetTotals.selectGradeAssets,
+					watchGradeAssets: snapshot.assetTotals.watchGradeAssets,
+					rejectGradeAssets: snapshot.assetTotals.rejectGradeAssets,
+					failedAssets: [],
+					...(snapshot.assetTotals.engineUsage ? { engineUsage: snapshot.assetTotals.engineUsage } : {}),
+				}
+				: null);
+			dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics && !this.latestAssetOpportunityDiagnostics;
+		} else if (snapshot.phase === "done" && snapshot.terminalCandidates) {
+			// The terminal snapshot is the full scalar run inventory. Keep it
+			// for post-run re-sort and display only the persisted topN.
+			this.resultStore.adoptSymbolUniverseResults(snapshot.terminalCandidates);
+			this.populateResortOptions();
+			this.renderLatestResults();
+			this.latestDiagnostics = snapshot.diagnostics;
+			dom.finderCopyDiagnostics.disabled = !snapshot.diagnostics;
+		}
+	}
+
+	private reattachHost(): FinderSessionHost {
+		return {
+			setProgress: (active, percent, text) => this.setProgress(active, percent, text),
+			setStatus: (text) => this.setStatus(text),
+			restoreScope: (scope) => this.restoreServerRunScope(scope),
+			resetForServerRunAdoption: () => this.resetForServerRunAdoption(),
+			setRunning: (running) => this.setServerRunRunning(running),
+			interpretTerminal: (snapshot, persistedScope) => this.interpretTerminalServerRunSnapshot(snapshot, persistedScope),
+		};
 	}
 
 	/** Recover the server's retained full inventory when localStorage has only the bounded preview. */
@@ -1868,7 +1446,7 @@ gate is not applicable (toggle off, non-half window, cancelled).
 		const runId = saved.runContext?.runId ?? candidateRunId;
 		if (!runId) return;
 		const abortController = new AbortController();
-		this.reattachAbortController = abortController;
+		this.session.adoptAbortController(abortController);
 		const request = createFinderStatusRequestSignal(abortController.signal);
 		try {
 			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
@@ -1878,8 +1456,8 @@ gate is not applicable (toggle off, non-half window, cancelled).
 			if (!response.ok) return;
 			const snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
 			if (
-				this.reattachPollingStopped
-				|| this.activeServerRunId !== null
+				this.session.pollingStopped
+				|| this.session.activeRunId !== null
 				|| this.resultStore.latestResults !== saved
 				|| !snapshot.ok
 				|| !snapshot.terminal
@@ -1901,314 +1479,8 @@ gate is not applicable (toggle off, non-half window, cancelled).
 			// Keep the persisted preview available if the server cannot be reached.
 		} finally {
 			request.cleanup();
-			this.releaseReattachAbortController(abortController);
+			this.session.releaseAbortController(abortController);
 		}
-	}
-
-	/**
-	 * Recover the initiating tab when its NDJSON connection ends before the
-	 * terminal event. The server job keeps running, so poll the scoped status
-	 * endpoint instead of treating provisional streamed candidates as final or
-	 * allowing a replacement run to orphan the active server job.
-	 */
-	private async recoverActiveServerRun(
-		runId: string,
-		jobKind: 'symbol_universe' | 'asset_opportunity' | 'asset_opportunity_batch' | 'arm_performance',
-	): Promise<FinderRunStatusSnapshot | null> {
-		const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
-		const MAX_CONSECUTIVE_FAILURES = 20;
-		let consecutiveFailures = 0;
-
-		const abortController = new AbortController();
-		this.reattachAbortController = abortController;
-		try {
-			while (this.activeServerRunId === runId) {
-				const statusRequest = createFinderStatusRequestSignal(abortController.signal);
-				try {
-					const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
-						cache: "no-store",
-						signal: statusRequest.signal,
-					});
-					if (response.status === 404) return null;
-					if (!response.ok) throw new Error(`status ${response.status}`);
-					const snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
-					// Ownership check after the await: a stale response that lands
-					// after a new run (or Stop) changed activeServerRunId must be
-					// discarded, never adopted.
-					if (this.activeServerRunId !== runId) return null;
-					if (!snapshot.ok) return null;
-					consecutiveFailures = 0;
-					if (snapshot.terminal) {
-						debugLogger.warn("finder.server.stream_recovered_via_status", {
-							runId,
-							phase: snapshot.phase,
-							candidates: snapshot.terminalCandidates?.length ?? 0,
-							assets: snapshot.terminalAssets?.length ?? 0,
-						});
-						return snapshot;
-					}
-					this.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-					const label = jobKind === 'asset_opportunity' || jobKind === 'asset_opportunity_batch'
-						? 'Asset Opportunity'
-						: jobKind === 'arm_performance' ? 'Arm Performance' : 'Universe Finder';
-					this.setStatus(`${label}: ${snapshot.statusText}`);
-					await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
-				} catch (error) {
-					// An abort (Stop / new run) is not a transient failure — bail
-					// out without counting it against the backoff budget.
-					if (this.activeServerRunId !== runId) return null;
-					consecutiveFailures += 1;
-					debugLogger.warn("finder.server.stream_recovery_poll_failed", {
-						runId,
-						consecutive: consecutiveFailures,
-						error: error instanceof Error ? error.message : String(error),
-					});
-					if (consecutiveFailures > MAX_CONSECUTIVE_FAILURES) return null;
-					const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
-					await new Promise<void>((resolve) => setTimeout(resolve, FAILURE_BACKOFF_MS[backoffIndex]!));
-				} finally {
-					statusRequest.cleanup();
-				}
-			}
-			return null;
-		} finally {
-			this.releaseReattachAbortController(abortController);
-		}
-	}
-
-	private async runAssetOpportunityFinder(options: FinderOptions, startTime: number): Promise<boolean> {
-		const selectedStrategies = await this.getSelectedStrategies();
-		if (selectedStrategies.length === 0) {
-			this.setStatus('Select at least one strategy for Asset Opportunity mode.');
-			return false;
-		}
-		const symbols = options.assetOpportunity?.symbols ?? [];
-		if (symbols.length === 0) {
-			this.setStatus('Add at least one symbol for Asset Opportunity mode.');
-			return false;
-		}
-
-		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
-		const runId = this.generateServerRunId();
-		this.activeServerRunId = runId;
-		this.persistActiveServerRun(runId, startTime, 'asset_opportunity');
-
-		const outcome = await this.runAssetOpportunityFinderServer(
-			options,
-			selectedStrategies,
-			exitStrategyCandidates,
-			runId,
-			startTime,
-		);
-
-		if (this.activeServerRunId === runId) {
-			this.activeServerRunId = null;
-			this.clearActiveServerRun();
-		}
-		this.latestDiagnostics = outcome.diagnostics;
-		this.latestAssetOpportunityDiagnostics = outcome.assetDiagnostics ?? {
-			totalAssets: symbols.length,
-			assetsWithFreshEntry: outcome.assetsWithFreshEntry,
-			assetsWithNoFreshEntry: Math.max(0, symbols.length - outcome.assetsWithFreshEntry - outcome.failedAssets),
-			selectGradeAssets: 0,
-			watchGradeAssets: 0,
-			rejectGradeAssets: 0,
-			failedAssets: [],
-		};
-		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics && !this.latestAssetOpportunityDiagnostics;
-		this.ui.renderRandomBenchmark('random');
-
-		if (!this.isCancelled && this.activeServerRunId === null) {
-			const terminalAssetDiagnostics = outcome.assetDiagnostics;
-			const totalAssets = terminalAssetDiagnostics?.totalAssets ?? symbols.length;
-			const freshAssets = terminalAssetDiagnostics?.assetsWithFreshEntry ?? outcome.assetsWithFreshEntry;
-			const failedAssets = terminalAssetDiagnostics?.failedAssets.length ?? outcome.failedAssets;
-			this.setStatus(
-				`Asset Opportunity complete. ${outcome.results.length}/${totalAssets} fresh opportunities` +
-				` | ${freshAssets} fresh assets | ${failedAssets} failed` +
-				` | ${Math.round(performance.now() - startTime)}ms`,
-			);
-		}
-		return true;
-	}
-
-	private async runAssetOpportunityFinderServer(
-		options: FinderOptions,
-		selectedStrategies: FinderSelectedStrategy[],
-		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
-		runId: string,
-		startTime: number,
-	): Promise<ServerAssetOpportunityRunOutcome> {
-		const settings = backtestService.getBacktestSettings();
-		const capitalSettings = backtestService.getCapitalSettings();
-		const symbols = options.assetOpportunity?.symbols ?? [];
-
-		const response = await fetch('/api/finder/asset-opportunity-run', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				runId,
-				symbols,
-				interval: state.currentInterval,
-				options,
-				settings,
-				capitalSettings,
-				strategyKeys: selectedStrategies.map((candidate) => candidate.key),
-				exitStrategyKeys: exitStrategyCandidates?.map((candidate) => candidate.key),
-				useRustEnginePreference: shouldUseRustEngine(),
-			}),
-		});
-		if (response.status === 404 || response.status === 405) {
-			throw new Error("Asset Opportunity requires a Vite server runtime; static-only deployments are unsupported.");
-		}
-		if (!response.ok || !response.body) {
-			const text = await response.text();
-			let payload: { error?: string } = {};
-			try { payload = JSON.parse(text); } catch { /* ignore */ }
-			throw new Error(payload.error ?? `Server Asset Opportunity run failed (${response.status}).`);
-		}
-
-		const isStillActive = (): boolean => this.activeServerRunId === runId;
-		const submittedAssetSymbols = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean));
-		const provisionalAssetResults = new Map<string, FinderAssetOpportunityResult>();
-		const assetResultKey = (result: FinderAssetOpportunityResult): string =>
-			`${result.symbol.trim().toUpperCase()}\u0000${result.strategyKey}`;
-		const retainSubmittedAssetResults = (
-			results: readonly FinderAssetOpportunityResult[],
-		): FinderAssetOpportunityResult[] => {
-			const retained = retainAssetOpportunityResultsForSymbols(results, submittedAssetSymbols);
-			if (retained.length !== results.length) {
-				debugLogger.warn("finder.asset_opportunity.stale_result_ignored", {
-					runId,
-					ignoredSymbols: results
-						.filter((result) => !submittedAssetSymbols.has(result.symbol.trim().toUpperCase()))
-						.map((result) => result.symbol),
-				});
-			}
-			return retained;
-		};
-		let terminalResults: FinderAssetOpportunityResult[] | null = null;
-		let terminalDiagnostics: FinderDiagnostics | null = null;
-		let assetDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
-		let assetsWithFreshEntry = 0;
-		let failedAssets = 0;
-		let streamError: unknown = null;
-		// Coalesced provisional rendering: sort + render at most once per
-		// flush interval. The terminal asset_done render cancels any pending
-		// flush, and a late flush after terminal adoption is a no-op.
-		let provisionalRenderTimer: ReturnType<typeof setTimeout> | null = null;
-		const flushProvisionalRender = (): void => {
-			provisionalRenderTimer = null;
-			if (terminalResults !== null) return;
-			this.resultStore.assetOpportunityRunResults = sortAssetOpportunityResults([
-				...provisionalAssetResults.values(),
-			]);
-			// Provisional streamed asset — no persistence until terminal
-			// asset_done adoption.
-			this.resultStore.setAssetOpportunityLatestResults(this.resultStore.assetOpportunityRunResults, false, options.topN);
-			this.renderLatestResults();
-		};
-		const scheduleProvisionalRender = (): void => {
-			if (provisionalRenderTimer !== null) return;
-			provisionalRenderTimer = setTimeout(flushProvisionalRender, ASSET_PROVISIONAL_RENDER_FLUSH_MS);
-		};
-		const cancelProvisionalRender = (): void => {
-			if (provisionalRenderTimer === null) return;
-			clearTimeout(provisionalRenderTimer);
-			provisionalRenderTimer = null;
-		};
-		try {
-			await consumeNdjsonStream<FinderAssetOpportunityStreamEvent>(response.body, {
-					onAssetStart: (event) => {
-						if (isStillActive()) this.setStatus(`Asset Opportunity: ${event.strategyNames.join(', ')}, 0/${event.totalAssets} assets`);
-				},
-				onAssetProgress: (event) => {
-					if (!isStillActive()) return;
-					this.setProgress(true, event.percent, event.text);
-					this.setStatus(`Asset Opportunity: ${event.status}`);
-				},
-				onAssetComplete: (event) => {
-					if (!isStillActive()) return;
-					if (!submittedAssetSymbols.has(event.asset.symbol.trim().toUpperCase())) {
-						debugLogger.warn("finder.asset_opportunity.stale_result_ignored", {
-							runId,
-							ignoredSymbols: [event.asset.symbol],
-						});
-						return;
-					}
-					assetsWithFreshEntry += 1;
-					provisionalAssetResults.set(assetResultKey(event.asset), event.asset);
-					scheduleProvisionalRender();
-				},
-				onAssetDone: (event) => {
-					if (event.runId !== runId) return;
-					terminalResults = retainSubmittedAssetResults(event.assets ?? []);
-					terminalDiagnostics = event.diagnostics;
-					assetDiagnostics = event.assetDiagnostics;
-					assetsWithFreshEntry = event.totals.assetsWithFreshEntry;
-					failedAssets = event.totals.failedAssets;
-					cancelProvisionalRender();
-					if (isStillActive()) {
-						this.resultStore.assetOpportunityRunResults = sortAssetOpportunityResults([...(terminalResults ?? [])]);
-						this.resultStore.assetOpportunityDefaultResults = [...this.resultStore.assetOpportunityRunResults];
-						this.resultStore.setAssetOpportunityLatestResults(this.resultStore.assetOpportunityRunResults, true, options.topN);
-						this.stashAndResetResort();
-						this.renderLatestResults();
-					}
-				},
-				onAssetFatal: (event) => {
-					throw new Error(event.error);
-				},
-			}, { requireTerminal: true, terminalTypes: ['asset_done', 'asset_fatal'] });
-		} catch (error) {
-			streamError = error;
-		}
-		cancelProvisionalRender();
-		if (terminalResults === null && streamError === null) {
-			// Stream ended without a terminal event carrying rows (e.g. an
-			// empty run): still surface the latest provisional state once.
-			flushProvisionalRender();
-		}
-
-		if (streamError) {
-			if (isStillActive()) {
-				const recovered = await this.recoverActiveServerRun(runId, 'asset_opportunity');
-				if (recovered?.terminalAssets) {
-					terminalResults = retainSubmittedAssetResults(recovered.terminalAssets);
-					terminalDiagnostics = recovered.diagnostics;
-					assetDiagnostics = recovered.assetDiagnostics ?? (recovered.assetTotals
-						? {
-							totalAssets: recovered.assetTotals.totalAssets,
-							assetsWithFreshEntry: recovered.assetTotals.assetsWithFreshEntry,
-							assetsWithNoFreshEntry: Math.max(0, recovered.assetTotals.totalAssets - recovered.assetTotals.assetsWithFreshEntry - recovered.assetTotals.failedAssets),
-							selectGradeAssets: recovered.assetTotals.selectGradeAssets,
-							watchGradeAssets: recovered.assetTotals.watchGradeAssets,
-							rejectGradeAssets: recovered.assetTotals.rejectGradeAssets,
-							failedAssets: [],
-							...(recovered.assetTotals.engineUsage ? { engineUsage: recovered.assetTotals.engineUsage } : {}),
-						}
-						: null);
-					assetsWithFreshEntry = recovered.assetTotals?.assetsWithFreshEntry ?? terminalResults.length;
-					failedAssets = recovered.assetTotals?.failedAssets ?? 0;
-					this.resultStore.assetOpportunityRunResults = sortAssetOpportunityResults([...terminalResults]);
-					this.resultStore.assetOpportunityDefaultResults = [...this.resultStore.assetOpportunityRunResults];
-					this.resultStore.setAssetOpportunityLatestResults(this.resultStore.assetOpportunityRunResults, true, options.topN);
-					this.stashAndResetResort();
-					this.renderLatestResults();
-				} else if (!this.isCancelled) {
-					throw streamError;
-				}
-			}
-		}
-
-		const results = terminalResults ?? this.getAssetOpportunityResults();
-		if (!this.isCancelled && isStillActive()) {
-			this.setStatus(`Server Asset Opportunity: ${results.length} opportunities (${Math.round(performance.now() - startTime)}ms)`);
-		}
-		if (terminalDiagnostics && assetDiagnostics) {
-			terminalDiagnostics.assetOpportunity = assetDiagnostics;
-		}
-		return { results, diagnostics: terminalDiagnostics, assetDiagnostics, assetsWithFreshEntry, failedAssets };
 	}
 
 	private isAssetOpportunityBatchMode(): boolean {
@@ -2216,41 +1488,23 @@ gate is not applicable (toggle off, non-half window, cancelled).
 	}
 
 	/**
-	 * Asset Opportunity BATCH mode: one server-owned job sweeps the validated
-	 * holdout range in ascending order and appends each top-N payload to
-	 * `archive/asset opportunity/`. The browser renders only the latest
-	 * completed iteration; Stop and reload reattach reuse the existing
-	 * owner/run-id machinery.
+	 * Facade seam over the batch server consumer, preserving the original
+	 * positional signature for integration tests.
 	 */
-	private async runAssetOpportunityBatchFinder(options: FinderOptions, startTime: number): Promise<boolean> {
-		const selectedStrategies = await this.getSelectedStrategies();
-		if (selectedStrategies.length === 0) {
-			this.setStatus('Select at least one strategy for Asset Opportunity mode.');
-			return false;
-		}
-		const symbols = options.assetOpportunity?.symbols ?? [];
-		if (symbols.length === 0) {
-			this.setStatus('Add at least one symbol for Asset Opportunity mode.');
-			return false;
-		}
-		const dom = this.getDom();
-		const range = normalizeFinderAssetOosBatchHoldoutRange(
-			dom.finderAssetOosBatchStart.value,
-			dom.finderAssetOosBatchEnd.value,
-		);
-		if (range.error !== null) {
-			this.setStatus(range.error);
-			uiManager.showToast(range.error, 'error');
-			return false;
-		}
-		const archiveSort = ASSET_OPPORTUNITY_ALL_SORTS;
-
-		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
-		const runId = this.generateServerRunId();
-		this.activeServerRunId = runId;
-		this.persistActiveServerRun(runId, startTime, 'asset_opportunity_batch');
-
-		const outcome = await this.runAssetOpportunityBatchFinderServer(
+	/** @internal exposed for facade integration tests */
+	async runAssetOpportunityBatchFinderServer(
+		options: FinderOptions,
+		selectedStrategies: FinderSelectedStrategy[],
+		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
+		runId: string,
+		startTime: number,
+		range: BatchHoldoutRange,
+		archiveSort: import("./finder/finder-asset-opportunity-metrics").FinderAssetOpportunityArchiveSort | null = null,
+	): Promise<unknown> {
+		return runAssetOpportunityBatchFinderServer({
+			host: this.runHost(),
+			store: this.resultStore,
+			session: this.session,
 			options,
 			selectedStrategies,
 			exitStrategyCandidates,
@@ -2258,720 +1512,49 @@ gate is not applicable (toggle off, non-half window, cancelled).
 			startTime,
 			range,
 			archiveSort,
-		);
-
-		if (this.activeServerRunId === runId) {
-			this.activeServerRunId = null;
-			this.clearActiveServerRun();
-		}
-		this.latestDiagnostics = outcome.diagnostics;
-		this.latestAssetOpportunityDiagnostics = outcome.assetDiagnostics ?? {
-			totalAssets: symbols.length,
-			assetsWithFreshEntry: outcome.assetsWithFreshEntry,
-			assetsWithNoFreshEntry: Math.max(0, symbols.length - outcome.assetsWithFreshEntry - outcome.failedAssets),
-			selectGradeAssets: 0,
-			watchGradeAssets: 0,
-			rejectGradeAssets: 0,
-			failedAssets: [],
-		};
-		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics && !this.latestAssetOpportunityDiagnostics;
-		this.ui.renderRandomBenchmark('random');
-
-		if (!this.isCancelled && this.activeServerRunId === null) {
-			const totalAssets = outcome.assetDiagnostics?.totalAssets ?? symbols.length;
-			const freshAssets = outcome.assetDiagnostics?.assetsWithFreshEntry ?? outcome.assetsWithFreshEntry;
-			const failedAssets = outcome.assetDiagnostics?.failedAssets.length ?? outcome.failedAssets;
-			this.setStatus(
-				`Asset Opportunity batch complete (${range.start}–${range.end} holdout bars). ` +
-				`Last holdout: ${outcome.results.length}/${totalAssets} fresh opportunities` +
-				` | ${freshAssets} fresh assets | ${failedAssets} failed` +
-				` | ${Math.round(performance.now() - startTime)}ms`,
-			);
-		}
-		return true;
-	}
-
-	private async runAssetOpportunityBatchFinderServer(
-		options: FinderOptions,
-		selectedStrategies: FinderSelectedStrategy[],
-		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
-		runId: string,
-		startTime: number,
-		range: { start: number; end: number },
-		archiveSort: FinderAssetOpportunityArchiveSort | null = null,
-	): Promise<ServerAssetOpportunityRunOutcome> {
-		archiveSort = ASSET_OPPORTUNITY_ALL_SORTS;
-		const settings = backtestService.getBacktestSettings();
-		const capitalSettings = backtestService.getCapitalSettings();
-		const symbols = options.assetOpportunity?.symbols ?? [];
-
-		const response = await fetch('/api/finder/asset-opportunity-batch-run', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				runId,
-				symbols,
-				interval: state.currentInterval,
-				options,
-				settings,
-				capitalSettings,
-				strategyKeys: selectedStrategies.map((candidate) => candidate.key),
-				exitStrategyKeys: exitStrategyCandidates?.map((candidate) => candidate.key),
-				useRustEnginePreference: shouldUseRustEngine(),
-				archiveSort,
-				batch: {
-					startHoldoutBars: range.start,
-					endHoldoutBars: range.end,
-				},
-			}),
 		});
-		if (response.status === 404 || response.status === 405) {
-			throw new Error("Asset Opportunity batch requires a Vite server runtime; static-only deployments are unsupported.");
-		}
-		if (!response.ok || !response.body) {
-			const text = await response.text();
-			let payload: { error?: string } = {};
-			try { payload = JSON.parse(text); } catch { /* ignore */ }
-			throw new Error(payload.error ?? `Server Asset Opportunity batch run failed (${response.status}).`);
-		}
-
-		const isStillActive = (): boolean => this.activeServerRunId === runId;
-		const submittedAssetSymbols = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean));
-		const retainSubmittedAssetResults = (
-			results: readonly FinderAssetOpportunityResult[],
-		): FinderAssetOpportunityResult[] => {
-			const retained = retainAssetOpportunityResultsForSymbols(results, submittedAssetSymbols);
-			if (retained.length !== results.length) {
-				debugLogger.warn("finder.asset_opportunity_batch.stale_result_ignored", {
-					runId,
-					ignoredSymbols: results
-						.filter((result) => !submittedAssetSymbols.has(result.symbol.trim().toUpperCase()))
-						.map((result) => result.symbol),
-				});
-			}
-			return retained;
-		};
-		// Renders ONLY the latest completed iteration; prior iterations are not
-		// retained (their rows were already appended to the archive server-side).
-		const adoptIterationRows = (rows: readonly FinderAssetOpportunityResult[], persist: boolean): void => {
-			this.resultStore.assetOpportunityRunResults = sortAssetOpportunityResults([...rows]);
-			this.resultStore.assetOpportunityDefaultResults = [...this.resultStore.assetOpportunityRunResults];
-			this.resultStore.setAssetOpportunityLatestResults(this.resultStore.assetOpportunityRunResults, persist, options.topN);
-			this.stashAndResetResort();
-			this.renderLatestResults();
-		};
-		let terminalResults: FinderAssetOpportunityResult[] | null = null;
-		let terminalDiagnostics: FinderDiagnostics | null = null;
-		let assetDiagnostics: FinderDiagnostics['assetOpportunity'] | null = null;
-		let assetsWithFreshEntry = 0;
-		let failedAssets = 0;
-		let streamError: unknown = null;
-		try {
-			await consumeNdjsonStream<FinderAssetOpportunityBatchStreamEvent>(response.body, {
-				onAssetBatchStart: (event) => {
-					if (isStillActive()) {
-						this.setStatus(
-							`Asset Opportunity batch ${event.startHoldoutBars}–${event.endHoldoutBars} holdout bars, ` +
-							`${event.totalIterations} iterations × ${event.totalAssets} assets: ${event.strategyNames.join(', ')}`,
-						);
-					}
-				},
-				onAssetBatchProgress: (event) => {
-					if (!isStillActive()) return;
-					this.setProgress(true, event.percent, event.statusText);
-					this.setStatus(`Asset Opportunity batch [${event.holdoutBars} bars, ${event.iterationIndex + 1}/${event.totalIterations}]: ${event.statusText}`);
-				},
-				onAssetBatchIterationDone: (event) => {
-					if (!isStillActive()) return;
-					terminalDiagnostics = event.diagnostics;
-					assetDiagnostics = event.assetDiagnostics;
-					assetsWithFreshEntry = event.assetDiagnostics?.assetsWithFreshEntry ?? event.totals.assetsWithFreshEntry;
-					failedAssets = event.assetDiagnostics?.failedAssets.length ?? event.totals.failedAssets;
-					// Render the latest completed iteration only; the archive file
-					// name is surfaced in the status so the operator knows where
-					// the top-N payload landed.
-					adoptIterationRows(event.assets ?? [], false);
-					this.setStatus(
-						`Asset Opportunity batch: holdout ${event.holdoutBars} bars complete (${event.iterationIndex + 1}/${event.totalIterations})` +
-						` | ${event.assets.length} opportunities` +
-						(event.archiveFilename ? ` | archived ${event.archiveFilename}` : ''),
-					);
-					debugLogger.event("finder.asset_opportunity_batch.iteration_received", {
-						runId,
-						holdoutBars: event.holdoutBars,
-						iterationIndex: event.iterationIndex,
-						totalIterations: event.totalIterations,
-						assets: event.assets.length,
-						archiveFilename: event.archiveFilename,
-					});
-				},
-				onAssetBatchDone: (event) => {
-					if (event.runId !== runId) return;
-					terminalResults = retainSubmittedAssetResults(event.assets ?? []);
-					terminalDiagnostics = event.diagnostics;
-					assetDiagnostics = event.assetDiagnostics;
-					assetsWithFreshEntry = event.assetDiagnostics?.assetsWithFreshEntry
-						?? event.totals?.assetsWithFreshEntry
-						?? terminalResults.length;
-					failedAssets = event.assetDiagnostics?.failedAssets.length
-						?? event.totals?.failedAssets
-						?? 0;
-					if (isStillActive()) {
-						adoptIterationRows(terminalResults, true);
-						this.setStatus(`Asset Opportunity batch ${event.summary}`);
-					}
-					debugLogger.event("finder.asset_opportunity_batch.complete_received", {
-						runId,
-						completedIterations: event.completedIterations,
-						failedIterations: event.failedIterations,
-						assets: terminalResults.length,
-					});
-				},
-				onAssetBatchFatal: (event) => {
-					throw new Error(event.error);
-				},
-			}, { requireTerminal: true, terminalTypes: ['asset_batch_done', 'asset_batch_fatal'] });
-		} catch (error) {
-			streamError = error;
-		}
-
-		if (streamError) {
-			if (isStillActive()) {
-				const recovered = await this.recoverActiveServerRun(runId, 'asset_opportunity_batch');
-				if (recovered?.phase === 'fatal') {
-					throw new Error(recovered.error ?? recovered.summary ?? 'Asset Opportunity batch failed.');
-				}
-				if (recovered?.terminalAssets) {
-					terminalResults = retainSubmittedAssetResults(recovered.terminalAssets);
-					terminalDiagnostics = recovered.diagnostics;
-					assetDiagnostics = recovered.assetDiagnostics ?? null;
-					assetsWithFreshEntry = recovered.assetDiagnostics?.assetsWithFreshEntry
-						?? recovered.assetTotals?.assetsWithFreshEntry
-						?? terminalResults.length;
-					failedAssets = recovered.assetDiagnostics?.failedAssets.length
-						?? recovered.assetTotals?.failedAssets
-						?? 0;
-					adoptIterationRows(terminalResults, true);
-				} else if (!this.isCancelled) {
-					throw streamError;
-				}
-			}
-		}
-
-		const results = terminalResults ?? this.getAssetOpportunityResults();
-		if (!this.isCancelled && isStillActive()) {
-			this.setStatus(`Server Asset Opportunity batch: ${results.length} opportunities (${Math.round(performance.now() - startTime)}ms)`);
-		}
-		if (terminalDiagnostics && assetDiagnostics) {
-			terminalDiagnostics.assetOpportunity = assetDiagnostics;
-		}
-		return { results, diagnostics: terminalDiagnostics, assetDiagnostics, assetsWithFreshEntry, failedAssets };
 	}
 
-	private async runArmPerformanceFinder(options: FinderOptions, startTime: number): Promise<boolean> {
-		const selectedStrategies = await this.getUniverseSelectedStrategies();
-		if (selectedStrategies.length === 0) {
-			this.setStatus('Select at least one strategy for Arm Performance.');
-			return false;
-		}
-		if (options.mode !== 'grid' && options.mode !== 'random') {
-			this.setStatus('Arm Performance supports Grid Sweep and Random Search only.');
-			return false;
-		}
-		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
-		const runId = this.generateServerRunId();
-		this.activeServerRunId = runId;
-		this.persistActiveServerRun(runId, startTime, 'arm_performance');
-		this.resultStore.armPerformanceDisplayLimit = Math.max(1, options.topN);
-		const outcome = await this.runArmPerformanceFinderServer(
-			options,
-			selectedStrategies,
-			exitStrategyCandidates,
-			runId,
+	/** Validated batch holdout range straight from the DOM inputs. */
+	private readBatchHoldoutRange(): BatchHoldoutRange {
+		return normalizeFinderAssetOosBatchHoldoutRange(
+			this.getDom().finderAssetOosBatchStart.value,
+			this.getDom().finderAssetOosBatchEnd.value,
 		);
-		if (this.activeServerRunId === runId) {
-			this.activeServerRunId = null;
-			this.clearActiveServerRun();
-		}
-		if (outcome.cancelled) {
-			this.isCancelled = true;
-			this.setStatus(`Arm Performance stopped after ${this.resultStore.armPerformanceRunResults.length} completed configurations.`);
-			return false;
-		}
-		if (!outcome.ok) {
-			this.setStatus(`Arm Performance stopped at ${this.resultStore.armPerformanceRunResults.length} completed configurations. ${outcome.error ?? 'See server status for details.'}`);
-			uiManager.showToast('Arm Performance stopped after a candidate failure. Completed rows were retained.', 'error');
-			return false;
-		}
-		const skippedPairCount = this.resultStore.armPerformanceRunContext?.skippedPairs?.length ?? 0;
-		const failedPairCount = this.resultStore.armPerformanceRunContext?.failedPairs?.filter((failure) => failure.failureKind === 'missing_data').length ?? 0;
-		const skippedPairNoun = skippedPairCount === 1 ? 'pair' : 'pairs';
-		const runtimeFailedPairNoun = failedPairCount === 1 ? 'pair' : 'pairs';
-		const skippedPairSummary = skippedPairCount > 0 ? `; skipped ${skippedPairCount} ${skippedPairNoun} before evaluation` : '';
-		const runtimeFailedPairSummary = failedPairCount > 0 ? `; skipped ${failedPairCount} ${runtimeFailedPairNoun} with missing data during evaluation` : '';
-		this.setStatus(`Arm Performance completed ${this.resultStore.armPerformanceRunResults.length} configurations across ${this.resultStore.armPerformanceRunContext?.pairs.length ?? 0} pairs${skippedPairSummary}${runtimeFailedPairSummary} (${Math.round(performance.now() - startTime)}ms).`);
-		return true;
-	}
-
-	private async runArmPerformanceFinderServer(
-		options: FinderOptions,
-		selectedStrategies: FinderSelectedStrategy[],
-		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
-		runId: string,
-	): Promise<{ ok: boolean; cancelled: boolean; error: string | null }> {
-		const settings = backtestService.getBacktestSettings();
-		const capitalSettings = backtestService.getCapitalSettings();
-		this.resultStore.armPerformanceApplyContext = {
-			interval: state.currentInterval,
-			uiBacktestSettings: settingsManager.getBacktestSettings(),
-			capitalSettings,
-		};
-		const response = await fetch('/api/finder/arm-performance-run', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				runId,
-				pairListText: this.getDom().finderUniverseSymbols.value,
-				interval: state.currentInterval,
-				options,
-				settings,
-				uiBacktestSettings: settingsManager.getBacktestSettings(),
-				capitalSettings,
-				strategyKeys: selectedStrategies.map(({ key }) => key),
-				exitStrategyKeys: exitStrategyCandidates?.map(({ key }) => key),
-				useRustEnginePreference: shouldUseRustEngine(),
-			}),
-		});
-		if (response.status === 404 || response.status === 405) {
-			throw new Error('Arm Performance requires a Vite server runtime; static-only deployments are unsupported.');
-		}
-		if (!response.ok || !response.body) {
-			const text = await response.text();
-			let payload: { error?: string } = {};
-			try { payload = JSON.parse(text); } catch { /* ignore */ }
-			throw new Error(payload.error ?? `Server Arm Performance run failed (${response.status}).`);
-		}
-
-		const isStillActive = (): boolean => this.activeServerRunId === runId;
-		const candidatesById = new Map<string, FinderArmPerformanceCandidate>();
-		let terminal: { ok: boolean; cancelled: boolean; error: string | null } | null = null;
-		let streamError: unknown = null;
-		let finalized = false;
-		const renderFrame = coalesceAnimationFrame(() => {
-			if (!finalized && isStillActive()) {
-				const selectedArm = this.getDom().finderResort.value as FinderArmPerformanceArm;
-				const availableArms = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[];
-				const sortArm = availableArms.includes(selectedArm) ? selectedArm : 'TOP_RAW_PROFIT_NOW';
-				const sorted = sortFinderArmPerformanceResults([...candidatesById.values()], sortArm);
-				this.resultStore.armPerformanceRunResults = sorted;
-				this.resultStore.setArmPerformanceLatestResults(sorted, false, options.topN, false);
-				this.renderLatestResults();
-			}
-		});
-		try {
-			await consumeNdjsonStream<FinderStreamEvent>(response.body, {
-				onArmStart: (event) => {
-					if (event.runId !== runId || !isStillActive()) return;
-					const skippedPairCount = event.skippedPairCount ?? 0;
-					const skippedPairNoun = skippedPairCount === 1 ? 'pair' : 'pairs';
-					const skippedPairSummary = skippedPairCount > 0
-						? ` · skipped ${skippedPairCount} ${skippedPairNoun} with missing data`
-						: '';
-					this.setStatus(`Arm Performance: ${event.plannedCandidates} configurations × ${event.pairCount} pairs · horizon ${event.horizon}${skippedPairSummary}`);
-				},
-				onArmProgress: (event) => {
-					if (event.runId !== runId || !isStillActive()) return;
-					this.setProgress(true, event.percent, event.text);
-					this.setStatus(`Arm Performance ${event.candidateOrdinal + 1}/${event.totalCandidates} · ${event.strategyName} · ${event.childPhase}`);
-				},
-				onArmCandidate: (event) => {
-					if (event.runId !== runId || !isStillActive()) return;
-					candidatesById.set(event.candidateId, event.candidate);
-					renderFrame.schedule();
-				},
-				onArmDone: (event) => {
-					if (event.runId !== runId) return;
-					terminal = { ok: event.ok, cancelled: event.cancelled, error: event.error };
-					finalized = true;
-					if (isStillActive() || (this.isCancelled && this.activeServerRunId === null)) {
-						this.adoptArmPerformanceResults(event.results, event.runContext, true);
-						this.stashAndResetResort();
-						this.populateResortOptions();
-						this.renderLatestResults();
-					}
-				},
-			}, { requireTerminal: true, terminalTypes: ['arm_done'] });
-		} catch (error) {
-			streamError = error;
-		}
-
-		if (streamError !== null && terminal === null && isStillActive()) {
-			const recovered = await this.recoverActiveServerRun(runId, 'arm_performance');
-			if (recovered?.terminalArmPerformanceResults) {
-				this.adoptArmPerformanceResults(
-					recovered.terminalArmPerformanceResults,
-					recovered.armPerformanceRunContext ?? null,
-					true,
-				);
-				this.stashAndResetResort();
-				this.populateResortOptions();
-				this.renderLatestResults();
-				terminal = {
-					ok: recovered.phase === 'done',
-					cancelled: recovered.cancelled,
-					error: recovered.error,
-				};
-				finalized = true;
-			}
-		}
-		if (streamError !== null && terminal === null) {
-			if (this.isCancelled && !isStillActive()) return { ok: false, cancelled: true, error: null };
-			throw streamError;
-		}
-		if (terminal === null) throw new Error('Arm Performance stream ended without a terminal result.');
-		this.setProgress(false, terminal.ok ? 100 : 0, '');
-		return terminal;
-	}
-
-	private async runUniverseFinder(options: FinderOptions, startTime: number): Promise<boolean> {
-		const selectedStrategies = await this.getUniverseSelectedStrategies();
-		if (selectedStrategies.length === 0) {
-			this.setStatus('Select at least one strategy for Symbol Universe mode.');
-			return false;
-		}
-		if (!options.universe || options.universe.symbols.length === 0) {
-			this.setStatus('Add at least one symbol for Symbol Universe mode.');
-			return false;
-		}
-		const exitStrategyCandidates = await this.resolveExitStrategyCandidates(options, selectedStrategies);
-
-		// ONE server job owns all selected strategies: IS evaluation, survivor
-		// merge, and the optional OOS pass all run server-side. The browser is
-		// the control + rendering layer. Persist the active run id before fetch
-		// so a tab reload can reattach to the same server job.
-		const runId = this.generateServerRunId();
-		this.activeServerRunId = runId;
-		this.persistActiveServerRun(runId, startTime, 'symbol_universe');
-
-		const outcome = await this.runUniverseFinderServer(
-			options,
-			selectedStrategies,
-			exitStrategyCandidates,
-			runId,
-			startTime,
-		);
-
-		// A stale run that lost ownership (Stop, newer run) must not persist
-		// its active-run record or overwrite rendered state. The stream
-		// consumer already guards against stale run ids; this clears the
-		// record only when THIS run is still the active one.
-		if (this.activeServerRunId === runId) {
-			this.activeServerRunId = null;
-			this.clearActiveServerRun();
-		}
-
-		this.latestDiagnostics = outcome.diagnostics;
-		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
-		this.ui.renderRandomBenchmark(options.mode);
-
-		if (!this.isCancelled && this.activeServerRunId === null) {
-			const totalSymbols = options.universe.symbols.length;
-			const survivors = outcome.results.length;
-			const segments = [
-				`Universe Finder complete. ${survivors} survivor${survivors === 1 ? '' : 's'}`,
-				`${selectedStrategies.length} strateg${selectedStrategies.length === 1 ? 'y' : 'ies'}`,
-				`${outcome.loadedSymbols}/${totalSymbols} symbols loaded`,
-			];
-			if (outcome.oosRemoved > 0) {
-				segments.push(`${outcome.oosRemoved} filtered by OOS gate`);
-			}
-			if (outcome.failedSymbolCount > 0) {
-				segments.push(`${outcome.failedSymbolCount} load failure${outcome.failedSymbolCount === 1 ? '' : 's'}`);
-			}
-			segments.push(`${Math.round(performance.now() - startTime)}ms`);
-			this.setStatus(segments.join(' | '));
-		}
-		return true;
 	}
 
 	/**
-	 * Server-owned Finder Universe path: POST ONE request containing all
-	 * selected entry strategy keys + a browser-generated runId, consume the
-	 * NDJSON stream of scalar survivor candidates, and adopt the server's
-	 * authoritative terminal inventory + diagnostics. The server sequences
-	 * strategies, merges survivors, runs OOS, and publishes one terminal
-	 * snapshot; the browser only renders.
-	 *
-	 * `runId` guards every stream + poll callback so a stale tab cannot
-	 * mutate newer Finder state (the active-server-run token). Disconnecting
-	 * the initiating stream does not cancel the server job — reattach polling
-	 * on Finder init recovers an in-flight or terminal job after reload.
+	 * Presentation/lifecycle capabilities shared by every scope workflow.
+	 * Mutable state stays in the result store and session; this only forwards
+	 * to the UI, render dispatch, and the browser-cancellation flag.
 	 */
-	private async runUniverseFinderServer(
-		options: FinderOptions,
-		selectedStrategies: FinderSelectedStrategy[],
-		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
-		runId: string,
-		startTime: number,
-	): Promise<ServerUniverseRunOutcome> {
-		const settings = backtestService.getBacktestSettings();
-		const capitalSettings = backtestService.getCapitalSettings();
-		const universeSymbols = options.universe?.symbols ?? [];
-		const response = await fetch('/api/finder/universe-run', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({
-				runId,
-				symbols: universeSymbols,
-				interval: state.currentInterval,
-				options,
-				settings,
-				capitalSettings,
-				strategyKeys: selectedStrategies.map((s) => s.key),
-				exitStrategyKeys: exitStrategyCandidates?.map((c) => c.key),
-				useRustEnginePreference: shouldUseRustEngine(),
-			}),
-		});
-
-		if (response.status === 404 || response.status === 405) {
-			throw new Error("Finder Universe requires a Vite server runtime; static-only deployments are unsupported.");
-		}
-		if (!response.ok || !response.body) {
-			const text = await response.text();
-			let payload: { error?: string } = {};
-			try { payload = JSON.parse(text); } catch { /* ignore */ }
-			throw new Error(payload.error ?? `Server Finder run failed (${response.status}).`);
-		}
-
-		// runId guard: every callback checks `this.activeServerRunId === runId`
-		// before mutating UI state, so a stale tab (or a stale stream consumed
-		// after a newer run started) cannot clobber the current view.
-		const isStillActive = (): boolean => this.activeServerRunId === runId;
-		const survivorByKey = new Map<string, FinderUniverseCandidate>();
-		const identityKey = (c: FinderUniverseCandidate) =>
-			`${c.strategyKey}|${JSON.stringify(c.params)}|${c.exitStrategyKey ?? ''}|${JSON.stringify(c.exitStrategyParams ?? {})}`;
-		const sortPriority = options.universe?.sortPriority ?? [];
-		let terminalDiagnostics: FinderDiagnostics | null = null;
-		let terminalCandidates: FinderUniverseCandidate[] | null = null;
-		let loadedSymbols = 0;
-		let failedSymbolCount = 0;
-		let oosRemoved = 0;
-
-		const renderMerged = (): void => {
-			if (!isStillActive()) return;
-			const merged = sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority)
-				.slice(0, options.topN);
-			// Candidate events are incremental, but a candidate displaced from the
-			// topN can never return under the fixed comparator. Release its large
-			// per-symbol metrics array instead of retaining every provisional row.
-			survivorByKey.clear();
-			for (const candidate of merged) {
-				survivorByKey.set(identityKey(candidate), candidate);
-			}
-			// Provisional candidate merge — no persistence until the terminal
-			// slice is adopted in onDone.
-			this.resultStore.setLatestResults({ scope: 'symbol_universe', results: merged }, false);
-			this.renderLatestResults();
-		};
-		// Coalesce candidate arrivals into one render per animation frame. The
-		// server dedups identities, but a throttled snapshot can ship several
-		// candidate events back-to-back in one chunk. `finalized` guards the
-		// race where a candidate event in the SAME chunk as `done` would defer
-		// a render that fires AFTER the authoritative terminal slice render.
-		let finalized = false;
-		const renderFrame = coalesceAnimationFrame(() => {
-			if (!finalized) {
-				renderMerged();
-			}
-		});
-		const scheduleRender = (): void => {
-			if (!finalized) renderFrame.schedule();
-		};
-
-		let streamError: unknown = null;
-		try {
-			await consumeNdjsonStream<FinderStreamEvent>(response.body, {
-				onStart: (event) => {
-					if (!isStillActive()) return;
-					const strategyCount = event.strategyCount ?? selectedStrategies.length;
-					this.setStatus(`Universe Finder: ${strategyCount} strateg${strategyCount === 1 ? 'y' : 'ies'}, 0/${event.totalSymbols} symbols (evaluating ~${event.totalCandidates} candidates)...`);
-				},
-				onProgress: (event) => {
-					if (!isStillActive()) return;
-					this.setProgress(true, event.percent, event.text);
-					const si = event.strategyIndex ?? 0;
-					const sc = event.strategyCount ?? selectedStrategies.length;
-					const phaseLabel = event.phase === 'oos' ? 'OOS' : `${Math.min(si + 1, sc)}/${sc}`;
-					this.setStatus(`Universe Finder [${phaseLabel}]: ${event.status}`);
-				},
-				onCandidate: (event) => {
-					if (!isStillActive()) return;
-					survivorByKey.set(identityKey(event.candidate), event.candidate);
-					scheduleRender();
-				},
-				onSymbolFailed: (event) => {
-					debugLogger.warn('finder.server.symbol_failed', { symbol: event.symbol, error: event.error });
-				},
-				onDone: (event) => {
-					terminalDiagnostics = event.diagnostics;
-					loadedSymbols = event.totals?.loadedSymbols ?? 0;
-					failedSymbolCount = event.totals?.failedSymbols ?? 0;
-					oosRemoved = event.totals?.oosRemoved ?? 0;
-					// Adopt the authoritative terminal slice (server-owned IS
-					// + OOS). The merged map is provisional; done.candidates is
-					// the source of truth including OOS fields.
-					terminalCandidates = event.candidates ?? null;
-					if (terminalCandidates && isStillActive()) {
-						const displayed = sortFinderUniverseCandidates(terminalCandidates, sortPriority, {
-							useOosValues: terminalCandidates.some((candidate) => candidate.oosAggregate !== undefined),
-						});
-						this.resultStore.adoptSymbolUniverseResults(displayed, true, options.topN);
-						this.stashAndResetResort();
-						this.populateResortOptions();
-						this.renderLatestResults();
-					}
-					finalized = true;
-				},
-				onFatal: (event) => {
-					throw new Error(event.error);
-				},
-			}, { requireTerminal: true });
-		} catch (error) {
-			streamError = error;
-		}
-
-		if (streamError !== null && terminalCandidates === null && isStillActive()) {
-			const recovered = await this.recoverActiveServerRun(runId, 'symbol_universe');
-			if (recovered?.phase === "fatal") {
-				throw new Error(recovered.error ?? recovered.summary ?? recovered.statusText);
-			}
-			if (recovered?.terminalCandidates) {
-				terminalCandidates = recovered.terminalCandidates;
-				terminalDiagnostics = recovered.diagnostics;
-				loadedSymbols = recovered.totals?.loadedSymbols ?? 0;
-				failedSymbolCount = recovered.totals?.failedSymbols ?? 0;
-				oosRemoved = recovered.totals?.oosRemoved ?? 0;
-				finalized = true;
-				if (isStillActive()) {
-					this.resultStore.adoptSymbolUniverseResults(terminalCandidates);
-					this.stashAndResetResort();
-					this.populateResortOptions();
-					this.renderLatestResults();
-				}
-			}
-		}
-
-		if (streamError !== null && terminalCandidates === null) {
-			if (this.isCancelled && !isStillActive()) {
-				throw new Error("Finder stopped.");
-			}
-			const message = streamError instanceof Error ? streamError.message : String(streamError);
-			if (isStillActive()) {
-				this.setStatus(`Server Finder failed: ${message}`);
-			}
-			throw streamError;
-		}
-
-		const finalResults = terminalCandidates
-			?? sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority);
-
-		if (!this.isCancelled && isStillActive()) {
-			this.setStatus(`Server Finder: ${finalResults.length} survivors (${Math.round(performance.now() - startTime)}ms)`);
-		}
-
+	private runHost(): FinderRunHost {
 		return {
-			results: finalResults,
-			diagnostics: terminalDiagnostics,
-			loadedSymbols,
-			failedSymbolCount,
-			oosRemoved,
-		};
-	}
-
-	private async runStrategyQualityFinder(options: FinderOptions, startTime: number): Promise<boolean> {
-		const selectedStrategies = await this.getUniverseSelectedStrategies();
-		if (selectedStrategies.length === 0) {
-			this.setStatus('Select at least one strategy for Strategy Quality Audit mode.');
-			return false;
-		}
-		const symbols = options.universe?.symbols ?? [];
-		if (symbols.length === 0) {
-			this.setStatus('Add at least one symbol for Strategy Quality Audit mode.');
-			return false;
-		}
-		this.setStatus('Resolving local dataset providers...');
-		const providerResolutionStartedAt = performance.now();
-		const localAssets = await getLocalDailyAssets();
-		const universeSymbols = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
-		for (const asset of localAssets) {
-			if (universeSymbols.has(asset.symbol)) {
-				dataManager.setProviderOverride(asset.symbol, asset.provider);
-			}
-		}
-		const providerResolutionMs = performance.now() - providerResolutionStartedAt;
-
-		const qualitySettings = {
-			...backtestService.getBacktestSettings(),
-			exitStrategyOverrideEnabled: false,
-			exitStrategyKey: undefined,
-			exitStrategyParams: undefined,
-		};
-		const output = await runStrategyQualityAudit({
-			selectedStrategies,
-			symbols,
-			interval: state.currentInterval,
-			dataSlice: options.dataSlice ?? 'all',
-			dataRangeFrom: options.dataRangeFrom,
-			dataRangeTo: options.dataRangeTo,
-			oosValidationEnabled: options.oosValidationEnabled === true,
-			settings: qualitySettings,
-			capitalSettings: backtestService.getCapitalSettings(),
-			loadDataset: (symbol, interval) => loadBatchDataset(symbol, interval),
-			getProvider: (symbol) => dataManager.getProvider(symbol),
-			getDatasetCacheStats: () => getBatchDatasetCacheStats(),
-			yieldControl: () => this.taskYielder.yieldControl(),
-			isCancelled: () => this.isCancelled,
-			setProgress: (percent, text) => this.setProgress(true, percent, text),
+			setProgress: (active, percent, text) => this.setProgress(active, percent, text),
 			setStatus: (text) => this.setStatus(text),
-		});
-
-		const results = [...output.results].sort((a, b) =>
-			b.averageExpectancy - a.averageExpectancy
-			|| b.profitFactor - a.profitFactor
-			|| b.activeSymbols - a.activeSymbols
-			|| a.strategyName.localeCompare(b.strategyName),
-		);
-		this.resultStore.setLatestResults({ scope: 'strategy_quality', results });
-		output.performance.timingsMs.providerResolution = Number(providerResolutionMs.toFixed(2));
-		this.latestDiagnostics = buildStrategyQualityDiagnostics({
-			options,
-			results,
-			performance: output.performance,
-			failedSymbolDetails: output.failedSymbolDetails,
-			elapsedMs: performance.now() - startTime,
-		});
-		this.getDom().finderCopyDiagnostics.disabled = !this.latestDiagnostics;
-		this.stashAndResetResort();
-		this.renderLatestResults();
-
-		if (!this.isCancelled) {
-			const oosLabel = options.oosValidationEnabled && (options.dataSlice === 'half_oldest' || options.dataSlice === 'half_newest')
-				? ' | OOS included'
-				: '';
-			const statusPrefix = output.loadedSymbols === 0 ? 'Quality Audit failed.' : 'Quality Audit complete.';
-			const diagnosticSuffix = output.failedSymbols > 0
-				? ' Copy Diagnostics for load details and performance.'
-				: ' Copy Diagnostics for performance.';
-			this.setStatus(
-				`${statusPrefix} ${results.length} strateg${results.length === 1 ? 'y' : 'ies'}, `
-				+ `${output.loadedSymbols}/${symbols.length} symbols loaded${oosLabel} `
-				+ `in ${Math.round(performance.now() - startTime)}ms.${diagnosticSuffix}`,
-			);
-		}
-		return true;
+			isCancelled: () => this.isCancelled,
+			getAbortSignal: () => this.finderRunAbortController?.signal,
+			yieldControl: () => this.taskYielder.yieldControl(),
+			renderRandomBenchmark: (mode, payload) => this.ui.renderRandomBenchmark(mode, payload as never),
+			renderLatestResults: () => this.renderLatestResults(),
+			stashAndResetResort: () => this.stashAndResetResort(),
+			populateResortOptions: () => this.populateResortOptions(),
+			showDiagnosticsAvailability: (available) => {
+				this.getDom().finderCopyDiagnostics.disabled = !available;
+			},
+		};
 	}
 
-private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'executionModel' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
+	private strategySource() {
+		return {
+			getSelectedStrategies: () => this.getSelectedStrategies(),
+			getUniverseSelectedStrategies: () => this.getUniverseSelectedStrategies(),
+			resolveExitStrategyCandidates: (options: FinderOptions, selectedStrategies: FinderSelectedStrategy[]) =>
+				this.resolveExitStrategyCandidates(options, selectedStrategies),
+		};
+	}
+
+	private readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktestSettings>, 'executionModel' | 'disableSignalExits' | 'exitStrategyOverrideEnabled'>): FinderOptions {
 		const dom = this.getDom();
 		const scope = this.getScope();
 		const useAdvancedSort = dom.finderAdvancedToggle.checked;
