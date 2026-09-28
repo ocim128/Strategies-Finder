@@ -400,7 +400,7 @@ beforeEach(() => {
     m.resultStore.armPerformanceRunContext = null;
     m.resultStore.armPerformanceInventoryComplete = true;
     m.resultStore.armPerformanceDisplayLimit = 10;
-    m.uiState.scope = "current_chart";
+    m.controls.uiState.scope = "current_chart";
     (m.ui as any).statusElement = null;
     (m.ui as any).lastStatusText = "";
     elsById.clear();
@@ -431,7 +431,7 @@ describe("FinderManager reattach lifecycle (audit Finding 2)", () => {
         expect(manager().session.activeRunId, "new run ownership preserved").to.equal("new-run");
         expect(manager().isRunning).to.equal(true);
         // The reattach path never adopted the old run's scope either.
-        expect(manager().uiState.scope).to.equal("current_chart");
+        expect(manager().controls.uiState.scope).to.equal("current_chart");
     });
 
     it("aborts an in-flight status fetch when Stop cancels the reattach poll", async () => {
@@ -439,7 +439,7 @@ describe("FinderManager reattach lifecycle (audit Finding 2)", () => {
         const reattach = manager().reattachToActiveServerRun();
         // Probe hangs; the user presses Stop while it is pending.
         expect(mockFetch.requests.length).to.be.greaterThan(0);
-        manager().stopReattachPoll();
+        manager().session.stopReattachPoll();
         expect(mockFetch.aborted(), "the pending status fetch was aborted").to.equal(true);
         await reattach;
         expect(manager().session.abortController).to.equal(null);
@@ -467,7 +467,7 @@ describe("FinderManager reattach lifecycle (audit Finding 2)", () => {
         persistActiveServerRun(runId);
         manager().isRunning = true;
 
-        const stop = manager().stopActiveServerRun(runId);
+        const stop = manager().session.stopServerRun(runId, { setStatus: (text: string) => manager().setStatus(text) });
         mockFetch.resolveFirst(makeResponse({ ok: false, stopped: false }));
         await stop;
 
@@ -511,7 +511,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
 
     it("re-sorts the full terminal Universe inventory, not only the displayed topN", async () => {
         persistActiveServerRun("universe-resort-run");
-        manager().uiState.topN = 1;
+        manager().controls.uiState.topN = 1;
         const lower = makeCandidate({ threshold: 1 }, 10);
         const higher = makeCandidate({ threshold: 2 }, 100);
         const reattach = manager().reattachToActiveServerRun();
@@ -531,8 +531,8 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
     it("reattaches the full Arm Performance inventory and repeatedly re-sorts every arm locally", async () => {
         const runId = "arm-performance-reattach";
         persistActiveServerRun(runId, "arm_performance");
-        manager().uiState.topN = 1;
-        manager().uiState.scope = "arm_performance";
+        manager().controls.uiState.topN = 1;
+        manager().controls.uiState.scope = "arm_performance";
         const rows = [
             makeArmCandidate(0, 1, 8),
             makeArmCandidate(1, 9, 2),
@@ -593,8 +593,8 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
     it("reloads the full terminal Arm Performance inventory from the saved context runId", async () => {
         const runId = "arm-performance-completion-reload";
         persistActiveServerRun(runId, "arm_performance");
-        manager().uiState.topN = 1;
-        manager().uiState.scope = "arm_performance";
+        manager().controls.uiState.topN = 1;
+        manager().controls.uiState.scope = "arm_performance";
         const rows = [
             makeArmCandidate(0, 100, 1),
             makeArmCandidate(1, 90, 100),
@@ -737,7 +737,7 @@ describe("FinderManager reattach terminal adoption (audit Finding 8)", () => {
             makeArmCandidate(1, 10, 100),
         ];
         const m = manager();
-        m.uiState.scope = "arm_performance";
+        m.controls.uiState.scope = "arm_performance";
         m.getDom().finderScope.value = "arm_performance";
         m.resultStore.armPerformanceRunResults = [...results];
         m.resultStore.armPerformanceDefaultResults = [...results];
@@ -773,8 +773,8 @@ describe("FinderManager Arm Performance scope controls", () => {
             { value: "half_newest", disabled: false },
         ];
         dom.finderScope.value = "arm_performance";
-        m.uiState.scope = "arm_performance";
-        m.applyScopeUi();
+        m.controls.uiState.scope = "arm_performance";
+        m.controls.applyScopeUi();
 
         expect(dom.finderMode.options[2].disabled).to.equal(true);
         expect(dom.finderMode.value).to.equal("random");

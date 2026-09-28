@@ -412,10 +412,32 @@ drawdown, or Sharpe, check the browser and server paths together.
 
 ## Source map
 
+The browser manager is decomposed into cohesive collaborators under
+`lib/finder/browser/`; `lib/finder-manager.ts` is the composition point and
+public facade (construction, `init`, and public delegation) and owns no
+mutable state of its own beyond the retained run context
+(`lastFinderRunBacktestSettings`, `lastFinderOptions`,
+`lastFinderEvaluationData`) and the latest diagnostics.
+
+| Task / change | Owner | Focused tests |
+| --- | --- | --- |
+| Persisted settings shape, defaults, normalizers | `lib/finder/browser/finder-settings.ts` | `tests/finder-settings-persistence.spec.ts` |
+| Storage envelopes (UI state, results snapshot, active server run) | `lib/finder/browser/finder-persistence.ts` | `tests/finder-settings-persistence.spec.ts`, `tests/finder-result-snapshot.spec.ts` |
+| Copy payloads (top results, run configuration, Arm/Asset diagnostics), clipboard | `lib/finder/browser/finder-export.ts` | `tests/finder-export-diagnostics.spec.ts`, `tests/finder-config-capture.spec.ts` |
+| Failure/fallback/quality diagnostics builders, engine-mode label | `lib/finder/browser/finder-run-diagnostics.ts` | `tests/finder-export-diagnostics.spec.ts`, `tests/finder-diagnostics.spec.ts` |
+| Result inventories, display limits, re-sort and Run Sort restoration, Arm run/apply context | `lib/finder/browser/finder-result-store.ts` | `tests/finder-result-store.spec.ts`, `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-all-resorts.spec.ts` |
+| Candidate Apply flows, apply-in-flight guard, backtest-settings merge | `lib/finder/browser/finder-result-actions.ts` | `tests/finder-selection-apply.browser.spec.ts`, `tests/finder-arm-performance-settings.spec.ts`, `tests/finder-freeze-randomize-path-exit.spec.ts` |
+| Strategy selection sets, toggle maps, filter/range/bulk selection | `lib/finder/browser/finder-strategy-selection.ts` | `tests/finder-selection-apply.browser.spec.ts` |
+| Server run ownership, scoped Stop, reattach/recovery polling | `lib/finder/browser/finder-server-session.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |
+| Scope workflows (current chart, universe, asset single/batch, arm, quality) | `lib/finder/browser/workflows/*` | `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-stream.spec.ts` |
+| Form binding/capture, `readOptions`, scope visibility, sorting controls, reset | `lib/finder/browser/finder-controls.ts` | `tests/feature-dom-contracts.spec.ts`, `tests/finder-settings-persistence.spec.ts` |
+| Browser run lifecycle flags, `runFinder` dispatch, Run/Stop wiring | `lib/finder/browser/finder-run-controller.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |
+| Facade: construction, `init`, public accessors, render dispatch | `lib/finder-manager.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |
+
 | Area | Main files |
 | --- | --- |
 | Menu markup | `html-partials/tab-finder.html` |
-| Finder orchestration and persistence | `lib/finder-manager.ts` |
+| Finder facade | `lib/finder-manager.ts` |
 | DOM ids and required-element contract | `lib/finder/finder-manager-dom.ts` |
 | Option normalization and data/OOS slices | `lib/finder/finder-manager-logic.ts` |
 | Browser UI rendering | `lib/finder/finder-ui.ts` |
