@@ -16,10 +16,10 @@ import {
     TOP_MEAN_WORKER_FOOTPRINT_BYTES,
     TopMeanWorkerPool,
 } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
-import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
+import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
+import type { Time } from "../lib/types/strategies";
 import { TOP_MEAN_WORKER_COUNT_MAX } from "../lib/batch-backtest/sp500-top-mean-request-limits";
 import { readShardArtifactsAsync, writeShardArtifactsAsync } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
-import assert from "node:assert/strict";
 
 const testWorkerPath = fileURLToPath(new URL("./helpers/top-mean-test-worker.cjs", import.meta.url));
 const dieOnFirstTaskWorkerPath = fileURLToPath(new URL("./helpers/top-mean-die-on-retry-worker.cjs", import.meta.url));
@@ -772,7 +772,7 @@ function testRunLevelNowSecThreadsIntoWorkerTasks(): void {
 async function testShardArtifactPersistenceShape(): Promise<void> {
     const baseDir = mkdtempSync(join(tmpdir(), "sp500-pool-shard-shape-"));
     try {
-        const artifacts = [
+        const artifacts: CompactPairArtifact[] = [
             {
                 schema: "compact_pair_artifact.v1",
                 pairIndex: 0,
@@ -782,8 +782,8 @@ async function testShardArtifactPersistenceShape(): Promise<void> {
                 baseSymbol: "STRÜM•A",
                 quoteSymbol: "STRÜM•B",
                 trades: [
-                    { type: "long", entryTime: 1700000000, exitTime: 1700003600, pnl: 12.5 },
-                    { type: "short", entryTime: 1700003600, exitTime: Number.NaN, pnl: Number.POSITIVE_INFINITY },
+                    { type: "long", entryTime: 1700000000 as Time, exitTime: 1700003600 as Time, pnl: 12.5 },
+                    { type: "short", entryTime: 1700003600 as Time, exitTime: Number.NaN as Time, pnl: Number.POSITIVE_INFINITY },
                 ],
                 netProfit: Number.NaN,
                 dataEndTime: 1701038400,

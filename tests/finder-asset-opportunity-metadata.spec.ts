@@ -145,6 +145,7 @@ describe("Asset Opportunity metadata payload serializer", () => {
                     { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
                 ],
             },
+            activePositionContinuationMetrics: null,
             oosNextExitMetrics: null,
             exitStrategy: {
                 key: "trailing_exit",

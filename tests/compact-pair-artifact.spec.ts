@@ -203,7 +203,7 @@ async function runTests(): Promise<void> {
         // keeps the whole window busy).
         let activeReads = 0;
         let maxActiveReads = 0;
-        const readAheadHarness = async (runIdArg: string, shardIndex: number): Promise<CompactPairArtifact[] | null> => {
+        const readAheadHarness = async (_runIdArg: string, shardIndex: number): Promise<CompactPairArtifact[] | null> => {
             activeReads += 1;
             maxActiveReads = Math.max(maxActiveReads, activeReads);
             const shardArtifacts = readAheadShards[shardIndex]!;
@@ -229,7 +229,7 @@ async function runTests(): Promise<void> {
         // first artifact and breaks: 4 initial reads + 1 refill, never more.
         let earlyStarted = 0;
         let earlySettled = 0;
-        const earlyHarness = async (runIdArg: string, shardIndex: number): Promise<CompactPairArtifact[] | null> => {
+        const earlyHarness = async (_runIdArg: string, shardIndex: number): Promise<CompactPairArtifact[] | null> => {
             earlyStarted += 1;
             await new Promise((resolveTick) => setTimeout(resolveTick, 5));
             earlySettled += 1;

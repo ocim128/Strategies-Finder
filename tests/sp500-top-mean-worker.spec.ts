@@ -157,7 +157,7 @@ function testDiagnosticSamplingByOriginalPairIndex(): void {
     // copy of the frozen defaults (still collecting executor timings);
     // unsampled pairs run on the shared frozen object untouched.
     const sampled = resolveTopMeanEngineRunOptions(true);
-    assert.equal(sampled.collectDiagnostics, true);
+    assert.equal((sampled as { collectDiagnostics: boolean }).collectDiagnostics, true);
     assert.equal(sampled.collectExecutorTimings, true);
     assert.equal(sampled.skipDrawdown, TOP_MEAN_BACKTEST_RUN_OPTIONS.skipDrawdown);
     assert.equal(sampled.omitEquityCurve, TOP_MEAN_BACKTEST_RUN_OPTIONS.omitEquityCurve);

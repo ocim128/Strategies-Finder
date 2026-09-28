@@ -32,7 +32,10 @@ describe('Exit merge order does not change fills (event-sweep plan, phase 4)', (
         { time: 2 as Time, type: 'sell', price: 101 },
         { time: 5 as Time, type: 'buy', price: 104 },
     ];
-    const settingsFor = (direction: 'long' | 'short' | 'both', executionModel: string) => ({
+    const settingsFor = (
+        direction: 'long' | 'short' | 'both',
+        executionModel: 'signal_close' | 'next_open' | 'next_close',
+    ): BacktestSettings => ({
         tradeDirection: direction,
         executionModel,
         disableSignalExits: true,

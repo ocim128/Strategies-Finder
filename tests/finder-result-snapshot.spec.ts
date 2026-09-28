@@ -101,7 +101,6 @@ function makeAssetOpportunityResult(index: number): FinderAssetOpportunityResult
         symbol: `ASSET${index}`,
         strategyKey: "strategy_1",
         strategyName: "Strategy 1",
-        horizon: 5,
         params: { lookback: index },
         historicalRank: 1,
         totalCandidatesEvaluated: 10,
@@ -144,6 +143,7 @@ function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandida
         candidateOrdinal: index,
         strategyKey: "strategy_1",
         strategyName: "Strategy 1",
+        horizon: 5,
         params: { lookback: index },
         backtestSettings: { executionModel: "signal_close" },
         pairCoverage: {
@@ -153,7 +153,7 @@ function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandida
             replayTargetLoadFailures: 0,
             noTradePairs: 2,
         },
-        metrics: metrics as FinderArmPerformanceCandidate["metrics"],
+        metrics: metrics as unknown as FinderArmPerformanceCandidate["metrics"],
         requestedEngineMode: "typescript",
         actualEngineMode: "typescript",
     };
