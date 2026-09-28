@@ -7,6 +7,72 @@ synthetic-pair runs hold
 OPEN_SCORE USD Replay step, which OOMs a browser tab. Node can use main RAM
 directly; the browser tab keeps only rendered scalars and DOM rows.
 
+## Module map and ownership
+
+Batch is split so each behavior has one owner. Paths are relative to
+`lib/batch-backtest/`. Dependency direction: `browser/*` and
+`open-score-replay/*` modules import leaf contracts directly
+(`open-score-replay/types.ts`, the store, the views); they never import
+through the engine entry point, and the facade never reaches into a child's
+internals. Public entry points are stable:
+`runOpenScoreUsdReplay` (engine) and `BatchBacktestService` /
+`createBatchBacktestService` / `batchBacktestService` (facade), which
+re-export every historical symbol.
+
+### Replay engine (`batch-open-score-usd-replay-engine.ts`, ~470 lines)
+
+`runOpenScoreUsdReplay` stays the orchestrator: phase sequencing, bounded
+yields, cancellation checks, archive-sink awaiting, and the explicit
+large-data release points (`events`/`returnsByView` drops) remain in the
+engine. Stage implementations live in `open-score-replay/`:
+
+| Stage module | Owns | Focused specs |
+| --- | --- | --- |
+| `types.ts` | Public result/option/selector contracts, archive records, shared-cache contract (type-only) | (consumed everywhere) |
+| `internal-types.ts` | `ScoreDelta`, `DecisionEvent`, candidate views, stage result/early-exit contracts | — |
+| `statistics.ts` | median/finite guards, block bootstrap, degree summaries, per-asset breakdown + exclusion helpers | `batch-open-score-usd-replay-engine.spec.ts` |
+| `pnl.ts` | `computeSelectorPnl`, `simulateTopMeanPortfolio` | `batch-open-score-usd-selector-pnl.spec.ts` |
+| `report.ts` | `buildReportLines` (opaque `reportLines` text is frozen) | replay specs |
+| `artifact-scan.ts` | Phase 1 artifact streaming, per-pair delta reconstruction, causal vote flags, cap-tilt coverage | replay specs |
+| `event-sweep.ts` | Phase 2 time-bucketed merge, ordinary/profit/causal accumulators, event snapshots | `batch-open-score-usd-max-active.spec.ts`, replay specs |
+| `candidate-selection.ts` | Candidate pools + FNV tie-breaks, strict-past TOP_Z history, outcome request grouping, gap-filtered reranking, BOT_* picks, latest selections | replay specs |
+| `target-outcomes.ts` | Lazy dataset resolution + caller-owned shared cache, per-horizon outcomes, gap/censoring/no-data accounting, Phase 0b diagnostics | replay specs, `sp500-top-mean-research-archive-writers.spec.ts`, `sp500-top-mean-causal-features.spec.ts` |
+| `aggregation.ts` | Per-horizon series/controls/breakdowns/exclusions, ONGOING picks, P&L experiments | replay specs |
+| `runtime.ts` | `yieldLoop` bounded-yield helper | — |
+
+Deterministic parity gate: `scripts/bench-finder-arm-replay.ts` prints a
+full-result SHA-256 fingerprint (ordinary/`--ties`/`--gaps`/
+`--missing-targets`/`--interleave`/`--sparse` fixtures). Any refactor that
+changes a fingerprint is a behavior change — investigate, don't re-bless.
+
+### Browser modules (`browser/`)
+
+`BatchBacktestService` remains the composition root and public facade: it
+wires the DOM contract, owns cross-workflow coordination (`isBatchUiBusy`,
+balanced-generator lock, trade-gate preflight, pending-Stop sequencing —
+deliberately uncoalesced — and `clearStaleResults` across owners), composes
+disposal, and exposes typed accessors rather than letting children see its
+internals. Do not pass the whole service into a child module.
+
+| Module | Owns | Focused specs |
+| --- | --- | --- |
+| `batch-results-view.ts` | Result rows, sort header, coalesced live-render queue (run-token check injected), summary/progress presentation | `batch-backtest-service-lifecycle.browser.spec.ts`, `feature-dom-contracts.spec.ts` |
+| `batch-run-controller.ts` | Batch Run/Stop lifecycle, NDJSON stream consumption, status pagination/reconciliation/recovery, benchmark snapshot, result persistence, server reattach poll + timers/backoff | `batch-backtest-service-lifecycle.browser.spec.ts`, `batch-backtest-server-plugin.spec.ts` |
+| `top-mean-controller.ts` | TOP_MEAN run/stop/reattach, diagnostic ring + debounces + durable log, latest result/arm, copy/download | lifecycle spec, `sp500-top-mean-*.spec.ts` |
+| `open-score-controller.ts` | Standalone replay request/stream, analysis lock + stale-cancel, copy | lifecycle spec |
+| `top-mean-results-view.ts` | Current-snapshot banner, latest-arm card, display tie-breaks, copy text | lifecycle spec |
+| `top-mean-event-details-view.ts` | Details sections, year filter, ONGOING rows, truncation notices | lifecycle spec |
+| `batch-browser-store.ts` | Storage keys/versions/migrations for settings, active-run markers, compact snapshots (data only; no DOM) | `batch-backtest-snapshot.spec.ts` |
+| `trade-gate-controls.ts` | Gate catalog fetch, persisted options, selection render/validate | `batch-ndjson-post.spec.ts` (transport) |
+| `balanced-pair-list-controls.ts` | Generate-and-apply, copy, applied-list provenance | `batch-balanced-pair-list-generator.spec.ts` |
+
+Memory ownership: the replay engine's per-window arrays are released only at
+the engine's explicit points; stage results must not embed (and closures must
+not retain) large arrays. The render queue belongs to the results view;
+timers/backoff belong to their controllers and are released by each
+controller's `dispose()` (TOP_MEAN clears its run id before resolving poll
+delays so the loop cannot reschedule).
+
 ## Runtime requirement
 
 Batch Run and OPEN_SCORE USD Replay require
