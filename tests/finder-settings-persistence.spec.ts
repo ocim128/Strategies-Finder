@@ -266,7 +266,7 @@ describe("finder results snapshot persistence", () => {
         const armSnapshot = readFinderLatestResultsSnapshot();
         expect(armSnapshot).to.not.equal(null);
         expect(armSnapshot!.results.scope).to.equal("arm_performance");
-        expect(armSnapshot!.results.inventoryComplete).to.equal(false);
+        expect((armSnapshot!.results as any).inventoryComplete).to.equal(false);
     });
 
     it("returns null for a results envelope with neither rows nor Arm scope", () => {
