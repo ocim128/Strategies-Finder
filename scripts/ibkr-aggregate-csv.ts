@@ -155,7 +155,19 @@ function shouldSkip(symbol: string, toInterval: string, expected: OHLCVData[]): 
     const existing = readCsv(symbol, toInterval);
     if (existing.length === 0) return false;
     if (existing.length !== expected.length) return false;
-    return lastBarTimestamp(existing) === lastBarTimestamp(expected);
+    if (lastBarTimestamp(existing) !== lastBarTimestamp(expected)) return false;
+    // Source history may be corrected without changing its candle count or
+    // final timestamp (for example, Alpaca's retroactive split adjustment).
+    // Compare the bars too, or the derived interval will remain stale forever.
+    return existing.every((bar, index) => {
+        const next = expected[index]!;
+        return Number(bar.time) === Number(next.time)
+            && bar.open === next.open
+            && bar.high === next.high
+            && bar.low === next.low
+            && bar.close === next.close
+            && (bar.volume ?? 0) === (next.volume ?? 0);
+    });
 }
 
 interface AggregateOutcome {

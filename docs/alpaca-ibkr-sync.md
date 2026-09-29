@@ -52,7 +52,12 @@ exports them before launching Vite. Optional server-side overrides are
 
 Both actions merge fetched rows with the existing CSV. This is intentional:
 an Alpaca download must not destroy older history when its requested window is
-shorter than the file already on disk.
+shorter than the file already on disk. When a split-adjusted interval has no
+recorded Alpaca adjustment provenance, or Alpaca reports a split since its last
+full-history refresh, the workflow fetches the complete adjusted history. A
+complete same-provider refresh replaces that interval's old rows so pre-split
+bars cannot remain at a stale nominal price scale. An incomplete full refresh
+leaves the existing CSV untouched.
 
 The catalog records the provider as follows:
 
@@ -82,6 +87,10 @@ daily and is not a source for a derived `4h` file.
 
 - Alpaca and IBKR data can differ in feed, adjustments, coverage, and latest
   bar availability. Treat `mixed` intervals as an explicit research choice.
+- Alpaca's split-adjusted bars change historical prices after a reverse or
+  forward split. The catalog records feed, adjustment, and the last complete
+  split-adjusted refresh date; a later split triggers a complete refresh of
+  that interval before new results are merged.
 - API keys never appear in URLs, catalog JSON, CSV files, NDJSON events, or
   returned per-symbol results.
 - Stop/cancellation has a no-write invariant for the affected symbol.

@@ -59,6 +59,11 @@ export type IbkrIntervalMeta = {
      * honestly labelled `"mixed"`.
      */
     source?: "ibkr" | "alpaca" | "mixed";
+    /** Alpaca request provenance needed to know whether a sync changes price scale. */
+    alpacaFeed?: string;
+    alpacaAdjustment?: string;
+    /** Date through which local Alpaca bars were fetched with split adjustment applied. */
+    splitAdjustedThrough?: string;
 };
 
 /**

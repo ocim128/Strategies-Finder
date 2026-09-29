@@ -766,6 +766,7 @@ function summarizeCandles(
     lastSyncAt: string,
     completeness?: { complete: boolean; stopReason: IbkrIntervalMeta["stopReason"] },
     source?: IbkrIntervalMeta["source"],
+    alpaca?: Pick<IbkrIntervalMeta, "alpacaFeed" | "alpacaAdjustment" | "splitAdjustedThrough">,
 ): IbkrCatalogEntry["intervals"][string] {
     const first = candles[0];
     const last = candles[candles.length - 1];
@@ -776,6 +777,9 @@ function summarizeCandles(
         lastSyncAt,
         ...(completeness ? { complete: completeness.complete, stopReason: completeness.stopReason } : {}),
         ...(source ? { source } : {}),
+        ...(alpaca?.alpacaFeed ? { alpacaFeed: alpaca.alpacaFeed } : {}),
+        ...(alpaca?.alpacaAdjustment ? { alpacaAdjustment: alpaca.alpacaAdjustment } : {}),
+        ...(alpaca?.splitAdjustedThrough ? { splitAdjustedThrough: alpaca.splitAdjustedThrough } : {}),
     };
 }
 
@@ -825,6 +829,7 @@ function upsertCatalogEntry(catalog: IbkrCatalog, args: {
     resolved?: IbkrResolvedContract;
     completeness?: { complete: boolean; stopReason: IbkrIntervalMeta["stopReason"] };
     source?: IbkrIntervalMeta["source"];
+    alpaca?: Pick<IbkrIntervalMeta, "alpacaFeed" | "alpacaAdjustment" | "splitAdjustedThrough">;
 }): IbkrCatalogEntry {
     const nowIso = new Date().toISOString();
     const markedSymbol = markIbkrSymbol(args.symbol);
@@ -845,7 +850,7 @@ function upsertCatalogEntry(catalog: IbkrCatalog, args: {
         entry.currency = args.resolved.currency;
         if (!entry.symbol) entry.symbol = args.resolved.symbol;
     }
-    entry.intervals[args.interval] = summarizeCandles(args.candles, nowIso, args.completeness, args.source);
+    entry.intervals[args.interval] = summarizeCandles(args.candles, nowIso, args.completeness, args.source, args.alpaca);
     catalog.entries.sort((a, b) => a.symbol.localeCompare(b.symbol));
     catalog.updatedAt = nowIso;
     return entry;
@@ -1865,15 +1870,72 @@ export async function syncOneAlpacaSymbol(
         throw new HttpStatusError(400, `Alpaca source does not support interval "${interval}".`);
     }
 
-    // Incremental sync: overlap the window with the last bar so late
-    // corrections to the previous bar are re-fetched.
+    const existingCandles = readCsvCandles(symbol, interval);
+
+    const adjustmentTokens = config.adjustment.toLowerCase().split(",").map((part) => part.trim());
+    const splitAdjusted = adjustmentTokens.includes("split") || adjustmentTokens.includes("all");
+    const splitAdjustedThrough = existingInterval?.splitAdjustedThrough;
+    const sameAlpacaPriceScale = existingInterval?.alpacaFeed === config.feed
+        && existingInterval?.alpacaAdjustment === config.adjustment;
+    let refreshFullHistory = false;
+
+    // Alpaca's split adjustment is retroactive. An incremental sync only
+    // fetches recent bars, so an old pre-split series otherwise stays at its
+    // old nominal price scale while newly fetched bars use the new scale.
+    // Old catalog entries have no adjustment provenance and get one complete
+    // refresh before incremental syncing is trusted.
+    if (splitAdjusted && (existingInterval || existingCandles.length > 0)) {
+        if (!sameAlpacaPriceScale || !splitAdjustedThrough) {
+            refreshFullHistory = true;
+        } else {
+            try {
+                const splits = await fetchAlpacaSplits(config, symbol, signal);
+                const adjustedThroughToday = new Date().toISOString().slice(0, 10);
+                refreshFullHistory = splits.some(
+                    (split) => split.executionDate > splitAdjustedThrough
+                        && split.executionDate <= adjustedThroughToday,
+                );
+            } catch (error) {
+                if (signal?.aborted) {
+                    return {
+                        symbol,
+                        markedSymbol: markIbkrSymbol(symbol),
+                        interval,
+                        bars: 0,
+                        fetchedBars: 0,
+                        firstTime: null,
+                        lastTime: null,
+                        filePath: getCsvPath(symbol, interval),
+                        cancelled: true,
+                        complete: false,
+                        stopReason: "cancelled" as const,
+                        source: "alpaca" as const,
+                    };
+                }
+                // A corporate-actions lookup failure must not silently bless
+                // an incremental merge. A full adjusted-bar refresh can still
+                // recover the canonical series directly from the bars API.
+                refreshFullHistory = true;
+                debugLogger.warn("alpaca.sync.splitCheckFallback", {
+                    target: "alpaca",
+                    symbol,
+                    interval,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+    }
+
+    // Incremental sync overlaps the last bar for late corrections, except
+    // when an adjustment change requires Alpaca's complete split-adjusted
+    // history to replace the older local price scale too.
     const existingLastMs = existingInterval?.lastTime
         ? Date.parse(existingInterval.lastTime)
         : NaN;
-    const startOverrideMs = syncOnly && Number.isFinite(existingLastMs)
+    const startOverrideMs = !refreshFullHistory && syncOnly && Number.isFinite(existingLastMs)
         ? existingLastMs - (ALPACA_SYNC_OVERLAP_MS_BY_INTERVAL[interval] ?? 2 * 24 * 60 * 60 * 1000)
         : undefined;
-    const window = resolveAlpacaWindow(period, Date.now(), startOverrideMs);
+    const window = resolveAlpacaWindow(refreshFullHistory ? "max" : period, Date.now(), startOverrideMs);
 
     let result = await fetchAlpacaBars(
         config,
@@ -1943,15 +2005,26 @@ export async function syncOneAlpacaSymbol(
     if (result.candles.length === 0) {
         throw new HttpStatusError(502, `Alpaca returned no ${interval} bars for ${symbol} in the requested window.`);
     }
+    if (refreshFullHistory && !result.complete) {
+        throw new HttpStatusError(
+            502,
+            `Alpaca's split-adjusted full-history refresh for ${symbol} (${interval}) was incomplete; the existing dataset was left unchanged.`,
+        );
+    }
 
     const fetched = result.candles;
-    // ALWAYS merge onto existing rows — Download is NOT a replace. The old
-    // behavior (`syncOnly ? read : []`) discarded existing history on every
-    // Download, which made an Alpaca fetch of a short window silently
-    // destroy years of IBKR-sourced data. `mergeCandlesByTime` is last-
-    // write-wins by timestamp, sorted ascending: overlapping bars take the
-    // fresh Alpaca values, non-overlapping old bars are preserved.
-    const existing = readCsvCandles(symbol, interval);
+    // Ordinary downloads merge onto existing rows — Download is NOT a
+    // replace. The old behavior (`syncOnly ? read : []`) discarded existing
+    // history on every Download, which made a short fetch silently destroy
+    // years of other-provider data. `mergeCandlesByTime` is last-write-wins:
+    // overlapping bars take the fresh Alpaca values and other rows survive.
+    // A complete same-provider refresh is authoritative for its full history;
+    // retaining old rows outside the API response could leave a second price
+    // scale in what the catalog claims is one Alpaca series. Keep rows from a
+    // different provider on the established mixed-source path.
+    const existing = refreshFullHistory && existingSource === "alpaca"
+        ? []
+        : existingCandles;
     const existingHasBars = existing.length > 0;
     const merged = mergeCandlesByTime([...existing, ...fetched]);
     writeCsv(symbol, interval, merged);
@@ -1977,6 +2050,17 @@ export async function syncOneAlpacaSymbol(
         candles: merged,
         completeness: { complete: result.complete && !gapWarning, stopReason: catalogStopReason },
         source: catalogSource,
+        alpaca: {
+            alpacaFeed: config.feed,
+            alpacaAdjustment: config.adjustment,
+            ...(splitAdjusted
+                ? {
+                    splitAdjustedThrough: refreshFullHistory
+                        ? new Date().toISOString().slice(0, 10)
+                        : existingInterval?.splitAdjustedThrough,
+                }
+                : {}),
+        },
     });
     debugLogger.info("alpaca.sync.symbol", {
         target: "alpaca",
@@ -1987,6 +2071,7 @@ export async function syncOneAlpacaSymbol(
         fetchedBars: fetched.length,
         pages: result.pages,
         retries: result.retries,
+        fullHistoryRefresh: refreshFullHistory,
         complete: result.complete && !gapWarning,
         stopReason: catalogStopReason,
         catalogSource,
