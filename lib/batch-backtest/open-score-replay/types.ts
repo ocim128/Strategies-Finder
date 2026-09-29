@@ -463,6 +463,11 @@ export interface OpenScoreUsdReplayResult {
          * tie-break decided the selection — material for research transparency.
          */
         tieRates: Record<SelectorName, SelectorAgreement>;
+        /** Per-arm contributor-excluded summaries, rebuilt from paired event deltas. */
+        armExTopContributorComparisons?: Partial<Record<ReplayArmField, ReplayComparison>>;
+        /** Largest total paired excess-return contributor and its excluded event count. */
+        armTopContributorAssets?: Partial<Record<ReplayArmField, string | null>>;
+        armTopContributorEvents?: Partial<Record<ReplayArmField, number>>;
     }>;
     /** Latest-event selector picks used by the completed Batch result UI. */
     latestSelections: OpenScoreUsdLatestSelections | null;
@@ -516,7 +521,15 @@ export interface OpenScoreUsdSharedTargetCacheEntry {
      * to re-discover the same noData event.
      */
     outcomesByEventTimeSec: Map<number, OpenScoreUsdSharedOutcomeRecord | null>;
+    /** Last target candle at or before each decision time, including right-edge events with no future entry bar. */
+    boundaryIndexByEventTimeSec?: Map<number, number>;
 }
+
+/** Replay result fields represented as Finder's 15 Arm Performance selectors. */
+export type ReplayArmField =
+    | "topRawProfitNow" | "topMeanProfitNow" | "topRawProfitNowConf" | "topZ"
+    | "topRaw" | "topMean" | "topMeanRawUnique" | "topRawProfit" | "topMeanProfit"
+    | "botRawProfitNow" | "botMeanProfitNow" | "botZ" | "botRaw" | "botMean" | "botMeanRawUnique";
 
 /** Cap-tilt weighting for OPEN_SCORE USD (docs/open-score-cap-tilt.md). */
 export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
@@ -536,6 +549,8 @@ export interface RunOpenScoreUsdReplayOptions {
     blockCount?: number;
     /** Deterministic bootstrap resamples. Default 2000. */
     bootstrapSamples?: number;
+    /** Exclude the last selected candle and the next N candles for each selector arm; zero preserves legacy behavior. */
+    selectionCooldownBars?: number;
     /** Include scalar per-event selector rows for the coordinator details UI. */
     includeEventDetails?: boolean;
     /** Phase 0b: emit one pool snapshot per decision event and catalog asset. */

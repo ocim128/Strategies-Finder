@@ -56,6 +56,8 @@ export type TopMeanStreamEvent =
     | {
         type: "current_snapshot";
         currentSnapshot: TopMeanCurrentSnapshot;
+        /** Effective replay setting, so the independent raw snapshot is labeled immediately. */
+        selectionCooldownBars?: number;
     }
     | { type: "done"; result: TopMeanResultSummary }
     | { type: "done"; interrupted: true; performance?: TopMeanPerformanceDiagnostic }

@@ -69,11 +69,44 @@
         </div>
     </div>
 
-    <div class="param-row" id="finderArmPerformanceSettings" style="display:none;">
-        <div class="param-group">
-            <label class="param-label" for="finderArmPerformanceHorizon">Replay Horizon (bars)</label>
-            <input type="number" class="param-input" id="finderArmPerformanceHorizon" value="5" min="1" max="1000" step="1">
-            <div class="param-hint">Ranks each strategy configuration by the selected arm's mean forward return. TOP_*_PROFIT is look-ahead research.</div>
+    <div id="finderArmPerformanceSettings" class="finder-arm-performance-settings" style="display:none;">
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="finderArmPerformanceHorizon">Replay Horizon (bars)</label>
+                <input type="number" class="param-input" id="finderArmPerformanceHorizon" value="5" min="1" max="1000" step="1">
+            </div>
+            <div class="param-group">
+                <label class="param-label finder-arm-performance-toggle" for="finderArmPerformanceSelectionCooldownEnabled">
+                    <input type="checkbox" id="finderArmPerformanceSelectionCooldownEnabled">
+                    <span>Block repeat asset selection</span>
+                </label>
+                <label class="param-label" for="finderArmPerformanceSelectionCooldownBars">Cooldown bars</label>
+                <input type="number" class="param-input" id="finderArmPerformanceSelectionCooldownBars" value="5" min="1" max="10000" step="1">
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label finder-arm-performance-toggle" for="finderArmPerformanceExcludeTopContributor">
+                    <input type="checkbox" id="finderArmPerformanceExcludeTopContributor">
+                    <span>Exclude top contributor</span>
+                </label>
+            </div>
+            <div class="param-group">
+                <label class="param-label finder-arm-performance-toggle" for="finderArmPerformanceEventFilterEnabled">
+                    <input type="checkbox" id="finderArmPerformanceEventFilterEnabled">
+                    <span>Completed event count filter</span>
+                </label>
+            </div>
+        </div>
+        <div class="param-row">
+            <div class="param-group">
+                <label class="param-label" for="finderArmPerformanceMinEvents">Min events</label>
+                <input type="number" class="param-input" id="finderArmPerformanceMinEvents" value="1" min="1" max="1000000" step="1">
+            </div>
+            <div class="param-group">
+                <label class="param-label" for="finderArmPerformanceMaxEvents">Max events</label>
+                <input type="number" class="param-input" id="finderArmPerformanceMaxEvents" placeholder="No max" min="1" max="1000000" step="1">
+            </div>
         </div>
     </div>
 

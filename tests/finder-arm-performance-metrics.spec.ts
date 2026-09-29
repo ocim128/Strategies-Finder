@@ -82,4 +82,37 @@ describe("Finder Arm Performance metrics", () => {
         expect(source.map((row) => row.id)).to.deep.equal(["first", "tie", "unavailable", "winner-below-display-prefix"]);
         expect(sorted).not.to.equal(source);
     });
+
+    it("filters inclusively on the selected basis before sorting and never falls back to raw metrics", () => {
+        const source = [
+            {
+                candidateOrdinal: 0,
+                id: "raw-winner",
+                metrics: { TOP_RAW: compactFinderArmComparison(comparison(5, 10)) },
+                metricsExTopContributor: { TOP_RAW: compactFinderArmComparison(comparison(0, 9)) },
+            },
+            {
+                candidateOrdinal: 1,
+                id: "adjusted-winner",
+                metrics: { TOP_RAW: compactFinderArmComparison(comparison(3, 100)) },
+                metricsExTopContributor: { TOP_RAW: compactFinderArmComparison(comparison(4, 8)) },
+            },
+            {
+                candidateOrdinal: 2,
+                id: "missing-adjusted",
+                metrics: { TOP_RAW: compactFinderArmComparison(comparison(2, 50)) },
+            },
+        ];
+        const adjusted = sortFinderArmPerformanceResults(source, "TOP_RAW", {
+            basis: "exclude_top_contributor",
+            eventFilterEnabled: true,
+            minEvents: 8,
+            maxEvents: 9,
+        });
+        expect(adjusted.map((row) => row.id)).to.deep.equal(["adjusted-winner", "raw-winner"]);
+        expect(sortFinderArmPerformanceResults(source, "TOP_RAW", {
+            basis: "exclude_top_contributor",
+        }).map((row) => row.id)).to.deep.equal(["adjusted-winner", "raw-winner", "missing-adjusted"]);
+        expect(source).to.have.length(3);
+    });
 });

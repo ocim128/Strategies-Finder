@@ -20,7 +20,7 @@
  */
 import { tieBreakDigest } from "../max-active-research-contract";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
-import type { BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayPhaseCallback } from "./internal-types";
+import type { BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback } from "./internal-types";
 import { yieldLoop } from "./runtime";
 
 export interface CandidateStageResult {
@@ -34,17 +34,19 @@ export async function buildCandidateViews(args: {
     totalEvents: number;
     assetNames: readonly string[];
     assetCount: number;
+    /** Keep singleton events so they can start an enabled selector cooldown. */
+    selectionCooldownBars?: number;
     onPhase: ReplayPhaseCallback;
 }): Promise<CandidateStageResult> {
     const { events, totalEvents, assetNames, assetCount, onPhase } = args;
+    const retainSingletonEvents = Math.max(0, Math.floor(args.selectionCooldownBars ?? 0)) > 0;
     // --- Phase 3: build candidate sets; collect per-asset event requests ---
     onPhase("targets", "forming candidates", 0, totalEvents);
     const views: EventView[] = [];
     /**
-     * Events with a >= 2-member profit pool (full-window or causal) but fewer
-     * than 2 ordinary positives. They form no EventView (the ordinary arms
-     * cannot fire there), but the profit arms are still evaluated on them so
-     * the causal selector's coverage does not depend on the ordinary pool.
+     * Events with a profit pool but fewer than 2 ordinary positives. Without
+     * cooldown, only >= 2-member profit pools are retained; with cooldown,
+     * singleton pools also remain so a selected asset can start its cooldown.
      */
     interface ProfitOnlyEvent {
         timeSec: number;
@@ -148,8 +150,10 @@ export async function buildCandidateViews(args: {
         // profit-now scores join each asset's history only AFTER the pools
         // above captured this event's z values.
         for (let a = 0; a < assetCount; a += 1) updateZStats(a, ev.rawScoreProfitNow[a]!);
-        // Need >= 2 positive candidates for a top-vs-random comparison.
-        if (positives.length >= 2) {
+        // A singleton cannot form a paired comparison, but with cooldown
+        // enabled it still represents a real selection event and must be
+        // retained so its selected asset starts cooling down.
+        if (positives.length >= 2 || (retainSingletonEvents && positives.length === 1)) {
             // Phase 0 freeze: tie-break by the versioned FNV-1a 64 digest of
             // `MAX_ACTIVE_TIE_VERSION|tieSeed|truncatedEventTimeSec|scoringAsset`.
             // Smallest digest wins. Asset name and input order are NEVER
@@ -257,13 +261,13 @@ export async function buildCandidateViews(args: {
                 },
             });
         } else if (
-            profitPositives.length >= 2
-            || profitNowPositives.length >= 2
-            || profitNowConfidencePositives.length >= 2
+            profitPositives.length >= (retainSingletonEvents ? 1 : 2)
+            || profitNowPositives.length >= (retainSingletonEvents ? 1 : 2)
+            || profitNowConfidencePositives.length >= (retainSingletonEvents ? 1 : 2)
         ) {
             // Profit-arm-only event: no ordinary view, but a profit arm can
-            // still fire. Pools are captured verbatim; picks are resolved in
-            // Phase 5 with the same tie-break rule.
+            // still select (and cool down) an asset. Pools are captured
+            // verbatim; picks are resolved in Phase 5 with the same tie-break.
             profitOnlyEvents.push({
                 timeSec: ev.timeSec,
                 profitPositives,
@@ -356,6 +360,8 @@ export interface PostOutcomeSelectionResult {
     gapFilteredProfitOnlyEvents: ProfitOnlyEvent[];
     botPicksByView: Array<BotViewPicks | null>;
     latestSelections: OpenScoreUsdLatestSelections | null;
+    armSelectionsByView?: Array<ReplayArmSelectionMap | null>;
+    armSelectionsByProfitOnly?: Array<ReplayArmSelectionMap | null>;
 }
 
 export type UsableRankKey = "raw" | "mean" | "activePairs" | "z";
@@ -437,7 +443,7 @@ export function pickUsableMinByAssetNames(
 }
 
 
-export function selectAfterOutcomes(args: {
+export async function selectAfterOutcomes(args: {
     views: readonly EventView[];
     profitOnlyEvents: readonly ProfitOnlyEvent[];
     assetNames: readonly string[];
@@ -445,8 +451,12 @@ export function selectAfterOutcomes(args: {
     dataGapAssets: ReadonlyMap<number, unknown>;
     /** Events omitted because fewer than two usable positives survived gaps. */
     dataGapEvents: Set<number>;
-}): PostOutcomeSelectionResult {
+    shouldStop?: () => boolean;
+    selectionCooldownBars?: number;
+    boundaryIndicesByView?: Array<Map<number, number> | null>;
+}): Promise<PostOutcomeSelectionResult> {
     const { views, profitOnlyEvents, assetNames, dataGapAssets, dataGapEvents } = args;
+    const cooldownBars = Math.max(0, Math.floor(args.selectionCooldownBars ?? 0));
     const latestView = views[views.length - 1] ?? null;
     const usableCandidates = (pool: readonly Candidate[]): Candidate[] =>
         pool.filter((candidate) => !dataGapAssets.has(candidate.assetIndex));
@@ -485,7 +495,7 @@ export function selectAfterOutcomes(args: {
     for (let viewIndex = hasDataGaps ? 0 : views.length; viewIndex < views.length; viewIndex += 1) {
         const source = views[viewIndex]!;
         const positives = usableCandidates(source.positives);
-        if (positives.length < 2) {
+        if (positives.length < (cooldownBars > 0 ? 1 : 2)) {
             if (source.positives.some((candidate) => dataGapAssets.has(candidate.assetIndex))) {
                 dataGapEvents.add(viewIndex);
             }
@@ -721,5 +731,220 @@ export function selectAfterOutcomes(args: {
             ],
         };
     })();
-    return { gapFilteredViews, gapFilteredProfitOnlyEvents, botPicksByView, latestSelections };
+
+    if (cooldownBars <= 0) {
+        return { gapFilteredViews, gapFilteredProfitOnlyEvents, botPicksByView, latestSelections };
+    }
+
+    type ArmField = keyof ReplayArmSelectionMap;
+    type RankDirection = "max" | "min";
+    interface ArmSpec {
+        field: ArmField;
+        pool: "positives" | "profitPositives" | "profitNowPositives" | "profitNowConfidencePositives";
+        key: UsableRankKey;
+        direction: RankDirection;
+        uniqueRaw?: "max" | "min";
+    }
+    const specs: ArmSpec[] = [
+        { field: "topRawProfitNow", pool: "profitNowPositives", key: "raw", direction: "max" },
+        { field: "topMeanProfitNow", pool: "profitNowPositives", key: "mean", direction: "max" },
+        { field: "topRawProfitNowConf", pool: "profitNowConfidencePositives", key: "raw", direction: "max" },
+        { field: "topZ", pool: "profitNowPositives", key: "z", direction: "max" },
+        { field: "topRaw", pool: "positives", key: "raw", direction: "max" },
+        { field: "topMean", pool: "positives", key: "mean", direction: "max" },
+        { field: "topMeanRawUnique", pool: "positives", key: "mean", direction: "max", uniqueRaw: "max" },
+        { field: "topRawProfit", pool: "profitPositives", key: "raw", direction: "max" },
+        { field: "topMeanProfit", pool: "profitPositives", key: "mean", direction: "max" },
+        { field: "botRawProfitNow", pool: "profitNowPositives", key: "raw", direction: "min" },
+        { field: "botMeanProfitNow", pool: "profitNowPositives", key: "mean", direction: "min" },
+        { field: "botZ", pool: "profitNowPositives", key: "z", direction: "min" },
+        { field: "botRaw", pool: "positives", key: "raw", direction: "min" },
+        { field: "botMean", pool: "positives", key: "mean", direction: "min" },
+        { field: "botMeanRawUnique", pool: "positives", key: "mean", direction: "min", uniqueRaw: "min" },
+    ];
+    const armSelectionsByView: Array<ReplayArmSelectionMap | null> = new Array(views.length).fill(null);
+    const armSelectionsByProfitOnly: Array<ReplayArmSelectionMap | null> = new Array(profitOnlyEvents.length).fill(null);
+    // Only the final view needs its eligible candidates for the UI's latest
+    // selection explanation. Historical selections retain scalar metadata;
+    // their pools are reconstructed from event candidates during aggregation.
+    const latestEligiblePools = new Map<ArmField, readonly Candidate[]>();
+    const lastSelectedBoundaryByArm = new Map<ArmField, Map<number, number>>();
+    for (const spec of specs) lastSelectedBoundaryByArm.set(spec.field, new Map());
+    const timeline = [
+        ...views.map((view, index) => ({ kind: "view" as const, index, timeSec: view.timeSec })),
+        ...profitOnlyEvents.map((event, index) => ({ kind: "profit" as const, index, timeSec: event.timeSec })),
+    ].sort((left, right) => left.timeSec - right.timeSec);
+
+    for (let timelineIndex = 0; timelineIndex < timeline.length; timelineIndex += 1) {
+        if ((timelineIndex & 0x1ff) === 0) {
+            if (args.shouldStop?.()) throw new Error("OPEN_SCORE USD replay cancelled during selector cooldown.");
+            if (timelineIndex > 0) await yieldLoop();
+        }
+        const entry = timeline[timelineIndex]!;
+        const eventIndex = entry.kind === "view" ? entry.index : views.length + entry.index;
+        const sourceView = entry.kind === "view" ? gapFilteredViews[entry.index] : null;
+        const sourceProfitOnly = entry.kind === "profit" ? gapFilteredProfitOnlyEvents[entry.index] : null;
+        const pools: Record<ArmSpec["pool"], readonly Candidate[]> = sourceView
+            ? {
+                positives: sourceView.positives,
+                profitPositives: sourceView.profitPositives,
+                profitNowPositives: sourceView.profitNowPositives,
+                profitNowConfidencePositives: sourceView.profitNowConfidencePositives,
+            }
+            : {
+                positives: [],
+                profitPositives: sourceProfitOnly?.profitPositives ?? [],
+                profitNowPositives: sourceProfitOnly?.profitNowPositives ?? [],
+                profitNowConfidencePositives: sourceProfitOnly?.profitNowConfidencePositives ?? [],
+            };
+        const boundaryByAsset = args.boundaryIndicesByView?.[eventIndex] ?? null;
+        const resolved: ReplayArmSelectionMap = {};
+        for (const spec of specs) {
+            const pool = pools[spec.pool];
+            const previous = lastSelectedBoundaryByArm.get(spec.field)!;
+            const remaining = boundaryByAsset
+                ? pool.filter((candidate) => {
+                    const boundary = boundaryByAsset.get(candidate.assetIndex);
+                    const lastSelected = previous.get(candidate.assetIndex);
+                    return boundary === undefined || lastSelected === undefined || boundary - lastSelected > cooldownBars;
+                })
+                : [...pool];
+            let rankPool = remaining;
+            let selectedAssetIndex = -1;
+            let tiedCount = 0;
+            let control: "leave_one_out" | "mean_tied_set" = "leave_one_out";
+            if (remaining.length > 0 && spec.uniqueRaw) {
+                let bestMean = usableRankValue(remaining[0]!, "mean");
+                for (let i = 1; i < remaining.length; i += 1) {
+                    const value = usableRankValue(remaining[i]!, "mean");
+                    if (spec.direction === "max" ? value > bestMean : value < bestMean) bestMean = value;
+                }
+                rankPool = remaining.filter((candidate) => usableRankValue(candidate, "mean") === bestMean);
+                let bestRaw = rankPool[0]!.raw;
+                for (let i = 1; i < rankPool.length; i += 1) {
+                    const value = rankPool[i]!.raw;
+                    if (spec.uniqueRaw === "max" ? value > bestRaw : value < bestRaw) bestRaw = value;
+                }
+                const rawTied = rankPool.filter((candidate) => candidate.raw === bestRaw);
+                tiedCount = rawTied.length;
+                if (rawTied.length === 1) selectedAssetIndex = rawTied[0]!.assetIndex;
+                control = "mean_tied_set";
+            } else if (remaining.length > 0) {
+                const ranked = spec.direction === "max"
+                    ? pickUsableMaxByAssetNames(remaining, spec.key, entry.timeSec, assetNames)
+                    : pickUsableMinByAssetNames(remaining, spec.key, entry.timeSec, assetNames);
+                if (ranked) {
+                    selectedAssetIndex = ranked.winner.assetIndex;
+                    tiedCount = ranked.tiedCount;
+                }
+            }
+            resolved[spec.field] = {
+                selectedAssetIndex,
+                tiedCount,
+                poolSize: rankPool.length,
+                eligiblePoolSize: remaining.length,
+                control,
+            };
+            if (entry.kind === "view" && entry.index === views.length - 1) {
+                latestEligiblePools.set(spec.field, remaining);
+            }
+            if (selectedAssetIndex >= 0) {
+                const boundary = boundaryByAsset?.get(selectedAssetIndex);
+                if (boundary !== undefined) previous.set(selectedAssetIndex, boundary);
+            }
+        }
+        if (entry.kind === "view") armSelectionsByView[entry.index] = resolved;
+        else armSelectionsByProfitOnly[entry.index] = resolved;
+    }
+
+    // Latest-picks is a view of the final ordinary decision event. Reuse the
+    // already-resolved selection for that event so displaying it cannot apply
+    // the final event to cooldown state a second time.
+    const latestViewIndex = views.length - 1;
+    const latestResolved = latestViewIndex >= 0 ? armSelectionsByView[latestViewIndex] : null;
+    const cooldownLatestSelections: OpenScoreUsdLatestSelections | null = latestSelections && latestResolved
+        ? {
+            decisionTime: latestSelections.decisionTime,
+            selections: latestSelections.selections.map((current) => {
+                const fieldBySelector: Partial<Record<OpenScoreUsdLatestSelectorName, ArmField>> = {
+                    TOP_RAW: "topRaw",
+                    TOP_MEAN: "topMean",
+                    TOP_MEAN_RAW_UNIQUE: "topMeanRawUnique",
+                    TOP_RAW_PROFIT_NOW: "topRawProfitNow",
+                    TOP_MEAN_PROFIT_NOW: "topMeanProfitNow",
+                    TOP_RAW_PROFIT_NOW_CONF: "topRawProfitNowConf",
+                    TOP_Z: "topZ",
+                    BOT_RAW: "botRaw",
+                    BOT_MEAN: "botMean",
+                    BOT_MEAN_RAW_UNIQUE: "botMeanRawUnique",
+                    BOT_RAW_PROFIT_NOW: "botRawProfitNow",
+                    BOT_MEAN_PROFIT_NOW: "botMeanProfitNow",
+                    BOT_Z: "botZ",
+                };
+                const field = fieldBySelector[current.selector];
+                const selection = field ? latestResolved[field] : undefined;
+                if (!field || !selection) return current;
+                const spec = specs.find((candidate) => candidate.field === field)!;
+                const eligiblePool = latestEligiblePools.get(field) ?? [];
+                const ranked = [...eligiblePool].sort((left, right) => {
+                    const leftValue = usableRankValue(left, spec.key);
+                    const rightValue = usableRankValue(right, spec.key);
+                    if (leftValue !== rightValue) return spec.direction === "max"
+                        ? rightValue - leftValue
+                        : leftValue - rightValue;
+                    return assetNames[left.assetIndex]!.localeCompare(assetNames[right.assetIndex]!);
+                });
+                const topCandidates = ranked.slice(0, 3).map((candidate) => ({
+                    asset: assetNames[candidate.assetIndex]!,
+                    score: candidate.raw,
+                    mean: candidate.mean,
+                    activePairs: candidate.activePairs,
+                }));
+                const picked = eligiblePool.find((candidate) => candidate.assetIndex === selection.selectedAssetIndex);
+                const tieValue = picked ? usableRankValue(picked, spec.key) : null;
+                let tiedAssets: string[] = [];
+                if (selection.tiedCount > 1 && selection.control === "mean_tied_set") {
+                    const meanBest = eligiblePool.reduce((best, candidate) =>
+                        spec.direction === "max" ? Math.max(best, candidate.mean) : Math.min(best, candidate.mean),
+                    eligiblePool[0]!.mean);
+                    const meanTiedPool = eligiblePool.filter((candidate) => candidate.mean === meanBest);
+                    let bestRaw = meanTiedPool[0]!.raw;
+                    for (const candidate of meanTiedPool.slice(1)) {
+                        if (spec.uniqueRaw === "max" ? candidate.raw > bestRaw : candidate.raw < bestRaw) {
+                            bestRaw = candidate.raw;
+                        }
+                    }
+                    tiedAssets = meanTiedPool
+                        .filter((candidate) => candidate.raw === bestRaw)
+                        .map((candidate) => assetNames[candidate.assetIndex]!)
+                        .sort((left, right) => left.localeCompare(right));
+                } else if (selection.tiedCount > 1) {
+                    tiedAssets = eligiblePool
+                        .filter((candidate) => usableRankValue(candidate, spec.key) === tieValue)
+                        .map((candidate) => assetNames[candidate.assetIndex]!)
+                        .sort((left, right) => left.localeCompare(right));
+                }
+                return {
+                    ...current,
+                    asset: picked ? assetNames[picked.assetIndex]! : null,
+                    tiedAssets,
+                    score: picked?.raw ?? null,
+                    mean: picked?.mean ?? null,
+                    activePairs: picked?.activePairs ?? null,
+                    eligibleCandidates: selection.eligiblePoolSize,
+                    reason: picked ? "selected" : selection.tiedCount > 1 ? "tied" : "insufficient_candidates",
+                    topCandidates,
+                };
+            }),
+        }
+        : latestSelections;
+
+    return {
+        gapFilteredViews,
+        gapFilteredProfitOnlyEvents,
+        botPicksByView,
+        latestSelections: cooldownLatestSelections,
+        armSelectionsByView,
+        armSelectionsByProfitOnly,
+    };
 }

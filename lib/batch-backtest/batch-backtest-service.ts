@@ -255,6 +255,12 @@ export class BatchBacktestService {
         dom.batchBacktestSp500TopMeanRunBtn.addEventListener("click", () => {
             void this.runSp500TopMeanCoordinator();
         });
+        const syncTopMeanCooldownInput = () => {
+            dom.batchBacktestSp500TopMeanSelectionCooldownBars.disabled =
+                !dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked;
+        };
+        dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.addEventListener("change", syncTopMeanCooldownInput);
+        syncTopMeanCooldownInput();
         dom.batchBacktestSp500TopMeanStopBtn.addEventListener("click", () => {
             void this.stopSp500TopMeanCoordinator();
         });

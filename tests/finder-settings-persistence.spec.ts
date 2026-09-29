@@ -129,6 +129,9 @@ describe("normalizeFinderUiState", () => {
             universeMinProfitableActiveRatio: 7,
             assetOpportunityCandidatePoolSize: 500,
             armPerformanceHorizon: 5_000,
+            armPerformanceMinEvents: 3_000_000,
+            armPerformanceSelectionCooldownBars: 50_000,
+            armPerformanceEventFilterEnabled: true,
             assetOpportunityOosBatchStartBars: "bad",
             assetOpportunityOosBatchEndBars: 5,
             minTrades: 3.7,
@@ -139,6 +142,9 @@ describe("normalizeFinderUiState", () => {
         expect(normalized.universeMinProfitableActiveRatio).to.equal(1);
         expect(normalized.assetOpportunityCandidatePoolSize).to.equal(50);
         expect(normalized.armPerformanceHorizon).to.equal(1_000);
+        expect(normalized.armPerformanceMinEvents).to.equal(1_000_000);
+        expect(normalized.armPerformanceSelectionCooldownBars).to.equal(10_000);
+        expect(normalized.armPerformanceEventFilterEnabled).to.equal(true);
         expect(normalized.assetOpportunityOosBatchStartBars)
             .to.equal(DEFAULT_FINDER_UI_STATE.assetOpportunityOosBatchStartBars);
         expect(normalized.assetOpportunityOosBatchEndBars)
@@ -166,6 +172,12 @@ describe("normalizeFinderUiState", () => {
             universeSymbolsText: "AAPL\nMSFT",
             assetOpportunityOosMeasurementMode: "next_exit",
             armPerformanceHorizon: 20,
+            armPerformanceExcludeTopContributor: true,
+            armPerformanceEventFilterEnabled: true,
+            armPerformanceMinEvents: 12,
+            armPerformanceMaxEventsText: "40",
+            armPerformanceSelectionCooldownEnabled: true,
+            armPerformanceSelectionCooldownBars: 7,
         });
         expect(normalizeFinderUiState(state)).to.deep.equal(state);
     });

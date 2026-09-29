@@ -1426,6 +1426,23 @@ describe("FinderUI Arm Performance preview actions", () => {
         expect(button.disabled, "missing run context does not disable Apply").to.equal(false);
         expect(button.title ?? "").to.not.include("unavailable");
     });
+
+	 it("explains when a filtered legacy result has no contributor-excluded summary", () => {
+		const ui = new FinderUI();
+		const context = {
+			runId: "legacy-arm-run",
+			pairs: ["AAA+BBB"],
+			searchOptions: { armPerformance: { scoringBasis: "exclude_top_contributor" } },
+		} as unknown as FinderArmPerformanceRunContext;
+		ui.renderArmPerformanceResults([], context, "TOP_RAW", false, "exclude_top_contributor", {
+			eventFilterEnabled: true,
+			minEvents: 1,
+		}, true);
+
+		const list = elsById.get("finderList");
+		const notes = (list.children ?? []).filter((node: any) => node.className === "finder-sub finder-arm-performance-note");
+		expect(notes.some((node: any) => node.textContent.includes("unavailable") && node.textContent.includes("Rerun Finder"))).to.equal(true);
+	 });
 });
 
 describe("FinderUI lazy Universe symbol breakdowns (audit Finding 6)", () => {

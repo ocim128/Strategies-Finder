@@ -208,6 +208,7 @@ async function handleSp500TopMeanRunRequest(
         workerCount: req.workerCount,
         maxPairs: req.maxPairs,
         capTiltWeight: req.capTiltWeight,
+        selectionCooldownBars: req.selectionCooldownBars,
     });
     if (!limitCheck.ok) {
         throw new HttpStatusError(400, limitCheck.error);
@@ -222,6 +223,7 @@ async function handleSp500TopMeanRunRequest(
     if (limitCheck.value.capTiltWeight !== undefined) {
         req.capTiltWeight = limitCheck.value.capTiltWeight;
     }
+    req.selectionCooldownBars = limitCheck.value.selectionCooldownBars;
 
     // Optional decision-event date window for the phase-3 OPEN_SCORE USD
     // replay. Mirrors handleOpenScoreUsdRequest's parseBodyDateSec: YYYY-MM-DD

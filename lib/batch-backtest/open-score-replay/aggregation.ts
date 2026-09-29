@@ -16,23 +16,388 @@ import type {
     RunOpenScoreUsdReplayOptions,
     TopMeanPortfolioOpportunity,
 } from "./types";
-import type { BotViewPicks, Candidate, EventView, ProfitOnlyEvent, ReplayPhaseCallback } from "./internal-types";
-import type { SelectorName } from "./types";
+import type { BotViewPicks, Candidate, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback } from "./internal-types";
+import type { ReplayArmField, SelectorName } from "./types";
 import type { ViewOutcomeRecord } from "./target-outcomes";
 import { tieBreakDigest } from "../max-active-research-contract";
 import {
-    blockBootstrapMedianCi,
     buildAssetSelectionBreakdown,
     buildExDominantComparison,
+    buildReplayComparison,
     degreeSummary,
-    finiteOrNull,
-    meanOrNull,
-    median,
-    splitIntoBlocks,
 } from "./statistics";
 import { computeSelectorPnl, simulateTopMeanPortfolio } from "./pnl";
 import { pickUsableMaxByAssetNames, pickUsableMinByAssetNames } from "./candidate-selection";
 import { yieldLoop } from "./runtime";
+
+const REPLAY_ARM_FIELDS: ReplayArmField[] = [
+    "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
+    "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
+    "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",
+];
+
+const ARM_EVENT_DETAIL_SELECTORS: Record<ReplayArmField, OpenScoreUsdEventDetailSelector> = {
+    topRawProfitNow: "TOP_RAW_PROFIT_NOW",
+    topMeanProfitNow: "TOP_MEAN_PROFIT_NOW",
+    topRawProfitNowConf: "TOP_RAW_PROFIT_NOW_CONF",
+    topZ: "TOP_Z",
+    topRaw: "TOP_RAW",
+    topMean: "TOP_MEAN",
+    topMeanRawUnique: "TOP_MEAN_RAW_UNIQUE",
+    topRawProfit: "TOP_RAW_PROFIT",
+    topMeanProfit: "TOP_MEAN_PROFIT",
+    botRawProfitNow: "BOT_RAW_PROFIT_NOW",
+    botMeanProfitNow: "BOT_MEAN_PROFIT_NOW",
+    botZ: "BOT_Z",
+    botRaw: "BOT_RAW",
+    botMean: "BOT_MEAN",
+    botMeanRawUnique: "BOT_MEAN_RAW_UNIQUE",
+};
+
+interface CooldownArmSeries {
+    deltas: number[];
+    returns: number[];
+    times: number[];
+    assets: string[];
+    selectedCounts: Map<string, number>;
+    samplesByAsset: Map<string, { returns: number[]; deltas: number[] }>;
+    tieCount: number;
+}
+
+function emptyCooldownArmSeries(): CooldownArmSeries {
+    return {
+        deltas: [], returns: [], times: [], assets: [],
+        selectedCounts: new Map(), samplesByAsset: new Map(), tieCount: 0,
+    };
+}
+
+function replayArmBaseField(field: ReplayArmField): string {
+    return field;
+}
+
+type AggregationInput = Parameters<typeof aggregateHorizonResults>[0];
+
+function cooldownSourcePool(
+    field: ReplayArmField,
+    view: EventView | null,
+    profitOnly: ProfitOnlyEvent | null,
+): readonly Candidate[] {
+    if (field === "topRaw" || field === "topMean" || field === "topMeanRawUnique"
+        || field === "botRaw" || field === "botMean" || field === "botMeanRawUnique") {
+        return view?.positives ?? [];
+    }
+    if (field === "topRawProfit" || field === "topMeanProfit") {
+        return view?.profitPositives ?? profitOnly?.profitPositives ?? [];
+    }
+    if (field === "topRawProfitNowConf") {
+        return view?.profitNowConfidencePositives ?? profitOnly?.profitNowConfidencePositives ?? [];
+    }
+    return view?.profitNowPositives ?? profitOnly?.profitNowPositives ?? [];
+}
+
+async function aggregateCooldownSelection(
+    args: AggregationInput & {
+        armSelectionsByView: Array<ReplayArmSelectionMap | null>;
+        armSelectionsByProfitOnly: Array<ReplayArmSelectionMap | null>;
+        boundaryIndicesByView?: Array<Map<number, number> | null>;
+    },
+): Promise<AggregationStageResult> {
+    // Build only the result skeleton from empty input. The prior implementation
+    // ran every legacy selector and bootstrap, then discarded those statistics
+    // and recomputed them for cooldown selections.
+    const base = await aggregateHorizonResults({
+        ...args,
+        options: { ...args.options, selectionCooldownBars: 0, includeEventDetails: false },
+        views: [],
+        gapFilteredViews: [],
+        botPicksByView: [],
+        gapFilteredProfitOnlyEvents: [],
+        returnsByView: [],
+        noDataEvents: new Set(),
+        onPhase: () => undefined,
+        armSelectionsByView: undefined,
+        armSelectionsByProfitOnly: undefined,
+    });
+    const {
+        options, horizons, blockCount, bootstrapSamples, views,
+        returnsByView, assetNames, retainedDegree, onPhase,
+    } = args;
+    const cooldownBars = Math.max(0, Math.floor(options.selectionCooldownBars ?? 0));
+    const eventDetails: OpenScoreUsdEventDetail[] = [];
+    const ongoingEventDetails: OpenScoreUsdOngoingEventDetail[] = [];
+    let eligibleEventsMax = 0;
+    const timeline = [
+        ...views.map((view, index) => ({ kind: "view" as const, index, timeSec: view.timeSec })),
+        ...args.gapFilteredProfitOnlyEvents.map((event, index) => ({
+            kind: "profit" as const,
+            index,
+            timeSec: event.timeSec,
+        })),
+    ].sort((left, right) => left.timeSec - right.timeSec);
+
+    for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
+        const seriesByArm = Object.fromEntries(REPLAY_ARM_FIELDS.map((field) => [field, emptyCooldownArmSeries()])) as Record<ReplayArmField, CooldownArmSeries>;
+        const portfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
+        const lastSelectedBoundaryByArm = new Map<ReplayArmField, Map<number, number>>(
+            REPLAY_ARM_FIELDS.map((field) => [field, new Map<number, number>()]),
+        );
+        const activeCountsAtEvents: number[] = [];
+        const topRawSelectionCounts = new Map<string, number>();
+        let processedCooldownEvents = 0;
+        for (const event of timeline) {
+            if ((processedCooldownEvents++ & 0x1ff) === 0) {
+                if (options.shouldStop?.()) throw new Error("OPEN_SCORE USD replay cancelled during cooldown aggregation.");
+                if (processedCooldownEvents > 1) await yieldLoop();
+            }
+            const eventIndex = event.kind === "view" ? event.index : views.length + event.index;
+            const selections = event.kind === "view"
+                ? args.armSelectionsByView[event.index]
+                : args.armSelectionsByProfitOnly[event.index];
+            if (!selections) continue;
+            const outcomes = returnsByView[eventIndex];
+            const sourceView = event.kind === "view" ? args.gapFilteredViews[event.index] ?? null : null;
+            const sourceProfitOnly = event.kind === "profit" ? args.gapFilteredProfitOnlyEvents[event.index] ?? null : null;
+            const boundaryByAsset = args.boundaryIndicesByView?.[eventIndex] ?? null;
+            if (event.kind === "view" && sourceView && sourceView.positives.length >= 2) {
+                if (!outcomes) args.noDataEvents.add(event.index);
+                else {
+                    let allValid = true;
+                    for (const candidate of sourceView.positives) {
+                        const value = outcomes.get(candidate.assetIndex)?.long[hIdx];
+                        if (value === undefined || !Number.isFinite(value)) { allValid = false; break; }
+                    }
+                    if (allValid) {
+                        activeCountsAtEvents.push(sourceView.maxActivePairs);
+                        const asset = assetNames[sourceView.topRaw]!;
+                        topRawSelectionCounts.set(asset, (topRawSelectionCounts.get(asset) ?? 0) + 1);
+                    }
+                }
+            }
+            for (const field of REPLAY_ARM_FIELDS) {
+                const selection = selections[field];
+                if (!selection) continue;
+                const previous = lastSelectedBoundaryByArm.get(field)!;
+                const sourcePool = cooldownSourcePool(field, sourceView, sourceProfitOnly);
+                const eligiblePool: Candidate[] = [];
+                for (const candidate of sourcePool) {
+                    const boundary = boundaryByAsset?.get(candidate.assetIndex);
+                    const lastSelected = previous.get(candidate.assetIndex);
+                    if (boundary === undefined || lastSelected === undefined
+                        || boundary - lastSelected > cooldownBars) {
+                        eligiblePool.push(candidate);
+                    }
+                }
+                const selectedIndex = selection.selectedAssetIndex;
+                if (selectedIndex >= 0) {
+                    const selectedBoundary = boundaryByAsset?.get(selectedIndex);
+                    if (selectedBoundary !== undefined) previous.set(selectedIndex, selectedBoundary);
+                }
+                if (selectedIndex < 0) continue;
+                const selectedOutcome = outcomes?.get(selectedIndex);
+                if (options.includeEventDetails && selectedOutcome?.statuses[hIdx] === "right_censored") {
+                    ongoingEventDetails.push({
+                        decisionTime: event.timeSec,
+                        entryTime: Number.isFinite(selectedOutcome.entryTime) ? selectedOutcome.entryTime : null,
+                        horizonBars: horizons[hIdx]!,
+                        selector: ARM_EVENT_DETAIL_SELECTORS[field],
+                        direction: "long",
+                        asset: assetNames[selectedIndex]!,
+                        eligibleCandidates: selection.poolSize,
+                        unrealizedReturn: selectedOutcome.mtmLong[hIdx] ?? null,
+                    });
+                }
+                // Singleton choices above still advance cooldown state, but
+                // only a full eligible pool with alternatives contributes a
+                // paired comparison. Unique arms keep their mean-tied subset
+                // as the baseline while using the full pool for this gate.
+                if (eligiblePool.length < 2 || !outcomes) continue;
+                let bestMean: number | null = null;
+                if (selection.control === "mean_tied_set") {
+                    for (const candidate of eligiblePool) {
+                        bestMean = bestMean === null ? candidate.mean : Math.max(bestMean, candidate.mean);
+                    }
+                    // BOT_MEAN_RAW_UNIQUE uses the lowest tied mean.
+                    if (field === "botMeanRawUnique") {
+                        bestMean = null;
+                        for (const candidate of eligiblePool) {
+                            bestMean = bestMean === null ? candidate.mean : Math.min(bestMean, candidate.mean);
+                        }
+                    }
+                }
+                let poolTotal = 0;
+                let comparisonPoolSize = 0;
+                let allFinite = true;
+                for (const candidate of eligiblePool) {
+                    if (bestMean !== null && candidate.mean !== bestMean) continue;
+                    comparisonPoolSize += 1;
+                    const candidateReturn = outcomes.get(candidate.assetIndex)?.long[hIdx];
+                    if (candidateReturn === undefined || !Number.isFinite(candidateReturn)) {
+                        allFinite = false;
+                        break;
+                    }
+                    poolTotal += candidateReturn;
+                }
+                if (!allFinite || comparisonPoolSize === 0) continue;
+                const selectedReturn = outcomes.get(selectedIndex)?.long[hIdx];
+                if (selectedReturn === undefined || !Number.isFinite(selectedReturn)) continue;
+                const controlReturn = selection.control === "mean_tied_set"
+                    ? poolTotal / comparisonPoolSize
+                    : (poolTotal - selectedReturn) / (eligiblePool.length - 1);
+                const delta = selectedReturn - controlReturn;
+                const armSeries = seriesByArm[field];
+                const asset = assetNames[selectedIndex]!;
+                armSeries.deltas.push(delta);
+                armSeries.returns.push(selectedReturn);
+                armSeries.times.push(event.timeSec);
+                armSeries.assets.push(asset);
+                armSeries.selectedCounts.set(asset, (armSeries.selectedCounts.get(asset) ?? 0) + 1);
+                if (selection.tiedCount >= 2) armSeries.tieCount += 1;
+                let samples = armSeries.samplesByAsset.get(asset);
+                if (!samples) {
+                    samples = { returns: [], deltas: [] };
+                    armSeries.samplesByAsset.set(asset, samples);
+                }
+                samples.returns.push(selectedReturn);
+                samples.deltas.push(delta);
+                if (options.includeEventDetails) {
+                    const entryTime = selectedOutcome?.entryTime;
+                    const exitTime = selectedOutcome?.exitTimes[hIdx];
+                    if (entryTime !== undefined && exitTime !== undefined && Number.isFinite(entryTime) && Number.isFinite(exitTime)) {
+                        eventDetails.push({
+                            decisionTime: event.timeSec,
+                            entryTime,
+                            exitTime,
+                            horizonBars: horizons[hIdx]!,
+                            selector: ARM_EVENT_DETAIL_SELECTORS[field],
+                            direction: "long",
+                            asset,
+                            selectedReturn,
+                            controlReturn,
+                            delta,
+                            eligibleCandidates: selection.poolSize,
+                        });
+                    }
+                }
+                if (field === "topMean" && selectedOutcome) {
+                    const topMeanCandidate = eligiblePool.find((candidate) => candidate.assetIndex === selectedIndex);
+                    if (topMeanCandidate) {
+                        portfolioOpportunities.push({
+                            asset,
+                            decisionTime: event.timeSec,
+                            entryTime: selectedOutcome.entryTime,
+                            exitTime: selectedOutcome.exitTimes[hIdx]!,
+                            netReturn: selectedReturn,
+                            tied: selection.tiedCount >= 2,
+                        });
+                    }
+                }
+            }
+        }
+
+        const horizon = base.horizonResults[hIdx] as OpenScoreUsdReplayResult["horizons"][number] & Record<string, unknown>;
+        const comparisons = {} as Record<ReplayArmField, ReplayComparison>;
+        const exDominantComparisons: Partial<Record<ReplayArmField, ReplayComparison>> = {};
+        const exContributorComparisons: Partial<Record<ReplayArmField, ReplayComparison>> = {};
+        const contributorAssets: Partial<Record<ReplayArmField, string | null>> = {};
+        const contributorEvents: Partial<Record<ReplayArmField, number>> = {};
+        let topRawDominant: string | null = null;
+        let topMeanDominant: string | null = null;
+        for (const field of REPLAY_ARM_FIELDS) {
+            const armSeries = seriesByArm[field];
+            const build = (deltas: number[], returns: number[], times: number[]) =>
+                buildReplayComparison(deltas, returns, times, blockCount, bootstrapSamples);
+            const comparison = build(armSeries.deltas, armSeries.returns, armSeries.times);
+            comparisons[field] = comparison;
+            eligibleEventsMax = Math.max(eligibleEventsMax, comparison.events);
+            const breakdown = buildAssetSelectionBreakdown(armSeries.selectedCounts, armSeries.samplesByAsset).byAsset;
+            const baseField = replayArmBaseField(field);
+            (horizon as Record<string, unknown>)[baseField] = comparison;
+            (horizon as Record<string, unknown>)[`${baseField}ByAsset`] = breakdown;
+            const dominantAsset = breakdown[0]?.asset ?? null;
+            if (field === "topRaw") topRawDominant = dominantAsset;
+            if (field === "topMean") topMeanDominant = dominantAsset;
+            const exDominant = buildExDominantComparison(armSeries, dominantAsset, build);
+            exDominantComparisons[field] = exDominant;
+            if (field === "topRaw") {
+                (horizon as Record<string, unknown>).topRawExDominant = exDominant;
+                (horizon as Record<string, unknown>).dominantAsset = dominantAsset;
+            } else {
+                (horizon as Record<string, unknown>)[`${baseField}ExDominant`] = exDominant;
+                (horizon as Record<string, unknown>)[`${baseField}DominantAsset`] = dominantAsset;
+            }
+            let contributorAsset: string | null = null;
+            let greatestContribution = Number.NEGATIVE_INFINITY;
+            const contributionSums = new Map<string, number>();
+            const counts = new Map<string, number>();
+            for (let i = 0; i < armSeries.assets.length; i += 1) {
+                const selectedAsset = armSeries.assets[i]!;
+                contributionSums.set(selectedAsset, (contributionSums.get(selectedAsset) ?? 0) + armSeries.deltas[i]!);
+                counts.set(selectedAsset, (counts.get(selectedAsset) ?? 0) + 1);
+            }
+            for (const [selectedAsset, contribution] of contributionSums) {
+                if (contribution > greatestContribution || (contribution === greatestContribution && selectedAsset < (contributorAsset ?? "~"))) {
+                    contributorAsset = selectedAsset;
+                    greatestContribution = contribution;
+                }
+            }
+            const excludedCount = contributorAsset === null ? 0 : counts.get(contributorAsset) ?? 0;
+            contributorAssets[field] = contributorAsset;
+            contributorEvents[field] = excludedCount;
+            exContributorComparisons[field] = contributorAsset === dominantAsset
+                ? exDominant
+                : buildExDominantComparison(armSeries, contributorAsset, build);
+        }
+        const topRawSeries = seriesByArm.topRaw;
+        const topMeanSeries = seriesByArm.topMean;
+        (horizon as Record<string, unknown>).topRawExDominant = exDominantComparisons.topRaw;
+        (horizon as Record<string, unknown>).topMeanExDominant = exDominantComparisons.topMean;
+        (horizon as Record<string, unknown>).topMeanDominantAsset = topMeanDominant;
+        (horizon as Record<string, unknown>).dominantAsset = topRawDominant;
+        (horizon as Record<string, unknown>).topMeanExTopContrib = exContributorComparisons.topMean;
+        (horizon as Record<string, unknown>).topMeanTopContribAsset = contributorAssets.topMean ?? null;
+        (horizon as Record<string, unknown>).armExTopContributorComparisons = exContributorComparisons;
+        (horizon as Record<string, unknown>).armTopContributorAssets = contributorAssets;
+        (horizon as Record<string, unknown>).armTopContributorEvents = contributorEvents;
+        const topRawBreakdown = buildAssetSelectionBreakdown(topRawSeries.selectedCounts, topRawSeries.samplesByAsset);
+        const selectedDegree = topRawSeries.assets.map((asset) => retainedDegree.get(asset) ?? 0);
+        const topAssetShare = topRawBreakdown.totalSelected > 0
+            ? topRawBreakdown.maxSelected / topRawBreakdown.totalSelected
+            : null;
+        const randomReturns = topMeanSeries.returns.map((selected, index) => selected - topMeanSeries.deltas[index]!);
+        (horizon as Record<string, unknown>).pnl = {
+            topMean: computeSelectorPnl(topMeanSeries.returns, topMeanSeries.times),
+            random: computeSelectorPnl(randomReturns, topMeanSeries.times),
+            topMeanPortfolio: simulateTopMeanPortfolio(portfolioOpportunities),
+        };
+        const candidateSelectionTotal = Array.from(topRawSelectionCounts.values()).reduce((sum, count) => sum + count, 0);
+        const candidateSelectionMax = Math.max(0, ...topRawSelectionCounts.values());
+        (horizon as Record<string, unknown>).candidateDegree = degreeSummary(
+            activeCountsAtEvents,
+            candidateSelectionTotal > 0 ? candidateSelectionMax / candidateSelectionTotal : null,
+        );
+        (horizon as Record<string, unknown>).selectedDegree = degreeSummary(selectedDegree, topAssetShare);
+        const nRaw = comparisons.topRaw.events;
+        const nMean = comparisons.topMean.events;
+        (horizon as Record<string, unknown>).tieRates = {
+            RAW: { events: nRaw, sameSelection: topRawSeries.tieCount, rate: nRaw > 0 ? topRawSeries.tieCount / nRaw : null },
+            MEAN: { events: nMean, sameSelection: topMeanSeries.tieCount, rate: nMean > 0 ? topMeanSeries.tieCount / nMean : null },
+        };
+        onPhase("aggregate", `aggregated cooldown horizon ${horizons[hIdx]}`, hIdx + 1, horizons.length);
+        await yieldLoop();
+    }
+    eventDetails.sort((left, right) => left.decisionTime - right.decisionTime
+        || left.horizonBars - right.horizonBars
+        || left.selector.localeCompare(right.selector));
+    ongoingEventDetails.sort((left, right) => left.decisionTime - right.decisionTime
+        || left.horizonBars - right.horizonBars
+        || left.selector.localeCompare(right.selector));
+    return {
+        horizonResults: base.horizonResults,
+        eventDetails,
+        ongoingEventDetails,
+        eligibleEventsMax,
+    };
+}
 
 export interface AggregationStageResult {
     horizonResults: OpenScoreUsdReplayResult["horizons"];
@@ -51,6 +416,10 @@ export async function aggregateHorizonResults(args: {
     gapFilteredViews: ReadonlyArray<EventView | null>;
     gapFilteredProfitOnlyEvents: readonly ProfitOnlyEvent[];
     botPicksByView: ReadonlyArray<BotViewPicks | null>;
+    armSelectionsByView?: Array<ReplayArmSelectionMap | null>;
+    armSelectionsByProfitOnly?: Array<ReplayArmSelectionMap | null>;
+    /** Compact target candle boundaries used to replay cooldown eligibility. */
+    boundaryIndicesByView?: Array<Map<number, number> | null>;
     /** Sparse per-(event, asset) outcome records; read-only here. */
     returnsByView: ReadonlyArray<ReadonlyMap<number, ViewOutcomeRecord> | null>;
     dataGapAssets: ReadonlyMap<number, unknown>;
@@ -61,6 +430,13 @@ export async function aggregateHorizonResults(args: {
     noDataEvents: Set<number>;
     onPhase: ReplayPhaseCallback;
 }): Promise<AggregationStageResult> {
+    if (args.armSelectionsByView && args.armSelectionsByProfitOnly) {
+        return aggregateCooldownSelection(args as AggregationInput & {
+            armSelectionsByView: Array<ReplayArmSelectionMap | null>;
+            armSelectionsByProfitOnly: Array<ReplayArmSelectionMap | null>;
+            boundaryIndicesByView?: Array<Map<number, number> | null>;
+        });
+    }
     const {
         options, horizons, blockCount, bootstrapSamples,
         views, gapFilteredViews, gapFilteredProfitOnlyEvents, botPicksByView,
@@ -368,6 +744,10 @@ export async function aggregateHorizonResults(args: {
         );
 
         for (let v = 0; v < views.length; v += 1) {
+            if ((v & 0x1ff) === 0) {
+                if (options.shouldStop?.()) throw new Error("OPEN_SCORE USD replay cancelled during aggregation.");
+                if (v > 0) await yieldLoop();
+            }
             const view = gapFilteredViews[v];
             if (!view) continue;
             const botPicks = botPicksByView[v]!;
@@ -725,6 +1105,10 @@ export async function aggregateHorizonResults(args: {
             return winner.assetIndex;
         };
         for (let pi = 0; pi < gapFilteredProfitOnlyEvents.length; pi += 1) {
+            if ((pi & 0x1ff) === 0) {
+                if (options.shouldStop?.()) throw new Error("OPEN_SCORE USD replay cancelled during aggregation.");
+                if (pi > 0) await yieldLoop();
+            }
             const pe = gapFilteredProfitOnlyEvents[pi];
             const perAssetProfitOnly = returnsByView[views.length + pi];
             if (!perAssetProfitOnly) continue;
@@ -815,43 +1199,8 @@ export async function aggregateHorizonResults(args: {
 
         const n = topRaw.deltas.length;
         eligibleEventsMax = Math.max(eligibleEventsMax, n);
-        const buildComparison = (deltasArr: number[], topReturns: number[], times: number[]): ReplayComparison => {
-            const sampleCount = deltasArr.length;
-            if (sampleCount === 0) {
-                return {
-                    events: 0, topMean: null, randomMean: null, delta: null, topMedian: null,
-                    blockMeans: [], ciLower: null, ciUpper: null, positiveBlocks: 0, totalBlocks: 0,
-                };
-            }
-            const topMean = meanOrNull(topReturns);
-            // The mean delta survives only as the derivation of `randomMean`;
-            // the reported delta is the robust median of the paired deltas.
-            const deltaMean = meanOrNull(deltasArr);
-            const randomMean = topMean !== null && deltaMean !== null ? finiteOrNull(topMean - deltaMean) : null;
-            const sortedTop = [...topReturns].sort((a, b) => a - b);
-            const sortedDeltas = [...deltasArr].sort((a, b) => a - b);
-            // Chronological blocks by event time.
-            const blocks = splitIntoBlocks(deltasArr, times, blockCount);
-            const blockMeans = blocks.map((blk) => blk.reduce((s, x) => s + x, 0) / blk.length);
-            // sortedDeltas is exactly the whole-sample sorted view of
-            // `blocks` (splitIntoBlocks partitions every input value exactly
-            // once), so the bootstrap reuses it instead of concatenating the
-            // sorted blocks and re-sorting the sample (redundant-work plan
-            // phase 3).
-            const { lower, upper } = blockBootstrapMedianCi(blocks, bootstrapSamples, sortedDeltas);
-            return {
-                events: sampleCount,
-                topMean,
-                randomMean,
-                delta: finiteOrNull(median(sortedDeltas)),
-                topMedian: finiteOrNull(median(sortedTop)),
-                blockMeans,
-                ciLower: lower,
-                ciUpper: upper,
-                positiveBlocks: blockMeans.filter((m) => m > 0).length,
-                totalBlocks: blockMeans.length,
-            };
-        };
+        const buildComparison = (deltasArr: number[], topReturns: number[], times: number[]): ReplayComparison =>
+            buildReplayComparison(deltasArr, topReturns, times, blockCount, bootstrapSamples);
 
         // ---- Phase 5 horizon aggregation: per-asset breakdowns + dominant
         // exclusions for every asset-picking arm. Each arm produces:
@@ -1032,9 +1381,55 @@ export async function aggregateHorizonResults(args: {
         // comparison (with a fresh blockMeans array) to keep the two result
         // fields object-independent; different identities keep independent
         // computations.
-        const topMeanExTopContrib = topMeanTopContribAsset !== null && topMeanTopContribAsset === topMeanDominantAsset
+        const topMeanExTopContrib = topMeanTopContribAsset === topMeanDominantAsset
             ? { ...topMeanExDominant, blockMeans: [...topMeanExDominant.blockMeans] }
             : buildExDominantComparison(topMean, topMeanTopContribAsset, buildComparison);
+        const armSeries: Record<import("./types").ReplayArmField, SelectorSeries> = {
+            topRawProfitNow,
+            topMeanProfitNow,
+            topRawProfitNowConf,
+            topZ,
+            topRaw,
+            topMean,
+            topMeanRawUnique,
+            topRawProfit,
+            topMeanProfit,
+            botRawProfitNow,
+            botMeanProfitNow,
+            botZ,
+            botRaw,
+            botMean,
+            botMeanRawUnique,
+        };
+        const armExTopContributorComparisons: Partial<Record<import("./types").ReplayArmField, ReplayComparison>> = {};
+        const armTopContributorAssets: Partial<Record<import("./types").ReplayArmField, string | null>> = {};
+        const armTopContributorEvents: Partial<Record<import("./types").ReplayArmField, number>> = {};
+        for (const [arm, series] of Object.entries(armSeries) as Array<[
+            import("./types").ReplayArmField,
+            SelectorSeries,
+        ]>) {
+            let contributor: string | null = null;
+            let largestContribution = Number.NEGATIVE_INFINITY;
+            const contributionByAsset = new Map<string, number>();
+            const eventCountByAsset = new Map<string, number>();
+            for (let index = 0; index < series.assets.length; index += 1) {
+                const asset = series.assets[index]!;
+                contributionByAsset.set(asset, (contributionByAsset.get(asset) ?? 0) + series.deltas[index]!);
+                eventCountByAsset.set(asset, (eventCountByAsset.get(asset) ?? 0) + 1);
+            }
+            for (const [asset, contribution] of contributionByAsset) {
+                if (contribution > largestContribution || (contribution === largestContribution && asset < (contributor ?? "~"))) {
+                    largestContribution = contribution;
+                    contributor = asset;
+                }
+            }
+            const excludedEvents = contributor === null ? 0 : eventCountByAsset.get(contributor) ?? 0;
+            armTopContributorAssets[arm] = contributor;
+            armTopContributorEvents[arm] = excludedEvents;
+            armExTopContributorComparisons[arm] = arm === "topMean"
+                ? topMeanExTopContrib
+                : buildExDominantComparison(series, contributor, buildComparison);
+        }
         const topMeanPnl = computeSelectorPnl(topMean.returns, topMean.times);
         const randomPnlReturns: number[] = [];
         for (let i = 0; i < topMean.returns.length; i += 1) {
@@ -1123,6 +1518,9 @@ export async function aggregateHorizonResults(args: {
                 RAW: { events: n, sameSelection: tieCounts.RAW, rate: n > 0 ? tieCounts.RAW / n : null },
                 MEAN: { events: n, sameSelection: tieCounts.MEAN, rate: n > 0 ? tieCounts.MEAN / n : null },
             },
+            armExTopContributorComparisons,
+            armTopContributorAssets,
+            armTopContributorEvents,
         });
         onPhase("aggregate", `aggregated horizon ${horizons[hIdx]}`, hIdx + 1, horizons.length);
         await yieldLoop();

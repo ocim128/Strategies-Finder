@@ -2119,6 +2119,14 @@ describe("Finder Arm Performance request preflight", () => {
             const prepared = await prepareFinderArmPerformanceRunForTests(body as any, baseDir);
             expect(prepared.enumeration.canonicalPairs).to.deep.equal(["AAA•+BBB•"]);
             expect(prepared.enumeration.skippedPairTokens).to.deep.equal(["MISSING•+BBB•"]);
+            expect(prepared.options.armPerformance).to.deep.include({
+                scoringBasis: "raw",
+                eventFilterEnabled: false,
+                minEvents: 1,
+                maxEvents: null,
+                selectionCooldownEnabled: false,
+                selectionCooldownBars: 5,
+            });
             await assert.rejects(
                 prepareFinderArmPerformanceRunForTests({
                     ...body,
@@ -2126,6 +2134,26 @@ describe("Finder Arm Performance request preflight", () => {
                 } as any, baseDir),
                 /Pair preflight rejected 1 invalid pair/,
             );
+            for (const [invalid, message] of [
+                [{ selectionCooldownEnabled: "yes" }, /selectionCooldownEnabled must be a boolean/],
+                [{ selectionCooldownEnabled: true, selectionCooldownBars: 0 }, /must be positive when cooldown is enabled/],
+                [{ selectionCooldownBars: 10_001 }, /selectionCooldownBars must be an integer/],
+                [{ eventFilterEnabled: 1 }, /eventFilterEnabled must be a boolean/],
+                [{ minEvents: 1.5 }, /minEvents must be an integer/],
+                [{ minEvents: 5, maxEvents: 4 }, /maxEvents must be greater than or equal to minEvents/],
+                [{ scoringBasis: "raw_plus_magic" }, /scoringBasis must be raw or exclude_top_contributor/],
+            ] as const) {
+                await assert.rejects(
+                    prepareFinderArmPerformanceRunForTests({
+                        ...body,
+                        options: {
+                            ...body.options,
+                            armPerformance: { horizon: 5, dateMode: "full", ...invalid },
+                        },
+                    } as any, baseDir),
+                    message,
+                );
+            }
         } finally {
             rmSync(baseDir, { recursive: true, force: true });
         }

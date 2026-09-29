@@ -275,6 +275,39 @@ eligible event dates, so comparisons are not matched-event experiments. No
 minimum event threshold is applied; zero-event or missing means are shown as
 unavailable.
 
+The Arm Performance controls can change the displayed inventory without
+rerunning pair backtests:
+
+- **Exclude top contributor** switches ranking and cards to an adjusted
+  summary for every arm. For each configuration, arm, and horizon, the replay
+  finds the asset with the largest sum of paired excess returns, removes that
+  asset's selected events, and rebuilds the comparison and bootstrap interval.
+  Ties use asset-name order, and the largest contribution is excluded even if
+  every asset's total contribution is negative. This is a concentration
+  sensitivity calculation, not a blacklist or a calibrated confidence test.
+  Raw and adjusted summaries remain in the result; older snapshots without
+  adjusted values show them as unavailable and need a rerun.
+- **Completed event count filter** uses inclusive minimum and optional maximum
+  comparison-event counts from the selected arm and active scoring basis. Empty
+  maximum means unlimited. The order is basis, event filter, sort, then Top
+  Results. The compact full candidate inventory stays available, so changing
+  arms or thresholds restores filtered rows without another run. Pair coverage
+  remains the actual run count.
+- **Block repeat asset selection** applies during the replay and therefore
+  requires a new run. It keeps separate cooldown state per configuration,
+  replay window, and selector arm. The bar count uses the selected target's
+  candles, including candles with no selection event: a selection at index 100
+  with a 5-bar cooldown blocks through 105 and permits selection again at 106.
+  A blocked rank falls through to the next eligible asset. A singleton can
+  still be selected and start cooldown, but cannot form a paired comparison or
+  count as a completed event. The maximum accepted cooldown is 10,000 bars.
+
+Cards and copied top-result metadata name the active basis, selected arm,
+completed events, excluded contributor when available, event-count filter, and
+the cooldown used by the run. Changing cooldown in the controls does not alter
+an existing result. Apply continues to use only the candidate's saved strategy
+and backtest settings; replay scoring controls are not applied to the chart.
+
 `TOP_RAW_PROFIT` and `TOP_MEAN_PROFIT` use a full-window pair-profit gate that
 is known only after the backtest. They are labeled **LOOK-AHEAD RESEARCH** and
 must not be treated as live signals. BOT arms keep TOP_MEAN's existing long

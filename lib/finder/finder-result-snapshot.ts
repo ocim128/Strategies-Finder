@@ -232,6 +232,22 @@ function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate
                 return [arm, metric ? compactFinderArmPerformanceMetric(metric) : undefined];
             }).filter(([, metric]) => metric !== undefined),
         ) as FinderArmPerformanceCandidate["metrics"],
+        ...(candidate.metricsExTopContributor ? {
+            metricsExTopContributor: Object.fromEntries(
+                Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => {
+                    const metric = candidate.metricsExTopContributor?.[arm as FinderArmPerformanceArm];
+                    return [arm, metric ? compactFinderArmPerformanceMetric(metric) : undefined];
+                }).filter(([, metric]) => metric !== undefined),
+            ) as FinderArmPerformanceCandidate["metricsExTopContributor"],
+        } : {}),
+        ...(candidate.contributorExclusions ? {
+            contributorExclusions: Object.fromEntries(
+                Object.entries(candidate.contributorExclusions).map(([arm, exclusion]) => [arm, {
+                    asset: exclusion?.asset ?? null,
+                    events: Math.max(0, Math.floor(exclusion?.events ?? 0)),
+                }]),
+            ) as FinderArmPerformanceCandidate["contributorExclusions"],
+        } : {}),
     };
 }
 

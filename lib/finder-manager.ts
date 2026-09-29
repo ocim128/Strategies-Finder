@@ -248,9 +248,21 @@ export class FinderManager {
 		this.controls.initFinderSettingsPersistenceUI();
 		this.controls.initOosValidationUI();
 		this.getDom().finderResort.addEventListener("change", () => this.applyResort());
+		for (const element of [
+			dom.finderArmPerformanceExcludeTopContributor,
+			dom.finderArmPerformanceEventFilterEnabled,
+			dom.finderArmPerformanceMinEvents,
+			dom.finderArmPerformanceMaxEvents,
+		]) {
+			element.addEventListener("input", () => this.applyArmPerformanceDisplaySettings());
+			element.addEventListener("change", () => this.applyArmPerformanceDisplaySettings());
+		}
 		this.controls.applyScopeUi();
 		this.loadPersistedLatestResults();
 		this.populateResortOptions();
+		if (this.resultStore.latestResults.scope === "arm_performance") {
+			this.applyArmPerformanceDisplaySettings();
+		}
 		this.renderLatestResults();
 		// Reattach to an in-flight or terminal server-owned job after a tab
 		// reload. Finder is lazy-loaded, so this runs on first Finder
@@ -651,6 +663,10 @@ export class FinderManager {
 	 */
 	private applyResort(): void {
 		const metric = this.getDom().finderResort.value;
+		if (this.resultStore.latestResults.scope === "arm_performance") {
+			this.applyArmPerformanceDisplaySettings();
+			return;
+		}
 		if (!metric) {
 			this.resultStore.restoreRunSort();
 			this.renderLatestResults();
@@ -661,6 +677,23 @@ export class FinderManager {
 			return;
 		}
 		this.resultStore.applyResortMetric(metric);
+		this.renderLatestResults();
+	}
+
+	private applyArmPerformanceDisplaySettings(): void {
+		if (this.resultStore.latestResults.scope !== "arm_performance") return;
+		const dom = this.getDom();
+		const minRaw = Number(dom.finderArmPerformanceMinEvents.value);
+		const maxText = dom.finderArmPerformanceMaxEvents.value.trim();
+		const maxRaw = maxText === "" ? null : Number(maxText);
+		const selected = dom.finderResort.value;
+		const arm = (selected || "TOP_RAW_PROFIT_NOW") as FinderArmPerformanceArm;
+		this.resultStore.setArmPerformanceDisplayFilter({
+			basis: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
+			eventFilterEnabled: dom.finderArmPerformanceEventFilterEnabled.checked,
+			minEvents: Number.isInteger(minRaw) && minRaw >= 0 ? minRaw : 1,
+			maxEvents: maxRaw !== null && Number.isInteger(maxRaw) && maxRaw >= 0 ? maxRaw : null,
+		}, arm);
 		this.renderLatestResults();
 	}
 
@@ -698,6 +731,10 @@ export class FinderManager {
 				this.resultStore.latestResults.scope === 'arm_performance' ? this.resultStore.latestResults.runContext : null,
 				currentArm,
 				this.resultStore.latestResults.scope === 'arm_performance' && !this.resultStore.latestResults.inventoryComplete,
+				this.resultStore.armPerformanceDisplayFilter.basis ?? "raw",
+				this.resultStore.armPerformanceDisplayFilter,
+				this.resultStore.armPerformanceRunResults.some((candidate) =>
+					!candidate.metricsExTopContributor?.[currentArm]),
 			);
 			return;
 		}
@@ -721,6 +758,8 @@ export class FinderManager {
 			armRunContext: this.resultStore.armPerformanceRunContext,
 			armInventoryComplete: this.resultStore.armPerformanceInventoryComplete,
 			selectedArm: (this.getDom().finderResort.value || 'TOP_RAW_PROFIT_NOW') as FinderArmPerformanceArm,
+			scoringBasis: this.resultStore.armPerformanceDisplayFilter.basis ?? "raw",
+			displayFilter: this.resultStore.armPerformanceDisplayFilter,
 		});
 
 		try {

@@ -40,6 +40,8 @@ import {
 export const TOP_MEAN_ARCHIVE_LOG_DIR_NAME = "batch-open-score";
 
 export interface TopMeanArchiveManifest {
+    /** Effective per-selector replay cooldown; 0 means disabled. */
+    selectionCooldownBars?: number;
     strategy: {
         key: string;
         params: unknown;
@@ -536,8 +538,12 @@ export async function archiveCompletedTopMeanRun(
         if (!archiveRoot) return { reason: "disabled" };
 
         const canonicalAssets = [...(options.canonicalAssets ?? [])];
-        const fingerprint = options.fingerprint
+        const runFingerprint = options.fingerprint
             ?? computeArchiveFingerprint(request, canonicalAssets);
+        const selectionCooldownBars = request.selectionCooldownBars ?? 0;
+        const fingerprint = selectionCooldownBars > 0
+            ? createHash("sha256").update(JSON.stringify({ runFingerprint, selectionCooldownBars })).digest("hex")
+            : runFingerprint;
         const runDir = path.join(archiveRoot, request.runId);
         const completedAt = options.completedAt
             ?? result.performance?.completedAt
@@ -656,9 +662,12 @@ export async function archiveCompletedTopMeanRun(
             sampleToSec: request.sampleToSec ?? null,
             workerCount: request.workerCount ?? null,
             maxPairs: request.maxPairs ?? null,
+            selectionCooldownBars,
             fingerprint,
-            runFingerprint: fingerprint,
-            fingerprintVersion: "top_mean_ledger_fingerprint.v2",
+            runFingerprint,
+            fingerprintVersion: selectionCooldownBars > 0
+                ? "top_mean_ledger_fingerprint.v3"
+                : "top_mean_ledger_fingerprint.v2",
             postAssemblyFingerprint: sha256LineList(filenames.map((filename) => `${filename}=${fileHashes[filename]}`)),
             canonicalAssets,
             counts: {

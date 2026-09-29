@@ -4,6 +4,8 @@ import {
     runOpenScoreUsdReplay,
     type OpenScoreUsdTarget,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
+import { tieBreakDigest } from "../lib/batch-backtest/max-active-research-contract";
+import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-performance-metrics";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -232,8 +234,49 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(topContribAsset).to.not.equal(null);
         const topContribEvents = h.topMeanByAsset.find((a) => a.asset === topContribAsset)?.events ?? 0;
         expect(h.topMeanExTopContrib.events).to.equal(h.topMean.events - topContribEvents);
+        const replayHorizon = h as unknown as Record<string, any>;
+        expect(Object.keys(replayHorizon.armExTopContributorComparisons)).to.have.length(15);
+        for (const field of Object.values(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS)) {
+            const raw = replayHorizon[field];
+            const adjusted = replayHorizon.armExTopContributorComparisons[field];
+            const excludedEvents = replayHorizon.armTopContributorEvents[field] ?? 0;
+            expect(adjusted.events).to.equal(raw.events - excludedEvents, `${field} adjusted event count`);
+        }
+        // All flat-return contributors sum to zero here. The maximum rule is
+        // retained on ties and resolves them by asset name, independently of
+        // frequency ordering.
+        const selectedAssets = h.topMeanByAsset.map((row) => row.asset);
+        expect(topContribAsset).to.equal([...selectedAssets].sort()[0]);
         // Report always carries the line.
         expect(result.reportLines.join("\n")).to.include("MEAN_EX_TOPCONTRIB_");
+    });
+
+    it("selects the largest contributor even when every contribution is negative and keeps empty residuals unavailable", async () => {
+        const decision = T0 + 1000;
+        const expectedWinner = tieBreakDigest(decision, "AAA") < tieBreakDigest(decision, "BBB") ? "AAA" : "BBB";
+        const losingAsset = expectedWinner === "AAA" ? "BBB" : "AAA";
+        const pairs = [
+            makePair("AAA", "X1", [makeTrade("long", decision, null)]),
+            makePair("BBB", "Y1", [makeTrade("long", decision, null)]),
+        ];
+        const targets = [
+            makeTarget("AAA", 6, (index) => index === 3 ? (expectedWinner === "AAA" ? 90 : 110) : 100),
+            makeTarget("BBB", 6, (index) => index === 3 ? (expectedWinner === "BBB" ? 90 : 110) : 100),
+        ];
+        const result = await runOpenScoreUsdReplay(
+            () => fromArray(pairs),
+            () => fromArray(targets),
+            { horizons: [2], slippageRate: 0, commissionRate: 0, blockCount: 1, includeEventDetails: true },
+        );
+        const horizon = result.horizons[0]!;
+        expect(horizon.topMean.events).to.equal(1);
+        expect(horizon.topMeanTopContribAsset).to.equal(expectedWinner);
+        expect(horizon.topMean.delta).to.be.lessThan(0);
+        expect(horizon.topMeanByAsset.some((row) => row.asset === losingAsset)).to.equal(false);
+        expect(horizon.topMeanExTopContrib.events).to.equal(0);
+        expect(horizon.topMeanExTopContrib.topMean).to.equal(null);
+        expect(horizon.topMeanExTopContrib.delta).to.equal(null);
+        expect(horizon.topMeanExTopContrib.ciLower).to.equal(null);
     });
 
     it("MEAN_EX_TOPCONTRIB equals MEAN_EX_DOM when both exclusions resolve to the same asset (aggregation plan phase 1)", async () => {

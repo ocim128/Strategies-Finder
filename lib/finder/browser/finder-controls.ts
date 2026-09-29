@@ -235,6 +235,13 @@ applyPersistedUiStateToDom(): void {
 	dom.finderTradesMax.value = this.uiState.maxTradesText;
 	dom.finderOosValidationToggle.checked = this.uiState.oosValidationEnabled;
 	dom.finderArmPerformanceHorizon.value = String(this.uiState.armPerformanceHorizon);
+	dom.finderArmPerformanceExcludeTopContributor.checked = this.uiState.armPerformanceExcludeTopContributor;
+	dom.finderArmPerformanceEventFilterEnabled.checked = this.uiState.armPerformanceEventFilterEnabled;
+	dom.finderArmPerformanceMinEvents.value = String(this.uiState.armPerformanceMinEvents);
+	dom.finderArmPerformanceMaxEvents.value = this.uiState.armPerformanceMaxEventsText;
+	dom.finderArmPerformanceSelectionCooldownEnabled.checked = this.uiState.armPerformanceSelectionCooldownEnabled;
+	dom.finderArmPerformanceSelectionCooldownBars.value = String(this.uiState.armPerformanceSelectionCooldownBars);
+	this.syncArmPerformanceControls();
 	dom.finderUniverseSymbols.value = this.uiState.universeSymbolsText;
 	dom.finderUniverseMinActiveSymbols.value = String(this.uiState.universeMinActiveSymbols);
 	dom.finderUniverseMinTotalTrades.value = String(this.uiState.universeMinTotalTrades);
@@ -544,6 +551,7 @@ applyScopeUi(): void {
 	dom.finderAssetOpportunitySettings.style.display = assetOpportunityScope ? "" : "none";
 	dom.finderQualitySettings.style.display = qualityScope ? "" : "none";
 	dom.finderArmPerformanceSettings.style.display = armPerformanceScope ? "" : "none";
+	this.syncArmPerformanceControls();
 	dom.finderTradeFilterSection.style.display = universeScope || qualityScope || armPerformanceScope ? "none" : "";
 	dom.finderModeRow.classList.toggle("is-disabled", modeLockedScope);
 	dom.finderStepsRow.style.display = modeLockedScope ? "none" : "";
@@ -611,6 +619,14 @@ const applicable = oosCapableWindow;
 	dom.finderOosValidationRow.classList.toggle('is-disabled', !applicable);
 }
 
+private syncArmPerformanceControls(): void {
+	const dom = this.deps.getDom();
+	const filterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
+	dom.finderArmPerformanceMinEvents.disabled = !filterEnabled;
+	dom.finderArmPerformanceMaxEvents.disabled = !filterEnabled;
+	dom.finderArmPerformanceSelectionCooldownBars.disabled = !dom.finderArmPerformanceSelectionCooldownEnabled.checked;
+}
+
 initTradeFilterUI(): void {
 	const { finderTradesToggle } = this.deps.getDom();
 	finderTradesToggle.addEventListener("change", () => {
@@ -655,6 +671,12 @@ initFinderSettingsPersistenceUI(): void {
 		dom.finderTradesMax,
 		dom.finderOosValidationToggle,
 		dom.finderArmPerformanceHorizon,
+		dom.finderArmPerformanceExcludeTopContributor,
+		dom.finderArmPerformanceEventFilterEnabled,
+		dom.finderArmPerformanceMinEvents,
+		dom.finderArmPerformanceMaxEvents,
+		dom.finderArmPerformanceSelectionCooldownEnabled,
+		dom.finderArmPerformanceSelectionCooldownBars,
 		dom.finderAssetCandidatePoolSize,
 		dom.finderAssetMinFreshSupport,
 		dom.finderAssetIncludeOpenPositions,
@@ -671,6 +693,8 @@ initFinderSettingsPersistenceUI(): void {
 		element.addEventListener("input", persist);
 		element.addEventListener("change", persist);
 	});
+	dom.finderArmPerformanceEventFilterEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
+	dom.finderArmPerformanceSelectionCooldownEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
 }
 
 captureFinderUiState(persist = true): void {
@@ -706,6 +730,20 @@ captureFinderUiState(persist = true): void {
 	this.uiState.armPerformanceHorizon = Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(
 		dom.finderArmPerformanceHorizon,
 		DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
+		1,
+	))));
+	this.uiState.armPerformanceExcludeTopContributor = dom.finderArmPerformanceExcludeTopContributor.checked;
+	this.uiState.armPerformanceEventFilterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
+	this.uiState.armPerformanceMinEvents = Math.max(1, Math.min(1_000_000, Math.round(this.readFinderNumberInput(
+		dom.finderArmPerformanceMinEvents,
+		DEFAULT_FINDER_UI_STATE.armPerformanceMinEvents,
+		1,
+	))));
+	this.uiState.armPerformanceMaxEventsText = dom.finderArmPerformanceMaxEvents.value.trim();
+	this.uiState.armPerformanceSelectionCooldownEnabled = dom.finderArmPerformanceSelectionCooldownEnabled.checked;
+	this.uiState.armPerformanceSelectionCooldownBars = Math.max(1, Math.min(10_000, Math.round(this.readFinderNumberInput(
+		dom.finderArmPerformanceSelectionCooldownBars,
+		DEFAULT_FINDER_UI_STATE.armPerformanceSelectionCooldownBars,
 		1,
 	))));
 	this.uiState.assetOpportunityCandidatePoolSize = Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
@@ -903,6 +941,22 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 				1,
 			)))),
 			dateMode,
+			scoringBasis: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
+			eventFilterEnabled: dom.finderArmPerformanceEventFilterEnabled.checked,
+			minEvents: Math.max(1, Math.round(this.readFinderNumberInput(
+				dom.finderArmPerformanceMinEvents,
+				DEFAULT_FINDER_UI_STATE.armPerformanceMinEvents,
+				1,
+			))),
+			maxEvents: dom.finderArmPerformanceMaxEvents.value.trim() === ""
+				? null
+				: Math.round(this.readFinderNumberInput(dom.finderArmPerformanceMaxEvents, Number.POSITIVE_INFINITY, 1)),
+			selectionCooldownEnabled: dom.finderArmPerformanceSelectionCooldownEnabled.checked,
+			selectionCooldownBars: Math.max(1, Math.round(this.readFinderNumberInput(
+				dom.finderArmPerformanceSelectionCooldownBars,
+				DEFAULT_FINDER_UI_STATE.armPerformanceSelectionCooldownBars,
+				1,
+			))),
 		};
 		options.dataSlice = dateMode === 'date_range' ? 'date_range' : 'all';
 		options.oosValidationEnabled = false;

@@ -230,6 +230,53 @@ describe("Finder metadata payload builders", () => {
         expect(payload.results[0].allArmMetrics).to.equal(candidate.metrics);
     });
 
+	it("copies the active basis, event filter, cooldown, and excluded contributor", () => {
+		const rawMetric = {
+			events: 8,
+			topMean: 0.12,
+			randomMean: 0.04,
+			delta: 0.08,
+			topMedian: 0.1,
+			ciLower: 0.02,
+			ciUpper: 0.16,
+			positiveBlocks: 3,
+			totalBlocks: 4,
+		};
+		const adjustedMetric = { ...rawMetric, events: 5, topMean: 0.09 };
+		const candidate = {
+			candidateId: "run:candidate-0",
+			candidateOrdinal: 0,
+			strategyKey: "arm_test",
+			strategyName: "Arm Test",
+			horizon: 5,
+			params: {},
+			backtestSettings: {},
+			pairCoverage: { requestedPairs: 2, completedPairs: 2, failedPairs: 0, replayTargetLoadFailures: 0, noTradePairs: 0 },
+			metrics: { TOP_RAW: rawMetric },
+			metricsExTopContributor: { TOP_RAW: adjustedMetric },
+			contributorExclusions: { TOP_RAW: { asset: "AAA", events: 3 } },
+		} as unknown as FinderArmPerformanceCandidate;
+		const runContext = {
+			runId: "arm-run-cooldown",
+			searchOptions: { armPerformance: { selectionCooldownEnabled: true, selectionCooldownBars: 5 } },
+		} as any;
+		const payload = buildArmPerformanceTopResultsPayload({
+			results: [candidate],
+			runContext,
+			inventoryComplete: true,
+			selectedArm: "TOP_RAW",
+			scoringBasis: "exclude_top_contributor",
+			displayFilter: { eventFilterEnabled: true, minEvents: 4, maxEvents: 10 },
+		});
+
+		expect(payload.scoringBasis).to.equal("exclude_top_contributor");
+		expect(payload.eventFilter).to.deep.equal({ enabled: true, minEvents: 4, maxEvents: 10 });
+		expect(payload.selectionCooldownBars).to.equal(5);
+		expect(payload.results[0].selectedArmMetric).to.equal(adjustedMetric);
+		expect(payload.results[0].excludedContributor).to.deep.equal({ asset: "AAA", events: 3 });
+		expect(payload.results[0]?.allArmMetricsExTopContributor?.TOP_RAW).to.equal(adjustedMetric);
+	});
+
     it("routes the top-results payload by result scope", () => {
         const base = {
             armRunContext: null,

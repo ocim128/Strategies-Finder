@@ -2513,6 +2513,62 @@ describe("runOpenScoreUsdReplay shared outcome cache (annual-reload finding)", (
         expect(coldFull.eventDetails).to.deep.equal(fullPass.eventDetails);
     });
 
+    it("preserves cooldown boundaries on cache hits, resets annual passes, and keeps zero at legacy parity", async () => {
+        const decision1 = T0 + 1000;
+        const decision2 = T0 + 5000;
+        const sharedTargetCache = new Map<string, SharedCacheSpec>();
+        let loads = 0;
+        const countingLoader = async (asset: string): Promise<OHLCVData[] | null> => {
+            loads += 1;
+            return cacheLoaderOptions.loadTargetDataset(asset);
+        };
+        const runWithCache = (sampleFromSec: number) => runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            {
+                ...cacheLoaderOptions,
+                selectionCooldownBars: 10,
+                loadTargetDataset: countingLoader,
+                prefetchTargetDatasets: () => undefined,
+                sharedTargetCache,
+                sampleFromSec,
+            },
+        );
+
+        const full = await runWithCache(T0);
+        expect(loads).to.equal(2);
+        expect(sharedTargetCache.get("AAA")?.boundaryIndexByEventTimeSec?.get(decision1)).to.equal(1);
+        expect(sharedTargetCache.get("AAA")?.boundaryIndexByEventTimeSec?.get(decision2)).to.equal(5);
+        const topMeanDetails = full.eventDetails?.filter((row) => row.selector === "TOP_MEAN" && row.horizonBars === 2) ?? [];
+        expect(topMeanDetails.map((row) => row.decisionTime)).to.deep.equal([T0 + 100]);
+        expect(full.horizons[0]!.topMean.events).to.equal(1, "the fallback singleton is selected but has no paired comparison");
+
+        const annual = await runWithCache(decision2);
+        expect(loads).to.equal(2, "cached target outcomes and candle boundaries avoid annual reloads");
+        const coldAnnual = await runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            { ...cacheLoaderOptions, selectionCooldownBars: 10, sampleFromSec: decision2 },
+        );
+        expect(annual.horizons).to.deep.equal(coldAnnual.horizons);
+        expect(annual.eventDetails).to.deep.equal(coldAnnual.eventDetails);
+        expect(annual.latestSelections).to.deep.equal(coldAnnual.latestSelections);
+
+        const implicitOff = await runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            { ...cacheLoaderOptions },
+        );
+        const explicitOff = await runOpenScoreUsdReplay(
+            () => fromArray(cacheMarkets(decision1, decision2)),
+            undefined,
+            { ...cacheLoaderOptions, selectionCooldownBars: 0 },
+        );
+        expect(explicitOff.horizons).to.deep.equal(implicitOff.horizons);
+        expect(explicitOff.eventDetails).to.deep.equal(implicitOff.eventDetails);
+        expect(explicitOff.latestSelections).to.deep.equal(implicitOff.latestSelections);
+    });
+
     it("noData markers are cached so later passes never reload the dataset", async () => {
         // decision2 is beyond the dataset end: entry resolution fails for it.
         // The null marker must be cached, not re-discovered by a reload.

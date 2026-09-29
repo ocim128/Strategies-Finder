@@ -6,6 +6,7 @@ import {
     TOP_MEAN_HORIZONS_MAX_LENGTH,
     TOP_MEAN_HORIZONS_MAX_VALUE,
     TOP_MEAN_MAX_PAIRS_MAX,
+    TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX,
     TOP_MEAN_WORKER_COUNT_MAX,
     validateTopMeanRequestLimits,
 } from "../lib/batch-backtest/sp500-top-mean-request-limits";
@@ -41,6 +42,20 @@ describe("validateTopMeanRequestLimits", () => {
         expect(validateTopMeanRequestLimits({ horizons: [12], workerCount: TOP_MEAN_WORKER_COUNT_MAX + 1 }).ok).to.equal(false);
         expect(validateTopMeanRequestLimits({ horizons: [12], maxPairs: 0 }).ok).to.equal(false);
         expect(validateTopMeanRequestLimits({ horizons: [12], maxPairs: TOP_MEAN_MAX_PAIRS_MAX + 1 }).ok).to.equal(false);
+    });
+
+    it("normalizes cooldown off and enforces its finite integer bar bound", () => {
+        const off = validateTopMeanRequestLimits({ horizons: [12] });
+        expect(off.ok).to.equal(true);
+        if (off.ok) expect(off.value.selectionCooldownBars).to.equal(0);
+        const enabled = validateTopMeanRequestLimits({ horizons: [12], selectionCooldownBars: 5 });
+        expect(enabled.ok).to.equal(true);
+        if (enabled.ok) expect(enabled.value.selectionCooldownBars).to.equal(5);
+        expect(validateTopMeanRequestLimits({ horizons: [12], selectionCooldownBars: 0 }).ok).to.equal(true);
+        expect(validateTopMeanRequestLimits({ horizons: [12], selectionCooldownBars: TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX }).ok).to.equal(true);
+        for (const value of [-1, 1.5, TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX + 1, "5", Number.NaN]) {
+            expect(validateTopMeanRequestLimits({ horizons: [12], selectionCooldownBars: value }).ok).to.equal(false);
+        }
     });
 
     it("normalizes absent/null/off capTiltWeight to baseline (field omitted)", () => {

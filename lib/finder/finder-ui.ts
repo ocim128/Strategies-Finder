@@ -13,7 +13,8 @@ import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
 import { calculateFinderAssetOosAverageHorizonMetrics } from "./finder-asset-opportunity-oos";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
-import type { FinderArmPerformanceArm } from "./finder-arm-performance-metrics";
+import type { FinderArmPerformanceArm, FinderArmPerformanceDisplayFilter } from "./finder-arm-performance-metrics";
+import { getFinderArmPerformanceMetric, type FinderArmPerformanceScoringBasis } from "./finder-arm-performance-metrics";
 
 function formatExitAlpha(value: number): string {
     return `${value >= 0 ? "+" : ""}${value.toFixed(2)} pp`;
@@ -641,28 +642,48 @@ export class FinderUI {
     public renderArmPerformanceResults(
         results: FinderArmPerformanceCandidate[],
         context: FinderArmPerformanceRunContext | null,
-        arm: FinderArmPerformanceArm,
-        inventoryIncomplete = false,
-    ): void {
+		arm: FinderArmPerformanceArm,
+		inventoryIncomplete = false,
+		basis: FinderArmPerformanceScoringBasis = context?.searchOptions.armPerformance?.scoringBasis ?? "raw",
+		filter: FinderArmPerformanceDisplayFilter = {},
+		adjustedMetricsUnavailable = results.some((candidate) => !candidate.metricsExTopContributor?.[arm]),
+	): void {
         const list = this.getListElement();
         const copyButton = this.getCopyButton();
         list.innerHTML = "";
         if (results.length === 0) {
             setVisible("finderEmpty", true);
             if (copyButton) copyButton.disabled = true;
+			if (basis === "exclude_top_contributor" && adjustedMetricsUnavailable) {
+				const note = document.createElement("div");
+				note.className = "finder-sub finder-arm-performance-note";
+				note.textContent = "Contributor-excluded summaries are unavailable for this saved result. Rerun Finder to use this scoring basis.";
+				list.appendChild(note);
+			} else if (filter.eventFilterEnabled) {
+				const note = document.createElement("div");
+				note.className = "finder-sub finder-arm-performance-note";
+				note.textContent = "No configurations match this arm and completed-event filter.";
+				list.appendChild(note);
+			}
             return;
         }
 
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
-        const note = document.createElement("div");
-        note.className = "finder-sub finder-arm-performance-note";
-        note.textContent = `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
+		const note = document.createElement("div");
+		note.className = "finder-sub finder-arm-performance-note";
+		const cooldownBars = context?.searchOptions.armPerformance?.selectionCooldownEnabled
+			? context.searchOptions.armPerformance.selectionCooldownBars ?? 5
+			: 0;
+		const eventFilterText = filter.eventFilterEnabled
+			? `Event filter: ${filter.minEvents ?? 1}..${filter.maxEvents ?? "unlimited"} completed comparisons.`
+			: "Event filter: off.";
+		note.textContent = `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Basis: ${basis === "raw" ? "raw" : "top contributor excluded"}. ${eventFilterText} Cooldown: ${cooldownBars} bars${cooldownBars > 0 ? " (requires a new run to change)" : " (off)"}. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${basis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for older results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
         list.appendChild(note);
 
         const fragment = document.createDocumentFragment();
         results.forEach((item, index) => {
-            const metric = item.metrics[arm];
+			const metric = getFinderArmPerformanceMetric(item, arm, basis);
             const title = document.createElement("div");
             title.className = "finder-title";
             const titleText = document.createElement("span");
@@ -679,14 +700,19 @@ export class FinderUI {
                 value === null || !Number.isFinite(value) ? "n/a" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
-            metrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.horizon || context?.horizon || "?"} bars`));
-            metrics.appendChild(this.createMetricChip(`Events ${metric?.events ?? 0}`));
+			metrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.horizon || context?.horizon || "?"} bars`));
+			metrics.appendChild(this.createMetricChip(basis === "raw" ? "RAW" : "TOP CONTRIBUTOR EXCLUDED"));
+			metrics.appendChild(this.createMetricChip(`Events ${metric?.events ?? "n/a"}`));
             metrics.appendChild(this.createMetricChip(`Mean ${formatPct(metric?.topMean ?? null)}`));
             metrics.appendChild(this.createMetricChip(`Random ${formatPct(metric?.randomMean ?? null)}`));
             metrics.appendChild(this.createMetricChip(`DeltaMed ${formatPct(metric?.delta ?? null)}`));
             metrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(metric?.ciLower ?? null)}, ${formatPct(metric?.ciUpper ?? null)}]`));
-            metrics.appendChild(this.createMetricChip(`Pairs ${item.pairCoverage.completedPairs}/${item.pairCoverage.requestedPairs}`));
-            metrics.appendChild(this.createMetricChip(`No trade ${item.pairCoverage.noTradePairs}`));
+			metrics.appendChild(this.createMetricChip(`Pairs ${item.pairCoverage.completedPairs}/${item.pairCoverage.requestedPairs}`));
+			metrics.appendChild(this.createMetricChip(`No trade ${item.pairCoverage.noTradePairs}`));
+			if (basis === "exclude_top_contributor") {
+				const excluded = item.contributorExclusions?.[arm];
+				metrics.appendChild(this.createMetricChip(`Excluded ${excluded?.asset ?? "n/a"} (${excluded ? excluded.events : "n/a"} events)`));
+			}
 
             fragment.appendChild(this.createResultRow({
                 index,

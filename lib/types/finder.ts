@@ -113,6 +113,14 @@ export interface FinderAssetOpportunityOptions {
 export interface FinderArmPerformanceOptions {
     horizon: number;
     dateMode: "full" | "date_range";
+    /** Display and ranking basis, applied to retained summaries without rerunning pair backtests. */
+    scoringBasis?: "raw" | "exclude_top_contributor";
+    eventFilterEnabled?: boolean;
+    minEvents?: number;
+    maxEvents?: number | null;
+    /** UI gate plus positive integer bar count; omitted legacy settings are off. */
+    selectionCooldownEnabled?: boolean;
+    selectionCooldownBars?: number;
 }
 
 export interface FinderArmPerformanceRunContext {
@@ -168,6 +176,12 @@ export interface FinderArmPerformanceCandidate {
     exitStrategyParams?: StrategyParams;
     pairCoverage: FinderArmPerformancePairCoverage;
     metrics: FinderArmPerformanceCompleteMetrics;
+    /** Contributor-excluded summaries are additive and absent on legacy results. */
+    metricsExTopContributor?: Partial<FinderArmPerformanceCompleteMetrics>;
+    contributorExclusions?: Partial<Record<keyof FinderArmPerformanceCompleteMetrics, {
+        asset: string | null;
+        events: number;
+    }>>;
     requestedEngineMode: "rust" | "typescript";
     actualEngineMode: string;
 }

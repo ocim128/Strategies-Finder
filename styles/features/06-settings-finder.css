@@ -1271,3 +1271,41 @@
     }
 
 }
+
+/* Arm Performance controls */
+#finderArmPerformanceSettings.finder-arm-performance-settings {
+    display: grid;
+    gap: var(--space-4);
+    margin-top: var(--space-2);
+}
+
+#finderArmPerformanceSettings > .param-row {
+    gap: var(--space-3);
+}
+
+#finderArmPerformanceSettings .param-group {
+    margin-bottom: 0;
+}
+
+#finderArmPerformanceSettings .finder-arm-performance-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: 0;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+#finderArmPerformanceSettings .finder-arm-performance-toggle input[type="checkbox"] {
+    flex: 0 0 16px;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    accent-color: var(--accent-color);
+}
+
+@container (max-width: 640px) {
+    #finderArmPerformanceSettings > .param-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}

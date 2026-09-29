@@ -78,6 +78,12 @@ export type FinderPersistedUiState = {
 	assetOpportunityOosBatchStartBars: number;
 	assetOpportunityOosBatchEndBars: number;
 	armPerformanceHorizon: number;
+	armPerformanceExcludeTopContributor: boolean;
+	armPerformanceEventFilterEnabled: boolean;
+	armPerformanceMinEvents: number;
+	armPerformanceMaxEventsText: string;
+	armPerformanceSelectionCooldownEnabled: boolean;
+	armPerformanceSelectionCooldownBars: number;
 };
 
 export const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
@@ -124,6 +130,12 @@ export const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	assetOpportunityOosBatchStartBars: 1,
 	assetOpportunityOosBatchEndBars: 5,
 	armPerformanceHorizon: 5,
+	armPerformanceExcludeTopContributor: false,
+	armPerformanceEventFilterEnabled: false,
+	armPerformanceMinEvents: 1,
+	armPerformanceMaxEventsText: "",
+	armPerformanceSelectionCooldownEnabled: false,
+	armPerformanceSelectionCooldownBars: 5,
 };
 
 export const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
@@ -359,6 +371,20 @@ export function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		armPerformanceHorizon: Math.max(1, Math.min(1_000, Math.round(normalizeNumber(
 			source.armPerformanceHorizon,
 			DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
+			1,
+		)))),
+		armPerformanceExcludeTopContributor: source.armPerformanceExcludeTopContributor === true,
+		armPerformanceEventFilterEnabled: source.armPerformanceEventFilterEnabled === true,
+		armPerformanceMinEvents: Math.max(1, Math.min(1_000_000, Math.round(normalizeNumber(
+			source.armPerformanceMinEvents,
+			DEFAULT_FINDER_UI_STATE.armPerformanceMinEvents,
+			1,
+		)))),
+		armPerformanceMaxEventsText: normalizeOptionalNumberText(source.armPerformanceMaxEventsText),
+		armPerformanceSelectionCooldownEnabled: source.armPerformanceSelectionCooldownEnabled === true,
+		armPerformanceSelectionCooldownBars: Math.max(1, Math.min(10_000, Math.round(normalizeNumber(
+			source.armPerformanceSelectionCooldownBars,
+			DEFAULT_FINDER_UI_STATE.armPerformanceSelectionCooldownBars,
 			1,
 		)))),
 	};

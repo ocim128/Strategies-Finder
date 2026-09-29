@@ -36,6 +36,7 @@ function makeRequest(runId = "top_mean_archive_test_1"): TopMeanCoordinatorRunRe
 
 function makeManifest(): TopMeanArchiveManifest {
     return {
+        selectionCooldownBars: 0,
         strategy: {
             key: "test_strategy",
             params: { lookback: 20 },
@@ -187,6 +188,7 @@ async function testCompletedRunWritesArchive(): Promise<void> {
         const meta = JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8")) as Record<string, any>;
         assert.equal(meta.schema, "top_mean_archive.v3");
         assert.equal(meta.runId, request.runId);
+        assert.equal(meta.selectionCooldownBars, 0);
         assert.equal(meta.completedAt, "2026-08-24T00:00:00.000Z");
         assert.equal(meta.fingerprint, "fingerprint-test");
         assert.equal(meta.runFingerprint, "fingerprint-test");
@@ -229,6 +231,28 @@ async function testCompletedRunWritesArchive(): Promise<void> {
             priorTopMeanReturnMean3: null,
         }]);
         assert.equal(resolveTopMeanArchiveLogDir(root, { TOP_MEAN_ARCHIVE_LOG_DIR: "" }), null);
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+}
+
+async function testCooldownArchiveIdentity(): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), "top-mean-cooldown-archive-"));
+    try {
+        const request = { ...makeRequest("top_mean_cooldown_archive_test"), selectionCooldownBars: 5 };
+        const summary = { ...makeSummary(), selectionCooldownBars: 5 };
+        const outcome = await archiveCompletedTopMeanRun(summary, request, {
+            root,
+            canonicalAssets: ["AAPL", "MSFT"],
+            fingerprint: "pair-artifact-fingerprint",
+            manifest: { ...makeManifest(), selectionCooldownBars: 5 },
+        });
+        assert.equal(outcome.reason, "saved");
+        const meta = JSON.parse(readFileSync(join(outcome.archiveDir!, "meta.json"), "utf8")) as Record<string, any>;
+        assert.equal(meta.selectionCooldownBars, 5);
+        assert.equal(meta.runFingerprint, "pair-artifact-fingerprint");
+        assert.notEqual(meta.fingerprint, meta.runFingerprint, "selection result identity includes cooldown while pair artifacts stay reusable");
+        assert.equal(meta.fingerprintVersion, "top_mean_ledger_fingerprint.v3");
     } finally {
         rmSync(root, { recursive: true, force: true });
     }
@@ -437,6 +461,7 @@ async function testReusedRunIdClearsStaleArchiveFiles(): Promise<void> {
 
 async function main(): Promise<void> {
     await testCompletedRunWritesArchive();
+    await testCooldownArchiveIdentity();
     await testDisabledAndFailedWritesAreBestEffort();
     await testPhase0bStreamFailurePropagatesWithoutCrashing();
     await testReusedRunIdClearsStaleArchiveFiles();

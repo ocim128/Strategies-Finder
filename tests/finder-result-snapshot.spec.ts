@@ -101,7 +101,6 @@ function makeAssetOpportunityResult(index: number): FinderAssetOpportunityResult
         symbol: `ASSET${index}`,
         strategyKey: "strategy_1",
         strategyName: "Strategy 1",
-        horizon: 5,
         params: { lookback: index },
         historicalRank: 1,
         totalCandidatesEvaluated: 10,
@@ -144,6 +143,7 @@ function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandida
         candidateOrdinal: index,
         strategyKey: "strategy_1",
         strategyName: "Strategy 1",
+        horizon: 5,
         params: { lookback: index },
         backtestSettings: { executionModel: "signal_close" },
         pairCoverage: {
@@ -153,7 +153,12 @@ function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandida
             replayTargetLoadFailures: 0,
             noTradePairs: 2,
         },
-        metrics: metrics as FinderArmPerformanceCandidate["metrics"],
+        metrics: metrics as unknown as FinderArmPerformanceCandidate["metrics"],
+        metricsExTopContributor: metrics as FinderArmPerformanceCandidate["metricsExTopContributor"],
+        contributorExclusions: Object.fromEntries(Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, {
+            asset: "AAA",
+            events: 1,
+        }])) as FinderArmPerformanceCandidate["contributorExclusions"],
         requestedEngineMode: "typescript",
         actualEngineMode: "typescript",
     };
@@ -310,6 +315,8 @@ describe("Finder result snapshots", () => {
         expect(compact.runContext?.uiBacktestSettings?.riskSettingsToggle).to.equal(true);
         expect(compact.results[0]!.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("blockMeans");
         expect(compact.results[0]!.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("eventDetails");
+        expect(compact.results[0]!.metricsExTopContributor?.TOP_RAW_PROFIT_NOW?.events).to.equal(1);
+        expect(compact.results[0]!.contributorExclusions?.TOP_RAW_PROFIT_NOW).to.deep.equal({ asset: "AAA", events: 1 });
         expect(Object.keys(compact.results[0]!)).not.to.include.members([
             "data", "signals", "trades", "eventDetails", "poolSnapshots", "candidateOutcomes",
         ]);
@@ -325,9 +332,27 @@ describe("Finder result snapshots", () => {
         if (!restored || restored.scope !== "arm_performance") throw new Error("unexpected restored scope");
         expect(restored.inventoryComplete).to.equal(false);
         expect(restored.runContext?.uiBacktestSettings?.stopLossEnabled).to.equal(true);
+        expect(restored.results[0]!.metricsExTopContributor?.TOP_RAW_PROFIT_NOW?.topMean).to.equal(0);
         expect(normalizeFinderLatestResultsSnapshot({
             ...compact,
             results: [{ ...compact.results[0], metrics: {} }],
         })).to.equal(null);
+    });
+
+    it("restores older Arm Performance snapshots without inventing adjusted metrics", () => {
+        const legacy = makeArmPerformanceCandidate(1) as unknown as Record<string, unknown>;
+        delete legacy.metricsExTopContributor;
+        delete legacy.contributorExclusions;
+        const restored = normalizeFinderLatestResultsSnapshot({
+            scope: "arm_performance",
+            results: [legacy],
+            runContext: null,
+            inventoryComplete: false,
+        });
+
+        expect(restored?.scope).to.equal("arm_performance");
+        if (!restored || restored.scope !== "arm_performance") throw new Error("unexpected restored scope");
+        expect(restored.results[0]!.metricsExTopContributor).to.equal(undefined);
+        expect(restored.results[0]!.contributorExclusions).to.equal(undefined);
     });
 });

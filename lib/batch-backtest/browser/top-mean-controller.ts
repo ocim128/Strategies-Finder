@@ -19,7 +19,11 @@ import { setVisible } from "../../dom-utils";
 import { debugLogger } from "../../debug-logger";
 import { copyToClipboard } from "../../browser-transfer";
 import { postBatchNdjson } from "../batch-ndjson-post";
-import { parseTopMeanMenuHorizons, parseTopMeanMenuOptionalPositiveInt } from "../sp500-top-mean-request-limits";
+import {
+    TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX,
+    parseTopMeanMenuHorizons,
+    parseTopMeanMenuOptionalPositiveInt,
+} from "../sp500-top-mean-request-limits";
 import {
     approxJsonByteLength,
     clearTopMeanDiagnosticLog,
@@ -217,6 +221,23 @@ export class TopMeanController {
         }
         const workerCount = workersParsed.kind === "valid" ? workersParsed.value : undefined;
         const maxPairs = maxPairsParsed.kind === "valid" ? maxPairsParsed.value : undefined;
+        const cooldownEnabled = dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked;
+        const cooldownParsed = parseTopMeanMenuOptionalPositiveInt(
+            dom.batchBacktestSp500TopMeanSelectionCooldownBars.value,
+        );
+        if (cooldownEnabled && cooldownParsed.kind !== "valid") {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                "Error: Cooldown bars must be a positive whole number when repeat selection is blocked.";
+            return;
+        }
+        const selectionCooldownBars = cooldownEnabled && cooldownParsed.kind === "valid"
+            ? cooldownParsed.value
+            : 0;
+        if (selectionCooldownBars > TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                `Error: Cooldown bars must not exceed ${TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX}.`;
+            return;
+        }
 
         const runId = this.generateTopMeanRunId();
         this.activeTopMeanRunId = runId;
@@ -271,6 +292,7 @@ export class TopMeanController {
             capitalSettings: backtestService.getCapitalSettings(),
             interval: pairListText ? state.currentInterval : "4h",
             horizons,
+            selectionCooldownBars,
             workerCount,
             maxPairs,
             pairListText,
@@ -333,7 +355,10 @@ export class TopMeanController {
                         // current-snapshot phase instead of making the user wait
                         // for the terminal leaderboard.
                         dom.batchBacktestSp500TopMeanResults.innerHTML =
-                            this.renderCurrentTopMeanBanner(event.currentSnapshot);
+                            this.renderCurrentTopMeanBanner(event.currentSnapshot)
+                            + ((event.selectionCooldownBars ?? 0) > 0
+                                ? `<div class="batch-report-note">Current snapshot uses raw scores. The ${event.selectionCooldownBars}-bar selection cooldown applies to historical replay picks.</div>`
+                                : "");
                     },
                     onDone: (event: Extract<TopMeanStreamEvent, { type: "done" }>) => {
                         if ("interrupted" in event) {
@@ -588,6 +613,10 @@ export class TopMeanController {
             "======================================================================",
             `Run ID: ${res.runId || "--"}`,
             `Coverage: ${res.counts?.usableTargetIntervalCount ?? "--"} target assets | ${res.counts?.pairCount ?? "--"} pairs`,
+            `Selection cooldown: ${(res.selectionCooldownBars ?? 0) > 0 ? `${res.selectionCooldownBars} target-asset bars per selector arm` : "off"}`,
+            ...((res.selectionCooldownBars ?? 0) > 0
+                ? ["Annual replay windows reset cooldown state independently.", "Current snapshot uses raw scores; cooldown applies to historical replay picks."]
+                : []),
             "",
         ];
 

@@ -499,9 +499,12 @@ export function toScalarArmPerformanceCandidate(
     candidate: FinderArmPerformanceCandidate,
 ): FinderArmPerformanceCandidate {
     const metrics = {} as FinderArmPerformanceCandidate["metrics"];
+    const metricsExTopContributor = {} as NonNullable<FinderArmPerformanceCandidate["metricsExTopContributor"]>;
     for (const arm of Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]) {
         const metric = candidate.metrics[arm];
         if (metric) metrics[arm] = compactFinderArmPerformanceMetric(metric);
+        const adjusted = candidate.metricsExTopContributor?.[arm];
+        if (adjusted) metricsExTopContributor[arm] = compactFinderArmPerformanceMetric(adjusted);
     }
     return {
         candidateId: candidate.candidateId,
@@ -516,6 +519,8 @@ export function toScalarArmPerformanceCandidate(
         ...(candidate.exitStrategyParams ? { exitStrategyParams: { ...candidate.exitStrategyParams } } : {}),
         pairCoverage: { ...candidate.pairCoverage },
         metrics,
+        ...(candidate.metricsExTopContributor ? { metricsExTopContributor } : {}),
+        ...(candidate.contributorExclusions ? { contributorExclusions: { ...candidate.contributorExclusions } } : {}),
         requestedEngineMode: candidate.requestedEngineMode,
         actualEngineMode: candidate.actualEngineMode,
     };

@@ -197,6 +197,40 @@ describe("FinderResultStore", () => {
         expect((store.latestResults as any).inventoryComplete).to.equal(false);
     });
 
+    it("preserves display changes made after run submission when terminal results arrive", () => {
+        const { store } = makeStore();
+        const rows = [makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2)];
+        store.armPerformanceDisplayLimit = 10;
+        store.initializeArmPerformanceDisplayFilter({
+            basis: "exclude_top_contributor",
+            eventFilterEnabled: true,
+            minEvents: 20,
+            maxEvents: null,
+        });
+
+        // A user edits the display controls while candidate events are still
+        // streaming. The terminal run context still contains submitted values.
+        store.setArmPerformanceDisplayFilter({
+            basis: "raw",
+            eventFilterEnabled: true,
+            minEvents: 2,
+            maxEvents: 10,
+        });
+        store.adoptArmPerformanceResults(rows, {
+            runId: "r2",
+            searchOptions: { armPerformance: { scoringBasis: "exclude_top_contributor", eventFilterEnabled: true, minEvents: 20 } },
+        } as any, true);
+
+        expect(store.armPerformanceDisplayFilter).to.deep.equal({
+            basis: "raw",
+            eventFilterEnabled: true,
+            minEvents: 2,
+            maxEvents: 10,
+        });
+        expect(store.latestResults.results).to.have.length(2);
+        expect(store.armPerformanceRunContext?.runId).to.equal("r2");
+    });
+
     it("retains strategy-level Asset rows on consensus re-sorts while grouping displayed rows by symbol", () => {
         const { store } = makeStore();
         const rows = [

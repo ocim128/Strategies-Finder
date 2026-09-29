@@ -6,6 +6,7 @@ import type {
     ReplayComparison,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-performance-metrics";
+import { renderTopMeanResults } from "../lib/batch-backtest/browser/top-mean-results-view";
 
 function comparison(events: number): ReplayComparison {
     return {
@@ -53,4 +54,43 @@ describe("buildTopMeanHorizonSummaries", () => {
         // topAssets stays sorted by events desc, then asset name.
         expect(summary.topAssets.map((asset) => asset.asset)).to.deep.equal(["AAA", "BBB"]);
     });
+
+    it("carries contributor-excluded summaries and exclusion counts by Finder arm", () => {
+        const replayHorizon: Record<string, unknown> = {
+            bars: 5,
+            topMeanByAsset: [],
+            armExTopContributorComparisons: {},
+            armTopContributorAssets: {},
+            armTopContributorEvents: {},
+        };
+        for (const [index, [, field]] of Object.entries(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).entries()) {
+            (replayHorizon.armExTopContributorComparisons as Record<string, ReplayComparison>)[field] = comparison(index + 1);
+            (replayHorizon.armTopContributorAssets as Record<string, string | null>)[field] = `ASSET${index}`;
+            (replayHorizon.armTopContributorEvents as Record<string, number>)[field] = index + 2;
+            (replayHorizon as Record<string, unknown>)[field] = comparison(index + 10);
+        }
+        const summaries = buildTopMeanHorizonSummaries({ horizons: [replayHorizon] } as unknown as OpenScoreUsdReplayResult);
+        const summary = summaries[0]!;
+        expect(summary.armComparisonsExTopContributor?.TOP_RAW?.events).to.equal(5);
+        expect(summary.armTopContributors?.TOP_RAW).to.deep.equal({ asset: "ASSET4", events: 6 });
+    });
+
+	it("labels cooldown replay provenance separately from the raw current snapshot and annual resets", () => {
+		const dom = { batchBacktestSp500TopMeanResults: { innerHTML: "" } };
+		renderTopMeanResults(dom, {
+			selectionCooldownBars: 5,
+			horizons: [],
+			annualReports: [{
+				year: 2025,
+				sampleFromSec: 1_735_689_600,
+				sampleToSec: 1_767_225_599,
+				horizons: [],
+				reportLines: ["Selection cooldown: 5 target-asset bars; state reset at the start of this independent annual replay."],
+			}],
+		} as any, { latestArm: "TOP_MEAN", tieMode: "off" });
+
+		expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Selection cooldown: 5 target-asset bars per selector arm");
+		expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("current snapshot uses raw scores");
+		expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("state reset at the start of this independent annual replay");
+	});
 });

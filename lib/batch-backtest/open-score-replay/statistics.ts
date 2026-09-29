@@ -362,3 +362,39 @@ export function splitIntoBlocks(values: readonly number[], times: readonly numbe
     }
     return blocks;
 }
+
+/** Build the shared paired-event summary with the frozen block/bootstrap definitions. */
+export function buildReplayComparison(
+    deltas: number[],
+    selectedReturns: number[],
+    times: number[],
+    blockCount: number,
+    bootstrapSamples: number,
+): ReplayComparison {
+    if (deltas.length === 0) {
+        return {
+            events: 0, topMean: null, randomMean: null, delta: null, topMedian: null,
+            blockMeans: [], ciLower: null, ciUpper: null, positiveBlocks: 0, totalBlocks: 0,
+        };
+    }
+    const topMean = meanOrNull(selectedReturns);
+    const deltaMean = meanOrNull(deltas);
+    const randomMean = topMean !== null && deltaMean !== null ? finiteOrNull(topMean - deltaMean) : null;
+    const sortedTop = [...selectedReturns].sort((a, b) => a - b);
+    const sortedDeltas = [...deltas].sort((a, b) => a - b);
+    const blocks = splitIntoBlocks(deltas, times, blockCount);
+    const blockMeans = blocks.map((block) => block.reduce((sum, value) => sum + value, 0) / block.length);
+    const { lower, upper } = blockBootstrapMedianCi(blocks, bootstrapSamples, sortedDeltas);
+    return {
+        events: deltas.length,
+        topMean,
+        randomMean,
+        delta: finiteOrNull(median(sortedDeltas)),
+        topMedian: finiteOrNull(median(sortedTop)),
+        blockMeans,
+        ciLower: lower,
+        ciUpper: upper,
+        positiveBlocks: blockMeans.filter((mean) => mean > 0).length,
+        totalBlocks: blockMeans.length,
+    };
+}

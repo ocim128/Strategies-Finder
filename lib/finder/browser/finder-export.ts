@@ -22,7 +22,7 @@ import type {
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 } from "../../types/finder";
-import type { FinderArmPerformanceArm } from "../finder-arm-performance-metrics";
+import { getFinderArmPerformanceMetric, type FinderArmPerformanceArm, type FinderArmPerformanceDisplayFilter, type FinderArmPerformanceScoringBasis } from "../finder-arm-performance-metrics";
 import type { FinderPersistedUiState } from "./finder-settings";
 import type { BacktestSettings } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
@@ -199,11 +199,22 @@ export function buildArmPerformanceTopResultsPayload(args: {
 	runContext: FinderArmPerformanceRunContext | null;
 	inventoryComplete: boolean;
 	selectedArm: FinderArmPerformanceArm;
+	scoringBasis?: FinderArmPerformanceScoringBasis;
+	displayFilter?: FinderArmPerformanceDisplayFilter;
 }) {
-	const { results, runContext, inventoryComplete, selectedArm } = args;
+	const { results, runContext, inventoryComplete, selectedArm, scoringBasis = "raw", displayFilter = {} } = args;
 	return {
 		scope: 'arm_performance' as const,
 		selectedArm,
+		scoringBasis,
+		eventFilter: {
+			enabled: displayFilter.eventFilterEnabled === true,
+			minEvents: displayFilter.minEvents ?? 1,
+			maxEvents: displayFilter.maxEvents ?? null,
+		},
+		selectionCooldownBars: runContext?.searchOptions?.armPerformance?.selectionCooldownEnabled
+			? runContext.searchOptions.armPerformance.selectionCooldownBars ?? 5
+			: 0,
 		rankingMetric: 'topMean',
 		runContext,
 		inventoryComplete,
@@ -222,8 +233,10 @@ export function buildArmPerformanceTopResultsPayload(args: {
 			exitStrategyParams: candidate.exitStrategyParams ?? null,
 			pairCoverage: candidate.pairCoverage,
 			selectedArm,
-			selectedArmMetric: candidate.metrics[selectedArm],
+			selectedArmMetric: getFinderArmPerformanceMetric(candidate, selectedArm, scoringBasis) ?? null,
+			excludedContributor: candidate.contributorExclusions?.[selectedArm] ?? null,
 			allArmMetrics: candidate.metrics,
+			allArmMetricsExTopContributor: candidate.metricsExTopContributor ?? null,
 		})),
 	};
 }
@@ -238,14 +251,18 @@ export function buildFinderTopResultsPayload(args: {
 	armRunContext: FinderArmPerformanceRunContext | null;
 	armInventoryComplete: boolean;
 	selectedArm: FinderArmPerformanceArm;
+	scoringBasis?: FinderArmPerformanceScoringBasis;
+	displayFilter?: FinderArmPerformanceDisplayFilter;
 }) {
-	const { latestResults, armRunContext, armInventoryComplete, selectedArm } = args;
+	const { latestResults, armRunContext, armInventoryComplete, selectedArm, scoringBasis = "raw", displayFilter = {} } = args;
 	if (latestResults.scope === 'arm_performance') {
 		return buildArmPerformanceTopResultsPayload({
 			results: latestResults.results,
 			runContext: armRunContext,
 			inventoryComplete: armInventoryComplete,
 			selectedArm,
+			scoringBasis,
+			displayFilter,
 		});
 	}
 	if (latestResults.scope === 'current_chart') {

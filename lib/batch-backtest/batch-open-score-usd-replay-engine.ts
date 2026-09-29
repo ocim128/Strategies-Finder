@@ -243,10 +243,15 @@ export async function runOpenScoreUsdReplay(
         totalEvents,
         assetNames,
         assetCount,
+        selectionCooldownBars: options.selectionCooldownBars,
         onPhase,
     });
     const views = candidateStage.views;
     const profitOnlyEvents = candidateStage.profitOnlyEvents;
+    const candidateComparisonEvents = views.reduce(
+        (count, view) => count + (view.positives.length >= 2 ? 1 : 0),
+        0,
+    );
 
 
     const includePoolSnapshots = options.includePoolSnapshots === true;
@@ -341,11 +346,22 @@ export async function runOpenScoreUsdReplay(
 
     // Post-outcome selection (gap-filtered views, BOT_* picks, latest
     // selections): stage implementation ./open-score-replay/candidate-selection.ts.
-    const postSelection = selectAfterOutcomes({ views, profitOnlyEvents, assetNames, dataGapAssets, dataGapEvents });
+    const postSelection = await selectAfterOutcomes({
+        views,
+        profitOnlyEvents,
+        assetNames,
+        dataGapAssets,
+        dataGapEvents,
+        shouldStop: options.shouldStop,
+        selectionCooldownBars: options.selectionCooldownBars,
+        boundaryIndicesByView: outcomeStage.boundaryIndicesByView,
+    });
     const gapFilteredViews = postSelection.gapFilteredViews;
     const gapFilteredProfitOnlyEvents = postSelection.gapFilteredProfitOnlyEvents;
     const botPicksByView = postSelection.botPicksByView;
     const latestSelections = postSelection.latestSelections;
+    const armSelectionsByView = postSelection.armSelectionsByView;
+    const armSelectionsByProfitOnly = postSelection.armSelectionsByProfitOnly;
 
 
     // --- Phase 5: aggregate ------------------------------------------------
@@ -362,6 +378,11 @@ export async function runOpenScoreUsdReplay(
         gapFilteredViews,
         gapFilteredProfitOnlyEvents,
         botPicksByView,
+        ...(armSelectionsByView ? { armSelectionsByView } : {}),
+        ...(armSelectionsByProfitOnly ? { armSelectionsByProfitOnly } : {}),
+        ...(options.selectionCooldownBars && options.selectionCooldownBars > 0
+            ? { boundaryIndicesByView: outcomeStage.boundaryIndicesByView }
+            : {}),
         returnsByView,
         dataGapAssets,
         assetNames,
@@ -421,7 +442,7 @@ export async function runOpenScoreUsdReplay(
 
     const reportLines = buildReportLines({
         pairs: pairCount, assets: assetCount, complete, omittedPairs, omittedAssets,
-        totalEvents, candidateEvents: views.length, eligibleEvents: eligibleEventsMax, horizons: horizonResults,
+        totalEvents, candidateEvents: candidateComparisonEvents, eligibleEvents: eligibleEventsMax, horizons: horizonResults,
         degree, warnings, startedAt, horizonsList: horizons,
         interval: options.interval ?? null,
         sampleFromSec: options.sampleFromSec ?? null,
@@ -443,7 +464,7 @@ export async function runOpenScoreUsdReplay(
         omittedPairs,
         omittedAssets,
         totalEvents,
-        candidateEvents: views.length,
+        candidateEvents: candidateComparisonEvents,
         eligibleEvents: eligibleEventsMax,
         horizons: horizonResults,
         latestSelections,

@@ -94,7 +94,20 @@ describe("Arm Performance run configuration capture", () => {
             targetDataBoundary: { earliestBarTimeSec: 1_700_000_100, latestBarTimeSec: 1_719_999_900 },
             actualEngineModes: ["typescript", "rust"],
             capTiltWeight: "off",
-            searchOptions: { mode: "random", randomSeed: 42 },
+            searchOptions: {
+                mode: "random",
+                randomSeed: 42,
+                armPerformance: {
+                    horizon: 12,
+                    dateMode: "full",
+                    scoringBasis: "exclude_top_contributor",
+                    eventFilterEnabled: true,
+                    minEvents: 4,
+                    maxEvents: 20,
+                    selectionCooldownEnabled: true,
+                    selectionCooldownBars: 5,
+                },
+            } as any,
             backtestSettings: { executionModel: "next_open", tradeDirection: "long" },
             capitalSettings: { initialCapital: 25_000, commission: 0.1 },
             requestedEngineMode: "rust",
@@ -105,6 +118,7 @@ describe("Arm Performance run configuration capture", () => {
         expect(restored.finder.runId).to.equal("frozen-run");
         expect(restored.finder.pairs).to.have.length(5_000);
         expect(restored.finder.searchOptions.randomSeed).to.equal(42);
+        expect(restored.finder.searchOptions.armPerformance).to.deep.equal(context.searchOptions.armPerformance);
         expect(restored.finder.horizon).to.equal(12);
         expect(restored.finder.sampleFromSec).to.equal(1_700_000_000);
         expect(restored.finder.evaluationCutoffSec).to.equal(1_720_000_000);

@@ -83,6 +83,8 @@ export interface TopMeanRunManifest {
      * self-describing.
      */
     capTiltWeight?: ActiveCapTiltWeight;
+    /** Effective replay selector cooldown; does not affect reusable pair-backtest shards. */
+    selectionCooldownBars?: number;
     error?: string;
     archiveComplete?: boolean;
     archiveRequested?: boolean;

@@ -405,6 +405,7 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         resume: true,
         saveArchiveLog: false,
         useRustEnginePreference: false,
+        selectionCooldownBars: 5,
     };
     const fingerprint = computeRunFingerprint({
         strategyKey: request.strategyKey as string,
@@ -477,6 +478,7 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         // 1. run() invoked the reducer and emitted current_snapshot BEFORE replay.
         assert.ok(sawSnapshot, "run() must emit a current_snapshot event");
         const snapshotIdx = events.findIndex((e) => e.type === "current_snapshot");
+        assert.equal(events[snapshotIdx]?.selectionCooldownBars, 5);
         const typesAfterSnapshot = events.slice(snapshotIdx + 1).map((e) => e.type);
         // Critically, NO replay fatal follows — proving the snapshot phase ran
         // BEFORE the replay phase and that the replay was unreachable once we
@@ -491,13 +493,15 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         //    replay never ran.
         const resultPath = join(getRunDir(runId, baseDir), "result.json");
         assert.ok(existsSync(resultPath), "result.json must be persisted before replay");
-        const onDisk = JSON.parse(readFileSync(resultPath, "utf8")) as { currentSnapshot?: unknown };
+        const onDisk = JSON.parse(readFileSync(resultPath, "utf8")) as { currentSnapshot?: unknown; selectionCooldownBars?: number };
         assert.ok(onDisk.currentSnapshot, "persisted result.json must carry currentSnapshot");
+        assert.equal(onDisk.selectionCooldownBars, 5);
         const persistedManifest = JSON.parse(
             readFileSync(join(getRunDir(runId, baseDir), "manifest.json"), "utf8"),
         ) as TopMeanRunManifest;
         assert.equal(persistedManifest.requestedEngineMode, "typescript");
         assert.equal(persistedManifest.actualEngineMode, "typescript");
+        assert.equal(persistedManifest.selectionCooldownBars, 5);
         assert.deepEqual(persistedManifest.engineUsage, { rust: 0, typescript: 0 });
         const persistedCurrent = onDisk.currentSnapshot as {
             snapshot: { asOf: number; winners: Array<{ asset: string }> };

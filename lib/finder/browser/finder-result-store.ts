@@ -47,6 +47,7 @@ import { sortStrategyQualityResultsByMetric } from "../finder-strategy-quality";
 import {
 	FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
 	sortFinderArmPerformanceResults,
+	type FinderArmPerformanceDisplayFilter,
 	type FinderArmPerformanceArm,
 } from "../finder-arm-performance-metrics";
 import { DEFAULT_FINDER_UI_STATE, UNIVERSE_SORT_OPTIONS } from "./finder-settings";
@@ -78,6 +79,7 @@ export class FinderResultStore {
 	armPerformanceApplyContext: Pick<FinderArmPerformanceRunContext, "interval" | "uiBacktestSettings" | "capitalSettings"> | null = null;
 	armPerformanceDisplayLimit = DEFAULT_FINDER_UI_STATE.topN;
 	armPerformanceInventoryComplete = true;
+	armPerformanceDisplayFilter: FinderArmPerformanceDisplayFilter = {};
 	/**
 	 * Snapshot of the run-time sorted results before any post-run re-sort was
 	 * applied. Used to restore the original ordering when the re-sort dropdown
@@ -151,9 +153,22 @@ export class FinderResultStore {
 		this.armPerformanceRunResults = [...results];
 		this.armPerformanceRunContext = context;
 		this.armPerformanceInventoryComplete = complete;
+		// The run context is provenance. Display preferences may have changed
+		// while its stream was running, so only derive a display default when no
+		// current preference has been initialized (for example, snapshot restore).
+		if (Object.keys(this.armPerformanceDisplayFilter).length === 0) {
+			const armOptions = context?.searchOptions?.armPerformance;
+			this.armPerformanceDisplayFilter = {
+				basis: armOptions?.scoringBasis ?? "raw",
+				eventFilterEnabled: armOptions?.eventFilterEnabled ?? false,
+				minEvents: armOptions?.minEvents ?? 1,
+				maxEvents: armOptions?.maxEvents ?? null,
+			};
+		}
 		this.armPerformanceDefaultResults = sortFinderArmPerformanceResults(
 			this.armPerformanceRunResults,
 			'TOP_RAW_PROFIT_NOW',
+			this.armPerformanceDisplayFilter,
 		);
 		this.setArmPerformanceLatestResults(this.armPerformanceDefaultResults, persist, this.armPerformanceDisplayLimit, complete);
 	}
@@ -169,12 +184,34 @@ export class FinderResultStore {
 		this.armPerformanceRunContext = null;
 		this.armPerformanceApplyContext = null;
 		this.armPerformanceInventoryComplete = true;
+		this.armPerformanceDisplayFilter = {};
 	}
 
 	/** Capture both scope display limits from the run's topN. */
 	setRunDisplayLimits(topN: number): void {
 		this.symbolUniverseDisplayLimit = Math.max(1, topN);
 		this.armPerformanceDisplayLimit = Math.max(1, topN);
+	}
+
+	/** Initialize display settings from the submitted options before streaming. */
+	initializeArmPerformanceDisplayFilter(filter: FinderArmPerformanceDisplayFilter): void {
+		this.armPerformanceDisplayFilter = { ...filter };
+	}
+
+	setArmPerformanceDisplayFilter(filter: FinderArmPerformanceDisplayFilter, arm?: FinderArmPerformanceArm): void {
+		this.armPerformanceDisplayFilter = { ...filter };
+		this.armPerformanceDefaultResults = sortFinderArmPerformanceResults(
+			this.armPerformanceRunResults,
+			"TOP_RAW_PROFIT_NOW",
+			this.armPerformanceDisplayFilter,
+		);
+		const selectedArm = arm ?? "TOP_RAW_PROFIT_NOW";
+		const sorted = sortFinderArmPerformanceResults(
+			this.armPerformanceRunResults,
+			selectedArm,
+			this.armPerformanceDisplayFilter,
+		);
+		this.setArmPerformanceLatestResults(sorted);
 	}
 
 	/**
@@ -198,7 +235,11 @@ export class FinderResultStore {
 				results: this.symbolUniverseRunResults.slice(0, Math.max(1, this.symbolUniverseDisplayLimit)),
 			});
 		} else if (scope === 'arm_performance' && this.armPerformanceDefaultResults.length > 0) {
-			this.setArmPerformanceLatestResults(this.armPerformanceDefaultResults);
+			this.setArmPerformanceLatestResults(sortFinderArmPerformanceResults(
+				this.armPerformanceRunResults,
+				"TOP_RAW_PROFIT_NOW",
+				this.armPerformanceDisplayFilter,
+			));
 		} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
 			this.setLatestResults(this.originalLatestResults);
 		}
@@ -252,6 +293,7 @@ export class FinderResultStore {
 			const sorted = sortFinderArmPerformanceResults(
 				this.armPerformanceRunResults,
 				metric as FinderArmPerformanceArm,
+				this.armPerformanceDisplayFilter,
 			);
 			this.setArmPerformanceLatestResults(sorted);
 		}

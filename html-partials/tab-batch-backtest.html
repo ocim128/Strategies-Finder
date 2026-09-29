@@ -300,6 +300,14 @@
                     <option value="random">Pick randomly</option>
                 </select>
             </div>
+            <div class="batch-field batch-field--inline batch-field--check" title="Each TOP_MEAN selector arm independently blocks its previously selected asset for this many target candles, then falls through to its next eligible rank. Annual replay windows reset state.">
+                <input id="batchBacktestSp500TopMeanSelectionCooldownEnabled" type="checkbox">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanSelectionCooldownEnabled">Block repeat selection</label>
+            </div>
+            <div class="batch-field batch-field--inline" title="Cooldown counts actual target candles after selection. A value of 5 blocks the selected asset through five subsequent candles.">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanSelectionCooldownBars">Cooldown bars</label>
+                <input class="batch-field-input batch-field-input--auto" id="batchBacktestSp500TopMeanSelectionCooldownBars" type="number" min="1" max="10000" step="1" value="5" disabled>
+            </div>
             <div class="batch-field batch-field--inline batch-field--check" title="Write the completed run's permanent mining ledger to archive/batch-open-score/. Saved archives are not automatically removed.">
                 <input id="batchBacktestSp500TopMeanArchiveToggle" type="checkbox">
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanArchiveToggle">Save full research archive (~150 MB / 5k pairs)</label>

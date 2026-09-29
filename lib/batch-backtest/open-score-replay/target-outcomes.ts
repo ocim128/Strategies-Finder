@@ -129,6 +129,23 @@ export interface TargetOutcomeStageResult {
     dataGapEvents: Set<number>;
     censoredEvents: Set<number>;
     noDataEvents: Set<number>;
+    /** Compact target candle boundaries aligned to request/event indexes. */
+    boundaryIndicesByView: Array<Map<number, number> | null>;
+}
+
+/** Binary search: index of the last candle at or before t, or -1 before the target begins. */
+function lastBarAtOrBefore(times: readonly (number | null)[], t: number): number {
+    let lo = 0;
+    let hi = times.length - 1;
+    let answer = -1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        const value = times[mid];
+        if (value === null) lo = mid + 1;
+        else if (value <= t) { answer = mid; lo = mid + 1; }
+        else hi = mid - 1;
+    }
+    return answer;
 }
 
 export async function evaluateTargetOutcomes(args: {
@@ -199,6 +216,7 @@ export async function evaluateTargetOutcomes(args: {
         exitTimes: number[];
         statuses: CandidateOutcomeStatus[];
     }> | null> = new Array(totalEventCount).fill(null);
+    const boundaryIndicesByView: Array<Map<number, number> | null> = new Array(totalEventCount).fill(null);
     const missingAssets = new Set<number>();
     const dataGapAssets = new Map<number, CandleGap>();
     const dataGapEvents = new Set<number>();
@@ -354,6 +372,7 @@ export async function evaluateTargetOutcomes(args: {
                 cacheEntry = {
                     gapIntervals: findCandleGaps(data),
                     outcomesByEventTimeSec: new Map(),
+                    boundaryIndexByEventTimeSec: new Map(),
                 };
                 options.sharedTargetCache?.set(item.name, cacheEntry);
             }
@@ -361,6 +380,7 @@ export async function evaluateTargetOutcomes(args: {
         const aIdx = item.aIdx;
         const diagnosticIdx = item.diagnosticIdx;
         const requests = item.requests;
+        cacheEntry!.boundaryIndexByEventTimeSec ??= new Map();
         const dataGap = firstGapOverlapping(cacheEntry!.gapIntervals);
         if ((!requests || requests.length === 0) && diagnosticIdx === undefined) {
             if (dataGap && aIdx !== undefined) dataGapAssets.set(aIdx, dataGap);
@@ -562,6 +582,16 @@ export async function evaluateTargetOutcomes(args: {
         if (aIdx === undefined || !requests || requests.length === 0) continue;
         for (const viewIdx of requests) {
             const eventTime = eventTimeOf(viewIdx);
+            let boundaryIndex = cacheEntry.boundaryIndexByEventTimeSec?.get(eventTime);
+            if (boundaryIndex === undefined && data && times) {
+                boundaryIndex = lastBarAtOrBefore(times, eventTime);
+                cacheEntry.boundaryIndexByEventTimeSec?.set(eventTime, boundaryIndex);
+            }
+            if (boundaryIndex !== undefined) {
+                let boundaries = boundaryIndicesByView[viewIdx];
+                if (!boundaries) { boundaries = new Map(); boundaryIndicesByView[viewIdx] = boundaries; }
+                boundaries.set(aIdx, boundaryIndex);
+            }
             let record = cacheEntry
                 ? cacheEntry.outcomesByEventTimeSec.get(eventTime)
                 : undefined;
@@ -575,6 +605,13 @@ export async function evaluateTargetOutcomes(args: {
                 if (reloaded === null) continue;
                 data = reloaded;
                 times = data.map((b) => timeToNumber(b.time));
+                boundaryIndex = lastBarAtOrBefore(times, eventTime);
+                cacheEntry.boundaryIndexByEventTimeSec?.set(eventTime, boundaryIndex);
+                if (boundaryIndex !== undefined) {
+                    let boundaries = boundaryIndicesByView[viewIdx];
+                    if (!boundaries) { boundaries = new Map(); boundaryIndicesByView[viewIdx] = boundaries; }
+                    boundaries.set(aIdx, boundaryIndex);
+                }
             }
             if (record === undefined) {
                 // First target bar strictly after the decision timestamp.
@@ -683,6 +720,6 @@ export async function evaluateTargetOutcomes(args: {
 
     return {
         ok: true,
-        result: { returnsByView, missingAssets, dataGapAssets, dataGapEvents, censoredEvents, noDataEvents },
+        result: { returnsByView, missingAssets, dataGapAssets, dataGapEvents, censoredEvents, noDataEvents, boundaryIndicesByView },
     };
 }

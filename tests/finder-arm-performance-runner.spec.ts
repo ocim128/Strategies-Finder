@@ -87,12 +87,40 @@ function makeSummary(): TopMeanResultSummary {
             totalBlocks: 1,
         }]),
     );
+    const armComparisonsExTopContributor = Object.fromEntries(
+        (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]).map((arm, index) => [arm, {
+            events: 1,
+            topMean: index + 10,
+            randomMean: 0.2,
+            delta: index + 9,
+            topMedian: index + 10,
+            blockMeans: [],
+            ciLower: index + 8,
+            ciUpper: index + 11,
+            positiveBlocks: 1,
+            totalBlocks: 1,
+        }]),
+    );
+    const armTopContributors = Object.fromEntries(
+        (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]).map((arm) => [arm, {
+            asset: "AAA",
+            events: 1,
+        }]),
+    );
     return {
         runId: "child",
         completed: true,
         archiveComplete: false,
         counts: {} as TopMeanResultSummary["counts"],
-        horizons: [{ horizon: 5, armComparisons } as TopMeanResultSummary["horizons"][number]],
+        horizons: [{
+            horizon: 5,
+            events: 2,
+            topMean: armComparisons.TOP_MEAN!,
+            topAssets: [],
+            armComparisons,
+            armComparisonsExTopContributor,
+            armTopContributors,
+        } as TopMeanResultSummary["horizons"][number]],
         warnings: [],
         reportLines: [],
     };
@@ -166,11 +194,39 @@ describe("Finder Arm Performance runner", () => {
             noTradePairs: 0,
         });
         expect(results[0]!.metrics.TOP_RAW_PROFIT_NOW.topMean).to.equal(0.25);
+        expect(results[0]!.metricsExTopContributor?.TOP_RAW_PROFIT_NOW?.topMean).to.equal(10);
+        expect(results[0]!.contributorExclusions?.TOP_RAW_PROFIT_NOW).to.deep.equal({ asset: "AAA", events: 1 });
         expect(results[0]!.backtestSettings.exitStrategyOverrideEnabled).to.equal(false);
         expect(results[0]!.backtestSettings.exitStrategyKey).to.equal("");
         expect(results[0]!.backtestSettings.exitStrategyParams).to.deep.equal({});
         expect(order.indexOf("remove:0")).to.be.greaterThan(order.findIndex((item) => item.startsWith("teardown:")));
         expect(order.indexOf("create:1")).to.be.greaterThan(order.indexOf("remove:0"));
+    });
+
+    it("threads the effective cooldown through every Finder child coordinator request", async () => {
+        const input = makeInput();
+        input.options.armPerformance = {
+            horizon: 5,
+            dateMode: "full",
+            selectionCooldownEnabled: true,
+            selectionCooldownBars: 7,
+        };
+        const requests: TopMeanCoordinatorRunRequest[] = [];
+        await runFinderArmPerformance(input, {
+            onProgress: () => {},
+            onCandidate: () => {},
+            setActiveCoordinator: () => {},
+        }, {
+            createCoordinator(request) {
+                requests.push(request);
+                return makeCoordinator(request, {}, async (emit) => {
+                    emit({ type: "done", result: makeSummary() });
+                }, []);
+            },
+            async removeChildArtifacts() {},
+        });
+        expect(requests).to.have.length(2);
+        expect(requests.map((request) => request.selectionCooldownBars)).to.deep.equal([7, 7]);
     });
 
     it("keeps prior rows and cleans the failed child before reporting a fatal child", async () => {

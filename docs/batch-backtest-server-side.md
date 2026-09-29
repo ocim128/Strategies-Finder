@@ -322,6 +322,26 @@ TOP_MEAN snapshot from positions open at a common closed-candle endpoint. This
 reports ties and mixed/missing endpoints instead of silently selecting an
 asset, and it is a research display rather than a live order decision.
 
+The TOP_MEAN coordinator's **Block repeat selection** control applies a
+per-selector asset cooldown to historical OPEN_SCORE replay. It is off by
+default; the disabled input retains 5 bars, and the API accepts effective
+`selectionCooldownBars` values from 0 (off) through 10,000. The boundary is the
+selected target's last candle at or before the decision time, so cooldown bars
+count actual target candles, including bars without decision events. With a
+5-bar cooldown, an asset selected at candle index 100 stays blocked through
+105 and becomes eligible at 106. A blocked rank falls through to the next
+eligible asset, and cooldown state is isolated by arm and replay pass. A
+selection starts cooldown even when its future horizon is incomplete. A sole
+remaining candidate can be selected but cannot produce a paired comparison.
+
+Each calendar-year replay starts with empty cooldown state and is an independent
+experiment rather than a continuation of the full-window replay. The current
+cross-sectional snapshot remains raw and is labeled as such when cooldown is
+enabled. The effective bar count is saved in `result.json`, the TOP_MEAN run
+manifest, result summary, and archive metadata; cooldown-enabled archives use a
+distinct archive fingerprint while pair-backtest shards remain reusable.
+Cooldown changes require a new replay run and do not affect pair execution.
+
 ### Performance Diagnostics
 
 Completed runs include `performance` (`sp500_top_mean_performance.v1`) in the

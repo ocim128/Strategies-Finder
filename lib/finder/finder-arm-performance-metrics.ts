@@ -44,6 +44,14 @@ export type FinderArmPerformanceCompleteMetrics = Record<
     FinderArmPerformanceMetric
 >;
 
+export type FinderArmPerformanceScoringBasis = "raw" | "exclude_top_contributor";
+export interface FinderArmPerformanceDisplayFilter {
+    basis?: FinderArmPerformanceScoringBasis;
+    eventFilterEnabled?: boolean;
+    minEvents?: number;
+    maxEvents?: number | null;
+}
+
 function finiteOrNull(value: unknown): number | null {
     return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -86,14 +94,36 @@ export function getFinderArmPerformanceRankValue(
     return metric.topMean;
 }
 
+export function getFinderArmPerformanceMetric<Row extends {
+    metrics: FinderArmPerformanceMetrics;
+    metricsExTopContributor?: FinderArmPerformanceMetrics;
+}>(row: Row, arm: FinderArmPerformanceArm, basis: FinderArmPerformanceScoringBasis = "raw") {
+    return basis === "exclude_top_contributor"
+        ? row.metricsExTopContributor?.[arm]
+        : row.metrics[arm];
+}
+
 /** Sort a copy of the complete inventory by topMean, preserving ordinal ties. */
 export function sortFinderArmPerformanceResults<Row extends {
     candidateOrdinal: number;
     metrics: FinderArmPerformanceMetrics;
-}>(rows: readonly Row[], arm: FinderArmPerformanceArm): Row[] {
-    return [...rows].sort((left, right) => {
-        const leftValue = getFinderArmPerformanceRankValue(left.metrics, arm);
-        const rightValue = getFinderArmPerformanceRankValue(right.metrics, arm);
+    metricsExTopContributor?: FinderArmPerformanceMetrics;
+}>(rows: readonly Row[], arm: FinderArmPerformanceArm, filter: FinderArmPerformanceDisplayFilter = {}): Row[] {
+    const basis = filter.basis ?? "raw";
+    const filteredRows = filter.eventFilterEnabled
+        ? rows.filter((row) => {
+            const events = getFinderArmPerformanceMetric(row, arm, basis)?.events ?? 0;
+            return events >= (filter.minEvents ?? 1)
+                && (filter.maxEvents == null || events <= filter.maxEvents);
+        })
+        : rows;
+    return [...filteredRows].sort((left, right) => {
+        const leftValue = basis === "raw"
+            ? getFinderArmPerformanceRankValue(left.metrics, arm)
+            : getFinderArmPerformanceRankValue(left.metricsExTopContributor ?? {}, arm);
+        const rightValue = basis === "raw"
+            ? getFinderArmPerformanceRankValue(right.metrics, arm)
+            : getFinderArmPerformanceRankValue(right.metricsExTopContributor ?? {}, arm);
         if (leftValue === null && rightValue !== null) return 1;
         if (leftValue !== null && rightValue === null) return -1;
         if (leftValue !== null && rightValue !== null && leftValue !== rightValue) {

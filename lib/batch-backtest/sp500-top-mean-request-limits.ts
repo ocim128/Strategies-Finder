@@ -12,6 +12,8 @@ export const TOP_MEAN_WORKER_COUNT_MIN = 1;
 export const TOP_MEAN_WORKER_COUNT_MAX = 24;
 /** Matches the Balanced Generator UI clamp (1..1_000_000). */
 export const TOP_MEAN_MAX_PAIRS_MAX = 1_000_000;
+/** Replay-only selector cooldown: bounded so malformed requests cannot force unbounded state windows. */
+export const TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX = 10_000;
 /** Custom pair universes can contain millions of characters; bound the JSON upload separately from small control requests. */
 export const TOP_MEAN_RUN_MAX_BODY_BYTES = 64 * 1024 * 1024;
 
@@ -27,6 +29,7 @@ export type TopMeanValidatedLimits = {
     workerCount?: number;
     maxPairs?: number;
     capTiltWeight?: TopMeanActiveCapTiltWeight;
+    selectionCooldownBars: number;
 };
 
 export type TopMeanLimitValidationResult =
@@ -43,6 +46,7 @@ export function validateTopMeanRequestLimits(input: {
     workerCount?: unknown;
     maxPairs?: unknown;
     capTiltWeight?: unknown;
+    selectionCooldownBars?: unknown;
 }): TopMeanLimitValidationResult {
     if (!Array.isArray(input.horizons) || input.horizons.length === 0) {
         return { ok: false, error: "Missing required non-empty array: horizons." };
@@ -121,6 +125,23 @@ export function validateTopMeanRequestLimits(input: {
         capTiltWeight = input.capTiltWeight;
     }
 
+    let selectionCooldownBars = 0;
+    if (input.selectionCooldownBars !== undefined && input.selectionCooldownBars !== null) {
+        if (
+            typeof input.selectionCooldownBars !== "number"
+            || !Number.isFinite(input.selectionCooldownBars)
+            || !Number.isInteger(input.selectionCooldownBars)
+            || input.selectionCooldownBars < 0
+            || input.selectionCooldownBars > TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX
+        ) {
+            return {
+                ok: false,
+                error: `selectionCooldownBars must be an integer between 0 and ${TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX}.`,
+            };
+        }
+        selectionCooldownBars = input.selectionCooldownBars;
+    }
+
     return {
         ok: true,
         value: {
@@ -128,6 +149,7 @@ export function validateTopMeanRequestLimits(input: {
             ...(workerCount !== undefined ? { workerCount } : {}),
             ...(maxPairs !== undefined ? { maxPairs } : {}),
             ...(capTiltWeight !== undefined ? { capTiltWeight } : {}),
+            selectionCooldownBars,
         },
     };
 }

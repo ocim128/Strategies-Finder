@@ -192,7 +192,10 @@ import {
 } from "./finder-universe-strategy-pool";
 import { hasCapabilityIndependentTypescriptRequirement } from "../../rust-settings-sanitizer";
 import { enumerateSp500Pairs, type EnumerationResult } from "../../batch-backtest/sp500-pair-enumerator";
-import { validateTopMeanRequestLimits } from "../../batch-backtest/sp500-top-mean-request-limits";
+import {
+    TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX,
+    validateTopMeanRequestLimits,
+} from "../../batch-backtest/sp500-top-mean-request-limits";
 import { parseTopMeanDateWindow } from "../../batch-backtest/top-mean-date-window";
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import type { BatchOwnerLocks, BatchOwnerToken } from "../../batch-backtest/sp500-top-mean-vite-routes";
@@ -3094,6 +3097,41 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
         throw new HttpStatusError(400, "options.armPerformance is required.");
     }
     const armOptions = rawArmOptions as Record<string, unknown>;
+    const readOptionalBoolean = (key: string, fallback: boolean): boolean => {
+        const value = armOptions[key];
+        if (value === undefined) return fallback;
+        if (typeof value !== "boolean") throw new HttpStatusError(400, `options.armPerformance.${key} must be a boolean.`);
+        return value;
+    };
+    const readOptionalInteger = (key: string, fallback: number, min: number, max: number): number => {
+        const value = armOptions[key];
+        if (value === undefined) return fallback;
+        if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+            throw new HttpStatusError(400, `options.armPerformance.${key} must be an integer between ${min} and ${max}.`);
+        }
+        return value;
+    };
+    const scoringBasis = armOptions.scoringBasis === undefined ? "raw" : armOptions.scoringBasis;
+    if (scoringBasis !== "raw" && scoringBasis !== "exclude_top_contributor") {
+        throw new HttpStatusError(400, "options.armPerformance.scoringBasis must be raw or exclude_top_contributor.");
+    }
+    const eventFilterEnabled = readOptionalBoolean("eventFilterEnabled", false);
+    const minEvents = readOptionalInteger("minEvents", 1, 0, 1_000_000);
+    let maxEvents: number | null = null;
+    if (armOptions.maxEvents !== undefined && armOptions.maxEvents !== null) {
+        maxEvents = readOptionalInteger("maxEvents", 1, 0, 1_000_000);
+        if (maxEvents < minEvents) throw new HttpStatusError(400, "options.armPerformance.maxEvents must be greater than or equal to minEvents.");
+    }
+    const selectionCooldownEnabled = readOptionalBoolean("selectionCooldownEnabled", false);
+    const selectionCooldownBars = readOptionalInteger(
+        "selectionCooldownBars",
+        5,
+        0,
+        TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX,
+    );
+    if (selectionCooldownEnabled && selectionCooldownBars < 1) {
+        throw new HttpStatusError(400, "options.armPerformance.selectionCooldownBars must be positive when cooldown is enabled.");
+    }
     const horizonLimits = validateTopMeanRequestLimits({ horizons: [armOptions.horizon], capTiltWeight: "off" });
     if (!horizonLimits.ok) throw new HttpStatusError(400, horizonLimits.error);
     const dateMode = armOptions.dateMode;
@@ -3135,7 +3173,16 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
         minTrades: 0,
         maxTrades: Number.POSITIVE_INFINITY,
         oosValidationEnabled: false,
-        armPerformance: { horizon: horizonLimits.value.horizons[0]!, dateMode: dateWindow.mode },
+        armPerformance: {
+            horizon: horizonLimits.value.horizons[0]!,
+            dateMode: dateWindow.mode,
+            scoringBasis,
+            eventFilterEnabled,
+            minEvents,
+            maxEvents,
+            selectionCooldownEnabled,
+            selectionCooldownBars,
+        },
     };
 
     const strategyKeys = parseStrategyKeys(body.strategyKeys, body.strategyKey);

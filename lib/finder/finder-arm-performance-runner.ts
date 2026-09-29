@@ -18,6 +18,7 @@ import { resolveFinderRiskOverrides } from "./finder-runner-core";
 import { splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import {
     buildFinderArmPerformanceMetricsFromArms,
+    compactFinderArmComparison,
     FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
 } from "./finder-arm-performance-metrics";
 import {
@@ -232,6 +233,21 @@ function buildCandidateResult(args: {
             ) as Record<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, ReplayComparison>
             : undefined
     );
+    const adjustedArmMetrics = horizon?.armComparisonsExTopContributor
+        ? Object.fromEntries(
+            (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS>)
+                .filter((arm) => horizon.armComparisonsExTopContributor?.[arm])
+                .map((arm) => [arm, compactFinderArmComparison(horizon.armComparisonsExTopContributor![arm]!)]),
+        ) as FinderArmPerformanceCandidate["metricsExTopContributor"]
+        : undefined;
+    const contributorExclusions = horizon?.armTopContributors
+        ? Object.fromEntries(
+            Object.entries(horizon.armTopContributors).map(([arm, summary]) => [arm, {
+                asset: summary?.asset ?? null,
+                events: Math.max(0, Math.floor(summary?.events ?? 0)),
+            }]),
+        ) as FinderArmPerformanceCandidate["contributorExclusions"]
+        : undefined;
     const missingArms = (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS>)
         .filter((arm) => !armComparisons?.[arm]);
     if (missingArms.length > 0) {
@@ -274,6 +290,8 @@ function buildCandidateResult(args: {
             noTradePairs: result.noTradePairs ?? 0,
         },
         metrics: buildFinderArmPerformanceMetricsFromArms(armComparisons as never),
+        ...(adjustedArmMetrics ? { metricsExTopContributor: adjustedArmMetrics } : {}),
+        ...(contributorExclusions ? { contributorExclusions } : {}),
         requestedEngineMode: input.useRustEnginePreference ? "rust" : "typescript",
         actualEngineMode: status.actualEngineMode,
     };
@@ -391,6 +409,9 @@ async function runFinderArmPerformanceCandidates(
             resume: false,
             saveArchiveLog: false,
             useRustEnginePreference: input.useRustEnginePreference,
+            selectionCooldownBars: input.options.armPerformance?.selectionCooldownEnabled
+                ? input.options.armPerformance.selectionCooldownBars ?? 5
+                : 0,
             ...(input.workerCount !== undefined ? { workerCount: input.workerCount } : {}),
             ...(input.sampleFromSec !== undefined ? { sampleFromSec: input.sampleFromSec } : {}),
             ...(input.sampleToSec !== undefined ? { sampleToSec: input.sampleToSec } : {}),

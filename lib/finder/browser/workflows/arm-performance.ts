@@ -61,6 +61,12 @@ export async function runArmPerformanceFinder(args: ArmPerformanceWorkflowArgs):
 	session.activeRunId = runId;
 	writeFinderActiveServerRun({ runId, scope: 'arm_performance', startedAt: startTime });
 	store.armPerformanceDisplayLimit = Math.max(1, options.topN);
+	store.initializeArmPerformanceDisplayFilter({
+		basis: options.armPerformance?.scoringBasis ?? 'raw',
+		eventFilterEnabled: options.armPerformance?.eventFilterEnabled ?? false,
+		minEvents: options.armPerformance?.minEvents ?? 1,
+		maxEvents: options.armPerformance?.maxEvents ?? null,
+	});
 	const outcome = await runArmPerformanceFinderServer({
 		host,
 		store,
@@ -151,8 +157,9 @@ async function runArmPerformanceFinderServer(args: {
 			const selectedArm = args.getSelectedArm();
 			const availableArms = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[];
 			const sortArm = availableArms.includes(selectedArm) ? selectedArm : 'TOP_RAW_PROFIT_NOW';
-			const sorted = sortFinderArmPerformanceResults([...candidatesById.values()], sortArm);
-			store.armPerformanceRunResults = sorted;
+			const inventory = [...candidatesById.values()];
+			store.armPerformanceRunResults = inventory;
+			const sorted = sortFinderArmPerformanceResults(inventory, sortArm, store.armPerformanceDisplayFilter);
 			store.setArmPerformanceLatestResults(sorted, false, options.topN, false);
 			host.renderLatestResults();
 		}

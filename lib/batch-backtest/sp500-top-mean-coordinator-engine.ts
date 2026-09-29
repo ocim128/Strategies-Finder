@@ -121,6 +121,8 @@ export interface TopMeanCoordinatorRunRequest {
      * MarketCap dataset; a requested weighting without it fails the run.
      */
     capTiltWeight?: ActiveCapTiltWeight;
+    /** Replay-only per-selector repeat-asset cooldown; 0 = disabled. */
+    selectionCooldownBars?: number;
 }
 
 export interface TopMeanHorizonSummary {
@@ -139,6 +141,9 @@ export interface TopMeanHorizonSummary {
     latestArms?: Partial<Record<OpenScoreUsdLatestSelectorName, ReplayComparison>>;
     /** All Finder Arm Performance comparisons; absent on older result files. */
     armComparisons?: Partial<Record<FinderArmPerformanceArm, ReplayComparison>>;
+    /** Contributor-excluded Finder summaries; absent in older result snapshots. */
+    armComparisonsExTopContributor?: Partial<Record<FinderArmPerformanceArm, ReplayComparison>>;
+    armTopContributors?: Partial<Record<FinderArmPerformanceArm, { asset: string | null; events: number }>>;
 }
 
 export interface TopMeanAnnualReplayWindow {
@@ -162,6 +167,8 @@ export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
 
 export interface TopMeanResultSummary {
     runId: string;
+    /** Effective selector cooldown used by the replay; 0 = off. */
+    selectionCooldownBars?: number;
     completed: boolean;
     archiveComplete: boolean;
     archiveRequested?: boolean;
@@ -242,6 +249,23 @@ export function buildTopMeanHorizonSummaries(
                             TOP_Z: h.topZ,
                         },
             armComparisons,
+            ...(h.armExTopContributorComparisons ? {
+                armComparisonsExTopContributor: Object.fromEntries(
+                    (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[])
+                        .filter((arm) => h.armExTopContributorComparisons?.[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]])
+                        .map((arm) => [arm, h.armExTopContributorComparisons![FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]]]),
+                ) as Partial<Record<FinderArmPerformanceArm, ReplayComparison>>,
+            } : {}),
+            ...(h.armTopContributorAssets ? {
+                armTopContributors: Object.fromEntries(
+                    (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[])
+                        .filter((arm) => h.armTopContributorAssets?.[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]] !== undefined)
+                        .map((arm) => [arm, {
+                            asset: h.armTopContributorAssets![FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]] ?? null,
+                            events: h.armTopContributorEvents?.[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]] ?? 0,
+                        }]),
+                ) as Partial<Record<FinderArmPerformanceArm, { asset: string | null; events: number }>>,
+            } : {}),
         };
     });
 }
@@ -393,6 +417,8 @@ export function shouldEmitTopMeanReplayProgress(
 
 export interface TopMeanStatusResponse {
     runId: string;
+    /** Effective replay cooldown; 0 means disabled. */
+    selectionCooldownBars?: number;
     status: "running" | "completed" | "interrupted" | "failed";
     phase: "preflight" | "backtesting" | "replay" | "completed" | "interrupted" | "failed";
     fingerprint?: string;
@@ -562,6 +588,7 @@ export class TopMeanCoordinatorEngine {
     public getStatus(): TopMeanStatusResponse {
         return {
             runId: this._request.runId,
+            selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
             status: this.manifest?.status || (this.isStopped ? "interrupted" : "running"),
             phase: this.currentPhase,
             fingerprint: this.manifest?.fingerprint,
@@ -676,6 +703,7 @@ export class TopMeanCoordinatorEngine {
         // records the requested cap-tilt weighting so archived runs are
         // self-describing.
         manifest.capTiltWeight = this._request.capTiltWeight;
+        manifest.selectionCooldownBars = this._request.selectionCooldownBars ?? 0;
     }
 
     private async buildArchiveManifest(): Promise<TopMeanArchiveManifest> {
@@ -687,6 +715,7 @@ export class TopMeanCoordinatorEngine {
         const strategy = await ensureBuiltInStrategyLoaded(this._request.strategyKey);
         const normalizeApplied = typeof strategy?.normalizeParams === "function";
         return {
+            selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
             strategy: {
                 key: this._request.strategyKey,
                 params: normalizeApplied
@@ -1101,9 +1130,16 @@ export class TopMeanCoordinatorEngine {
                 // The replay's later write merges its fields into the same file
                 // via `{ ...replayResult, currentSnapshot }`.
                 const snapshotWriteStartedAt = performance.now();
-                atomicWriteJsonSync(resultJsonPath, { currentSnapshot: currentSnapshotResult });
+                atomicWriteJsonSync(resultJsonPath, {
+                    currentSnapshot: currentSnapshotResult,
+                    selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+                });
                 this.performanceDiagnostic.phases.resultWriteMs += performance.now() - snapshotWriteStartedAt;
-                emitNdjson({ type: "current_snapshot", currentSnapshot: currentSnapshotResult });
+                emitNdjson({
+                    type: "current_snapshot",
+                    currentSnapshot: currentSnapshotResult,
+                    selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+                });
             }
 
 
@@ -1397,6 +1433,9 @@ export class TopMeanCoordinatorEngine {
                         ...(this._request.capTiltWeight && replayCapTiltLookup
                             ? { capTiltWeight: this._request.capTiltWeight, lookupMarketCap: replayCapTiltLookup }
                             : {}),
+                        ...(this._request.selectionCooldownBars
+                            ? { selectionCooldownBars: this._request.selectionCooldownBars }
+                            : {}),
                         onPhase: (phase, detail, completed, total) => {
                             if (!detail) return;
                             if (phase !== activeReplayPhase) {
@@ -1536,6 +1575,7 @@ export class TopMeanCoordinatorEngine {
                     ...replayResult,
                     annualReports,
                     currentSnapshot: this.currentSnapshotResult,
+                    selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
                     performance: this.performanceSnapshot(),
                 });
                 this.performanceDiagnostic.phases.resultWriteMs += performance.now() - finalWriteStartedAt;
@@ -1550,11 +1590,15 @@ export class TopMeanCoordinatorEngine {
             const annualReportLines = annualReports.flatMap((annual) => [
                 "",
                 `================ OPEN_SCORE USD | CALENDAR YEAR ${annual.year} ================`,
+                ...(this._request.selectionCooldownBars
+                    ? [`Selection cooldown: ${this._request.selectionCooldownBars} target-asset bars; state reset at the start of this independent annual replay.`]
+                    : []),
                 ...annual.reportLines,
             ]);
 
             this.resultSummary = {
                 runId: this._request.runId,
+                selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
                 completed: true,
                 archiveComplete: false,
                 counts: this.counts,
@@ -1566,6 +1610,14 @@ export class TopMeanCoordinatorEngine {
                 candidateOutcomes: replayResult.candidateOutcomes,
                 warnings: replayResult.warnings,
                 reportLines: [
+                    ...(this._request.selectionCooldownBars
+                        ? [
+                            `Selection cooldown: ${this._request.selectionCooldownBars} target-asset bars per selector arm.`,
+                            "Annual replay windows reset cooldown state independently.",
+                            "Current snapshot is a raw score snapshot; cooldown applies to historical replay selections.",
+                            "",
+                        ]
+                        : []),
                     ...replayResult.reportLines,
                     ...annualReportLines,
                     // Additive MarketCap provenance (audit coverage/

@@ -346,6 +346,10 @@ export function renderTopMeanResults(
 
     let html = "";
 
+    if ((summary.selectionCooldownBars ?? 0) > 0) {
+        html += `<div class="batch-report-note">Selection cooldown: ${summary.selectionCooldownBars} target-asset bars per selector arm; annual replay windows reset independently. The current snapshot uses raw scores, while cooldown applies to historical replay picks.</div>`;
+    }
+
     // 0. Current TOP_MEAN snapshot (Phase 1): positions open at the latest
     // common closed candle. Surfaced separately from the historical
     // OPEN_SCORE replay leaderboard below — the two answer different

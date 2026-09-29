@@ -5,7 +5,7 @@
  * retention beyond the compact delta stream. Not exported through the engine
  * entry point.
  */
-import type { SelectorName } from "./types";
+import type { ReplayArmField, SelectorName } from "./types";
 
 /** Bounded phase callback shared by every replay stage. */
 export type ReplayPhaseCallback = (
@@ -144,10 +144,9 @@ export interface EventView {
 }
 
 /**
- * Events with a >= 2-member profit pool (full-window or causal) but fewer
- * than 2 ordinary positives. They form no EventView (the ordinary arms
- * cannot fire there), but the profit arms are still evaluated on them so
- * the causal selector's coverage does not depend on the ordinary pool.
+ * Events with a profit pool but fewer than 2 ordinary positives. Singleton
+ * pools are retained only when cooldown is enabled, because they can still
+ * select an asset and advance that arm's cooldown state.
  */
 export interface ProfitOnlyEvent {
     timeSec: number;
@@ -172,6 +171,19 @@ export interface BotViewPicks {
     meanProfitNow: number;
     z: number;
 }
+
+/** Compact cooldown-resolved selector pick. Candidate pools live on the event. */
+export interface ReplayArmSelection {
+    selectedAssetIndex: number;
+    tiedCount: number;
+    /** Mean-tied baseline size for unique-only arms; otherwise eligible pool size. */
+    poolSize: number;
+    /** Full pool size after cooldown, before unique-only refinement. */
+    eligiblePoolSize: number;
+    /** TOP/BOT_MEAN_RAW_UNIQUE uses the existing tied-mean control convention. */
+    control: "leave_one_out" | "mean_tied_set";
+}
+export type ReplayArmSelectionMap = Partial<Record<ReplayArmField, ReplayArmSelection>>;
 
 /** Cap-tilt coverage counters (docs/open-score-cap-tilt.md). */
 export interface CapTiltCoverageCounters {
