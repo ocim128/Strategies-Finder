@@ -1479,6 +1479,7 @@ export class TopMeanCoordinatorEngine {
                         // suppress event and ongoing-detail rows when this is
                         // false. Standalone keeps them for the details UI.
                         includeEventDetails: !finderArmProfile,
+                        includeAssetSwitchContributorSummary: finderArmProfile,
                         ...(tradeWriter ? {
                             onAssetSwitchTrade: async (row) => {
                                 if (phase0bWriterFailed) return;

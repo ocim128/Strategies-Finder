@@ -145,6 +145,12 @@ export interface EventView {
     ties: Record<SelectorName, number>;
 }
 
+/** Minimal event input needed by the path-dependent asset-switch simulator. */
+export interface AssetSwitchDecision {
+    timeSec: number;
+    picks: Readonly<Record<ReplayArmField, number | null>>;
+}
+
 /**
  * Events with a profit pool but fewer than 2 ordinary positives. Singleton
  * pools are retained only when cooldown is enabled, because they can still

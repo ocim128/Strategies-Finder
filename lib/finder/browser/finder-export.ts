@@ -208,7 +208,7 @@ export function buildArmPerformanceTopResultsPayload(args: {
 } {
 	const { results, runContext, inventoryComplete, selectedArm, scoringBasis = "raw", displayFilter = {} } = args;
 	const replayMode = results[0]?.replayMode ?? runContext?.replayMode ?? "horizon";
-	const effectiveBasis = replayMode === "asset_switch" ? "raw" : scoringBasis;
+	const effectiveBasis = scoringBasis;
 	const filteredResults = displayFilter.eventFilterEnabled
 		? results.filter((candidate) => {
 			const metric = getFinderArmPerformanceMetric(candidate, selectedArm, effectiveBasis);

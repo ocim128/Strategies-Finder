@@ -151,17 +151,20 @@ export function persistTopMeanReplayMode(mode: ReplayMode): void {
     });
 }
 
-const TOP_MEAN_SWITCH_RESULT_STORAGE_LIMIT = 1_000;
-function compactTopMeanSwitchSection(section: NonNullable<TopMeanResultSummary["assetSwitch"]>) {
+const TOP_MEAN_SWITCH_RESULT_STORAGE_LIMIT_PER_ARM = 20;
+function compactTopMeanSwitchSection(
+    section: NonNullable<TopMeanResultSummary["assetSwitch"]>,
+    retainTradePreview: boolean,
+) {
     const trades = section.trades;
     let boundedTrades: typeof trades;
-    if (trades) {
+    if (retainTradePreview && trades) {
         const retainedByArm = new Map<string, number>();
         const selected: NonNullable<typeof trades> = [];
         for (let index = trades.length - 1; index >= 0; index -= 1) {
             const row = trades[index]!;
             const retained = retainedByArm.get(row.arm) ?? 0;
-            if (retained >= TOP_MEAN_SWITCH_RESULT_STORAGE_LIMIT) continue;
+            if (retained >= TOP_MEAN_SWITCH_RESULT_STORAGE_LIMIT_PER_ARM) continue;
             retainedByArm.set(row.arm, retained + 1);
             selected.push(row);
         }
@@ -349,14 +352,14 @@ export function persistLatestTopMeanResult(result: TopMeanResultSummary): void {
         const { eventDetails: _eventDetails, ...persistedAnnual } = annual;
         return {
             ...persistedAnnual,
-            ...(annual.assetSwitch ? { assetSwitch: compactTopMeanSwitchSection(annual.assetSwitch) } : {}),
+            ...(annual.assetSwitch ? { assetSwitch: compactTopMeanSwitchSection(annual.assetSwitch, false) } : {}),
         };
     });
     writePersistedJson({
         ...TOP_MEAN_LATEST_RESULT_STORAGE,
         data: {
             ...persistedResult,
-            ...(result.assetSwitch ? { assetSwitch: compactTopMeanSwitchSection(result.assetSwitch) } : {}),
+            ...(result.assetSwitch ? { assetSwitch: compactTopMeanSwitchSection(result.assetSwitch, true) } : {}),
             ...(persistedAnnualReports ? { annualReports: persistedAnnualReports } : {}),
         },
         onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_save_failed", {

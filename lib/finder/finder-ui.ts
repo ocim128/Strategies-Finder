@@ -646,7 +646,10 @@ export class FinderUI {
 		inventoryIncomplete = false,
 		basis: FinderArmPerformanceScoringBasis = context?.searchOptions.armPerformance?.scoringBasis ?? "raw",
 		filter: FinderArmPerformanceDisplayFilter = {},
-		adjustedMetricsUnavailable = results.some((candidate) => !candidate.metricsExTopContributor?.[arm]),
+		adjustedMetricsUnavailable = results.some((candidate) => candidate.replayMode === "asset_switch"
+			? candidate.assetSwitchMetrics[arm]?.status === "complete"
+				&& !candidate.assetSwitchMetrics[arm]?.topContributorExclusion
+			: !candidate.metricsExTopContributor?.[arm]),
 	): void {
         const list = this.getListElement();
         const copyButton = this.getCopyButton();
@@ -680,7 +683,7 @@ export class FinderUI {
 
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
-		const effectiveBasis = replayMode === "asset_switch" ? "raw" : basis;
+		const effectiveBasis = basis;
 		const note = document.createElement("div");
 		note.className = "finder-sub finder-arm-performance-note";
 		const cooldownBars = replayMode === "horizon" && context?.searchOptions.armPerformance?.selectionCooldownEnabled
@@ -691,8 +694,8 @@ export class FinderUI {
 				? `Completed-trade filter: ${filter.minEvents ?? 1}..${filter.maxEvents ?? "unlimited"}.`
 				: `Event filter: ${filter.minEvents ?? 1}..${filter.maxEvents ?? "unlimited"} completed comparisons.`
 			: replayMode === "asset_switch" ? "Completed-trade filter: off." : "Event filter: off.";
-		note.textContent = replayMode === "asset_switch"
-			? `Asset-switch replay holds one long target-asset position per arm, starts flat, and enters fixed $1,000 non-compounding positions. Ranking uses total net P&L in USD, including the open mark; costs are informational. ${eventFilterText} Ties and no-pick decisions keep the current holding. A pending order is shown separately from the raw current snapshot.${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`
+			note.textContent = replayMode === "asset_switch"
+				? `Asset-switch replay holds one long target-asset position per arm, starts flat, and enters fixed $1,000 non-compounding positions. Raw ranking uses total net P&L in USD, including the open mark; costs are informational. Basis: ${effectiveBasis === "raw" ? "raw" : "top contributor excluded"}.${effectiveBasis === "exclude_top_contributor" ? " The highest cumulative asset P&L contribution is removed from the reported totals; the original position path is unchanged." : ""} ${eventFilterText} Ties and no-pick decisions keep the current holding. A pending order is shown separately from the current position snapshot.${effectiveBasis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for some saved results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`
 			: `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Basis: ${effectiveBasis === "raw" ? "raw" : "top contributor excluded"}. ${eventFilterText} Cooldown: ${cooldownBars} bars${cooldownBars > 0 ? " (requires a new run to change)" : " (off)"}. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${effectiveBasis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for older results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
         list.appendChild(note);
 
@@ -727,12 +730,23 @@ export class FinderUI {
 			metrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.replayMode === "horizon" ? `${item.horizon} bars` : "hold until asset changes"}`));
 			if (item.replayMode === "asset_switch") {
 				const switchMetric = selectedSwitchMetric!;
+				const contributorExclusion = switchMetric.topContributorExclusion;
 				metrics.appendChild(this.createMetricChip(`Status ${switchMetric.status.replaceAll("_", " ")}`));
-				appendSwitchPnlChip("Total net P&L", switchMetric.totalNetPnl);
-				appendSwitchPnlChip("Realized", switchMetric.realizedNetPnl);
-				appendSwitchPnlChip("Open", switchMetric.openPositionNetPnl);
+				appendSwitchPnlChip("Total net P&L", effectiveBasis === "exclude_top_contributor"
+					? contributorExclusion?.adjustedTotalNetPnl ?? null
+					: switchMetric.totalNetPnl);
+				appendSwitchPnlChip("Realized", effectiveBasis === "exclude_top_contributor"
+					? contributorExclusion?.adjustedRealizedNetPnl ?? null
+					: switchMetric.realizedNetPnl);
+				appendSwitchPnlChip("Open", effectiveBasis === "exclude_top_contributor"
+					? contributorExclusion?.adjustedOpenPositionNetPnl ?? null
+					: switchMetric.openPositionNetPnl);
 				metrics.appendChild(this.createMetricChip(`Completed trades ${switchMetric.completedTrades} · entries ${switchMetric.enteredCount}`));
 				metrics.appendChild(this.createMetricChip(`Costs ${formatNullableCurrency(switchMetric.totalCosts)}`));
+				if (effectiveBasis === "exclude_top_contributor") {
+					metrics.appendChild(this.createMetricChip("TOP CONTRIBUTOR EXCLUDED"));
+					metrics.appendChild(this.createMetricChip(`Excluded ${contributorExclusion?.asset ?? "n/a"} (${formatNullableCurrency(contributorExclusion?.contributionNetPnl ?? null)})`));
+				}
 				metrics.appendChild(this.createMetricChip("Fixed $1,000 per entry · non-compounding"));
 			} else {
 				const horizonMetric = effectiveBasis === "exclude_top_contributor"
@@ -759,8 +773,8 @@ export class FinderUI {
                 paramsText: this.formatParams(item.params),
                 detailLines: [
                     `Pair failures ${item.pairCoverage.failedPairs} · replay target load failures ${item.pairCoverage.replayTargetLoadFailures}`,
-                    ...(selectedSwitchMetric?.openPosition
-                        ? [`Holding ${selectedSwitchMetric.openPosition.asset} since ${new Date(selectedSwitchMetric.openPosition.entryTimeSec * 1000).toISOString()} · open P&L ${formatNullableCurrency(selectedSwitchMetric.openPosition.openNetPnl)}`]
+					...(selectedSwitchMetric?.openPosition
+						? [`Holding ${selectedSwitchMetric.openPosition.asset} since ${new Date(selectedSwitchMetric.openPosition.entryTimeSec * 1000).toISOString()} · current-path open P&L ${formatNullableCurrency(selectedSwitchMetric.openPosition.openNetPnl)}`]
                         : []),
                     ...(selectedSwitchMetric?.pendingOrder
                         ? [`Pending ${selectedSwitchMetric.pendingOrder.side} ${selectedSwitchMetric.pendingOrder.destinationAsset ?? ""} from ${new Date(selectedSwitchMetric.pendingOrder.decisionTimeSec * 1000).toISOString()}${selectedSwitchMetric.pendingOrder.scheduledTimeSec !== null ? ` · scheduled ${new Date(selectedSwitchMetric.pendingOrder.scheduledTimeSec * 1000).toISOString()}` : " · no executable open within the window"}`]

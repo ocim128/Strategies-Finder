@@ -588,6 +588,15 @@ export interface AssetSwitchArmSummary {
     totalCosts: number;
     openPosition: AssetSwitchOpenPosition | null;
     pendingOrder: AssetSwitchPendingOrder | null;
+    /** Optional Finder sensitivity result; absent on older results and non-Finder replays. */
+    topContributorExclusion?: {
+        asset: string;
+        /** The removed asset's realized P&L plus its terminal open mark, if held. */
+        contributionNetPnl: number;
+        adjustedTotalNetPnl: number;
+        adjustedRealizedNetPnl: number;
+        adjustedOpenPositionNetPnl: number;
+    };
     diagnosticCounts: {
         missingTarget: number;
         invalidTimestamp: number;
@@ -664,6 +673,8 @@ export interface RunOpenScoreUsdReplayOptions {
     onCandidateOutcome?: (row: CandidateOutcomeRecord) => void | Promise<void>;
     /** Stream each finalized switch trade to an archive sink without retaining full history. */
     onAssetSwitchTrade?: (row: AssetSwitchTradeRecord) => void | Promise<void>;
+    /** Retain exact per-asset P&L totals for Finder's post-run contributor exclusion. */
+    includeAssetSwitchContributorSummary?: boolean;
     /** Phase transition + bounded-chunk progress. */
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate" | "switch", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */

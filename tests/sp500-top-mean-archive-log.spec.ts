@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
+import { cleanOldArtifacts, getRunDir } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 import {
     archiveCompletedTopMeanRun,
     createTopMeanAssetSwitchTradeWriter,
@@ -563,6 +564,38 @@ async function testReusedRunIdClearsStaleArchiveFiles(): Promise<void> {
     console.log("PASS: reused run id clears stale archive files");
 }
 
+async function testInterruptedAssetSwitchStagingIsRemovedWithItsRunDirectory(): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), "top-mean-switch-stage-retention-"));
+    try {
+        const runId = "top_mean_switch_interrupted_stage_1";
+        const runDir = getRunDir(runId, root);
+        const writer = await createTopMeanAssetSwitchTradeWriter(root, runId, "full");
+        await writer.write({
+            arm: "topMean", asset: "AAPL", decisionTimeSec: 1_700_000_000,
+            entryTimeSec: 1_700_000_001, entryPrice: 100,
+            exitTimeSec: null, exitPrice: null, holdingDurationSec: null,
+            netPnl: null, entryCost: 1, exitCost: 0, status: "open",
+        });
+        await writer.close();
+
+        assert.ok(
+            writer.path.startsWith(`${runDir}${sep}`),
+            "staging must be nested under the retained run directory",
+        );
+        assert.equal(existsSync(writer.path), true);
+
+        // Simulate a process crash: leave the staged file behind and age its
+        // owner directory so normal artifact retention is responsible for it.
+        const expiredAt = new Date(Date.now() - 60_000);
+        utimesSync(runDir, expiredAt, expiredAt);
+        cleanOldArtifacts(root, 1_000);
+
+        assert.equal(existsSync(runDir), false, "retention removes the interrupted run and its staging data");
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+}
+
 async function main(): Promise<void> {
     await testCompletedRunWritesArchive();
     await testCooldownArchiveIdentity();
@@ -570,6 +603,7 @@ async function main(): Promise<void> {
     await testDisabledAndFailedWritesAreBestEffort();
     await testPhase0bStreamFailurePropagatesWithoutCrashing();
     await testReusedRunIdClearsStaleArchiveFiles();
+    await testInterruptedAssetSwitchStagingIsRemovedWithItsRunDirectory();
     await testMarkedRegistryPoolMatch();
     console.log("PASS: sp500-top-mean-archive-log.spec.ts");
 }

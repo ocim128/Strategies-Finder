@@ -325,9 +325,17 @@ function renderAssetSwitchTradeDetails(
     const arm = selectorArm(selector);
     const annuals = summary.annualReports ?? [];
     const selectedAnnuals = year === null ? [] : annuals.filter((annual) => annual.year === year);
+    const annualSection = selectedAnnuals[0]?.assetSwitch;
+    const annualTradeCount = annualSection?.tradeCount ?? annualSection?.trades?.length ?? 0;
+    const annualPreviewMissing = !!annualSection
+        && annualTradeCount > 0
+        && (annualSection.trades?.length ?? 0) === 0;
+    const usesFullWindowPreview = year !== null && (!annualSection || annualPreviewMissing);
     const section = year === null
         ? summary.assetSwitch
-        : selectedAnnuals[0]?.assetSwitch;
+        : usesFullWindowPreview
+            ? summary.assetSwitch
+            : annualSection;
     const rows = (section?.trades ?? []).filter((trade) =>
         arm !== null
         && trade.arm === arm
@@ -337,11 +345,18 @@ function renderAssetSwitchTradeDetails(
     const shipped = section?.trades?.length ?? 0;
     let html = `<div class="batch-open-score-details-heading">Asset-Switch Trade Details — ${escapeHtml(selector)}</div>`;
     html += `<div class="batch-open-score-details-note">These are filled long-only position records from an independent path-dependent replay. Each entry uses fixed $1,000 notional; net P&amp;L includes entry and exit costs. An open row is marked at the last closed candle available at that replay window's end. No horizon or random-control comparison is implied.</div>`;
+    if (usesFullWindowPreview && year !== null) {
+        const explanation = annualPreviewMissing
+            ? `The independent ${year} replay summary has ${annualTradeCount.toLocaleString()} trades but no retained annual preview.`
+            : `No independent annual replay section is available for ${year}.`;
+        html += `<div class="batch-report-warning">${escapeHtml(explanation)} Showing the full-window preview filtered by UTC decision year; this is not an independent annual replay.</div>`;
+    }
     if (total > shipped) {
         html += `<div class="batch-report-warning">TRUNCATED FOR THE UI — the wire contains the most recent ${shipped.toLocaleString()} of ${total.toLocaleString()} trade records across all arms; this view shows ${rows.length.toLocaleString()} rows for the selected arm.</div>`;
     }
     if (rows.length === 0) {
-        html += `<div class="batch-open-score-details-empty">No ${escapeHtml(selector)} trade records for this replay window${year === null ? "" : ` in ${year}`}.</div>`;
+        const source = usesFullWindowPreview ? "full-window preview" : "this replay window";
+        html += `<div class="batch-open-score-details-empty">No ${escapeHtml(selector)} trade records in ${source}${year === null ? "" : ` for ${year}`}.</div>`;
         return html;
     }
     const time = (value: number | null): string => value === null
@@ -350,7 +365,12 @@ function renderAssetSwitchTradeDetails(
     const money = (value: number | null): string => value === null || !Number.isFinite(value)
         ? "n/a"
         : `${value >= 0 ? "+" : "−"}$${Math.abs(value).toFixed(2)}`;
-    html += `<details open class="batch-open-score-details-section"><summary>${year === null ? "Full window" : `Calendar Year ${year}`} | ${rows.length.toLocaleString()} trade records</summary>`;
+    const sectionLabel = year === null
+        ? "Full window"
+        : usesFullWindowPreview
+            ? `Filtered Full-Window Preview — Calendar Year ${year}`
+            : `Independent Calendar Year ${year}`;
+    html += `<details open class="batch-open-score-details-section"><summary>${sectionLabel} | ${rows.length.toLocaleString()} trade records</summary>`;
     html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table"><thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Asset</th><th>Net P&amp;L</th><th>Costs</th><th>Holding</th><th>Status</th></tr></thead><tbody>`;
     for (const trade of rows) {
         const cost = trade.entryCost + trade.exitCost;

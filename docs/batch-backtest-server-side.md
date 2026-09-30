@@ -390,6 +390,17 @@ output is stored under the distinct
 candidate-outcome diagnostics. The cross-sectional `currentSnapshot` remains
 a raw view and is distinct from each arm's held position and pending order.
 
+The latest TOP_MEAN result saved in browser storage keeps at most the 20 most
+recent full-window trade rows per arm. Independent annual sections retain
+their scalar summaries and exact trade counts, but no trade rows. This keeps a
+multi-year result within browser storage budgets; the permanent archive still
+contains the complete streamed JSONL history. If a selected year has no
+retained independent annual trade preview, the details view filters the
+full-window preview by UTC decision year and labels it as a filtered preview,
+not an independent annual replay. Switch trade staging files live under their
+owning run's artifact directory, so artifact retention also removes abandoned
+staging files after a crashed process.
+
 Changing replay mode requires a rerun and does not reinterpret a completed
 result. Horizon and cooldown controls are disabled in switch mode while their
 horizon values are retained. The switch replay does not use cooldown.
@@ -422,8 +433,10 @@ Only completed runs are archived. Fixed-horizon archives use
 causal feature sidecar; frozen legacy archives remain readable as
 `top_mean_archive.v2`. Switch archives use the separate
 `top_mean_asset_switch_archive.v1` schema and preserve their mode-specific
-summary and complete streamed trade history. Browser summaries and persisted
-previews retain up to 1,000 detail rows per arm. The streamed result and terminal status expose
+summary and complete streamed trade history. Live browser summaries keep a
+bounded preview of up to 1,000 detail rows per arm per replay window, while
+localStorage persists only 20 full-window rows per arm and scalar-only annual
+sections. The streamed result and terminal status expose
 `archiveComplete`, `archiveRequested`, and, when
 applicable, `archiveDir` or `archiveError`. Archive writes remain best-effort,
 and saved archives have no TTL or cleanup sweep.

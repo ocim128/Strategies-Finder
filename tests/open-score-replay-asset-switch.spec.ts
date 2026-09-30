@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { runAssetSwitchReplay } from "../lib/batch-backtest/open-score-replay/asset-switch";
-import type { Candidate, EventView } from "../lib/batch-backtest/open-score-replay/internal-types";
+import type { AssetSwitchDecision, Candidate, EventView } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { AssetSwitchReplaySummary, ReplayArmField, RunOpenScoreUsdReplayOptions } from "../lib/batch-backtest/open-score-replay/types";
 import type { OHLCVData } from "../lib/types/strategies";
 
@@ -22,32 +22,60 @@ const B = candidate(1, 6, 6, 2);
 const C = candidate(2, 3, 1, 8);
 const DEFAULT_POOL = [A, B, C];
 
+function uniqueExtreme(
+    pool: readonly Candidate[],
+    key: "raw" | "mean" | "z",
+    direction: "max" | "min",
+): number | null {
+    if (pool.length === 0) return null;
+    const score = (row: Candidate): number => key === "z" ? row.z ?? Number.NEGATIVE_INFINITY : row[key];
+    let best = score(pool[0]!);
+    for (const row of pool.slice(1)) {
+        const value = score(row);
+        if (direction === "max" ? value > best : value < best) best = value;
+    }
+    const matches = pool.filter((row) => score(row) === best);
+    return matches.length === 1 ? matches[0]!.assetIndex : null;
+}
+
+function meanRawUnique(pool: readonly Candidate[], direction: "max" | "min"): number | null {
+    if (pool.length === 0) return null;
+    const bestMean = pool.reduce((best, row) => direction === "max" ? Math.max(best, row.mean) : Math.min(best, row.mean),
+        direction === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY);
+    return uniqueExtreme(pool.filter((row) => row.mean === bestMean), "raw", direction);
+}
+
+function switchPicks(pools: Pick<EventView, "positives" | "profitPositives" | "profitNowPositives" | "profitNowConfidencePositives">): AssetSwitchDecision["picks"] {
+    return {
+        topRawProfitNow: uniqueExtreme(pools.profitNowPositives, "raw", "max"),
+        topMeanProfitNow: uniqueExtreme(pools.profitNowPositives, "mean", "max"),
+        topRawProfitNowConf: uniqueExtreme(pools.profitNowConfidencePositives, "raw", "max"),
+        topZ: uniqueExtreme(pools.profitNowPositives, "z", "max"),
+        topRaw: uniqueExtreme(pools.positives, "raw", "max"),
+        topMean: uniqueExtreme(pools.positives, "mean", "max"),
+        topMeanRawUnique: meanRawUnique(pools.positives, "max"),
+        topRawProfit: uniqueExtreme(pools.profitPositives, "raw", "max"),
+        topMeanProfit: uniqueExtreme(pools.profitPositives, "mean", "max"),
+        botRawProfitNow: uniqueExtreme(pools.profitNowPositives, "raw", "min"),
+        botMeanProfitNow: uniqueExtreme(pools.profitNowPositives, "mean", "min"),
+        botZ: uniqueExtreme(pools.profitNowPositives, "z", "min"),
+        botRaw: uniqueExtreme(pools.positives, "raw", "min"),
+        botMean: uniqueExtreme(pools.positives, "mean", "min"),
+        botMeanRawUnique: meanRawUnique(pools.positives, "min"),
+    };
+}
+
 function view(
     timeSec: number,
     pools: Partial<Pick<EventView, "positives" | "profitPositives" | "profitNowPositives" | "profitNowConfidencePositives">> = {},
-): EventView {
+): AssetSwitchDecision {
     const positives = pools.positives ?? DEFAULT_POOL;
     const profitPositives = pools.profitPositives ?? DEFAULT_POOL;
     const profitNowPositives = pools.profitNowPositives ?? DEFAULT_POOL;
     const profitNowConfidencePositives = pools.profitNowConfidencePositives ?? DEFAULT_POOL;
     return {
         timeSec,
-        positives,
-        profitPositives,
-        profitNowPositives,
-        profitNowConfidencePositives,
-        topRaw: -1,
-        topMean: -1,
-        topMeanRawUnique: -1,
-        topMeanRawUniquePool: [],
-        topRawProfit: -1,
-        topMeanProfit: -1,
-        topRawProfitNow: -1,
-        topMeanProfitNow: -1,
-        topRawProfitNowConf: -1,
-        topZ: -1,
-        maxActivePairs: 1,
-        ties: { RAW: 0, MEAN: 0 },
+        picks: switchPicks({ positives, profitPositives, profitNowPositives, profitNowConfidencePositives }),
     };
 }
 
@@ -56,7 +84,7 @@ function candles(rows: Array<[number, number, number]>): OHLCVData[] {
 }
 
 async function replay(args: {
-    views: EventView[];
+    views: AssetSwitchDecision[];
     data: Record<string, OHLCVData[] | null>;
     endSec?: number;
     cutoffSec?: number;
@@ -365,6 +393,62 @@ describe("OPEN_SCORE asset-switch replay", () => {
         expect(gapInsideExposure.arms.topRaw.diagnosticCounts.dataGap).to.be.greaterThan(0);
     });
 
+    it("stops sale and replacement execution at sell-side and buy-side gap failures", async () => {
+        const fortyDays = 40 * 86_400;
+        const onlyA = {
+            positives: [A], profitPositives: [A],
+            profitNowPositives: [A], profitNowConfidencePositives: [A],
+        };
+        const onlyB = {
+            positives: [B], profitPositives: [B],
+            profitNowPositives: [B], profitNowConfidencePositives: [B],
+        };
+        const sellGapArchive: Array<{ arm: ReplayArmField; asset: string; status: string }> = [];
+        const sellGap = okResult(await replay({
+            views: [view(ORIGIN, onlyA), view(ORIGIN + 39 * 86_400, onlyB)],
+            data: {
+                A: candles([[ORIGIN + HOUR, 100, 100], [ORIGIN + fortyDays, 110, 111]]),
+                B: candles([[ORIGIN + fortyDays, 50, 51], [ORIGIN + fortyDays + HOUR, 51, 52]]),
+            },
+            endSec: ORIGIN + fortyDays + HOUR,
+            onAssetSwitchTrade: (row) => { sellGapArchive.push({ arm: row.arm, asset: row.asset, status: row.status }); },
+        }));
+        expect(sellGap.arms.topRaw.status).to.equal("incomplete");
+        expect(sellGap.arms.topRaw.diagnosticCounts.dataGap).to.be.greaterThan(0);
+        expect(sellGap.arms.topRaw.completedTrades).to.equal(0);
+        expect(sellGap.arms.topRaw.enteredCount).to.equal(1);
+        expect(sellGap.arms.topRaw.partialRealizedNetPnl).to.equal(0);
+        expect(sellGap.arms.topRaw.openPosition?.asset).to.equal("A");
+        const topRawSellGapTrades = sellGap.trades?.filter((row) => row.arm === "topRaw") ?? [];
+        expect(topRawSellGapTrades).to.have.length(1);
+        expect(topRawSellGapTrades[0]).to.deep.include({ asset: "A", status: "open", exitTimeSec: null });
+        expect(sellGap.trades?.some((row) => row.arm === "topRaw" && row.asset === "B")).to.equal(false);
+        expect(sellGapArchive.filter((row) => row.arm === "topRaw")).to.deep.equal([
+            { arm: "topRaw", asset: "A", status: "open" },
+        ]);
+
+        const buyGapArchive: Array<{ arm: ReplayArmField; asset: string; status: string }> = [];
+        const buyGap = okResult(await replay({
+            views: [view(ORIGIN, onlyA), view(ORIGIN + HOUR, onlyB)],
+            data: {
+                A: candles([[ORIGIN + HOUR, 100, 100], [ORIGIN + 2 * HOUR, 101, 102]]),
+                B: candles([[ORIGIN + HOUR, 50, 50], [ORIGIN + fortyDays, 60, 61]]),
+            },
+            endSec: ORIGIN + fortyDays + HOUR,
+            onAssetSwitchTrade: (row) => { buyGapArchive.push({ arm: row.arm, asset: row.asset, status: row.status }); },
+        }));
+        expect(buyGap.arms.topRaw.status).to.equal("incomplete");
+        expect(buyGap.arms.topRaw.diagnosticCounts.dataGap).to.be.greaterThan(0);
+        expect(buyGap.arms.topRaw.completedTrades).to.equal(1, "the sale before the replacement gap is valid history");
+        expect(buyGap.arms.topRaw.enteredCount).to.equal(1);
+        expect(buyGap.arms.topRaw.openPosition).to.equal(null);
+        expect(buyGap.trades?.filter((row) => row.arm === "topRaw")).to.have.length(1);
+        expect(buyGap.trades?.some((row) => row.arm === "topRaw" && row.asset === "B")).to.equal(false);
+        expect(buyGapArchive.filter((row) => row.arm === "topRaw")).to.deep.equal([
+            { arm: "topRaw", asset: "A", status: "closed" },
+        ]);
+    });
+
     it("normalizes seconds, milliseconds, ISO strings, and BusinessDay timestamps", async () => {
         const day = Math.floor(Date.parse("2024-02-01T00:00:00.000Z") / 1_000);
         const data = [
@@ -424,7 +508,7 @@ describe("OPEN_SCORE asset-switch replay", () => {
             100,
             101,
         ] as [number, number, number]);
-        const streamedByArm = new Map(ARM_FIELDS.map((arm) => [arm, 0] as const));
+        const streamedByArm = new Map<ReplayArmField, number>(ARM_FIELDS.map((arm) => [arm, 0]));
         const result = okResult(await replay({
             views,
             data: { A: candles(rows), B: candles(rows) },
@@ -446,11 +530,9 @@ describe("OPEN_SCORE asset-switch replay", () => {
     it("shares normalized target series across 15 arms while replaying 20 assets", async () => {
         const assetNames = Array.from({ length: 20 }, (_, index) => `ASSET${index}`);
         const decisionCount = 60;
-        const views = Array.from({ length: decisionCount }, (_, eventIndex) => ({
-            ...view(ORIGIN + eventIndex * HOUR, {
-                positives: [], profitPositives: [], profitNowPositives: [], profitNowConfidencePositives: [],
-            }),
-            assetSwitchPicks: Object.fromEntries(ARM_FIELDS.map((arm, armIndex) => [
+        const views: AssetSwitchDecision[] = Array.from({ length: decisionCount }, (_, eventIndex) => ({
+            timeSec: ORIGIN + eventIndex * HOUR,
+            picks: Object.fromEntries(ARM_FIELDS.map((arm, armIndex) => [
                 arm,
                 (eventIndex + armIndex) % assetNames.length,
             ])) as Record<ReplayArmField, number | null>,

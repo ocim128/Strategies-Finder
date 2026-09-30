@@ -120,7 +120,7 @@ import { evaluateTargetOutcomes } from "./open-score-replay/target-outcomes";
 import { aggregateHorizonResults } from "./open-score-replay/aggregation";
 import { sweepScoreEvents } from "./open-score-replay/event-sweep";
 import { buildCandidateViews, buildOutcomeRequests, selectAfterOutcomes } from "./open-score-replay/candidate-selection";
-import type { DecisionEvent } from "./open-score-replay/internal-types";
+import type { AssetSwitchDecision, DecisionEvent } from "./open-score-replay/internal-types";
 import { buildReportLines } from "./open-score-replay/report";
 import { createEmptyAssetSwitchSummary, runAssetSwitchReplay } from "./open-score-replay/asset-switch";
 import { REPLAY_ARM_FIELDS } from "./open-score-replay/arm-contract";
@@ -267,11 +267,19 @@ export async function runOpenScoreUsdReplay(
     );
 
     if (replayMode === "asset_switch") {
-        // Position simulation consumes the candidate snapshots directly and
-        // never consults fixed-horizon outcome eligibility or future returns.
+        // The position simulator needs only each decision time and its
+        // pre-resolved arm picks. Drop the candidate pools before replay so
+        // they are not retained alongside the path-dependent state.
+        const switchViews: AssetSwitchDecision[] = views.map((view) => {
+            if (!view.assetSwitchPicks) {
+                throw new Error("Asset-switch candidate stage omitted pre-resolved arm picks.");
+            }
+            return { timeSec: view.timeSec, picks: view.assetSwitchPicks };
+        });
+        views.length = 0;
         events = [];
         const switchOutcome = await runAssetSwitchReplay({
-            views,
+            views: switchViews,
             assetNames,
             options,
             slippageRate,

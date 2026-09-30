@@ -280,15 +280,18 @@ unavailable.
 The Arm Performance controls can change the displayed inventory without
 rerunning pair backtests:
 
-- **Exclude top contributor** (Fixed horizon only) switches ranking and cards
-  to an adjusted summary for every arm. For each configuration, arm, and
-  horizon, the replay finds the asset with the largest sum of paired excess returns, removes that
-  asset's selected events, and rebuilds the comparison and bootstrap interval.
-  Ties use asset-name order, and the largest contribution is excluded even if
-  every asset's total contribution is negative. This is a concentration
-  sensitivity calculation, not a blacklist or a calibrated confidence test.
-  Raw and adjusted summaries remain in the result; older snapshots without
-  adjusted values show them as unavailable and need a rerun.
+- **Exclude top contributor** switches ranking and cards to an adjusted
+  summary for every arm. In Fixed horizon mode, it finds the asset with the
+  largest sum of paired excess returns, removes that asset's selected events,
+  and rebuilds the comparison and bootstrap interval. In switch mode, it finds
+  the asset with the largest cumulative net P&L per arm (closed trades plus
+  that asset's terminal open mark, if held) and subtracts that contribution
+  from total, realized, and open P&L. The switch path itself is unchanged, so
+  this is a concentration sensitivity calculation rather than a counterfactual
+  replay, blacklist, or calibrated confidence test. Ties use asset-name order;
+  the highest contribution is excluded even if every asset's total is
+  negative. Raw and adjusted summaries remain in the result; older snapshots
+  without adjusted values show them as unavailable and need a rerun.
 - **Completed count filter** uses comparison-event counts in Fixed horizon mode
   and completed-trade counts in switch mode. Minimum and optional maximum are
   inclusive; an empty maximum means unlimited. The order is basis, filter,
@@ -339,11 +342,11 @@ Re-Sort uses the completed result's mode even if the live control has changed.
 Switch-mode total, realized, and open P&L values are green when positive and red
 when negative.
 
-Switch mode disables the horizon, cooldown, and contributor-exclusion controls
-while retaining their saved horizon-mode values. A mode change requires a new
-run; it never reinterprets completed results. The exclusion basis is raw for
-switch results because removing past events would change a position path.
-Both modes persist through Finder settings and bounded result snapshots;
+Switch mode disables the horizon and cooldown controls while retaining their
+saved horizon-mode values. Contributor exclusion remains available as a
+display-side sensitivity for completed switch results. A mode change requires
+a new run; it never reinterprets completed results. Both modes persist through
+Finder settings and bounded result snapshots;
 legacy mode-less results are read as fixed horizon, and unknown future modes
 are not treated as horizon results. Copy output identifies the switch
 semantics and its $1,000 long-only sizing.

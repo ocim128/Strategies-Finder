@@ -696,15 +696,91 @@ describe("BatchBacktestService analysis lifecycle", () => {
         persistLatestTopMeanResult(result);
         const restored = readLatestTopMeanResult();
         expect(restored?.replayMode).to.equal("asset_switch");
-        expect(restored?.assetSwitch?.trades).to.have.length(1_001);
-        expect(restored?.assetSwitch?.trades?.filter((row) => row.arm === "topRaw")).to.have.length(1_000);
+        expect(restored?.assetSwitch?.trades).to.have.length(21);
+        expect(restored?.assetSwitch?.trades?.filter((row) => row.arm === "topRaw")).to.have.length(20);
         expect(restored?.assetSwitch?.trades?.some((row) => row.asset === "TOP_MEAN_DETAIL")).to.equal(true);
+        const retainedTopRaw = restored?.assetSwitch?.trades?.filter((row) => row.arm === "topRaw") ?? [];
+        expect(retainedTopRaw[retainedTopRaw.length - 1]?.asset).to.equal("A1004", "the most recent full-window rows are retained");
         expect(restored?.assetSwitch?.tradeCount).to.equal(1_006);
 
         const envelope = JSON.parse((globalThis as any).localStorage.getItem(TOP_MEAN_LATEST_RESULT_STORAGE.key));
         envelope.data.replayMode = "future_mode";
         (globalThis as any).localStorage.setItem(TOP_MEAN_LATEST_RESULT_STORAGE.key, JSON.stringify(envelope));
         expect(readLatestTopMeanResult()).to.equal(null);
+    });
+
+    it("keeps multi-year switch snapshots within a small storage budget", () => {
+        const armNames = [
+            "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
+            "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
+            "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",
+        ];
+        const arms = Object.fromEntries(armNames.map((name) => [name, {
+            status: "complete", enteredCount: 1_001, completedTrades: 1_000,
+            realizedNetPnl: 100, openPositionNetPnl: 0, totalNetPnl: 100,
+            partialRealizedNetPnl: 100, completedHoldingDurationSec: 10_000,
+            averageCompletedHoldingDurationSec: 10, totalCosts: 5,
+            openPosition: null, pendingOrder: null,
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        }]));
+        const yearTrades = (year: number) => Array.from({ length: 15_000 }, (_, index) => ({
+            arm: armNames[index % armNames.length],
+            asset: `ASSET${index % 100}`,
+            decisionTimeSec: Math.floor(Date.UTC(year, 0, 1) / 1_000) + index,
+            entryTimeSec: Math.floor(Date.UTC(year, 0, 1) / 1_000) + index + 1,
+            entryPrice: 100,
+            exitTimeSec: Math.floor(Date.UTC(year, 0, 1) / 1_000) + index + 2,
+            exitPrice: 101,
+            holdingDurationSec: 1,
+            netPnl: 10,
+            entryCost: 1,
+            exitCost: 1,
+            status: "closed",
+        }));
+        const makeSwitch = (year: number) => ({
+            semanticsVersion: "asset_switch.v1",
+            windowStartSec: Math.floor(Date.UTC(year, 0, 1) / 1_000),
+            windowEndSec: Math.floor(Date.UTC(year, 11, 31) / 1_000),
+            independentWindow: year !== 2021,
+            sizing: "fixed_entry_notional_non_compounding",
+            notionalPerEntry: 1_000,
+            slippageRate: 0,
+            commissionRate: 0,
+            valuation: "last_closed_candle_close_at_or_before_window_end",
+            coverage: { requestedAssets: 100, loadedAssets: 100, missingAssets: 0, invalidSeries: 0 },
+            arms,
+            trades: yearTrades(year),
+            tradeCount: 15_000,
+        });
+        const result = {
+            ...topMeanResultFixture(),
+            replayMode: "asset_switch",
+            horizons: [],
+            assetSwitch: makeSwitch(2021),
+            annualReports: [2022, 2023, 2024, 2025, 2026].map((year) => ({
+                year,
+                sampleFromSec: Math.floor(Date.UTC(year, 0, 1) / 1_000),
+                sampleToSec: Math.floor(Date.UTC(year, 11, 31) / 1_000),
+                replayMode: "asset_switch",
+                horizons: [],
+                assetSwitch: makeSwitch(year),
+                warnings: [],
+                reportLines: [`annual ${year}`],
+            })),
+        } as any;
+
+        persistLatestTopMeanResult(result);
+        const serialized = (globalThis as any).localStorage.getItem(TOP_MEAN_LATEST_RESULT_STORAGE.key) as string;
+        const bytes = new TextEncoder().encode(serialized).byteLength;
+        const saved = JSON.parse(serialized).data;
+        expect(bytes, "persisted snapshot has room under normal browser storage quotas").to.be.lessThan(256 * 1024);
+        expect(saved.assetSwitch.trades).to.have.length(armNames.length * 20);
+        for (const annual of saved.annualReports) {
+            expect(Object.prototype.hasOwnProperty.call(annual.assetSwitch, "trades"), `${annual.year} stores no trade rows`).to.equal(false);
+            expect(annual.assetSwitch.tradeCount, `${annual.year} preserves the full scalar count`).to.equal(15_000);
+            expect(annual.assetSwitch.arms.topMean.totalNetPnl).to.equal(100);
+        }
+        expect(readLatestTopMeanResult()?.annualReports).to.have.length(5);
     });
 
     it("renders annual switch arms as independent position replays with separate raw snapshot context", () => {

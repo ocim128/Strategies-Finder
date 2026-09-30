@@ -755,8 +755,10 @@ export class FinderManager {
 				this.resultStore.latestResults.scope === 'arm_performance' && !this.resultStore.latestResults.inventoryComplete,
 				this.resultStore.armPerformanceDisplayFilter.basis ?? "raw",
 				this.resultStore.armPerformanceDisplayFilter,
-				this.resultStore.armPerformanceRunResults.some((candidate) =>
-					!candidate.metricsExTopContributor?.[currentArm]),
+				this.resultStore.armPerformanceRunResults.some((candidate) => candidate.replayMode === "asset_switch"
+					? candidate.assetSwitchMetrics[currentArm]?.status === "complete"
+						&& !candidate.assetSwitchMetrics[currentArm]?.topContributorExclusion
+					: !candidate.metricsExTopContributor?.[currentArm]),
 			);
 			return;
 		}

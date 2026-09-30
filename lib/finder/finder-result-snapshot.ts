@@ -236,6 +236,9 @@ function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate
                     diagnosticCounts: { ...metric.diagnosticCounts },
                     openPosition: metric.openPosition ? { ...metric.openPosition } : null,
                     pendingOrder: metric.pendingOrder ? { ...metric.pendingOrder } : null,
+                    ...(metric.topContributorExclusion ? {
+                        topContributorExclusion: { ...metric.topContributorExclusion },
+                    } : {}),
                 }]),
             ) as NonNullable<FinderArmPerformanceCandidate["assetSwitchMetrics"]>,
         };
@@ -372,10 +375,25 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
                 const switchMetrics = item.assetSwitchMetrics as Record<string, unknown>;
                 const complete = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).every((arm) => {
                     const metric = switchMetrics[arm] as Record<string, unknown> | undefined;
+                    const exclusion = metric?.topContributorExclusion as Record<string, unknown> | undefined;
+                    const exclusionValid = exclusion === undefined || (
+                        !!exclusion
+                        && typeof exclusion === "object"
+                        && !Array.isArray(exclusion)
+                        && typeof exclusion.asset === "string"
+                        && exclusion.asset.length > 0
+                        && [
+                            exclusion.contributionNetPnl,
+                            exclusion.adjustedTotalNetPnl,
+                            exclusion.adjustedRealizedNetPnl,
+                            exclusion.adjustedOpenPositionNetPnl,
+                        ].every((value) => typeof value === "number" && Number.isFinite(value))
+                    );
                     return !!metric && typeof metric === "object"
                         && (metric.status === "complete" || metric.status === "no_entry" || metric.status === "incomplete")
                         && Number.isInteger(metric.enteredCount)
-                        && Number.isInteger(metric.completedTrades);
+                        && Number.isInteger(metric.completedTrades)
+                        && exclusionValid;
                 });
                 if (!complete) return false;
                 normalizedRows.push({ ...item, replayMode: "asset_switch" } as unknown as FinderArmPerformanceCandidate);

@@ -520,7 +520,8 @@ export async function createTopMeanAssetSwitchTradeWriter(
     label: string,
 ): Promise<TopMeanAssetSwitchTradeWriter> {
     const runDir = getRunDir(runId, root);
-    const filePath = path.join(path.dirname(runDir), `${path.basename(runDir)}-asset-switch-trades-${label}.staging.jsonl`);
+    const stagingDir = path.join(runDir, "asset-switch");
+    const filePath = path.join(stagingDir, `trades-${label}.staging.jsonl`);
     await mkdir(path.dirname(filePath), { recursive: true });
     const tracked = createTrackedJsonlStream(filePath);
     let closePromise: Promise<void> | null = null;

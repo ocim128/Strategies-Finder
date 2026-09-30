@@ -71,18 +71,23 @@ export function compactFinderArmComparison(comparison: ReplayComparison): Finder
 }
 
 /**
- * Returns the arm's ranking metric. Zero-event arms and non-finite means are
- * unavailable; zero and negative finite means remain rankable.
+ * Returns the arm's ranking metric. Zero-event horizon arms and non-finite
+ * means are unavailable; complete switch arms rank by net P&L. Zero and
+ * negative finite values remain rankable.
  */
 export function getFinderArmPerformanceRankValue(
     metrics: FinderArmPerformanceMetrics,
     arm: FinderArmPerformanceArm,
     replayMode: ReplayMode = "horizon",
     switchMetric?: AssetSwitchArmSummary,
+    basis: FinderArmPerformanceScoringBasis = "raw",
 ): number | null {
     if (replayMode === "asset_switch") {
-        return switchMetric?.status === "complete" && Number.isFinite(switchMetric.totalNetPnl)
-            ? switchMetric.totalNetPnl
+        const value = basis === "exclude_top_contributor"
+            ? switchMetric?.topContributorExclusion?.adjustedTotalNetPnl
+            : switchMetric?.totalNetPnl;
+        return switchMetric?.status === "complete" && typeof value === "number" && Number.isFinite(value)
+            ? value
             : null;
     }
     const metric = metrics[arm];
@@ -96,7 +101,17 @@ export function getFinderArmPerformanceMetric<Row extends {
     metricsExTopContributor?: FinderArmPerformanceMetrics;
     assetSwitchMetrics?: Partial<Record<FinderArmPerformanceArm, AssetSwitchArmSummary>>;
 }>(row: Row, arm: FinderArmPerformanceArm, basis: FinderArmPerformanceScoringBasis = "raw") {
-    if (row.replayMode === "asset_switch") return row.assetSwitchMetrics?.[arm];
+    if (row.replayMode === "asset_switch") {
+        const metric = row.assetSwitchMetrics?.[arm];
+        if (basis === "raw" || !metric) return metric;
+        const exclusion = metric.topContributorExclusion;
+        return {
+            ...metric,
+            totalNetPnl: exclusion?.adjustedTotalNetPnl ?? null,
+            realizedNetPnl: exclusion?.adjustedRealizedNetPnl ?? null,
+            openPositionNetPnl: exclusion?.adjustedOpenPositionNetPnl ?? null,
+        };
+    }
     return basis === "exclude_top_contributor"
         ? row.metricsExTopContributor?.[arm]
         : row.metrics?.[arm];
@@ -125,12 +140,12 @@ export function sortFinderArmPerformanceResults<Row extends {
         const leftMode = left.replayMode ?? "horizon";
         const rightMode = right.replayMode ?? "horizon";
         const leftValue = leftMode === "asset_switch"
-            ? getFinderArmPerformanceRankValue({}, arm, leftMode, left.assetSwitchMetrics?.[arm])
+            ? getFinderArmPerformanceRankValue({}, arm, leftMode, left.assetSwitchMetrics?.[arm], basis)
             : getFinderArmPerformanceRankValue(
                 basis === "raw" ? left.metrics ?? {} : left.metricsExTopContributor ?? {}, arm,
             );
         const rightValue = rightMode === "asset_switch"
-            ? getFinderArmPerformanceRankValue({}, arm, rightMode, right.assetSwitchMetrics?.[arm])
+            ? getFinderArmPerformanceRankValue({}, arm, rightMode, right.assetSwitchMetrics?.[arm], basis)
             : getFinderArmPerformanceRankValue(
                 basis === "raw" ? right.metrics ?? {} : right.metricsExTopContributor ?? {}, arm,
             );

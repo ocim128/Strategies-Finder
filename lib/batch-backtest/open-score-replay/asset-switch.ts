@@ -3,7 +3,7 @@
  * This is deliberately separate from the fixed-horizon outcome path: a
  * position's sale, replacement, and terminal mark depend on prior fills.
  */
-import { applySlippage, timeKey, timeToNumber } from "../../strategies/backtest/backtest-utils";
+import { applySlippage, timeToNumber } from "../../strategies/backtest/backtest-utils";
 import { DEFAULT_CANDLE_GAP_THRESHOLD_DAYS } from "../../ibkr-data/candle-gap";
 import { parseIntervalSeconds } from "../../interval-utils";
 import type { OHLCVData } from "../../types/strategies";
@@ -16,7 +16,7 @@ import type {
     ReplayArmField,
     RunOpenScoreUsdReplayOptions,
 } from "./types";
-import type { Candidate, EventView, ReplayPhaseCallback, StageOutcome } from "./internal-types";
+import type { AssetSwitchDecision, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { yieldLoop } from "./runtime";
 import { REPLAY_ARM_FIELDS } from "./arm-contract";
 
@@ -68,10 +68,10 @@ interface Position {
 }
 
 interface ArmState {
-    field: ReplayArmField;
     enteredCount: number;
     completedTrades: number;
     realizedNetPnl: number;
+    realizedNetPnlByAsset?: Map<string, number>;
     completedHoldingDurationSec: number;
     totalCosts: number;
     position: Position | null;
@@ -84,80 +84,12 @@ interface ArmState {
     diagnostics: AssetSwitchArmSummary["diagnosticCounts"];
 }
 
-function candidateRankValue(candidate: Candidate, key: "raw" | "mean" | "z"): number {
-    if (key === "z") return candidate.z ?? Number.NEGATIVE_INFINITY;
-    return candidate[key];
-}
-
-function uniqueExtreme(
-    pool: readonly Candidate[],
-    key: "raw" | "mean" | "z",
-    direction: "max" | "min",
-): number | null {
-    if (pool.length === 0) return null;
-    let best = candidateRankValue(pool[0]!, key);
-    for (let i = 1; i < pool.length; i += 1) {
-        const candidate = pool[i]!;
-        const value = candidateRankValue(candidate, key);
-        if (direction === "max" ? value > best : value < best) best = value;
-    }
-    let winner: Candidate | null = null;
-    for (const candidate of pool) {
-        if (candidateRankValue(candidate, key) !== best) continue;
-        if (winner) return null;
-        winner = candidate;
-    }
-    return winner?.assetIndex ?? null;
-}
-
-/** Resolve ties causally: only a unique best rank makes a switch decision. */
-function resolveSwitchPick(view: EventView, arm: ReplayArmField): number | null {
-    switch (arm) {
-        case "topRaw": return uniqueExtreme(view.positives, "raw", "max");
-        case "topMean": return uniqueExtreme(view.positives, "mean", "max");
-        case "topMeanRawUnique": {
-            const mean = uniqueExtreme(view.positives, "mean", "max");
-            if (mean === null) {
-                // The ordinary TOP_MEAN arm holds on a mean tie. The unique
-                // arm first forms the complete best-mean subset, then applies
-                // its secondary raw-score ranking.
-                const pool = view.positives;
-                if (pool.length === 0) return null;
-                let bestMean = Number.NEGATIVE_INFINITY;
-                for (const candidate of pool) bestMean = Math.max(bestMean, candidate.mean);
-                const tied = pool.filter((candidate) => candidate.mean === bestMean);
-                return uniqueExtreme(tied, "raw", "max");
-            }
-            return mean;
-        }
-        case "topRawProfit": return uniqueExtreme(view.profitPositives, "raw", "max");
-        case "topMeanProfit": return uniqueExtreme(view.profitPositives, "mean", "max");
-        case "topRawProfitNow": return uniqueExtreme(view.profitNowPositives, "raw", "max");
-        case "topMeanProfitNow": return uniqueExtreme(view.profitNowPositives, "mean", "max");
-        case "topRawProfitNowConf": return uniqueExtreme(view.profitNowConfidencePositives, "raw", "max");
-        case "topZ": return uniqueExtreme(view.profitNowPositives, "z", "max");
-        case "botRaw": return uniqueExtreme(view.positives, "raw", "min");
-        case "botMean": return uniqueExtreme(view.positives, "mean", "min");
-        case "botMeanRawUnique": {
-            const pool = view.positives;
-            if (pool.length === 0) return null;
-            let bestMean = Number.POSITIVE_INFINITY;
-            for (const candidate of pool) bestMean = Math.min(bestMean, candidate.mean);
-            return uniqueExtreme(pool.filter((candidate) => candidate.mean === bestMean), "raw", "min");
-        }
-        case "botRawProfitNow": return uniqueExtreme(view.profitNowPositives, "raw", "min");
-        case "botMeanProfitNow": return uniqueExtreme(view.profitNowPositives, "mean", "min");
-        case "botZ": return uniqueExtreme(view.profitNowPositives, "z", "min");
-        default: return null;
-    }
-}
-
-function newState(field: ReplayArmField): ArmState {
+function newState(includeContributorSummary: boolean): ArmState {
     return {
-        field,
         enteredCount: 0,
         completedTrades: 0,
         realizedNetPnl: 0,
+        ...(includeContributorSummary ? { realizedNetPnlByAsset: new Map<string, number>() } : {}),
         completedHoldingDurationSec: 0,
         totalCosts: 0,
         position: null,
@@ -322,9 +254,6 @@ class SwitchTargetLookup {
         let previous = Number.NEGATIVE_INFINITY;
         for (const candle of data) {
             const normalizedTime = timeToNumber(candle.time);
-            // Keep using the shared time-key normalization beside the numeric
-            // ordering check; this also exercises BusinessDay/string shapes.
-            try { timeKey(candle.time); } catch { invalidSeries = true; }
             if (normalizedTime === null || !Number.isFinite(normalizedTime) || normalizedTime <= previous) {
                 invalidSeries = true;
                 break;
@@ -443,11 +372,13 @@ async function checkGap(
     asset: string,
     fromSec: number,
     toSec: number,
-): Promise<void> {
+): Promise<boolean> {
     const hasGap = await lookup.hasGap(asset, fromSec, toSec);
+    if (hasGap === false) return true;
     if (hasGap === true) addDiagnostic(state, "dataGap");
     else if (hasGap === "missing") addDiagnostic(state, "missingTarget");
-    else if (hasGap === "invalid") addDiagnostic(state, "invalidTimestamp");
+    else addDiagnostic(state, "invalidTimestamp");
+    return false;
 }
 
 interface ArmRuntime {
@@ -463,12 +394,13 @@ function createArmRuntime(args: {
     assetNames: readonly string[];
     slippageRate: number;
     commissionRate: number;
+    includeContributorSummary: boolean;
     retainTradeRows: boolean;
     onTradeFinalized(row: AssetSwitchTradeRecord): Promise<void>;
     onTradeOpened(row: AssetSwitchTradeRecord): void;
 }): ArmRuntime {
-    const { field, lookup, assetNames, slippageRate, commissionRate, retainTradeRows, onTradeFinalized, onTradeOpened } = args;
-    const state = newState(field);
+    const { field, lookup, assetNames, slippageRate, commissionRate, includeContributorSummary, retainTradeRows, onTradeFinalized, onTradeOpened } = args;
+    const state = newState(includeContributorSummary);
     const planNext = async (asset: string, boundarySec: number, inclusive: boolean): Promise<PlannedCandle | null> => {
         const response = await lookup.next(asset, boundarySec, inclusive);
         if (response.status !== "ok") {
@@ -521,30 +453,26 @@ function createArmRuntime(args: {
             if (state.position && state.pendingSell && state.pendingSell.timeSec <= throughSec) {
                 const old = state.position;
                 const sell = state.pendingSell;
-                await checkGap(state, lookup, old.asset, old.entryTimeSec, sell.timeSec);
-                const response = await lookup.next(old.asset, sell.timeSec, true);
-                if (response.status !== "ok" || !response.point || response.point.timeSec !== sell.timeSec) {
-                    markArmIncompleteForLookup(state, response);
-                    state.pendingSell = null;
-                    state.failed = true;
-                    break;
-                }
-                if (!finitePositive(response.point.open)) {
+                if (!await checkGap(state, lookup, old.asset, old.entryTimeSec, sell.timeSec)) return;
+                if (!finitePositive(sell.open)) {
                     addDiagnostic(state, "invalidPrice");
                     state.pendingSell = null;
                     break;
                 }
-                const exitPrice = applySlippage(response.point.open, "sell", slippageRate);
+                const exitPrice = applySlippage(sell.open, "sell", slippageRate);
                 if (!finitePositive(exitPrice)) {
                     addDiagnostic(state, "invalidPrice");
                     state.pendingSell = null;
                     break;
                 }
                 const exitFee = old.quantity * exitPrice * commissionRate;
-                const exitSlippage = old.quantity * (response.point.open - exitPrice);
+                const exitSlippage = old.quantity * (sell.open - exitPrice);
                 const netPnl = old.quantity * (exitPrice - old.entryPrice) - old.entryFee - exitFee;
                 const duration = Math.max(0, sell.timeSec - old.entryTimeSec);
                 state.realizedNetPnl += netPnl;
+                if (state.realizedNetPnlByAsset) {
+                    state.realizedNetPnlByAsset.set(old.asset, (state.realizedNetPnlByAsset.get(old.asset) ?? 0) + netPnl);
+                }
                 state.completedTrades += 1;
                 state.completedHoldingDurationSec += duration;
                 state.totalCosts += exitFee + exitSlippage;
@@ -566,20 +494,13 @@ function createArmRuntime(args: {
                 const destination = state.desiredAsset;
                 const buy = state.pendingBuy;
                 const fromSec = state.buyOrderFromSec ?? state.pendingDecisionTimeSec ?? buy.timeSec;
-                await checkGap(state, lookup, destination, fromSec, buy.timeSec);
-                const response = await lookup.next(destination, buy.timeSec, true);
-                if (response.status !== "ok" || !response.point || response.point.timeSec !== buy.timeSec) {
-                    markArmIncompleteForLookup(state, response);
-                    state.pendingBuy = null;
-                    state.failed = true;
-                    break;
-                }
-                if (!finitePositive(response.point.open)) {
+                if (!await checkGap(state, lookup, destination, fromSec, buy.timeSec)) return;
+                if (!finitePositive(buy.open)) {
                     addDiagnostic(state, "invalidPrice");
                     state.pendingBuy = null;
                     break;
                 }
-                const entryPrice = applySlippage(response.point.open, "buy", slippageRate);
+                const entryPrice = applySlippage(buy.open, "buy", slippageRate);
                 if (!finitePositive(entryPrice)) {
                     addDiagnostic(state, "invalidPrice");
                     state.pendingBuy = null;
@@ -587,7 +508,7 @@ function createArmRuntime(args: {
                 }
                 const quantity = NOTIONAL_PER_ENTRY / entryPrice;
                 const entryFee = quantity * entryPrice * commissionRate;
-                const entrySlippage = quantity * (entryPrice - response.point.open);
+                const entrySlippage = quantity * (entryPrice - buy.open);
                 const decisionTimeSec = state.pendingDecisionTimeSec ?? buy.timeSec;
                 const tradeRecord: AssetSwitchTradeRecord | undefined = retainTradeRows ? {
                     arm: field,
@@ -629,7 +550,7 @@ function createArmRuntime(args: {
 }
 
 export async function runAssetSwitchReplay(args: {
-    views: readonly EventView[];
+    views: readonly AssetSwitchDecision[];
     assetNames: readonly string[];
     options: RunOpenScoreUsdReplayOptions;
     slippageRate: number;
@@ -648,12 +569,10 @@ export async function runAssetSwitchReplay(args: {
     const windowEndSec = Math.min(requestedEndSec, cutoffSec);
     const windowStartSec = Number.isFinite(options.sampleFromSec) ? options.sampleFromSec! : null;
     const lookup = new SwitchTargetLookup(options.loadTargetDataset, windowEndSec, intervalSec);
-    const pickFor = (view: EventView, arm: ReplayArmField): number | null =>
-        view.assetSwitchPicks ? view.assetSwitchPicks[arm] : resolveSwitchPick(view, arm);
     const selectedAssets = new Set<string>();
     for (const view of views) {
         for (const arm of REPLAY_ARM_FIELDS) {
-            const selectedIndex = pickFor(view, arm);
+            const selectedIndex = view.picks[arm];
             if (selectedIndex !== null) selectedAssets.add(assetNames[selectedIndex] ?? "");
         }
     }
@@ -677,6 +596,7 @@ export async function runAssetSwitchReplay(args: {
         assetNames,
         slippageRate,
         commissionRate,
+        includeContributorSummary: options.includeAssetSwitchContributorSummary === true,
         retainTradeRows,
         onTradeOpened,
         onTradeFinalized,
@@ -693,7 +613,7 @@ export async function runAssetSwitchReplay(args: {
         const view = views[eventIndex]!;
         for (const runtime of runtimes) {
             await runtime.processPendingThrough(view.timeSec);
-            if (!runtime.state.failed) await runtime.schedule(pickFor(view, runtime.field), view.timeSec);
+            if (!runtime.state.failed) await runtime.schedule(view.picks[runtime.field], view.timeSec);
         }
         if (eventIndex % 500 === 499) {
             const completed = (eventIndex + 1) * runtimes.length;
@@ -724,31 +644,35 @@ export async function runAssetSwitchReplay(args: {
                 entryCost: position.entryFee + position.entrySlippage,
                 holdingDurationSec: null,
             };
-            const response = await lookup.last(position.asset, windowEndSec);
-            if (response.status !== "ok") {
-                markArmIncompleteForLookup(state, response);
-                addDiagnostic(state, "unvaluedPosition");
-            } else if (!response.point || response.point.timeSec < position.entryTimeSec) {
-                addDiagnostic(state, "unvaluedPosition");
-            } else if (!finitePositive(response.point.close)) {
-                addDiagnostic(state, "invalidPrice");
-            } else {
-                const markTimeSec = response.point.timeSec + intervalSec;
-                const age = Math.max(0, windowEndSec - markTimeSec);
-                if (age > GAP_THRESHOLD_SEC) addDiagnostic(state, "staleMark");
-                await checkGap(state, lookup, position.asset, position.entryTimeSec, response.point.timeSec);
-                openPnl = position.quantity * (response.point.close - position.entryPrice) - position.entryFee;
-                openPosition = {
-                    ...openPosition,
-                    markTimeSec,
-                    markPrice: response.point.close,
-                    markAgeSec: age,
-                    openNetPnl: openPnl,
-                    holdingDurationSec: Math.max(0, markTimeSec - position.entryTimeSec),
-                };
-                if (position.tradeRecord) {
-                    position.tradeRecord.holdingDurationSec = Math.max(0, markTimeSec - position.entryTimeSec);
-                    position.tradeRecord.netPnl = openPnl;
+            if (!state.failed) {
+                const response = await lookup.last(position.asset, windowEndSec);
+                if (response.status !== "ok") {
+                    markArmIncompleteForLookup(state, response);
+                    addDiagnostic(state, "unvaluedPosition");
+                } else if (!response.point || response.point.timeSec < position.entryTimeSec) {
+                    addDiagnostic(state, "unvaluedPosition");
+                } else if (!finitePositive(response.point.close)) {
+                    addDiagnostic(state, "invalidPrice");
+                } else {
+                    const point = response.point;
+                    const markTimeSec = point.timeSec + intervalSec;
+                    const age = Math.max(0, windowEndSec - markTimeSec);
+                    if (age > GAP_THRESHOLD_SEC) addDiagnostic(state, "staleMark");
+                    if (await checkGap(state, lookup, position.asset, position.entryTimeSec, point.timeSec)) {
+                        openPnl = position.quantity * (point.close - position.entryPrice) - position.entryFee;
+                        openPosition = {
+                            ...openPosition,
+                            markTimeSec,
+                            markPrice: point.close,
+                            markAgeSec: age,
+                            openNetPnl: openPnl,
+                            holdingDurationSec: Math.max(0, markTimeSec - position.entryTimeSec),
+                        };
+                        if (position.tradeRecord) {
+                            position.tradeRecord.holdingDurationSec = Math.max(0, markTimeSec - position.entryTimeSec);
+                            position.tradeRecord.netPnl = openPnl;
+                        }
+                    }
                 }
             }
             if (position.tradeRecord) await onTradeFinalized(position.tradeRecord);
@@ -763,6 +687,42 @@ export async function runAssetSwitchReplay(args: {
             };
         const status = state.failed ? "incomplete" : state.enteredCount === 0 ? "no_entry" : "complete";
         const rankable = status === "complete";
+        let topContributorExclusion: AssetSwitchArmSummary["topContributorExclusion"];
+        if (rankable && state.realizedNetPnlByAsset && openPnl !== null && Number.isFinite(openPnl)) {
+            const netPnlByAsset = new Map(state.realizedNetPnlByAsset);
+            if (state.position) {
+                netPnlByAsset.set(
+                    state.position.asset,
+                    (netPnlByAsset.get(state.position.asset) ?? 0) + openPnl,
+                );
+            }
+            let topAsset: string | null = null;
+            let topContribution = Number.NEGATIVE_INFINITY;
+            for (const [asset, contribution] of netPnlByAsset) {
+                if (!Number.isFinite(contribution)) continue;
+                if (contribution > topContribution
+                    || (contribution === topContribution && topAsset !== null && asset.localeCompare(topAsset) < 0)) {
+                    topAsset = asset;
+                    topContribution = contribution;
+                }
+            }
+            if (topAsset !== null) {
+                const realizedContribution = state.realizedNetPnlByAsset.get(topAsset) ?? 0;
+                const openContribution = state.position?.asset === topAsset ? openPnl : 0;
+                const adjustedTotalNetPnl = state.realizedNetPnl + openPnl - topContribution;
+                const adjustedRealizedNetPnl = state.realizedNetPnl - realizedContribution;
+                const adjustedOpenPositionNetPnl = openPnl - openContribution;
+                if ([adjustedTotalNetPnl, adjustedRealizedNetPnl, adjustedOpenPositionNetPnl].every(Number.isFinite)) {
+                    topContributorExclusion = {
+                        asset: topAsset,
+                        contributionNetPnl: topContribution,
+                        adjustedTotalNetPnl,
+                        adjustedRealizedNetPnl,
+                        adjustedOpenPositionNetPnl,
+                    };
+                }
+            }
+        }
         finalArms[field] = {
             status,
             enteredCount: state.enteredCount,
@@ -776,6 +736,7 @@ export async function runAssetSwitchReplay(args: {
             totalCosts: state.totalCosts,
             openPosition,
             pendingOrder,
+            ...(topContributorExclusion ? { topContributorExclusion } : {}),
             diagnosticCounts: { ...state.diagnostics },
         };
     }

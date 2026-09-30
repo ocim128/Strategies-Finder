@@ -3119,7 +3119,7 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
     if (replayMode !== "horizon" && replayMode !== "asset_switch") {
         throw new HttpStatusError(400, "options.armPerformance.replayMode must be horizon or asset_switch.");
     }
-    const scoringBasis = replayMode === "asset_switch" ? "raw" : requestedScoringBasis;
+    const scoringBasis = requestedScoringBasis;
     const eventFilterEnabled = readOptionalBoolean("eventFilterEnabled", false);
     const minEvents = readOptionalInteger("minEvents", 1, 0, 1_000_000);
     let maxEvents: number | null = null;

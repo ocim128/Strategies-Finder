@@ -632,7 +632,6 @@ private syncArmPerformanceControls(): void {
 	dom.finderArmPerformanceHorizon.disabled = switchMode;
 	dom.finderArmPerformanceSelectionCooldownEnabled.disabled = switchMode;
 	dom.finderArmPerformanceSelectionCooldownBars.disabled = switchMode || !dom.finderArmPerformanceSelectionCooldownEnabled.checked;
-	dom.finderArmPerformanceExcludeTopContributor.disabled = switchMode;
 	dom.finderArmPerformanceMinEvents.disabled = !filterEnabled;
 	dom.finderArmPerformanceMaxEvents.disabled = !filterEnabled;
 	const useTradeCount = labelMode === "asset_switch";
@@ -965,9 +964,7 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 				)))),
 			} : {}),
 			dateMode,
-			scoringBasis: replayMode === "asset_switch"
-				? "raw"
-				: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
+			scoringBasis: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
 			eventFilterEnabled: dom.finderArmPerformanceEventFilterEnabled.checked,
 			minEvents: Math.max(1, Math.round(this.readFinderNumberInput(
 				dom.finderArmPerformanceMinEvents,
