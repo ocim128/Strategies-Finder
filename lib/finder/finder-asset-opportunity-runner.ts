@@ -1557,6 +1557,10 @@ async function searchOneAsset(args: {
             rustDiagnosticPhase: "fresh_entry",
             rustCapabilities: input.rustCapabilities,
             signal: input.signal,
+            // With one retained candidate, a negative screen cannot change
+            // another winner's active-position support counts. Open-position
+            // mode must still reconstruct old entries even without a new signal.
+            screenSignalCloseReplay: topK.length === 1 && !includeOpenPositions,
         });
     };
     let freshEvaluations: AssetFreshEvaluation[];
@@ -2390,6 +2394,8 @@ async function regenerateSignalsAndDetectFresh(args: {
     signal?: AbortSignal;
     /** Generate primary signals first so exit override work can be skipped. */
     primarySignalPrefilter?: boolean;
+    /** Reject a sole signal-close candidate with no boundary entry before simulation. */
+    screenSignalCloseReplay?: boolean;
 }): Promise<AssetFreshEvaluation> {
     const includeOpenPositions = args.options.assetOpportunity?.includeOpenPositions === true;
     const needsExecutableFreshRecheck = args.options.assetOpportunity?.oosMeasurementMode === "next_exit";
@@ -2399,6 +2405,41 @@ async function regenerateSignalsAndDetectFresh(args: {
         && args.signalData !== undefined
         && !includeOpenPositions;
     let preGeneratedSignals: Signal[] | undefined;
+    if (args.screenSignalCloseReplay === true
+        && args.settings.executionModel === "signal_close"
+        && !includeOpenPositions
+        && args.signalData === undefined
+        && args.settings.exitStrategyOverrideEnabled !== true
+        && args.candidate.exitStrategyKey === undefined) {
+        // Generate on the original full window: a short IS window is not proof
+        // that a history-dependent strategy has no boundary signal.
+        const primary = await executeAssetCandidate({
+            ...args,
+            data: signalData,
+            signalOnly: true,
+        });
+        const boundaryIndex = signalData.length - 1;
+        const boundaryTime = timeKey(signalData[boundaryIndex]!.time);
+        const possibleEntry = primary.signals.some((signal) =>
+            signal.exitOnly !== true
+            && (signal.type === "buy" || signal.type === "sell")
+            && (Math.trunc(signal.barIndex ?? -1) === boundaryIndex
+                || timeKey(signal.time) === boundaryTime));
+        if (!possibleEntry) {
+            return buildFreshEntryEvaluation({
+                result: createEmptyBacktestResult(),
+                candles: args.fullClosed,
+                settings: args.settings,
+                signals: primary.signals,
+                engineUsed: primary.engineUsed,
+                rustAttempted: false,
+                typescriptReason: "no boundary entry signal; fresh replay skipped",
+            });
+        }
+        // A possible entry still needs the complete replay for capacity,
+        // cooldown and repeated signals; reuse generation rather than run twice.
+        preGeneratedSignals = primary.signals;
+    }
     if (primarySignalPrefilter) {
         const primary = await executeAssetCandidate({
             candidate: args.candidate,

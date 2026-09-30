@@ -283,6 +283,9 @@ async function runAssetOpportunityFinderServer(args: {
 	if (streamError) {
 		if (isStillActive()) {
 			const recovered = await session.recoverActiveServerRun(runId, 'asset_opportunity', host);
+			if (recovered?.phase === 'fatal') {
+				throw new Error(recovered.error ?? recovered.summary ?? 'Asset Opportunity failed.');
+			}
 			if (recovered?.terminalAssets) {
 				terminalResults = retainSubmittedAssetResults(recovered.terminalAssets);
 				terminalDiagnostics = recovered.diagnostics;

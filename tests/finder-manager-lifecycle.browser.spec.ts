@@ -941,9 +941,48 @@ describe("Finder facade terminal adoption (integration)", () => {
     });
 });
 
-describe("FinderManager Asset Opportunity batch stream contracts", () => {
+describe("FinderManager Asset Opportunity stream contracts", () => {
     beforeEach(() => {
         resetFacadeCollaborators();
+    });
+
+    it("surfaces a recovered single-run fatal instead of persisting successful results", async () => {
+        const host = makeRecordingRunHost();
+        const session = new FinderServerSession();
+        const store = new FinderResultStore(() => {});
+        const selected = [{ key: "asset_test", name: "Asset Test", strategy: makeFakeStrategy("Asset Test") }];
+        const run = runAssetOpportunityFinder({
+            host, store, session,
+            strategies: {
+                getSelectedStrategies: async () => selected,
+                getUniverseSelectedStrategies: async () => [],
+                resolveExitStrategyCandidates: async () => undefined,
+            },
+            options: {
+                scope: "asset_opportunity", mode: "random", topN: 5,
+                assetOpportunity: { symbols: ["AAA"] },
+            } as any,
+            startTime: performance.now(),
+            getSelectedStrategies: async () => selected,
+            onDiagnostics: () => { throw new Error("Must not adopt fatal diagnostics as success"); },
+        }).then(() => null, (error: unknown) => error);
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        const runId = session.activeRunId!;
+        mockFetch.resolveFirst(makeNdjsonResponse([
+            { type: "asset_fatal", runId, error: "Asset worker failed" },
+        ]));
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        mockFetch.resolveFirst({
+            ...terminalFatalSnapshot(runId, "Asset worker failed"),
+            jobKind: "asset_opportunity",
+            terminalAssets: [],
+        });
+
+        const caught = await run;
+        expect(caught).to.be.instanceOf(Error);
+        expect((caught as Error).message).to.equal("Asset worker failed");
+        expect((globalThis as any).localStorage.getItem("playground_finder_latest_results")).to.equal(null);
+        expect(host.calls.availability).to.deep.equal([]);
     });
 
     it("does not turn a recovered batch fatal into a successful outcome", async () => {

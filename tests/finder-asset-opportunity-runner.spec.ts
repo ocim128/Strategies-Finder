@@ -1493,6 +1493,51 @@ describe("Asset Opportunity runner", () => {
         expect(output.results[0]!.latestSignalTime).to.equal(candles[candles.length - 1]!.time);
     });
 
+    for (const direction of ["long", "short"] as const) {
+        for (const boundary of ["none", "fresh", "repeated", "active"] as const) {
+            it(`screens signal-close ${direction} replay safely for ${boundary} boundary signals`, async () => {
+                const candles = makeCandles(Array.from({ length: 1000 }, (_, index) => 100 + index / 100));
+                const executionLengths: number[] = [];
+                const entryType = direction === "long" ? "buy" : "sell";
+                const strategy: Strategy = {
+                    name: "Boundary screen",
+                    description: "history-dependent entry signals",
+                    defaultParams: {},
+                    paramLabels: {},
+                    execute(data) {
+                        executionLengths.push(data.length);
+                        // The capped IS window cannot stand in for full signal history.
+                        if (data.length < 100) return [];
+                        const indexes = boundary === "fresh" ? [data.length - 1]
+                            : boundary === "repeated" ? [10, data.length - 1] : [10];
+                        return indexes.map((index) => ({
+                            time: data[index]!.time, price: data[index]!.close,
+                            type: entryType, barIndex: index,
+                        }));
+                    },
+                };
+                const output = await runAssetOpportunitySearch(makeInput({
+                    selectedStrategy: { key: "boundary_screen", name: strategy.name, strategy },
+                    settings: { ...settings, tradeDirection: direction, slippageBps: 5 },
+                    options: makeOptions({ assetOpportunity: {
+                        evalLastBars: 32, oosIgnoreLastBars: 20, includeOpenPositions: boundary === "active",
+                    } as FinderAssetOpportunityOptions }),
+                    assets: [{ symbol: "SCREEN", data: candles }],
+                    generateParamSets: () => [{}],
+                }), makeCallbacks());
+
+                expect(executionLengths).to.deep.equal(boundary === "active" ? [32, 980, 980] : [32, 980]);
+                const reasons = output.outcomes[0]!.diagnostics!.engineUsage.typescriptReasons.map((entry) => entry.reason);
+                expect(reasons.includes("no boundary entry signal; fresh replay skipped")).to.equal(boundary === "none");
+                expect(output.results).to.have.length(boundary === "fresh" || boundary === "active" ? 1 : 0);
+                if (boundary === "fresh") {
+                    expect(output.results[0]!.direction).to.equal(direction);
+                    expect(output.results[0]!.freshStatus).to.equal("fresh");
+                }
+            });
+        }
+    }
+
     it("keeps re-executing the recheck for signal_close (the in-sample fast path drops trades)", async () => {
         // Parity guard: a `signal_close` recheck needs the re-simulated trade
         // list, and the compact in-sample fast path drops trades — so the

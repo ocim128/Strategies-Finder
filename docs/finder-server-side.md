@@ -128,6 +128,19 @@ Asset runs emit bounded debug events named
 and `finder.asset_opportunity.run.failed`. Event payloads contain counts,
 grades, symbols, timings, and errors only—never candles, signals, or trades.
 
+When a single-run stream fails, the browser polls the scoped status endpoint.
+A recovered fatal snapshot remains a failed run, even when it includes an
+empty `terminalAssets` array; it must not be persisted as successful results.
+
+For a single retained `signal_close` candidate, the full-history freshness
+pass first generates signals and skips trade simulation when there is no
+boundary entry signal. A possible entry still gets the complete replay with
+the generated signals reused, preserving position capacity and repeated-entry
+behavior. This screen is disabled for open-position results, multiple retained
+candidates (whose active-position support matters), exit overrides, and bounded
+replays. Diagnostics report skipped simulations as
+`no boundary entry signal; fresh replay skipped` under TypeScript reasons.
+
 ## Asset Opportunity Batch
 
 Batch mode sweeps an inclusive holdout range in **one server-owned job** under
