@@ -356,12 +356,15 @@ semantics and its $1,000 long-only sizing.
 
 Each run starts flat inside its effective date window. The frozen evaluation
 cutoff bounds both fills and the terminal mark; a pre-window selection does
-not create a position. Target timestamps are normalized before execution. A
+not create a position. Switch-mode fills can use a candle's open when its
+timestamp is at or before the cutoff, even if that candle is not fully closed;
+terminal marks still use only fully closed candles. Target timestamps are normalized before execution. A
 missing target series, invalid or non-monotonic timestamps, invalid required
 prices, a holding or order spanning a data gap over 30 days, or a terminal
 mark older than 30 days makes that arm incomplete and unrankable. Shorter
 calendar gaps are allowed without interpolation. A healthy series with no
-next open before the cutoff leaves a pending order, and an open position is
+next open before the cutoff leaves a pending order; a pending buy that waits
+through a gap over 30 days makes the arm incomplete. An open position is
 marked rather than fabricated into a closing trade. `TOP_RAW_PROFIT` and
 `TOP_MEAN_PROFIT` remain labeled **LOOK-AHEAD RESEARCH** because their existing
 selection pools depend on full-window pair profit.

@@ -2,6 +2,7 @@ import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import { selectClosedCandleWindow } from "../alert-evaluation-window";
+import { selectTopMeanReplayTargetWindow } from "./top-mean-target-window";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../types/backtest";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import {
@@ -1269,6 +1270,7 @@ export class TopMeanCoordinatorEngine {
                 ? enumRes.eligibleTargets
                 : await deriveReplayTargetsFromCompletedArtifacts(runArtifactCorpus);
             const requestInterval = this._request.interval;
+            const isAssetSwitchReplay = this._request.replayMode === "asset_switch";
 
             const targetPerformance = this.performanceDiagnostic;
             // Audit (unbounded-replay-cache finding): this used to be a plain
@@ -1388,11 +1390,17 @@ export class TopMeanCoordinatorEngine {
                 fillTargetPrefetchWindow();
                 const loadedData = await pending;
                 if (loadedData === null) return null;
-                const closedWindow = selectClosedCandleWindow(loadedData, requestInterval, runNowSec, 1);
-                // Replay outcomes require completed market bars. Execution
-                // bridge candles are only valid in the pair backtest path.
-                const data = closedWindow?.candles ?? [];
-                const timeSec = closedWindow?.closedCandleTimeSec ?? null;
+                const replayWindow = isAssetSwitchReplay
+                    ? selectTopMeanReplayTargetWindow(loadedData, requestInterval, runNowSec)
+                    : null;
+                const closedWindow = replayWindow
+                    ? null
+                    : selectClosedCandleWindow(loadedData, requestInterval, runNowSec, 1);
+                // Horizon outcomes use completed bars only. Asset-switch fills
+                // may also use the current candle's known open, while marks
+                // remain limited to closedCandleTimeSec.
+                const data = replayWindow?.executionCandles ?? closedWindow?.candles ?? [];
+                const timeSec = replayWindow?.closedCandleTimeSec ?? closedWindow?.closedCandleTimeSec ?? null;
                 if (timeSec !== null && (coordinator.latestTargetBarTimeSec === null || timeSec > coordinator.latestTargetBarTimeSec)) {
                     coordinator.latestTargetBarTimeSec = timeSec;
                 }

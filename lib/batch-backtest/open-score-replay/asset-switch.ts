@@ -23,7 +23,13 @@ import { REPLAY_ARM_FIELDS } from "./arm-contract";
 const NOTIONAL_PER_ENTRY = 1_000;
 const MAX_DIAGNOSTIC_COUNT = 1_000_000_000;
 const PRICE_LOOKUP_CACHE_LIMIT = 8_192;
-const SERIES_META_CACHE_LIMIT = 16;
+// Asset-switch replay has up to 15 independent arms. During a simultaneous
+// switch they can reference one held and one replacement series each.
+const SERIES_META_CACHE_LIMIT = 32;
+// Each valid series retains three Float64 arrays (time/open/close): cap those
+// arrays at about 192 MB (183 MiB) in addition to the entry bound above.
+const SERIES_META_CACHE_MAX_POINTS = 8_000_000;
+const GAP_META_CACHE_LIMIT = 32;
 const TRADE_DETAIL_LIMIT = 1_000;
 const GAP_THRESHOLD_SEC = DEFAULT_CANDLE_GAP_THRESHOLD_DAYS * 24 * 60 * 60;
 
@@ -187,10 +193,18 @@ function addDiagnostic(state: ArmState, key: keyof ArmState["diagnostics"]): voi
     state.failed = true;
 }
 
-function cappedSet(map: Map<string, SeriesMeta>, key: string, value: SeriesMeta): void {
+function seriesPointCount(meta: SeriesMeta | undefined): number {
+    return meta?.status === "ok" ? meta.times?.length ?? 0 : 0;
+}
+
+function cappedGapSet(
+    map: Map<string, Pick<SeriesMeta, "status" | "gaps">>,
+    key: string,
+    value: Pick<SeriesMeta, "status" | "gaps">,
+): void {
     if (map.has(key)) map.delete(key);
     map.set(key, value);
-    while (map.size > SERIES_META_CACHE_LIMIT) map.delete(map.keys().next().value!);
+    while (map.size > GAP_META_CACHE_LIMIT) map.delete(map.keys().next().value!);
 }
 
 function cappedLookup(map: Map<string, LookupResult>, key: string, value: LookupResult): void {
@@ -209,12 +223,31 @@ class SwitchTargetLookup {
     private readonly loaded = new Set<string>();
     private readonly missing = new Set<string>();
     private readonly invalid = new Set<string>();
+    private seriesMetaPoints = 0;
 
     constructor(
         private readonly load: (asset: string) => Promise<OHLCVData[] | null>,
         private readonly endSec: number,
         private readonly intervalSec: number,
     ) {}
+
+    private rememberSeriesMeta(asset: string, meta: SeriesMeta): void {
+        const previous = this.seriesMeta.get(asset);
+        if (previous) {
+            this.seriesMeta.delete(asset);
+            this.seriesMetaPoints -= seriesPointCount(previous);
+        }
+        this.seriesMeta.set(asset, meta);
+        this.seriesMetaPoints += seriesPointCount(meta);
+        while (this.seriesMeta.size > SERIES_META_CACHE_LIMIT
+            || this.seriesMetaPoints > SERIES_META_CACHE_MAX_POINTS) {
+            const oldestAsset = this.seriesMeta.keys().next().value;
+            if (oldestAsset === undefined) break;
+            const oldest = this.seriesMeta.get(oldestAsset);
+            this.seriesMeta.delete(oldestAsset);
+            this.seriesMetaPoints -= seriesPointCount(oldest);
+        }
+    }
 
     get coverage(): AssetSwitchReplaySummary["coverage"] {
         return {
@@ -242,36 +275,37 @@ class SwitchTargetLookup {
         if (!data || data.length === 0) {
             const meta = { status: "missing" as const, gaps: [] };
             this.missing.add(asset);
-            this.gapMeta.set(asset, meta);
-            cappedSet(this.seriesMeta, asset, meta);
+            cappedGapSet(this.gapMeta, asset, meta);
+            this.rememberSeriesMeta(asset, meta);
             return meta;
         }
         this.loaded.add(asset);
-        const times: number[] = [];
-        const opens: number[] = [];
-        const closes: number[] = [];
+        const times = new Float64Array(data.length);
+        const opens = new Float64Array(data.length);
+        const closes = new Float64Array(data.length);
         let invalidSeries = false;
         let previous = Number.NEGATIVE_INFINITY;
-        for (const candle of data) {
+        for (let index = 0; index < data.length; index += 1) {
+            const candle = data[index]!;
             const normalizedTime = timeToNumber(candle.time);
             if (normalizedTime === null || !Number.isFinite(normalizedTime) || normalizedTime <= previous) {
                 invalidSeries = true;
                 break;
             }
             previous = normalizedTime;
-            times.push(normalizedTime);
-            opens.push(candle.open);
-            closes.push(candle.close);
+            times[index] = normalizedTime;
+            opens[index] = candle.open;
+            closes[index] = candle.close;
         }
         if (invalidSeries) {
             const meta = { status: "invalid" as const, gaps: [] };
             this.invalid.add(asset);
-            this.gapMeta.set(asset, meta);
-            cappedSet(this.seriesMeta, asset, meta);
+            cappedGapSet(this.gapMeta, asset, meta);
+            this.rememberSeriesMeta(asset, meta);
             return meta;
         }
         const gaps: CandleGapInterval[] = [];
-        for (let i = 1; i < times.length; i += 1) {
+        for (let i = 1; i < data.length; i += 1) {
             const from = times[i - 1]!;
             const to = times[i]!;
             if (to - from > GAP_THRESHOLD_SEC) gaps.push({ from, to });
@@ -279,12 +313,12 @@ class SwitchTargetLookup {
         const meta: SeriesMeta = {
             status: "ok",
             gaps,
-            times: Float64Array.from(times),
-            opens: Float64Array.from(opens),
-            closes: Float64Array.from(closes),
+            times,
+            opens,
+            closes,
         };
-        this.gapMeta.set(asset, { status: meta.status, gaps });
-        cappedSet(this.seriesMeta, asset, meta);
+        cappedGapSet(this.gapMeta, asset, { status: meta.status, gaps });
+        this.rememberSeriesMeta(asset, meta);
         return meta;
     }
 
@@ -379,6 +413,40 @@ async function checkGap(
     else if (hasGap === "missing") addDiagnostic(state, "missingTarget");
     else addDiagnostic(state, "invalidTimestamp");
     return false;
+}
+
+async function validatePendingBuyAtEnd(
+    state: ArmState,
+    lookup: SwitchTargetLookup,
+    asset: string,
+    fromSec: number,
+    endSec: number,
+    intervalSec: number,
+): Promise<void> {
+    const gap = await lookup.hasGap(asset, fromSec, endSec);
+    if (gap === true) {
+        addDiagnostic(state, "dataGap");
+        return;
+    }
+    if (gap === "missing") {
+        addDiagnostic(state, "missingTarget");
+        return;
+    }
+    if (gap === "invalid") {
+        addDiagnostic(state, "invalidTimestamp");
+        return;
+    }
+
+    // A pending order can have no executable candle before the window end.
+    // Internal gap intervals catch a long jump to a later candle; this also
+    // catches a stale tail where no later candle exists in the loaded series.
+    const last = await lookup.last(asset, endSec);
+    if (last.status !== "ok") {
+        markArmIncompleteForLookup(state, last);
+        return;
+    }
+    const lastClosedTimeSec = last.point ? last.point.timeSec + intervalSec : fromSec;
+    if (endSec - lastClosedTimeSec > GAP_THRESHOLD_SEC) addDiagnostic(state, "dataGap");
 }
 
 interface ArmRuntime {
@@ -624,6 +692,17 @@ export async function runAssetSwitchReplay(args: {
 
     for (const runtime of runtimes) {
         if (!runtime.state.failed) await runtime.processPendingThrough(windowEndSec);
+        const { state } = runtime;
+        if (!state.failed && !state.position && state.pendingDecisionTimeSec !== null && state.desiredAsset) {
+            await validatePendingBuyAtEnd(
+                state,
+                lookup,
+                state.desiredAsset,
+                state.buyOrderFromSec ?? state.pendingDecisionTimeSec,
+                windowEndSec,
+                intervalSec,
+            );
+        }
     }
     const finalArms = {} as AssetSwitchReplaySummary["arms"];
     for (const runtime of runtimes) {

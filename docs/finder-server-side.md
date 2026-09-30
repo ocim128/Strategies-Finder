@@ -62,10 +62,19 @@ of re-ranking every view. Standalone TOP_MEAN keeps the large cache, the
 shared annual outcome cache, and full diagnostics.
 
 The coordinator receives one frozen evaluation cutoff across all child runs.
-Pair backtests and annual replay windows use it, and replay target candles are
-trimmed to the same closed-bar boundary. This prevents later candidates from
-gaining newly closed bars during a long sweep. The cutoff is not a market-data
-snapshot: files can still be corrected or replaced while the sweep runs.
+Pair backtests and annual replay windows use it. Horizon outcomes use only
+closed target candles; asset-switch fills also receive the current candle when
+its open timestamp is at or before the cutoff, while terminal marks remain
+closed-candle-only. This prevents later candidates from gaining newly closed
+bars during a long sweep without dropping a valid open fill at the cutoff. The
+cutoff is not a market-data snapshot: files can still be corrected or replaced
+while the sweep runs.
+
+Asset-switch replay normalizes target prices into a bounded LRU that retains
+up to 32 series and 8 million candle points (three `Float64Array` fields per
+point). This covers the possible held and replacement asset for each of the
+15 arms while keeping the normalized working set bounded; the coordinator's
+raw target-data cache remains separately bounded by its prefetch window.
 Rust preference is forwarded to each child, and result rows record requested
 and actual engine modes.
 

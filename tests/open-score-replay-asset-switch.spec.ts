@@ -4,6 +4,7 @@ import { runAssetSwitchReplay } from "../lib/batch-backtest/open-score-replay/as
 import type { AssetSwitchDecision, Candidate, EventView } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { AssetSwitchReplaySummary, ReplayArmField, RunOpenScoreUsdReplayOptions } from "../lib/batch-backtest/open-score-replay/types";
 import type { OHLCVData } from "../lib/types/strategies";
+import { selectTopMeanReplayTargetWindow } from "../lib/batch-backtest/top-mean-target-window";
 
 const HOUR = 3_600;
 const ORIGIN = Math.floor(Date.parse("2024-01-01T00:00:00.000Z") / 1_000);
@@ -347,6 +348,50 @@ describe("OPEN_SCORE asset-switch replay", () => {
         expect(arm.totalNetPnl).to.equal(null);
     });
 
+    it("fills a scheduled sale at the cutoff from the current candle open", async () => {
+        const cutoff = ORIGIN + 2 * HOUR + HOUR / 2;
+        const aWindow = selectTopMeanReplayTargetWindow(candles([
+            [ORIGIN + HOUR, 100, 120],
+            [ORIGIN + 2 * HOUR, 120, 125],
+        ]), "1h", cutoff);
+        const bWindow = selectTopMeanReplayTargetWindow(candles([
+            [ORIGIN + HOUR, 50, 55],
+            [ORIGIN + 3 * HOUR, 55, 60],
+        ]), "1h", cutoff);
+        expect(aWindow.executionCandles).to.have.length(2);
+        expect(aWindow.closedCandleTimeSec).to.equal(ORIGIN + HOUR);
+        expect(bWindow.executionCandles).to.have.length(1, "future opens stay outside the frozen cutoff");
+
+        const result = okResult(await replay({
+            views: [view(ORIGIN, { positives: [A] }), view(ORIGIN + HOUR, { positives: [B] })],
+            data: { A: aWindow.executionCandles, B: bWindow.executionCandles },
+            endSec: cutoff,
+            cutoffSec: cutoff,
+        }));
+        const arm = result.arms.topRaw;
+        expect(arm.completedTrades).to.equal(1);
+        expect(arm.realizedNetPnl).to.equal(200);
+        expect(arm.pendingOrder?.side).to.equal("buy");
+        expect(arm.status).to.equal("complete");
+    });
+
+    it("marks a pending replacement incomplete when its wait crosses a long data gap", async () => {
+        const end = ORIGIN + 50 * 86_400;
+        const result = okResult(await replay({
+            views: [view(ORIGIN, { positives: [A] }), view(ORIGIN + HOUR, { positives: [B] })],
+            data: {
+                A: candles([[ORIGIN + HOUR, 100, 100], [ORIGIN + 2 * HOUR, 110, 110]]),
+                B: candles([[ORIGIN, 50, 50], [ORIGIN + 100 * 86_400, 55, 55]]),
+            },
+            endSec: end,
+        }));
+        const arm = result.arms.topRaw;
+        expect(arm.pendingOrder?.side).to.equal("buy");
+        expect(arm.status).to.equal("incomplete");
+        expect(arm.diagnosticCounts.dataGap).to.be.greaterThan(0);
+        expect(arm.totalNetPnl).to.equal(null);
+    });
+
     it("marks missing, corrupt, invalid-price, and in-exposure-gap arms unavailable while preserving valid arms", async () => {
         const missing = okResult(await replay({
             views: [view(ORIGIN, { positives: [A] })],
@@ -527,8 +572,8 @@ describe("OPEN_SCORE asset-switch replay", () => {
         expect(result.trades?.some((row) => row.arm === "topMean"), "TOP_MEAN details remain available").to.equal(true);
     });
 
-    it("shares normalized target series across 15 arms while replaying 20 assets", async () => {
-        const assetNames = Array.from({ length: 20 }, (_, index) => `ASSET${index}`);
+    it("keeps the 15-arm switch working set cached while replaying 30 assets", async () => {
+        const assetNames = Array.from({ length: 30 }, (_, index) => `ASSET${index}`);
         const decisionCount = 60;
         const views: AssetSwitchDecision[] = Array.from({ length: decisionCount }, (_, eventIndex) => ({
             timeSec: ORIGIN + eventIndex * HOUR,
@@ -551,7 +596,7 @@ describe("OPEN_SCORE asset-switch replay", () => {
             onLoad: () => { loads += 1; },
         }));
         expect(result.decisionCount).to.equal(decisionCount);
-        expect(loads, "shared event lookups avoid per-arm series reloads").to.be.lessThan(450);
+        expect(loads, "the bounded cache retains the active and replacement assets").to.be.at.most(assetNames.length);
     });
 
     it("returns interrupted output when Stop arrives during target loading", async () => {
