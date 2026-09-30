@@ -320,12 +320,15 @@ starts flat and holds one long target-asset position. BOT arms still choose
 from their existing bottom-ranked candidates; they do not open short trades.
 The first unique pick enters at the target's next open strictly after the
 decision. Repeating the held asset leaves the position and costs unchanged.
-A unique pick of another asset schedules a sale at the held asset's next open
-and then a purchase at the replacement's first open at or after the sale. The two
-positions never overlap. A tie or no pick holds the actual position, or keeps
-the arm flat, and cancels any outstanding switch. A one-candidate pool can
-make a pick. The pair-entry decision clock is retained, so score changes at
-exit-only timestamps do not place orders.
+A pick of another asset schedules a sale at the held asset's next open and then
+a purchase at the replacement's first open at or after the sale. The two
+positions never overlap. Ranked arms use the existing deterministic selector
+tie-break, so a tied best score still produces a pick. The unique-only
+TOP_MEAN_RAW_UNIQUE arm and tied BOT extrema can remain unresolved; an
+unresolved tie or no pick holds the actual position, or keeps the arm flat,
+and cancels any outstanding switch. A one-candidate pool can make a pick. The
+pair-entry decision clock is retained, so score changes at exit-only timestamps
+do not place orders.
 
 Switch mode uses a fixed $1,000 entry notional for every trade, without
 compounding. This is normalized research P&L, not a shared or self-financing

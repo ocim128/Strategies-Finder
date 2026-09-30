@@ -58,7 +58,7 @@ function makeDecisionEvent(
 }
 
 describe("OPEN_SCORE replay selection cooldown", () => {
-    it("reuses ranked winners for asset-switch picks and stores null for tied extrema", async () => {
+    it("reuses deterministic ranked winners for asset-switch picks while preserving unique-only ties", async () => {
         const built = await buildCandidateViews({
             events: [
                 makeDecisionEvent(100, [9, 6, 3], [1, 5, 4]),
@@ -86,13 +86,15 @@ describe("OPEN_SCORE replay selection cooldown", () => {
         expect(first.botZ).to.equal(0);
 
         const tied = built.views[1]!.assetSwitchPicks!;
-        expect(tied.topRaw).to.equal(null);
-        expect(tied.topMean).to.equal(null);
+        expect(tied.topRaw).to.equal(built.views[1]!.topRaw);
+        expect(tied.topMean).to.equal(built.views[1]!.topMean);
+        expect(tied.topRaw).to.be.greaterThan(-1);
+        expect(tied.topMean).to.be.greaterThan(-1);
         expect(tied.topMeanRawUnique).to.equal(null);
-        expect(tied.topRawProfit).to.equal(null);
-        expect(tied.topMeanProfit).to.equal(null);
-        expect(tied.topRawProfitNow).to.equal(null);
-        expect(tied.topMeanProfitNow).to.equal(null);
+        expect(tied.topRawProfit).to.be.a("number");
+        expect(tied.topMeanProfit).to.be.a("number");
+        expect(tied.topRawProfitNow).to.be.a("number");
+        expect(tied.topMeanProfitNow).to.be.a("number");
     });
 
     it("retains ordinary singleton events so their selected asset starts cooldown", async () => {

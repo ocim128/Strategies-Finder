@@ -279,21 +279,24 @@ export async function buildCandidateViews(args: {
                 : null;
             let switchPicks: Record<ReplayArmField, number | null> | undefined;
             if (args.includeAllDecisionEvents === true) {
-                const uniqueWinner = (pick: { winner: Candidate; tiedCount: number } | null): number | null =>
-                    pick?.tiedCount === 1 ? pick.winner.assetIndex : null;
+                // Normal ranked arms already resolve score ties with the
+                // canonical event digest. Keep that winner for switch replay;
+                // only TOP_MEAN_RAW_UNIQUE requires a unique best raw score.
+                const rankedWinner = (pick: { winner: Candidate } | null): number | null =>
+                    pick?.winner.assetIndex ?? null;
                 switchPicks = {
                     // The ordinary ranking results already computed above
                     // carry tie counts. Reuse them instead of ranking those
                     // pools a second time just for switch replay.
-                    topRawProfitNow: uniqueWinner(topRawProfitNow),
-                    topMeanProfitNow: uniqueWinner(topMeanProfitNow),
-                    topRawProfitNowConf: uniqueWinner(topRawProfitNowConf),
-                    topZ: uniqueWinner(topZ),
-                    topRaw: uniqueWinner(topRaw),
-                    topMean: uniqueWinner(topMean),
+                    topRawProfitNow: rankedWinner(topRawProfitNow),
+                    topMeanProfitNow: rankedWinner(topMeanProfitNow),
+                    topRawProfitNowConf: rankedWinner(topRawProfitNowConf),
+                    topZ: rankedWinner(topZ),
+                    topRaw: rankedWinner(topRaw),
+                    topMean: rankedWinner(topMean),
                     topMeanRawUnique: topMeanRawUnique >= 0 ? topMeanRawUnique : null,
-                    topRawProfit: uniqueWinner(topRawProfit),
-                    topMeanProfit: uniqueWinner(topMeanProfit),
+                    topRawProfit: rankedWinner(topRawProfit),
+                    topMeanProfit: rankedWinner(topMeanProfit),
                     // BOT arms have no parallel display pick in this stage;
                     // calculate only their unique extreme selectors here.
                     botRawProfitNow: uniquePick(profitNowPositives, "raw", "min"),
