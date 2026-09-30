@@ -29,30 +29,10 @@ import {
 import { computeSelectorPnl, simulateTopMeanPortfolio } from "./pnl";
 import { pickUsableMaxByAssetNames, pickUsableMinByAssetNames } from "./candidate-selection";
 import { yieldLoop } from "./runtime";
+import { REPLAY_ARM_FIELDS } from "./arm-contract";
+import { REPLAY_ARM_TO_FINDER_ARM } from "./arm-contract";
 
-const REPLAY_ARM_FIELDS: ReplayArmField[] = [
-    "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
-    "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
-    "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",
-];
-
-const ARM_EVENT_DETAIL_SELECTORS: Record<ReplayArmField, OpenScoreUsdEventDetailSelector> = {
-    topRawProfitNow: "TOP_RAW_PROFIT_NOW",
-    topMeanProfitNow: "TOP_MEAN_PROFIT_NOW",
-    topRawProfitNowConf: "TOP_RAW_PROFIT_NOW_CONF",
-    topZ: "TOP_Z",
-    topRaw: "TOP_RAW",
-    topMean: "TOP_MEAN",
-    topMeanRawUnique: "TOP_MEAN_RAW_UNIQUE",
-    topRawProfit: "TOP_RAW_PROFIT",
-    topMeanProfit: "TOP_MEAN_PROFIT",
-    botRawProfitNow: "BOT_RAW_PROFIT_NOW",
-    botMeanProfitNow: "BOT_MEAN_PROFIT_NOW",
-    botZ: "BOT_Z",
-    botRaw: "BOT_RAW",
-    botMean: "BOT_MEAN",
-    botMeanRawUnique: "BOT_MEAN_RAW_UNIQUE",
-};
+const ARM_EVENT_DETAIL_SELECTORS = REPLAY_ARM_TO_FINDER_ARM as Record<ReplayArmField, OpenScoreUsdEventDetailSelector>;
 
 interface CooldownArmSeries {
     deltas: number[];

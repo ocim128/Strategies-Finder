@@ -10,6 +10,7 @@
 import type { OHLCVData } from "../../types/strategies";
 import type { CandleGap } from "../../ibkr-data/candle-gap";
 import type { ActiveCapTiltWeight, CapTiltWeight } from "../cap-tilt-contract";
+import type { ReplayArmField } from "./arm-contract";
 
 // ============================================================================
 // Public types
@@ -257,6 +258,8 @@ export interface CandidateOutcomeRecord {
 }
 
 export interface OpenScoreUsdReplayResult {
+    /** New results always include this discriminator; absent means legacy horizon data. */
+    mode?: ReplayMode;
     pairs: number;
     assets: number;
     complete: boolean;
@@ -469,6 +472,8 @@ export interface OpenScoreUsdReplayResult {
         armTopContributorAssets?: Partial<Record<ReplayArmField, string | null>>;
         armTopContributorEvents?: Partial<Record<ReplayArmField, number>>;
     }>;
+    /** Required for `mode: asset_switch`; horizon arrays remain semantically unchanged. */
+    assetSwitch?: AssetSwitchReplaySummary;
     /** Latest-event selector picks used by the completed Batch result UI. */
     latestSelections: OpenScoreUsdLatestSelections | null;
     /**
@@ -526,22 +531,114 @@ export interface OpenScoreUsdSharedTargetCacheEntry {
 }
 
 /** Replay result fields represented as Finder's 15 Arm Performance selectors. */
-export type ReplayArmField =
-    | "topRawProfitNow" | "topMeanProfitNow" | "topRawProfitNowConf" | "topZ"
-    | "topRaw" | "topMean" | "topMeanRawUnique" | "topRawProfit" | "topMeanProfit"
-    | "botRawProfitNow" | "botMeanProfitNow" | "botZ" | "botRaw" | "botMean" | "botMeanRawUnique";
+export type { ReplayArmField } from "./arm-contract";
+
+/** Replay contract. Omitted values at legacy read boundaries mean `horizon`. */
+export type ReplayMode = "horizon" | "asset_switch";
+
+export type AssetSwitchArmStatus = "complete" | "no_entry" | "incomplete";
+
+export interface AssetSwitchPendingOrder {
+    side: "buy" | "sell";
+    destinationAsset: string | null;
+    decisionTimeSec: number;
+    scheduledTimeSec: number | null;
+}
+
+export interface AssetSwitchOpenPosition {
+    asset: string;
+    entryDecisionTimeSec: number;
+    entryTimeSec: number;
+    entryPrice: number;
+    markTimeSec: number | null;
+    markPrice: number | null;
+    markAgeSec: number | null;
+    openNetPnl: number | null;
+    entryCost: number;
+    holdingDurationSec: number | null;
+}
+
+export interface AssetSwitchTradeRecord {
+    arm: ReplayArmField;
+    asset: string;
+    decisionTimeSec: number;
+    entryTimeSec: number;
+    entryPrice: number;
+    exitTimeSec: number | null;
+    exitPrice: number | null;
+    holdingDurationSec: number | null;
+    netPnl: number | null;
+    entryCost: number;
+    exitCost: number;
+    status: "closed" | "open";
+}
+
+export interface AssetSwitchArmSummary {
+    status: AssetSwitchArmStatus;
+    /** Filled $1,000 entries; a final open position counts as entered. */
+    enteredCount: number;
+    completedTrades: number;
+    /** Null when never entered or when data quality makes the arm unrankable. */
+    realizedNetPnl: number | null;
+    openPositionNetPnl: number | null;
+    totalNetPnl: number | null;
+    partialRealizedNetPnl: number;
+    completedHoldingDurationSec: number;
+    averageCompletedHoldingDurationSec: number | null;
+    totalCosts: number;
+    openPosition: AssetSwitchOpenPosition | null;
+    pendingOrder: AssetSwitchPendingOrder | null;
+    diagnosticCounts: {
+        missingTarget: number;
+        invalidTimestamp: number;
+        invalidPrice: number;
+        dataGap: number;
+        staleMark: number;
+        unvaluedPosition: number;
+    };
+}
+
+/** Separate, path-dependent result; never represented as ReplayComparison. */
+export interface AssetSwitchReplaySummary {
+    semanticsVersion: "asset_switch.v1";
+    decisionCount: number;
+    windowStartSec: number | null;
+    windowEndSec: number;
+    independentWindow: boolean;
+    sizing: "fixed_entry_notional_non_compounding";
+    notionalPerEntry: number;
+    slippageRate: number;
+    commissionRate: number;
+    valuation: "last_closed_candle_close_at_or_before_window_end";
+    coverage: {
+        requestedAssets: number;
+        loadedAssets: number;
+        missingAssets: number;
+        invalidSeries: number;
+    };
+    arms: Record<ReplayArmField, AssetSwitchArmSummary>;
+    /** Optional, potentially large closed/open trade rows. */
+    trades?: AssetSwitchTradeRecord[];
+    tradeCount?: number;
+}
 
 /** Cap-tilt weighting for OPEN_SCORE USD (docs/open-score-cap-tilt.md). */
 export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
 
 export interface RunOpenScoreUsdReplayOptions {
-    /** Required in v1: positive bar horizons. Must be non-empty. */
-    horizons: number[];
+    /** Required only for horizon mode. Omitted mode defaults to `horizon`. */
+    mode?: ReplayMode;
+    /** Required in horizon mode: positive bar horizons. */
+    horizons?: number[];
     /** Bar interval the artifacts were produced on (echoed in the report). */
     interval?: string;
     /** Optional decision-timestamp window (unix seconds, inclusive). */
     sampleFromSec?: number;
     sampleToSec?: number;
+    /** Frozen coordinator run cutoff; bounds switch fills and terminal marks. */
+    evaluationCutoffSec?: number;
+    /** Annual coordinator passes start flat and are explicitly independent experiments. */
+    independentWindow?: boolean;
     /** Batch slippage/commission conventions applied to both arms identically. */
     slippageRate?: number;
     commissionRate?: number;
@@ -565,8 +662,10 @@ export interface RunOpenScoreUsdReplayOptions {
     onPoolSnapshot?: (row: PoolSnapshotRecord) => void | Promise<void>;
     /** Coordinator-only sink used to keep full-scale archive rows off the heap. */
     onCandidateOutcome?: (row: CandidateOutcomeRecord) => void | Promise<void>;
+    /** Stream each finalized switch trade to an archive sink without retaining full history. */
+    onAssetSwitchTrade?: (row: AssetSwitchTradeRecord) => void | Promise<void>;
     /** Phase transition + bounded-chunk progress. */
-    onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate", detail: string, completed: number, total: number) => void;
+    onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate" | "switch", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */
     shouldStop?: () => boolean;
     /**

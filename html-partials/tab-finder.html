@@ -72,6 +72,13 @@
     <div id="finderArmPerformanceSettings" class="finder-arm-performance-settings" style="display:none;">
         <div class="param-row">
             <div class="param-group">
+                <label class="param-label" for="finderArmPerformanceReplayMode">Replay mode</label>
+                <select class="param-input" id="finderArmPerformanceReplayMode">
+                    <option value="horizon" selected>Fixed horizon</option>
+                    <option value="asset_switch">Hold until asset changes</option>
+                </select>
+            </div>
+            <div class="param-group">
                 <label class="param-label" for="finderArmPerformanceHorizon">Replay Horizon (bars)</label>
                 <input type="number" class="param-input" id="finderArmPerformanceHorizon" value="5" min="1" max="1000" step="1">
             </div>
@@ -94,17 +101,17 @@
             <div class="param-group">
                 <label class="param-label finder-arm-performance-toggle" for="finderArmPerformanceEventFilterEnabled">
                     <input type="checkbox" id="finderArmPerformanceEventFilterEnabled">
-                    <span>Completed event count filter</span>
+                    <span id="finderArmPerformanceEventFilterLabel">Completed event count filter</span>
                 </label>
             </div>
         </div>
         <div class="param-row">
             <div class="param-group">
-                <label class="param-label" for="finderArmPerformanceMinEvents">Min events</label>
+                <label class="param-label" id="finderArmPerformanceMinEventsLabel" for="finderArmPerformanceMinEvents">Min events</label>
                 <input type="number" class="param-input" id="finderArmPerformanceMinEvents" value="1" min="1" max="1000000" step="1">
             </div>
             <div class="param-group">
-                <label class="param-label" for="finderArmPerformanceMaxEvents">Max events</label>
+                <label class="param-label" id="finderArmPerformanceMaxEventsLabel" for="finderArmPerformanceMaxEvents">Max events</label>
                 <input type="number" class="param-input" id="finderArmPerformanceMaxEvents" placeholder="No max" min="1" max="1000000" step="1">
             </div>
         </div>

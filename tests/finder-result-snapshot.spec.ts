@@ -9,6 +9,7 @@ import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-p
 import { toScalarArmPerformanceCandidate } from "../lib/finder/server/finder-stream-types";
 import type { FinderArmPerformanceCandidate, FinderAssetOpportunityResult, FinderLatestResults, FinderResult, FinderUniverseCandidate } from "../lib/types/finder";
 import type { BacktestResult, Time } from "../lib/types/strategies";
+import type { AssetSwitchArmSummary } from "../lib/batch-backtest/open-score-replay/types";
 
 function makeBacktestResult(overrides: Partial<BacktestResult> = {}): BacktestResult {
     return {
@@ -143,6 +144,7 @@ function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandida
         candidateOrdinal: index,
         strategyKey: "strategy_1",
         strategyName: "Strategy 1",
+        replayMode: "horizon",
         horizon: 5,
         params: { lookback: index },
         backtestSettings: { executionModel: "signal_close" },
@@ -153,7 +155,7 @@ function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandida
             replayTargetLoadFailures: 0,
             noTradePairs: 2,
         },
-        metrics: metrics as unknown as FinderArmPerformanceCandidate["metrics"],
+        metrics: metrics as unknown as NonNullable<FinderArmPerformanceCandidate["metrics"]>,
         metricsExTopContributor: metrics as FinderArmPerformanceCandidate["metricsExTopContributor"],
         contributorExclusions: Object.fromEntries(Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, {
             asset: "AAA",
@@ -161,6 +163,27 @@ function makeArmPerformanceCandidate(index: number): FinderArmPerformanceCandida
         }])) as FinderArmPerformanceCandidate["contributorExclusions"],
         requestedEngineMode: "typescript",
         actualEngineMode: "typescript",
+    };
+}
+
+function makeSwitchArmSummary(status: AssetSwitchArmSummary["status"] = "complete"): AssetSwitchArmSummary {
+    return {
+        status,
+        enteredCount: status === "no_entry" ? 0 : 1,
+        completedTrades: 0,
+        realizedNetPnl: status === "no_entry" ? null : 0,
+        openPositionNetPnl: status === "no_entry" ? null : -2,
+        totalNetPnl: status === "complete" ? -2 : null,
+        partialRealizedNetPnl: 0,
+        completedHoldingDurationSec: 0,
+        averageCompletedHoldingDurationSec: null,
+        totalCosts: 1,
+        openPosition: null,
+        pendingOrder: null,
+        diagnosticCounts: {
+            missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0,
+            dataGap: 0, staleMark: 0, unvaluedPosition: 0,
+        },
     };
 }
 
@@ -313,8 +336,10 @@ describe("Finder result snapshots", () => {
         expect(compact.inventoryComplete).to.equal(false);
         expect(compact.runContext?.pairs).to.deep.equal(["AAA+BBB"]);
         expect(compact.runContext?.uiBacktestSettings?.riskSettingsToggle).to.equal(true);
-        expect(compact.results[0]!.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("blockMeans");
-        expect(compact.results[0]!.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("eventDetails");
+        const compactRow = compact.results[0]!;
+        if (compactRow.replayMode !== "horizon") throw new Error("expected horizon candidate");
+        expect(compactRow.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("blockMeans");
+        expect(compactRow.metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("eventDetails");
         expect(compact.results[0]!.metricsExTopContributor?.TOP_RAW_PROFIT_NOW?.events).to.equal(1);
         expect(compact.results[0]!.contributorExclusions?.TOP_RAW_PROFIT_NOW).to.deep.equal({ asset: "AAA", events: 1 });
         expect(Object.keys(compact.results[0]!)).not.to.include.members([
@@ -322,6 +347,7 @@ describe("Finder result snapshots", () => {
         ]);
 
         const wireCandidate = toScalarArmPerformanceCandidate(rows[0]! as any);
+        if (wireCandidate.replayMode !== "horizon") throw new Error("expected horizon wire candidate");
         expect(Object.keys(wireCandidate)).not.to.include.members([
             "data", "signals", "trades", "eventDetails", "poolSnapshots", "candidateOutcomes",
         ]);
@@ -354,5 +380,47 @@ describe("Finder result snapshots", () => {
         if (!restored || restored.scope !== "arm_performance") throw new Error("unexpected restored scope");
         expect(restored.results[0]!.metricsExTopContributor).to.equal(undefined);
         expect(restored.results[0]!.contributorExclusions).to.equal(undefined);
+    });
+
+    it("round-trips switch summaries without horizon comparison fields and rejects unknown or mixed modes", () => {
+        const { horizon: _horizon, metrics: _metrics, metricsExTopContributor: _adjusted, contributorExclusions: _exclusions, ...base } = makeArmPerformanceCandidate(7);
+        const switchCandidate = {
+            ...base,
+            replayMode: "asset_switch" as const,
+            assetSwitchMetrics: Object.fromEntries(
+                Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, makeSwitchArmSummary()]),
+            ),
+        } as FinderArmPerformanceCandidate;
+        const compact = compactFinderLatestResults({
+            scope: "arm_performance",
+            results: [switchCandidate],
+            runContext: null,
+            inventoryComplete: true,
+        });
+        if (compact.scope !== "arm_performance") throw new Error("expected Arm Performance snapshot");
+        const compactRow = compact.results[0]!;
+        expect(compactRow.replayMode).to.equal("asset_switch");
+        expect(compactRow).not.to.have.property("horizon");
+        expect(compactRow).not.to.have.property("metrics");
+        expect(compactRow).not.to.have.property("metricsExTopContributor");
+        const restored = normalizeFinderLatestResultsSnapshot(compact);
+        if (!restored || restored.scope !== "arm_performance") throw new Error("expected restored Arm Performance snapshot");
+        expect(restored.results[0]!.replayMode).to.equal("asset_switch");
+        expect(restored.results[0]!.assetSwitchMetrics?.TOP_RAW.totalNetPnl).to.equal(-2);
+
+        const legacy = makeArmPerformanceCandidate(8) as unknown as Record<string, unknown>;
+        delete legacy.replayMode;
+        const restoredLegacy = normalizeFinderLatestResultsSnapshot({ scope: "arm_performance", results: [legacy] });
+        if (!restoredLegacy || restoredLegacy.scope !== "arm_performance") throw new Error("expected legacy Arm Performance snapshot");
+        expect(restoredLegacy.results[0]!.replayMode).to.equal("horizon");
+
+        expect(normalizeFinderLatestResultsSnapshot({
+            scope: "arm_performance",
+            results: [{ ...compactRow, replayMode: "future_mode" }],
+        })).to.equal(null);
+        expect(normalizeFinderLatestResultsSnapshot({
+            scope: "arm_performance",
+            results: [compactRow, legacy],
+        })).to.equal(null);
     });
 });

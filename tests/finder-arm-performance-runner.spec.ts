@@ -126,6 +126,41 @@ function makeSummary(): TopMeanResultSummary {
     };
 }
 
+function makeSwitchSummary(): TopMeanResultSummary {
+    const arm = {
+        status: "complete", enteredCount: 1, completedTrades: 0,
+        realizedNetPnl: 0, openPositionNetPnl: 4, totalNetPnl: 4,
+        partialRealizedNetPnl: 0, completedHoldingDurationSec: 0,
+        averageCompletedHoldingDurationSec: null, totalCosts: 1,
+        openPosition: null, pendingOrder: null,
+        diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+    };
+    return {
+        runId: "child-switch",
+        replayMode: "asset_switch",
+        completed: true,
+        archiveComplete: false,
+        counts: {} as TopMeanResultSummary["counts"],
+        horizons: [],
+        assetSwitch: {
+            semanticsVersion: "asset_switch.v1",
+            decisionCount: 1,
+            windowStartSec: null,
+            windowEndSec: 1_700_000_000,
+            independentWindow: false,
+            sizing: "fixed_entry_notional_non_compounding",
+            notionalPerEntry: 1_000,
+            slippageRate: 0,
+            commissionRate: 0,
+            valuation: "last_closed_candle_close_at_or_before_window_end",
+            coverage: { requestedAssets: 4, loadedAssets: 4, missingAssets: 0, invalidSeries: 0 },
+            arms: Object.fromEntries(Object.values(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((field) => [field, arm])) as any,
+        },
+        warnings: [],
+        reportLines: [],
+    };
+}
+
 function makeCoordinator(
     request: TopMeanCoordinatorRunRequest,
     status: Partial<TopMeanStatusResponse>,
@@ -186,21 +221,78 @@ describe("Finder Arm Performance runner", () => {
 
         expect(results).to.have.length(2);
         expect(candidates).to.have.length(2);
-        expect(results[0]!.pairCoverage).to.deep.equal({
+        const first = results[0]!;
+        if (first.replayMode !== "horizon") throw new Error("expected horizon arm result");
+        expect(first.pairCoverage).to.deep.equal({
             requestedPairs: 2,
             completedPairs: 2,
             failedPairs: 0,
             replayTargetLoadFailures: 0,
             noTradePairs: 0,
         });
-        expect(results[0]!.metrics.TOP_RAW_PROFIT_NOW.topMean).to.equal(0.25);
-        expect(results[0]!.metricsExTopContributor?.TOP_RAW_PROFIT_NOW?.topMean).to.equal(10);
-        expect(results[0]!.contributorExclusions?.TOP_RAW_PROFIT_NOW).to.deep.equal({ asset: "AAA", events: 1 });
-        expect(results[0]!.backtestSettings.exitStrategyOverrideEnabled).to.equal(false);
-        expect(results[0]!.backtestSettings.exitStrategyKey).to.equal("");
-        expect(results[0]!.backtestSettings.exitStrategyParams).to.deep.equal({});
+        expect(first.metrics.TOP_RAW_PROFIT_NOW.topMean).to.equal(0.25);
+        expect(first.metricsExTopContributor?.TOP_RAW_PROFIT_NOW?.topMean).to.equal(10);
+        expect(first.contributorExclusions?.TOP_RAW_PROFIT_NOW).to.deep.equal({ asset: "AAA", events: 1 });
+        expect(first.backtestSettings.exitStrategyOverrideEnabled).to.equal(false);
+        expect(first.backtestSettings.exitStrategyKey).to.equal("");
+        expect(first.backtestSettings.exitStrategyParams).to.deep.equal({});
         expect(order.indexOf("remove:0")).to.be.greaterThan(order.findIndex((item) => item.startsWith("teardown:")));
         expect(order.indexOf("create:1")).to.be.greaterThan(order.indexOf("remove:0"));
+    });
+
+    it("threads horizon-free switch requests and builds scalar switch-only candidates", async () => {
+        const input = makeInput();
+        input.options.armPerformance = { replayMode: "asset_switch", dateMode: "full" };
+        const requests: TopMeanCoordinatorRunRequest[] = [];
+        const cutoffTimes: number[] = [];
+        const candidates: any[] = [];
+        const results = await runFinderArmPerformance(input, {
+            onProgress: () => {},
+            onCandidate: (candidate) => candidates.push(candidate),
+            setActiveCoordinator: () => {},
+        }, {
+            createCoordinator(request, _baseDir, deps) {
+                requests.push(request);
+                cutoffTimes.push(deps.evaluationNowSec!);
+                return makeCoordinator(request, {}, async (emit) => {
+                    emit({ type: "done", result: makeSwitchSummary() });
+                }, []);
+            },
+            async removeChildArtifacts() {},
+        });
+
+        expect(requests).to.have.length(2);
+        expect(requests[0]?.replayMode).to.equal("asset_switch");
+        expect(requests[0]?.horizons).to.equal(undefined);
+        expect(requests[0]?.sampleToSec).to.equal(undefined);
+        expect(cutoffTimes).to.deep.equal([input.evaluationCutoffSec, input.evaluationCutoffSec]);
+        expect(results).to.have.length(2);
+        expect(candidates[0]?.replayMode).to.equal("asset_switch");
+        expect(candidates[0]).not.to.have.property("horizon");
+        expect(candidates[0]).not.to.have.property("metrics");
+        expect(candidates[0].assetSwitchMetrics.TOP_RAW.totalNetPnl).to.equal(4);
+    });
+
+    it("rejects a completed child that omits the switch result section", async () => {
+        const input = makeInput();
+        input.options.armPerformance = { replayMode: "asset_switch", dateMode: "full" };
+        let error: unknown;
+        try {
+            await runFinderArmPerformance(input, {
+                onProgress: () => {}, onCandidate: () => {}, setActiveCoordinator: () => {},
+            }, {
+                createCoordinator(request) {
+                    return makeCoordinator(request, {}, async (emit) => {
+                        emit({ type: "done", result: { ...makeSummary(), replayMode: "asset_switch", horizons: [] } });
+                    }, []);
+                },
+                async removeChildArtifacts() {},
+            });
+        } catch (caught) {
+            error = caught;
+        }
+        expect(error).to.be.instanceOf(FinderArmPerformanceChildError);
+        expect((error as Error).message).to.contain("required asset-switch result section");
     });
 
     it("threads the effective cooldown through every Finder child coordinator request", async () => {

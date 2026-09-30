@@ -46,6 +46,8 @@ import {
     type OpenScoreUsdLatestSelectorName,
     type AssetSelectionSummary,
     type ReplayComparison,
+    type ReplayMode,
+    type AssetSwitchReplaySummary,
 } from "./batch-open-score-usd-replay-engine";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
 import { SyntheticLegCache } from "./synthetic-leg-cache";
@@ -70,6 +72,7 @@ import {
 } from "./sp500-top-mean-performance";
 import {
     archiveCompletedTopMeanRun,
+    createTopMeanAssetSwitchTradeWriter,
     createTopMeanPhase0bArchiveWriter,
     findRegistryPoolMatch,
     resolveTopMeanArchiveLogDir,
@@ -78,6 +81,7 @@ import {
     type TopMeanArchiveManifest,
     type TopMeanArchiveOutcome,
     type TopMeanPhase0bArchiveWriter,
+    type TopMeanAssetSwitchTradeWriter,
 } from "./sp500-top-mean-archive-log";
 import { debugLogger } from "../debug-logger";
 import {
@@ -99,7 +103,9 @@ export interface TopMeanCoordinatorRunRequest {
     backtestSettings: BacktestSettings;
     capitalSettings: CapitalSettings;
     interval: string;
-    horizons: number[];
+    horizons?: number[];
+    /** Omitted legacy requests mean fixed horizon. */
+    replayMode?: ReplayMode;
     workerCount?: number;
     maxPairs?: number;
     pairListText?: string;
@@ -153,7 +159,9 @@ export interface TopMeanAnnualReplayWindow {
 }
 
 export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
+    replayMode?: ReplayMode;
     horizons: TopMeanHorizonSummary[];
+    assetSwitch?: AssetSwitchReplaySummary;
     eventDetails?: OpenScoreUsdEventDetail[];
     /**
      * Total eventDetail rows computed for this window, BEFORE the wire cap.
@@ -167,6 +175,8 @@ export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
 
 export interface TopMeanResultSummary {
     runId: string;
+    /** Completed run discriminator; absent old payloads mean horizon. */
+    replayMode?: ReplayMode;
     /** Effective selector cooldown used by the replay; 0 = off. */
     selectionCooldownBars?: number;
     completed: boolean;
@@ -176,6 +186,8 @@ export interface TopMeanResultSummary {
     archiveError?: string;
     counts: CoverageCounts;
     horizons: TopMeanHorizonSummary[];
+    /** Present for switch runs; never encoded as horizon comparisons. */
+    assetSwitch?: AssetSwitchReplaySummary;
     /** Calendar-year OPEN_SCORE USD reports clipped to the selected From/To range. */
     annualReports?: TopMeanAnnualReplaySummary[];
     /** Full selected-window scalar rows for the on-demand OPEN_SCORE details UI. */
@@ -319,9 +331,27 @@ export function toWireSafeTopMeanResultSummary(
         candidateOutcomes: undefined,
         annualReports: result.annualReports?.map((annual) => ({
             ...annual,
+            assetSwitch: annual.assetSwitch
+                ? {
+                    ...annual.assetSwitch,
+                    trades: annual.assetSwitch.trades
+                        ? capTopMeanEventDetailsForWire(annual.assetSwitch.trades)
+                        : undefined,
+                    tradeCount: annual.assetSwitch.tradeCount ?? annual.assetSwitch.trades?.length ?? 0,
+                }
+                : undefined,
             eventDetails: undefined,
             eventDetailCount: annual.eventDetails?.length ?? 0,
         })),
+        assetSwitch: result.assetSwitch
+            ? {
+                ...result.assetSwitch,
+                trades: result.assetSwitch.trades
+                    ? capTopMeanEventDetailsForWire(result.assetSwitch.trades)
+                    : undefined,
+                tradeCount: result.assetSwitch.tradeCount ?? result.assetSwitch.trades?.length ?? 0,
+            }
+            : undefined,
     };
 }
 
@@ -417,6 +447,7 @@ export function shouldEmitTopMeanReplayProgress(
 
 export interface TopMeanStatusResponse {
     runId: string;
+    replayMode?: ReplayMode;
     /** Effective replay cooldown; 0 means disabled. */
     selectionCooldownBars?: number;
     status: "running" | "completed" | "interrupted" | "failed";
@@ -561,6 +592,7 @@ export class TopMeanCoordinatorEngine {
     };
     private readonly archiveRequested: boolean;
     private archiveRoot: string | null = null;
+    private evaluationCutoffSec = Math.floor(Date.now() / 1000);
     /**
      * MarketCap dataset provenance (audit coverage/provenance finding),
      * captured when cap-tilt preflight succeeds and surfaced in the result
@@ -588,7 +620,10 @@ export class TopMeanCoordinatorEngine {
     public getStatus(): TopMeanStatusResponse {
         return {
             runId: this._request.runId,
-            selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+            replayMode: this._request.replayMode ?? "horizon",
+            selectionCooldownBars: (this._request.replayMode ?? "horizon") === "asset_switch"
+                ? 0
+                : this._request.selectionCooldownBars ?? 0,
             status: this.manifest?.status || (this.isStopped ? "interrupted" : "running"),
             phase: this.currentPhase,
             fingerprint: this.manifest?.fingerprint,
@@ -703,7 +738,10 @@ export class TopMeanCoordinatorEngine {
         // records the requested cap-tilt weighting so archived runs are
         // self-describing.
         manifest.capTiltWeight = this._request.capTiltWeight;
-        manifest.selectionCooldownBars = this._request.selectionCooldownBars ?? 0;
+        manifest.replayMode = this._request.replayMode ?? "horizon";
+        manifest.selectionCooldownBars = (this._request.replayMode ?? "horizon") === "asset_switch"
+            ? 0
+            : this._request.selectionCooldownBars ?? 0;
     }
 
     private async buildArchiveManifest(): Promise<TopMeanArchiveManifest> {
@@ -714,8 +752,14 @@ export class TopMeanCoordinatorEngine {
         const { ensureBuiltInStrategyLoaded } = await import("../strategies/built-in-catalog");
         const strategy = await ensureBuiltInStrategyLoaded(this._request.strategyKey);
         const normalizeApplied = typeof strategy?.normalizeParams === "function";
+        const replayMode = this._request.replayMode ?? "horizon";
+        const requestedEndSec = Number.isFinite(this._request.sampleToSec)
+            ? this._request.sampleToSec!
+            : this.evaluationCutoffSec;
         return {
-            selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+            selectionCooldownBars: (this._request.replayMode ?? "horizon") === "asset_switch"
+                ? 0
+                : this._request.selectionCooldownBars ?? 0,
             strategy: {
                 key: this._request.strategyKey,
                 params: normalizeApplied
@@ -747,6 +791,22 @@ export class TopMeanCoordinatorEngine {
                 dataCutoff,
             },
             costs: { ...this.replayCosts },
+            ...(replayMode === "asset_switch"
+                ? {
+                    assetSwitchReplayIdentity: {
+                        replayMode,
+                        semanticsVersion: "asset_switch.v1" as const,
+                        windowStartSec: this._request.sampleFromSec ?? null,
+                        windowEndSec: Math.min(requestedEndSec, this.evaluationCutoffSec),
+                        evaluationCutoffSec: this.evaluationCutoffSec,
+                        slippageRate: this.replayCosts.slippageRate,
+                        commissionRate: this.replayCosts.commissionRate,
+                        sizing: "fixed_entry_notional_non_compounding" as const,
+                        notionalPerEntry: 1_000,
+                        capTiltWeight: this._request.capTiltWeight ?? "off",
+                    },
+                }
+                : {}),
             windowDesignation: resolveTopMeanWindowDesignation(this._request),
             researchContract: {
                 tieVersion: MAX_ACTIVE_TIE_VERSION,
@@ -855,6 +915,7 @@ export class TopMeanCoordinatorEngine {
         // artifacts with different closed-candle cutoffs. One timestamp per
         // coordinator run is threaded through every worker task instead.
         const runNowSec = this.deps?.evaluationNowSec ?? Math.floor(Date.now() / 1000);
+        this.evaluationCutoffSec = runNowSec;
         // Internal execution profile (finder_arm): trusted Finder Arm
         // Performance children run the full-window replay only — see the
         // TopMeanCoordinatorEngineDeps comment for everything it skips.
@@ -867,6 +928,9 @@ export class TopMeanCoordinatorEngine {
         cleanOldArtifacts(this.baseDir);
         let phase0bWriter: TopMeanPhase0bArchiveWriter | null = null;
         let phase0bFiles: TopMeanPhase0bArchiveWriter["files"] | undefined;
+        let assetSwitchTradeWriter: TopMeanAssetSwitchTradeWriter | null = null;
+        const annualAssetSwitchTradeWriters = new Map<number, TopMeanAssetSwitchTradeWriter>();
+        const annualAssetSwitchTradePaths = new Map<number, string>();
         let phase0bWriterFailed = false;
         let phase0bWriterError: string | undefined;
 
@@ -916,13 +980,30 @@ export class TopMeanCoordinatorEngine {
             });
             this.canonicalAssets = [...enumRes.eligibleAssets];
             this.runFingerprint = fingerprint;
-            if (this.archiveRequested && this.archiveRoot !== null) {
+            if ((this._request.replayMode ?? "horizon") === "horizon" && this.archiveRequested && this.archiveRoot !== null) {
                 try {
                     phase0bWriter = await createTopMeanPhase0bArchiveWriter(this.baseDir, this._request.runId);
                 } catch (error) {
                     phase0bWriterFailed = true;
                     phase0bWriterError = error instanceof Error ? error.message : String(error);
                     debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
+                        runId: this._request.runId,
+                        error: phase0bWriterError,
+                    });
+                }
+            }
+            if ((this._request.replayMode ?? "horizon") === "asset_switch"
+                && this.archiveRequested && this.archiveRoot !== null && !finderArmProfile) {
+                try {
+                    assetSwitchTradeWriter = await createTopMeanAssetSwitchTradeWriter(
+                        this.baseDir,
+                        this._request.runId,
+                        "full",
+                    );
+                } catch (error) {
+                    phase0bWriterFailed = true;
+                    phase0bWriterError = error instanceof Error ? error.message : String(error);
+                    debugLogger.warn("sp500_top_mean.asset_switch_archive_staging_failed", {
                         runId: this._request.runId,
                         error: phase0bWriterError,
                     });
@@ -963,6 +1044,7 @@ export class TopMeanCoordinatorEngine {
                 };
             }
             this.manifest = manifest;
+            manifest.replayMode = this._request.replayMode ?? "horizon";
             manifest.archiveRequested = this.archiveRequested;
             delete manifest.archiveComplete;
             delete manifest.archiveDir;
@@ -1132,13 +1214,19 @@ export class TopMeanCoordinatorEngine {
                 const snapshotWriteStartedAt = performance.now();
                 atomicWriteJsonSync(resultJsonPath, {
                     currentSnapshot: currentSnapshotResult,
-                    selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+                    replayMode: this._request.replayMode ?? "horizon",
+                    selectionCooldownBars: (this._request.replayMode ?? "horizon") === "asset_switch"
+                        ? 0
+                        : this._request.selectionCooldownBars ?? 0,
                 });
                 this.performanceDiagnostic.phases.resultWriteMs += performance.now() - snapshotWriteStartedAt;
                 emitNdjson({
                     type: "current_snapshot",
                     currentSnapshot: currentSnapshotResult,
-                    selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+                    replayMode: this._request.replayMode ?? "horizon",
+                    selectionCooldownBars: (this._request.replayMode ?? "horizon") === "asset_switch"
+                        ? 0
+                        : this._request.selectionCooldownBars ?? 0,
                 });
             }
 
@@ -1147,7 +1235,7 @@ export class TopMeanCoordinatorEngine {
             this.progressText = "Running OPEN_SCORE USD replay and asset selection analysis...";
             emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
             const replayStartedAt = performance.now();
-            type ReplayPhase = "scan" | "events" | "targets" | "outcomes" | "aggregate";
+            type ReplayPhase = "scan" | "events" | "targets" | "outcomes" | "aggregate" | "switch";
             let activeReplayPhase: ReplayPhase | null = null;
             let activeReplayPhaseStartedAt = replayStartedAt;
             // Audit (replay-progress finding): the replay engine emits detailed
@@ -1163,7 +1251,7 @@ export class TopMeanCoordinatorEngine {
                 if (activeReplayPhase === "scan") this.performanceDiagnostic!.replay.scanMs += elapsedMs;
                 else if (activeReplayPhase === "events") this.performanceDiagnostic!.replay.eventsMs += elapsedMs;
                 else if (activeReplayPhase === "targets") this.performanceDiagnostic!.replay.targetsMs += elapsedMs;
-                else if (activeReplayPhase === "outcomes") this.performanceDiagnostic!.replay.outcomesMs += elapsedMs;
+                else if (activeReplayPhase === "outcomes" || activeReplayPhase === "switch") this.performanceDiagnostic!.replay.outcomesMs += elapsedMs;
                 else this.performanceDiagnostic!.replay.aggregateMs += elapsedMs;
                 activeReplayPhase = null;
             };
@@ -1344,8 +1432,12 @@ export class TopMeanCoordinatorEngine {
             const runReplayForWindow = (
                 sampleFromSec: number | undefined,
                 sampleToSec: number | undefined,
+                independentWindow = false,
+                tradeWriter: TopMeanAssetSwitchTradeWriter | null = null,
             ): Promise<OpenScoreUsdReplayResult> => {
-                const includePhase0bDiagnostics = replayPassIndex === 0 && phase0bWriter !== null && !phase0bWriterFailed;
+                const replayMode = this._request.replayMode ?? "horizon";
+                const includePhase0bDiagnostics = replayMode === "horizon"
+                    && replayPassIndex === 0 && phase0bWriter !== null && !phase0bWriterFailed;
                 replayPassIndex += 1;
                 const markPhase0bWriterFailed = (error: unknown): void => {
                     debugLogger.warn("sp500_top_mean.phase0b_writer_failed", {
@@ -1372,8 +1464,13 @@ export class TopMeanCoordinatorEngine {
                         // hit; omitting it lets each per-target cache entry
                         // die right after its asset is consumed instead of
                         // retaining every target until the pass ends.
-                        ...(finderArmProfile ? {} : { sharedTargetCache: sharedTargetOutcomeCache }),
-                        horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48],
+                        ...(finderArmProfile || replayMode === "asset_switch" ? {} : { sharedTargetCache: sharedTargetOutcomeCache }),
+                        mode: replayMode,
+                        ...(replayMode === "horizon"
+                            ? { horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48] }
+                            : {}),
+                        evaluationCutoffSec: runNowSec,
+                        independentWindow,
                         interval: this._request.interval,
                         slippageRate,
                         commissionRate,
@@ -1382,6 +1479,21 @@ export class TopMeanCoordinatorEngine {
                         // suppress event and ongoing-detail rows when this is
                         // false. Standalone keeps them for the details UI.
                         includeEventDetails: !finderArmProfile,
+                        ...(tradeWriter ? {
+                            onAssetSwitchTrade: async (row) => {
+                                if (phase0bWriterFailed) return;
+                                try {
+                                    await tradeWriter.write(row);
+                                } catch (error) {
+                                    debugLogger.warn("sp500_top_mean.asset_switch_archive_staging_failed", {
+                                        runId: this._request.runId,
+                                        error: error instanceof Error ? error.message : String(error),
+                                    });
+                                    phase0bWriterError ??= error instanceof Error ? error.message : String(error);
+                                    phase0bWriterFailed = true;
+                                }
+                            },
+                        } : {}),
                         ...(includePhase0bDiagnostics
                             ? {
                                 includePoolSnapshots: true,
@@ -1433,7 +1545,7 @@ export class TopMeanCoordinatorEngine {
                         ...(this._request.capTiltWeight && replayCapTiltLookup
                             ? { capTiltWeight: this._request.capTiltWeight, lookupMarketCap: replayCapTiltLookup }
                             : {}),
-                        ...(this._request.selectionCooldownBars
+                        ...(replayMode === "horizon" && this._request.selectionCooldownBars
                             ? { selectionCooldownBars: this._request.selectionCooldownBars }
                             : {}),
                         onPhase: (phase, detail, completed, total) => {
@@ -1470,6 +1582,8 @@ export class TopMeanCoordinatorEngine {
             const replayResult = await runReplayForWindow(
                 this._request.sampleFromSec,
                 this._request.sampleToSec,
+                false,
+                assetSwitchTradeWriter,
             );
             if (replayTargetLoadFailureCount > 0) {
                 const omitted = replayTargetLoadFailureCount - replayTargetLoadFailures.length;
@@ -1527,9 +1641,14 @@ export class TopMeanCoordinatorEngine {
                 for (let index = 0; index < annualWindows.length; index += 1) {
                     const window = annualWindows[index]!;
                     if (reuseFullWindowForSingleAnnual) {
+                        if (assetSwitchTradeWriter) annualAssetSwitchTradePaths.set(window.year, assetSwitchTradeWriter.path);
                         annualReports.push({
                             ...window,
+                            replayMode: this._request.replayMode ?? "horizon",
                             horizons: buildHorizonSummaries(replayResult),
+                            ...(replayResult.assetSwitch
+                                ? { assetSwitch: { ...replayResult.assetSwitch, independentWindow: true } }
+                                : {}),
                             eventDetails: replayResult.eventDetails,
                             warnings: replayResult.warnings,
                             reportLines: replayResult.reportLines,
@@ -1538,7 +1657,23 @@ export class TopMeanCoordinatorEngine {
                     }
                     this.progressText = `Running OPEN_SCORE USD replay for ${window.year} (${index + 1}/${annualWindows.length})...`;
                     emitNdjson({ type: "progress", phase: "replay", text: this.progressText });
-                    const annualResult = await runReplayForWindow(window.sampleFromSec, window.sampleToSec);
+                    let annualTradeWriter: TopMeanAssetSwitchTradeWriter | null = null;
+                    if ((this._request.replayMode ?? "horizon") === "asset_switch"
+                        && this.archiveRequested && this.archiveRoot !== null) {
+                        try {
+                            annualTradeWriter = await createTopMeanAssetSwitchTradeWriter(
+                                this.baseDir,
+                                this._request.runId,
+                                `annual-${window.year}`,
+                            );
+                            annualAssetSwitchTradeWriters.set(window.year, annualTradeWriter);
+                            annualAssetSwitchTradePaths.set(window.year, annualTradeWriter.path);
+                        } catch (error) {
+                            phase0bWriterFailed = true;
+                            phase0bWriterError ??= error instanceof Error ? error.message : String(error);
+                        }
+                    }
+                    const annualResult = await runReplayForWindow(window.sampleFromSec, window.sampleToSec, true, annualTradeWriter);
                     finishActiveReplayPhase();
                     if (this.isStopped) {
                         this.emitInterrupted(emitNdjson);
@@ -1546,11 +1681,25 @@ export class TopMeanCoordinatorEngine {
                     }
                     annualReports.push({
                         ...window,
+                        replayMode: this._request.replayMode ?? "horizon",
                         horizons: buildHorizonSummaries(annualResult),
+                        ...(annualResult.assetSwitch ? { assetSwitch: annualResult.assetSwitch } : {}),
                         eventDetails: annualResult.eventDetails,
                         warnings: annualResult.warnings,
                         reportLines: annualResult.reportLines,
                     });
+                }
+            }
+
+            if (assetSwitchTradeWriter || annualAssetSwitchTradeWriters.size > 0) {
+                for (const writer of [assetSwitchTradeWriter, ...annualAssetSwitchTradeWriters.values()]) {
+                    if (!writer) continue;
+                    try {
+                        await writer.close();
+                    } catch (error) {
+                        phase0bWriterFailed = true;
+                        phase0bWriterError ??= error instanceof Error ? error.message : String(error);
+                    }
                 }
             }
 
@@ -1573,9 +1722,12 @@ export class TopMeanCoordinatorEngine {
                 const finalWriteStartedAt = performance.now();
                 atomicWriteJsonSync(resultJsonPath, {
                     ...replayResult,
+                    replayMode: this._request.replayMode ?? "horizon",
                     annualReports,
                     currentSnapshot: this.currentSnapshotResult,
-                    selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+                    selectionCooldownBars: (this._request.replayMode ?? "horizon") === "asset_switch"
+                        ? 0
+                        : this._request.selectionCooldownBars ?? 0,
                     performance: this.performanceSnapshot(),
                 });
                 this.performanceDiagnostic.phases.resultWriteMs += performance.now() - finalWriteStartedAt;
@@ -1590,7 +1742,7 @@ export class TopMeanCoordinatorEngine {
             const annualReportLines = annualReports.flatMap((annual) => [
                 "",
                 `================ OPEN_SCORE USD | CALENDAR YEAR ${annual.year} ================`,
-                ...(this._request.selectionCooldownBars
+                ...((this._request.replayMode ?? "horizon") === "horizon" && this._request.selectionCooldownBars
                     ? [`Selection cooldown: ${this._request.selectionCooldownBars} target-asset bars; state reset at the start of this independent annual replay.`]
                     : []),
                 ...annual.reportLines,
@@ -1598,11 +1750,15 @@ export class TopMeanCoordinatorEngine {
 
             this.resultSummary = {
                 runId: this._request.runId,
-                selectionCooldownBars: this._request.selectionCooldownBars ?? 0,
+                replayMode: this._request.replayMode ?? "horizon",
+                selectionCooldownBars: (this._request.replayMode ?? "horizon") === "asset_switch"
+                    ? 0
+                    : this._request.selectionCooldownBars ?? 0,
                 completed: true,
                 archiveComplete: false,
                 counts: this.counts,
                 horizons: horizonSummaries,
+                ...(replayResult.assetSwitch ? { assetSwitch: replayResult.assetSwitch } : {}),
                 annualReports,
                 openScoreEventDetails: replayResult.eventDetails,
                 ongoingEventDetails: replayResult.ongoingEventDetails,
@@ -1610,7 +1766,7 @@ export class TopMeanCoordinatorEngine {
                 candidateOutcomes: replayResult.candidateOutcomes,
                 warnings: replayResult.warnings,
                 reportLines: [
-                    ...(this._request.selectionCooldownBars
+                    ...((this._request.replayMode ?? "horizon") === "horizon" && this._request.selectionCooldownBars
                         ? [
                             `Selection cooldown: ${this._request.selectionCooldownBars} target-asset bars per selector arm.`,
                             "Annual replay windows reset cooldown state independently.",
@@ -1664,6 +1820,10 @@ export class TopMeanCoordinatorEngine {
                         warn: (event, data) => debugLogger.warn(event, data),
                         manifest: await this.buildArchiveManifest(),
                         ...(phase0bFiles ? { phase0bFiles } : {}),
+                        ...(assetSwitchTradeWriter ? { assetSwitchTradesPath: assetSwitchTradeWriter.path } : {}),
+                        ...(annualAssetSwitchTradePaths.size > 0
+                            ? { assetSwitchAnnualTradePaths: Object.fromEntries(annualAssetSwitchTradePaths) }
+                            : {}),
                     });
                 } catch (error) {
                     const message = error instanceof Error ? error.message : String(error);
@@ -1761,6 +1921,10 @@ export class TopMeanCoordinatorEngine {
             }
             if (phase0bWriter) {
                 await phase0bWriter.dispose().catch(() => undefined);
+            }
+            if (assetSwitchTradeWriter) await assetSwitchTradeWriter.dispose().catch(() => undefined);
+            for (const writer of annualAssetSwitchTradeWriters.values()) {
+                await writer.dispose().catch(() => undefined);
             }
             if (activeEngineInstance === this) {
                 activeEngineInstance = null;

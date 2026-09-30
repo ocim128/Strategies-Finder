@@ -28,6 +28,7 @@ import {
     type OpenScoreUsdReplayResult,
     type OpenScoreUsdTarget,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
+import type { ReplayMode } from "../lib/batch-backtest/open-score-replay/types";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -45,6 +46,10 @@ interface BenchArgs {
     ties: boolean;
     interleave: boolean;
     sparse: boolean;
+    mode: ReplayMode;
+    longHolds: boolean;
+    frequentSwitches: boolean;
+    stopAfterSwitchMs: number | null;
     label: string;
     outDir: string;
 }
@@ -61,6 +66,10 @@ function parseArgs(argv: readonly string[]): BenchArgs {
         ties: false,
         interleave: false,
         sparse: false,
+        mode: "horizon",
+        longHolds: false,
+        frequentSwitches: false,
+        stopAfterSwitchMs: null,
         label: `replay-${Date.now()}`,
         outDir: "artifacts/arm-replay-eff-bench",
     };
@@ -83,10 +92,30 @@ function parseArgs(argv: readonly string[]): BenchArgs {
             case "--ties": args.ties = true; break;
             case "--interleave": args.interleave = true; break;
             case "--sparse": args.sparse = true; break;
+            case "--mode": {
+                const mode = take();
+                if (mode !== "horizon" && mode !== "asset_switch") throw new Error("--mode must be horizon or asset_switch");
+                args.mode = mode;
+                break;
+            }
+            case "--long-holds": args.longHolds = true; break;
+            case "--frequent-switches": args.frequentSwitches = true; break;
+            case "--stop-after-switch-ms": {
+                const ms = Number(take());
+                if (!Number.isFinite(ms) || ms < 0) throw new Error("--stop-after-switch-ms must be a non-negative number");
+                args.stopAfterSwitchMs = ms;
+                break;
+            }
             case "--label": args.label = take(); break;
             case "--out-dir": args.outDir = take(); break;
             default: throw new Error(`Unknown flag ${flag}`);
         }
+    }
+    if (args.longHolds && args.frequentSwitches) {
+        throw new Error("--long-holds and --frequent-switches are separate benchmark profiles");
+    }
+    if ((args.longHolds || args.frequentSwitches || args.stopAfterSwitchMs !== null) && args.mode !== "asset_switch") {
+        throw new Error("switch benchmark profiles require --mode asset_switch");
     }
     return args;
 }
@@ -146,7 +175,7 @@ interface Fixture {
 }
 
 function buildFixture(args: BenchArgs): Fixture {
-    const { assets, events, eventSpacingSec, horizons: horizonArg, gaps, missingTargets, ties, interleave, sparse } = args;
+    const { assets, events, eventSpacingSec, horizons: horizonArg, gaps, missingTargets, ties, interleave, sparse, longHolds, frequentSwitches } = args;
     const horizons = horizonArg.split(",").map((v) => Number(v)).filter((v) => Number.isFinite(v) && v > 0);
     const spanSec = events * eventSpacingSec;
     const targetBars = Math.ceil((spanSec + 4 * eventSpacingSec) / BAR_SEC);
@@ -202,6 +231,14 @@ function buildFixture(args: BenchArgs): Fixture {
         const trades: Trade[] = [];
         for (let e = 0; e < events; e += 1) {
             if (interleaveSlot(e)) continue;
+            if (frequentSwitches) {
+                if (a === e % assets) {
+                    const entry = T0 + e * eventSpacingSec + 60;
+                    trades.push(makeTrade("long", entry, entry + 120, 0.2));
+                }
+                continue;
+            }
+            if (longHolds && a !== 0) continue;
             if ((e + a) % 2 === 0 && (e * 7 + a * 13) % 5 !== 0) {
                 const entry = T0 + e * eventSpacingSec + 60;
                 const pnl = ties
@@ -237,13 +274,14 @@ function buildFixture(args: BenchArgs): Fixture {
 async function main(): Promise<void> {
     const args = parseArgs(process.argv.slice(2));
     const cwd = process.cwd();
-    console.log(`[bench] assets=${args.assets} events=${args.events} spacing=${args.eventSpacingSec}s horizons=${args.horizons} gaps=${args.gaps} missingTargets=${args.missingTargets} ties=${args.ties} interleave=${args.interleave} sparse=${args.sparse}`);
+    console.log(`[bench] mode=${args.mode} assets=${args.assets} events=${args.events} spacing=${args.eventSpacingSec}s horizons=${args.horizons} gaps=${args.gaps} missingTargets=${args.missingTargets} ties=${args.ties} interleave=${args.interleave} sparse=${args.sparse} longHolds=${args.longHolds} frequentSwitches=${args.frequentSwitches}`);
 
     const fixture = buildFixture(args);
 
-    let peakRss = 0;
-    let peakHeap = 0;
-    let peakExternal = 0;
+    const initialMemory = process.memoryUsage();
+    let peakRss = initialMemory.rss;
+    let peakHeap = initialMemory.heapUsed;
+    let peakExternal = initialMemory.external + initialMemory.arrayBuffers;
     const sampler = setInterval(() => {
         const m = process.memoryUsage();
         if (m.rss > peakRss) peakRss = m.rss;
@@ -258,20 +296,50 @@ async function main(): Promise<void> {
         ? (phase: string): void => { phaseMarks.push({ phase, at: performance.now() }); }
         : undefined;
 
+    const targetByAsset = new Map(fixture.targets.map((target) => [target.asset.toUpperCase(), target.data]));
+    let targetReads = 0;
+    let stopRequestedAt: number | null = null;
+    let stopTimer: ReturnType<typeof setTimeout> | null = null;
+    const shouldStop = (): boolean => stopRequestedAt !== null;
+    const onSwitchPhase = (phase: string): void => {
+        onPhase?.(phase);
+        if (phase === "switch" && args.stopAfterSwitchMs !== null && stopTimer === null) {
+            stopTimer = setTimeout(() => { stopRequestedAt = performance.now(); }, args.stopAfterSwitchMs);
+        }
+    };
+    let finalTargetOpenSec = Number.NEGATIVE_INFINITY;
+    for (const target of fixture.targets) {
+        for (const bar of target.data) finalTargetOpenSec = Math.max(finalTargetOpenSec, Number(bar.time));
+    }
+    if (!Number.isFinite(finalTargetOpenSec)) throw new Error("Benchmark fixture has no target candles.");
+    const replayEndSec = finalTargetOpenSec + 4 * 60 * 60;
+
     const startedAt = performance.now();
     const result: OpenScoreUsdReplayResult = await runOpenScoreUsdReplay(
         () => (async function* () { for (const pair of fixture.pairs) yield pair; })(),
         () => (async function* () { for (const t of fixture.targets) yield t; })(),
         {
-            horizons: fixture.horizons,
+            mode: args.mode,
+            ...(args.mode === "horizon" ? { horizons: fixture.horizons } : {}),
             interval: "4h",
             slippageRate: 0,
             commissionRate: 0,
             blockCount: fixture.blockCount,
-            ...(onPhase ? { onPhase } : {}),
+            ...(args.mode === "asset_switch" ? {
+                sampleToSec: replayEndSec,
+                evaluationCutoffSec: replayEndSec,
+                includeEventDetails: true,
+                loadTargetDataset: async (asset: string) => {
+                    targetReads += 1;
+                    return targetByAsset.get(asset.toUpperCase()) ?? null;
+                },
+                shouldStop,
+            } : {}),
+            ...((onPhase || args.stopAfterSwitchMs !== null) ? { onPhase: onSwitchPhase } : {}),
         },
     );
     const wallMs = performance.now() - startedAt;
+    if (stopTimer !== null) clearTimeout(stopTimer);
     clearInterval(sampler);
 
     const phaseDurations: Record<string, number> = {};
@@ -307,6 +375,18 @@ async function main(): Promise<void> {
         peakHeapBytes: peakHeap,
         peakExternalBytes: peakExternal,
         fingerprint,
+        mode: args.mode,
+        targetReads: args.mode === "asset_switch" ? targetReads : null,
+        stopLatencyMs: stopRequestedAt === null ? null : performance.now() - stopRequestedAt,
+        switchDetailRows: result.assetSwitch?.trades?.length ?? 0,
+        switchDetailBytes: result.assetSwitch?.trades ? Buffer.byteLength(JSON.stringify(result.assetSwitch.trades)) : 0,
+        switchTradeCount: result.assetSwitch?.tradeCount ?? 0,
+        switchArmStatusCounts: result.assetSwitch
+            ? Object.values(result.assetSwitch.arms).reduce((counts, arm) => {
+                counts[arm.status] += 1;
+                return counts;
+            }, { complete: 0, no_entry: 0, incomplete: 0 })
+            : null,
         totals: {
             pairs: result.pairs,
             assets: result.assets,
@@ -319,7 +399,7 @@ async function main(): Promise<void> {
     fs.mkdirSync(outDir, { recursive: true });
     const outPath = path.join(outDir, `${args.label}.json`);
     fs.writeFileSync(outPath, JSON.stringify({ metrics, result }, null, 2), "utf8");
-    console.log(`[bench] wall=${wallMs.toFixed(0)}ms fingerprint=${fingerprint.slice(0, 12)} events=${result.totalEvents} candidate=${result.candidateEvents} eligible=${result.eligibleEvents} peakRssMB=${(peakRss / 1048576).toFixed(0)} peakExtMB=${(peakExternal / 1048576).toFixed(0)}`);
+    console.log(`[bench] wall=${wallMs.toFixed(0)}ms fingerprint=${fingerprint.slice(0, 12)} events=${result.totalEvents} candidate=${result.candidateEvents} eligible=${result.eligibleEvents} peakRssMB=${(peakRss / 1048576).toFixed(0)} peakHeapMB=${(peakHeap / 1048576).toFixed(0)} peakExtMB=${(peakExternal / 1048576).toFixed(0)}${args.mode === "asset_switch" ? ` targetReads=${targetReads} detailRows=${metrics.switchDetailRows}/${metrics.switchTradeCount} detailBytes=${metrics.switchDetailBytes} stopLatencyMs=${metrics.stopLatencyMs ?? "n/a"}` : ""}`);
     if (args.profile) console.log(`[bench] phases: ${JSON.stringify(phaseDurations)}`);
     console.log(`[bench] report: ${outPath}`);
 }

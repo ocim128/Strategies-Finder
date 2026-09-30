@@ -38,22 +38,26 @@ import { ReattachBackoffController } from "../reattach-backoff";
 import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "../sp500-top-mean-stream-types";
 import type { CoverageCounts } from "../sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "../sp500-top-mean-coordinator-engine";
+import type { ReplayMode } from "../open-score-replay/types";
 import type {
     OpenScoreUsdEventDetailSelector,
     OpenScoreUsdLatestSelections,
     OpenScoreUsdLatestSelectorName,
 } from "../open-score-replay/types";
 import { isActiveCapTiltWeight } from "../cap-tilt-contract";
+import { hasAssetSwitchDecisionEvents } from "../open-score-replay/arm-contract";
 import { debounce } from "../../debounce";
 import { escapeHtml } from "../../html-escape";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import {
     clearPersistedLatestTopMeanResult,
     clearTopMeanActiveRun,
+    persistTopMeanReplayMode,
     persistLatestTopMeanResult,
     persistTopMeanActiveRun,
     readLatestTopMeanResult,
     readTopMeanActiveRun,
+    readTopMeanReplayMode,
 } from "./batch-browser-store";
 import {
     formatCurrentTopMeanLines,
@@ -134,6 +138,23 @@ export class TopMeanController {
         this.latestTopMeanResult = result;
     }
 
+    public initializeReplayModeControls(dom: BatchBacktestDom): void {
+        dom.batchBacktestSp500TopMeanReplayMode.value = readTopMeanReplayMode();
+        const sync = () => {
+            const mode: ReplayMode = dom.batchBacktestSp500TopMeanReplayMode.value === "asset_switch"
+                ? "asset_switch"
+                : "horizon";
+            dom.batchBacktestSp500TopMeanHorizons.disabled = mode === "asset_switch";
+            dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.disabled = mode === "asset_switch";
+            dom.batchBacktestSp500TopMeanSelectionCooldownBars.disabled =
+                mode === "asset_switch" || !dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked;
+            persistTopMeanReplayMode(mode);
+        };
+        dom.batchBacktestSp500TopMeanReplayMode.addEventListener("change", sync);
+        dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.addEventListener("change", sync);
+        sync();
+    }
+
     /** True while a run id or the reattach poll loop should block other Batch actions. */
     isUiOwned(): boolean {
         return this.activeTopMeanRunId !== null || this.topMeanReattachInFlight;
@@ -199,13 +220,18 @@ export class TopMeanController {
         // in Workers or Max Pairs used to fall through to "not set" — silently
         // launching the auto-worker or full-universe workload — and invalid
         // horizon tokens were silently dropped while valid ones remained.
-        const horizonsParsed = parseTopMeanMenuHorizons(dom.batchBacktestSp500TopMeanHorizons.value);
-        if (horizonsParsed.kind === "invalid") {
+        const replayMode: ReplayMode = dom.batchBacktestSp500TopMeanReplayMode.value === "asset_switch"
+            ? "asset_switch"
+            : "horizon";
+        const horizonsParsed = replayMode === "horizon"
+            ? parseTopMeanMenuHorizons(dom.batchBacktestSp500TopMeanHorizons.value)
+            : null;
+        if (horizonsParsed?.kind === "invalid") {
             dom.batchBacktestSp500TopMeanProgressText.textContent =
                 `Error: Invalid horizons value "${horizonsParsed.token}". Use comma-separated positive integers, e.g. 12,24,48.`;
             return;
         }
-        const horizons = horizonsParsed.horizons;
+        const horizons = horizonsParsed?.kind === "valid" ? horizonsParsed.horizons : undefined;
 
         const workersParsed = parseTopMeanMenuOptionalPositiveInt(dom.batchBacktestSp500TopMeanWorkers.value);
         if (workersParsed.kind === "invalid") {
@@ -221,7 +247,7 @@ export class TopMeanController {
         }
         const workerCount = workersParsed.kind === "valid" ? workersParsed.value : undefined;
         const maxPairs = maxPairsParsed.kind === "valid" ? maxPairsParsed.value : undefined;
-        const cooldownEnabled = dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked;
+        const cooldownEnabled = replayMode === "horizon" && dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked;
         const cooldownParsed = parseTopMeanMenuOptionalPositiveInt(
             dom.batchBacktestSp500TopMeanSelectionCooldownBars.value,
         );
@@ -291,8 +317,9 @@ export class TopMeanController {
             backtestSettings: backtestService.getBacktestSettings(),
             capitalSettings: backtestService.getCapitalSettings(),
             interval: pairListText ? state.currentInterval : "4h",
-            horizons,
-            selectionCooldownBars,
+            replayMode,
+            ...(horizons ? { horizons } : {}),
+            ...(replayMode === "horizon" ? { selectionCooldownBars } : {}),
             workerCount,
             maxPairs,
             pairListText,
@@ -609,12 +636,15 @@ export class TopMeanController {
 
         const lines: string[] = [
             "======================================================================",
-            "🏆 TOP_MEAN ASSET LEADERBOARD SUMMARY",
+            res.replayMode === "asset_switch" ? "ASSET-SWITCH REPLAY SUMMARY" : "🏆 TOP_MEAN ASSET LEADERBOARD SUMMARY",
             "======================================================================",
             `Run ID: ${res.runId || "--"}`,
+            `Replay mode: ${res.replayMode ?? "horizon"}`,
             `Coverage: ${res.counts?.usableTargetIntervalCount ?? "--"} target assets | ${res.counts?.pairCount ?? "--"} pairs`,
-            `Selection cooldown: ${(res.selectionCooldownBars ?? 0) > 0 ? `${res.selectionCooldownBars} target-asset bars per selector arm` : "off"}`,
-            ...((res.selectionCooldownBars ?? 0) > 0
+            ...((res.replayMode ?? "horizon") === "horizon"
+                ? [`Selection cooldown: ${(res.selectionCooldownBars ?? 0) > 0 ? `${res.selectionCooldownBars} target-asset bars per selector arm` : "off"}`]
+                : []),
+            ...((res.replayMode ?? "horizon") === "horizon" && (res.selectionCooldownBars ?? 0) > 0
                 ? ["Annual replay windows reset cooldown state independently.", "Current snapshot uses raw scores; cooldown applies to historical replay picks."]
                 : []),
             "",
@@ -630,7 +660,42 @@ export class TopMeanController {
             lines.push(...formatTopMeanPerformanceLines(res.performance), "");
         }
 
-        if (Array.isArray(res.horizons)) {
+        if (res.replayMode === "asset_switch" && res.assetSwitch) {
+            lines.push(
+                "--- PATH-DEPENDENT ASSET-SWITCH REPLAY ---",
+                `Semantics: ${res.assetSwitch.semanticsVersion} | fixed $${res.assetSwitch.notionalPerEntry} per entry | non-compounding | long-only | slippage=${res.assetSwitch.slippageRate} | commission=${res.assetSwitch.commissionRate}`,
+                `Window: ${!hasAssetSwitchDecisionEvents(res.assetSwitch)
+                    ? "no decision events"
+                    : res.assetSwitch.windowStartSec === null
+                        ? `full history through ${new Date(res.assetSwitch.windowEndSec * 1000).toISOString()}`
+                        : `${new Date(res.assetSwitch.windowStartSec * 1000).toISOString()} .. ${new Date(res.assetSwitch.windowEndSec * 1000).toISOString()}`}`,
+                `Target data: ${res.assetSwitch.coverage.loadedAssets}/${res.assetSwitch.coverage.requestedAssets} loaded | trade rows ${res.assetSwitch.tradeCount ?? res.assetSwitch.trades?.length ?? 0}`,
+                "Current snapshot is a separate raw-score snapshot and does not represent these replay positions.",
+                "",
+            );
+            const appendSwitchArms = (label: string, section: NonNullable<TopMeanResultSummary["assetSwitch"]>) => {
+                lines.push(label);
+                for (const [arm, metrics] of Object.entries(section.arms)) {
+                    const formatMoney = (value: number | null) => value === null || !Number.isFinite(value)
+                        ? "n/a"
+                        : `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
+                    const open = metrics.openPosition
+                        ? ` | open=${metrics.openPosition.asset} mark=${formatMoney(metrics.openPosition.openNetPnl)}`
+                        : "";
+                    const pending = metrics.pendingOrder
+                        ? ` | pending=${metrics.pendingOrder.side}${metrics.pendingOrder.destinationAsset ? ` ${metrics.pendingOrder.destinationAsset}` : ""}`
+                        : "";
+                    lines.push(`  ${arm} | ${metrics.status} | total=${formatMoney(metrics.totalNetPnl)} | realized=${formatMoney(metrics.realizedNetPnl)} | open=${formatMoney(metrics.openPositionNetPnl)} | closed=${metrics.completedTrades} | entries=${metrics.enteredCount} | costs=$${metrics.totalCosts.toFixed(2)}${open}${pending}`);
+                }
+                lines.push("");
+            };
+            appendSwitchArms("Full-window arms:", res.assetSwitch);
+            for (const annual of res.annualReports ?? []) {
+                if (annual.replayMode === "asset_switch" && annual.assetSwitch) {
+                    appendSwitchArms(`Independent ${annual.year} arms:`, annual.assetSwitch);
+                }
+            }
+        } else if (Array.isArray(res.horizons)) {
             for (const h of res.horizons) {
                 lines.push(`--- HISTORICAL TOP_MEAN | Horizon ${h.horizon} Bars (${h.events?.toLocaleString()} decision events) ---`);
                 lines.push(`HISTORICAL TOP_MEAN | horizon=${h.horizon} | top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} deltaMed=${formatSignedPercent(h.topMean?.delta)}`);

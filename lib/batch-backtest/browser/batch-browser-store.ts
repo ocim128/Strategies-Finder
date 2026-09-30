@@ -8,6 +8,7 @@
  */
 import { readPersistedJson, writePersistedJson } from "../../persisted-json";
 import { debugLogger } from "../../debug-logger";
+import { REPLAY_ARM_FIELDS } from "../open-score-replay/arm-contract";
 import { TRADE_LEDGER_DEFAULT_HORIZONS } from "../trade-ledger-schema";
 import type { TradeGateRunOptions } from "../trade-gate-wire";
 import {
@@ -18,6 +19,7 @@ import {
 } from "../batch-backtest-snapshot";
 import type { BatchBacktestSymbolResult } from "../batch-backtest-runner";
 import type { TopMeanResultSummary } from "../sp500-top-mean-coordinator-engine";
+import type { ReplayMode } from "../open-score-replay/types";
 
 export const BATCH_RESULTS_STORAGE = {
     key: "playground_batch_backtest_latest_results",
@@ -124,6 +126,54 @@ export const TOP_MEAN_LATEST_RESULT_STORAGE = {
     schema: "sp500_top_mean.latest_result",
     version: 1,
 } as const;
+
+export const TOP_MEAN_REPLAY_MODE_STORAGE = {
+    key: "playground_sp500_top_mean_replay_mode",
+    schema: "sp500_top_mean.replay_mode",
+    version: 1,
+} as const;
+
+export function readTopMeanReplayMode(): ReplayMode {
+    return readPersistedJson<ReplayMode>({
+        ...TOP_MEAN_REPLAY_MODE_STORAGE,
+        fallback: "horizon",
+        migrate: ({ data }) => data === "asset_switch" ? "asset_switch" : "horizon",
+    });
+}
+
+export function persistTopMeanReplayMode(mode: ReplayMode): void {
+    writePersistedJson({
+        ...TOP_MEAN_REPLAY_MODE_STORAGE,
+        data: mode,
+        onError: (error) => debugLogger.warn("sp500_top_mean.replay_mode_save_failed", {
+            error: error instanceof Error ? error.message : String(error),
+        }),
+    });
+}
+
+const TOP_MEAN_SWITCH_RESULT_STORAGE_LIMIT = 1_000;
+function compactTopMeanSwitchSection(section: NonNullable<TopMeanResultSummary["assetSwitch"]>) {
+    const trades = section.trades;
+    let boundedTrades: typeof trades;
+    if (trades) {
+        const retainedByArm = new Map<string, number>();
+        const selected: NonNullable<typeof trades> = [];
+        for (let index = trades.length - 1; index >= 0; index -= 1) {
+            const row = trades[index]!;
+            const retained = retainedByArm.get(row.arm) ?? 0;
+            if (retained >= TOP_MEAN_SWITCH_RESULT_STORAGE_LIMIT) continue;
+            retainedByArm.set(row.arm, retained + 1);
+            selected.push(row);
+        }
+        selected.reverse();
+        boundedTrades = selected;
+    }
+    return {
+        ...section,
+        trades: boundedTrades,
+        tradeCount: section.tradeCount ?? section.trades?.length ?? 0,
+    };
+}
 
 export type TopMeanPersistedActiveRun = { runId: string };
 
@@ -297,12 +347,16 @@ export function persistLatestTopMeanResult(result: TopMeanResultSummary): void {
     } = result;
     const persistedAnnualReports = annualReports?.map((annual) => {
         const { eventDetails: _eventDetails, ...persistedAnnual } = annual;
-        return persistedAnnual;
+        return {
+            ...persistedAnnual,
+            ...(annual.assetSwitch ? { assetSwitch: compactTopMeanSwitchSection(annual.assetSwitch) } : {}),
+        };
     });
     writePersistedJson({
         ...TOP_MEAN_LATEST_RESULT_STORAGE,
         data: {
             ...persistedResult,
+            ...(result.assetSwitch ? { assetSwitch: compactTopMeanSwitchSection(result.assetSwitch) } : {}),
             ...(persistedAnnualReports ? { annualReports: persistedAnnualReports } : {}),
         },
         onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_save_failed", {
@@ -330,6 +384,13 @@ export function readLatestTopMeanResult(): TopMeanResultSummary | null {
             const source = data as Partial<TopMeanResultSummary>;
             if (typeof source.runId !== "string" || !source.runId.trim()) return null;
             if (source.completed !== true || !Array.isArray(source.horizons)) return null;
+            const replayMode = source.replayMode === undefined ? "horizon" : source.replayMode;
+            if (replayMode !== "horizon" && replayMode !== "asset_switch") return null;
+            if (replayMode === "asset_switch") {
+                const section = source.assetSwitch;
+                if (!section || section.semanticsVersion !== "asset_switch.v1" || source.horizons.length !== 0) return null;
+                if (!section.arms || !REPLAY_ARM_FIELDS.every((arm) => arm in section.arms)) return null;
+            }
             if (!source.horizons.every((horizon) =>
                 horizon
                 && typeof horizon === "object"
@@ -337,7 +398,24 @@ export function readLatestTopMeanResult(): TopMeanResultSummary | null {
             )) {
                 return null;
             }
-            return source as TopMeanResultSummary;
+            if (source.annualReports !== undefined) {
+                if (!Array.isArray(source.annualReports)) return null;
+                const annualValid = source.annualReports.every((annual) => {
+                    if (!annual || typeof annual !== "object" || Array.isArray(annual)) return false;
+                    const annualMode = (annual as { replayMode?: unknown }).replayMode;
+                    if (annualMode !== undefined && annualMode !== "horizon" && annualMode !== "asset_switch") return false;
+                    if (annualMode !== undefined && annualMode !== replayMode) return false;
+                    if (replayMode === "asset_switch") {
+                        const switchAnnual = annual as { assetSwitch?: { semanticsVersion?: unknown }; horizons?: unknown[] };
+                        return switchAnnual.assetSwitch?.semanticsVersion === "asset_switch.v1"
+                            && Array.isArray(switchAnnual.horizons)
+                            && switchAnnual.horizons.length === 0;
+                    }
+                    return true;
+                });
+                if (!annualValid) return null;
+            }
+            return { ...source, replayMode } as TopMeanResultSummary;
         },
         onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_restore_failed", {
             error: error instanceof Error ? error.message : String(error),

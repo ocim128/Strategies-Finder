@@ -277,6 +277,57 @@ describe("Finder metadata payload builders", () => {
 		expect(payload.results[0]?.allArmMetricsExTopContributor?.TOP_RAW).to.equal(adjustedMetric);
 	});
 
+	it("exports switch P&L provenance and filters by completed trades without horizon fields", () => {
+		const switchMetric = (totalNetPnl: number | null, completedTrades: number, status: string) => ({
+			status,
+			enteredCount: 1,
+			completedTrades,
+			realizedNetPnl: completedTrades ? -5 : 0,
+			openPositionNetPnl: totalNetPnl,
+			totalNetPnl,
+			partialRealizedNetPnl: 0,
+			completedHoldingDurationSec: 0,
+			averageCompletedHoldingDurationSec: null,
+			totalCosts: 1,
+			openPosition: null,
+			pendingOrder: null,
+			diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+		});
+		const openOnly = switchMetric(8, 0, "complete");
+		const closed = switchMetric(-2, 1, "complete");
+		const candidate = (id: string, ordinal: number, metric: ReturnType<typeof switchMetric>) => ({
+			candidateId: id,
+			candidateOrdinal: ordinal,
+			strategyKey: "arm_test",
+			strategyName: "Arm Test",
+			replayMode: "asset_switch" as const,
+			params: {},
+			backtestSettings: {},
+			pairCoverage: { requestedPairs: 1, completedPairs: 1, failedPairs: 0, replayTargetLoadFailures: 0, noTradePairs: 0 },
+			assetSwitchMetrics: { TOP_RAW: metric },
+		}) as unknown as FinderArmPerformanceCandidate;
+		const payload = buildArmPerformanceTopResultsPayload({
+			results: [candidate("open-only", 0, openOnly), candidate("closed", 1, closed)],
+			runContext: { runId: "switch-run", replayMode: "asset_switch" } as any,
+			inventoryComplete: true,
+			selectedArm: "TOP_RAW",
+			scoringBasis: "exclude_top_contributor",
+			displayFilter: { eventFilterEnabled: true, minEvents: 1, maxEvents: 4 },
+		});
+		expect(payload.replayMode).to.equal("asset_switch");
+		expect(payload.scoringBasis).to.equal("raw");
+		expect(payload.rankingMetric).to.equal("totalNetPnlUsd");
+		expect(payload.assetSwitchSemantics.rankingMetric).to.equal("total_net_pnl_usd_including_open_mark");
+		expect(payload.completedTradeFilter).to.deep.equal({ enabled: true, minTrades: 1, maxTrades: 4 });
+		expect(payload).not.to.have.property("selectionCooldownBars");
+		expect(payload).not.to.have.property("eventFilter");
+		expect(payload.results.map((row) => row.candidateId)).to.deep.equal(["closed"]);
+		expect(payload.results[0].selectedArmMetric).to.equal(closed);
+		expect(payload.results[0]).not.to.have.property("horizon");
+		expect(payload.results[0]).not.to.have.property("allArmMetrics");
+		expect(payload.results[0].allArmSwitchMetrics.TOP_RAW.totalNetPnl).to.equal(-2);
+	});
+
     it("routes the top-results payload by result scope", () => {
         const base = {
             armRunContext: null,

@@ -9,6 +9,7 @@ import {
     sortFinderArmPerformanceResults,
 } from "../lib/finder/finder-arm-performance-metrics";
 import type { ReplayComparison } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
+import type { AssetSwitchArmSummary } from "../lib/batch-backtest/open-score-replay/types";
 
 function comparison(value: number | null, events = 3): ReplayComparison {
     return {
@@ -22,6 +23,31 @@ function comparison(value: number | null, events = 3): ReplayComparison {
         ciUpper: value,
         positiveBlocks: 1,
         totalBlocks: 2,
+    };
+}
+
+function switchArm(
+    status: AssetSwitchArmSummary["status"],
+    totalNetPnl: number | null,
+    completedTrades: number,
+): AssetSwitchArmSummary {
+    return {
+        status,
+        enteredCount: status === "no_entry" ? 0 : 1,
+        completedTrades,
+        realizedNetPnl: 0,
+        openPositionNetPnl: status === "no_entry" ? null : totalNetPnl,
+        totalNetPnl,
+        partialRealizedNetPnl: 0,
+        completedHoldingDurationSec: 0,
+        averageCompletedHoldingDurationSec: null,
+        totalCosts: 0,
+        openPosition: null,
+        pendingOrder: null,
+        diagnosticCounts: {
+            missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0,
+            dataGap: 0, staleMark: 0, unvaluedPosition: 0,
+        },
     };
 }
 
@@ -114,5 +140,26 @@ describe("Finder Arm Performance metrics", () => {
             basis: "exclude_top_contributor",
         }).map((row) => row.id)).to.deep.equal(["adjusted-winner", "raw-winner", "missing-adjusted"]);
         expect(source).to.have.length(3);
+    });
+
+    it("ranks switch total net P&L, including open-only positions, and filters by completed trades", () => {
+        const source = [
+            { candidateOrdinal: 0, id: "tie-later", replayMode: "asset_switch" as const, assetSwitchMetrics: { TOP_RAW: switchArm("complete", 3, 1) } },
+            { candidateOrdinal: 1, id: "open-only", replayMode: "asset_switch" as const, assetSwitchMetrics: { TOP_RAW: switchArm("complete", 0, 0) } },
+            { candidateOrdinal: 2, id: "incomplete", replayMode: "asset_switch" as const, assetSwitchMetrics: { TOP_RAW: switchArm("incomplete", 100, 4) } },
+            { candidateOrdinal: 3, id: "no-entry", replayMode: "asset_switch" as const, assetSwitchMetrics: { TOP_RAW: switchArm("no_entry", null, 0) } },
+            { candidateOrdinal: 4, id: "tie-first", replayMode: "asset_switch" as const, assetSwitchMetrics: { TOP_RAW: switchArm("complete", 3, 2) } },
+        ];
+        expect(getFinderArmPerformanceRankValue({}, "TOP_RAW", "asset_switch", source[1]!.assetSwitchMetrics.TOP_RAW))
+            .to.equal(0, "a marked open position is rankable even before its first completed trade");
+        expect(getFinderArmPerformanceRankValue({}, "TOP_RAW", "asset_switch", source[2]!.assetSwitchMetrics.TOP_RAW)).to.equal(null);
+        expect(getFinderArmPerformanceRankValue({}, "TOP_RAW", "asset_switch", source[3]!.assetSwitchMetrics.TOP_RAW)).to.equal(null);
+        expect(sortFinderArmPerformanceResults(source, "TOP_RAW").map((row) => row.id)).to.deep.equal([
+            "tie-later", "tie-first", "open-only", "incomplete", "no-entry",
+        ]);
+        expect(sortFinderArmPerformanceResults(source, "TOP_RAW", {
+            eventFilterEnabled: true,
+            minEvents: 1,
+        }).map((row) => row.id)).to.deep.equal(["tie-later", "tie-first", "incomplete"]);
     });
 });

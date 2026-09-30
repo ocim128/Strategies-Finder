@@ -57,6 +57,7 @@ import type {
 	FinderOptions,
 	FinderScope as FinderScopeLike,
 } from "../../types/finder";
+import type { ReplayMode } from "../../batch-backtest/open-score-replay/types";
 import { settingsManager } from "../../settings-manager";
 import type { FinderManagerDom } from "../finder-manager-dom";
 import type { FinderStrategySelection } from "./finder-strategy-selection";
@@ -88,6 +89,8 @@ export interface FinderControlsDeps {
 	applyResort(): void;
 	/** Run-button click (Run/Stop orchestration lives in the controller). */
 	requestRun(): void;
+	/** Completed result provenance; null means the live mode controls own the labels. */
+	getArmPerformanceReplayMode?(): ReplayMode | null;
 	renderRandomBenchmark(mode: FinderOptions["mode"], payload?: unknown): void;
 	selection: FinderStrategySelection;
 }
@@ -235,6 +238,7 @@ applyPersistedUiStateToDom(): void {
 	dom.finderTradesMax.value = this.uiState.maxTradesText;
 	dom.finderOosValidationToggle.checked = this.uiState.oosValidationEnabled;
 	dom.finderArmPerformanceHorizon.value = String(this.uiState.armPerformanceHorizon);
+	dom.finderArmPerformanceReplayMode.value = this.uiState.armPerformanceReplayMode;
 	dom.finderArmPerformanceExcludeTopContributor.checked = this.uiState.armPerformanceExcludeTopContributor;
 	dom.finderArmPerformanceEventFilterEnabled.checked = this.uiState.armPerformanceEventFilterEnabled;
 	dom.finderArmPerformanceMinEvents.value = String(this.uiState.armPerformanceMinEvents);
@@ -621,10 +625,23 @@ const applicable = oosCapableWindow;
 
 private syncArmPerformanceControls(): void {
 	const dom = this.deps.getDom();
+	const switchMode = dom.finderArmPerformanceReplayMode.value === "asset_switch";
+	const completedMode = this.deps.getArmPerformanceReplayMode?.() ?? null;
+	const labelMode = completedMode ?? (switchMode ? "asset_switch" : "horizon");
 	const filterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
+	dom.finderArmPerformanceHorizon.disabled = switchMode;
+	dom.finderArmPerformanceSelectionCooldownEnabled.disabled = switchMode;
+	dom.finderArmPerformanceSelectionCooldownBars.disabled = switchMode || !dom.finderArmPerformanceSelectionCooldownEnabled.checked;
+	dom.finderArmPerformanceExcludeTopContributor.disabled = switchMode;
 	dom.finderArmPerformanceMinEvents.disabled = !filterEnabled;
 	dom.finderArmPerformanceMaxEvents.disabled = !filterEnabled;
-	dom.finderArmPerformanceSelectionCooldownBars.disabled = !dom.finderArmPerformanceSelectionCooldownEnabled.checked;
+	const useTradeCount = labelMode === "asset_switch";
+	const eventFilterLabel = document.getElementById("finderArmPerformanceEventFilterLabel");
+	const minLabel = document.getElementById("finderArmPerformanceMinEventsLabel");
+	const maxLabel = document.getElementById("finderArmPerformanceMaxEventsLabel");
+	if (eventFilterLabel) eventFilterLabel.textContent = useTradeCount ? "Completed trade count filter" : "Completed event count filter";
+	if (minLabel) minLabel.textContent = useTradeCount ? "Min trades" : "Min events";
+	if (maxLabel) maxLabel.textContent = useTradeCount ? "Max trades" : "Max events";
 }
 
 initTradeFilterUI(): void {
@@ -670,6 +687,7 @@ initFinderSettingsPersistenceUI(): void {
 		dom.finderTradesMin,
 		dom.finderTradesMax,
 		dom.finderOosValidationToggle,
+		dom.finderArmPerformanceReplayMode,
 		dom.finderArmPerformanceHorizon,
 		dom.finderArmPerformanceExcludeTopContributor,
 		dom.finderArmPerformanceEventFilterEnabled,
@@ -695,6 +713,7 @@ initFinderSettingsPersistenceUI(): void {
 	});
 	dom.finderArmPerformanceEventFilterEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
 	dom.finderArmPerformanceSelectionCooldownEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
+	dom.finderArmPerformanceReplayMode.addEventListener("change", () => this.syncArmPerformanceControls());
 }
 
 captureFinderUiState(persist = true): void {
@@ -732,6 +751,7 @@ captureFinderUiState(persist = true): void {
 		DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
 		1,
 	))));
+	this.uiState.armPerformanceReplayMode = dom.finderArmPerformanceReplayMode.value === "asset_switch" ? "asset_switch" : "horizon";
 	this.uiState.armPerformanceExcludeTopContributor = dom.finderArmPerformanceExcludeTopContributor.checked;
 	this.uiState.armPerformanceEventFilterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
 	this.uiState.armPerformanceMinEvents = Math.max(1, Math.min(1_000_000, Math.round(this.readFinderNumberInput(
@@ -934,14 +954,20 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 	options.scope = scope;
 	if (scope === 'arm_performance') {
 		const dateMode = dataSlice === 'date_range' ? 'date_range' : 'full';
+		const replayMode = dom.finderArmPerformanceReplayMode.value === "asset_switch" ? "asset_switch" : "horizon";
 		options.armPerformance = {
-			horizon: Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(
-				dom.finderArmPerformanceHorizon,
-				DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
-				1,
-			)))),
+			replayMode,
+			...(replayMode === "horizon" ? {
+				horizon: Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(
+					dom.finderArmPerformanceHorizon,
+					DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
+					1,
+				)))),
+			} : {}),
 			dateMode,
-			scoringBasis: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
+			scoringBasis: replayMode === "asset_switch"
+				? "raw"
+				: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
 			eventFilterEnabled: dom.finderArmPerformanceEventFilterEnabled.checked,
 			minEvents: Math.max(1, Math.round(this.readFinderNumberInput(
 				dom.finderArmPerformanceMinEvents,
@@ -951,7 +977,7 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 			maxEvents: dom.finderArmPerformanceMaxEvents.value.trim() === ""
 				? null
 				: Math.round(this.readFinderNumberInput(dom.finderArmPerformanceMaxEvents, Number.POSITIVE_INFINITY, 1)),
-			selectionCooldownEnabled: dom.finderArmPerformanceSelectionCooldownEnabled.checked,
+			selectionCooldownEnabled: replayMode === "horizon" && dom.finderArmPerformanceSelectionCooldownEnabled.checked,
 			selectionCooldownBars: Math.max(1, Math.round(this.readFinderNumberInput(
 				dom.finderArmPerformanceSelectionCooldownBars,
 				DEFAULT_FINDER_UI_STATE.armPerformanceSelectionCooldownBars,

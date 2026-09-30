@@ -9,7 +9,7 @@ import type { ReplayArmField, SelectorName } from "./types";
 
 /** Bounded phase callback shared by every replay stage. */
 export type ReplayPhaseCallback = (
-    phase: "scan" | "events" | "targets" | "outcomes" | "aggregate",
+    phase: "scan" | "events" | "targets" | "outcomes" | "aggregate" | "switch",
     detail: string,
     completed: number,
     total: number,
@@ -105,6 +105,8 @@ export interface Candidate {
 /** Per-event candidate pools + pre-resolved picks (before gap filtering). */
 export interface EventView {
     timeSec: number;
+    /** Unique-best switch picks calculated while building the candidate pools. */
+    assetSwitchPicks?: Readonly<Record<ReplayArmField, number | null>>;
     positives: Candidate[];
     /**
      * Profit-gated positives: assets whose score, counted only from

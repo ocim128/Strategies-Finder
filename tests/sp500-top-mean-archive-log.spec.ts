@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     archiveCompletedTopMeanRun,
+    createTopMeanAssetSwitchTradeWriter,
     resolveTopMeanArchiveLogDir,
 } from "../lib/batch-backtest/sp500-top-mean-archive-log";
 import type {
@@ -258,6 +259,109 @@ async function testCooldownArchiveIdentity(): Promise<void> {
     }
 }
 
+async function testAssetSwitchArchiveSchemaAndReplayIdentity(): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), "top-mean-switch-archive-"));
+    try {
+        const request = { ...makeRequest("top_mean_switch_archive_test"), replayMode: "asset_switch" as const, horizons: [] };
+        const arm = {
+            status: "complete", enteredCount: 1, completedTrades: 0,
+            realizedNetPnl: 0, openPositionNetPnl: -2, totalNetPnl: -2,
+            partialRealizedNetPnl: 0, completedHoldingDurationSec: 0,
+            averageCompletedHoldingDurationSec: null, totalCosts: 1,
+            openPosition: null, pendingOrder: null,
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        };
+        const armFields = [
+            "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
+            "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
+            "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",
+        ];
+        const trade = {
+            arm: "topRaw", asset: "AAPL", decisionTimeSec: 1_700_000_000,
+            entryTimeSec: 1_700_000_001, entryPrice: 100,
+            exitTimeSec: null, exitPrice: null, holdingDurationSec: null,
+            netPnl: -2, entryCost: 1, exitCost: 0, status: "open",
+        };
+        const tradeWriter = await createTopMeanAssetSwitchTradeWriter(root, request.runId, "full");
+        const streamedTrades = Array.from({ length: 1_505 }, (_, index) => ({
+            ...trade,
+            arm: index === 1_200 ? "topMean" : "topRaw",
+            asset: `ASSET${index}`,
+            decisionTimeSec: 1_700_000_000 + index,
+        }));
+        for (const streamedTrade of streamedTrades) await tradeWriter.write(streamedTrade);
+        await tradeWriter.close();
+        const summary = {
+            ...makeSummary(),
+            replayMode: "asset_switch",
+            horizons: [],
+            annualReports: [],
+            openScoreEventDetails: [],
+            poolSnapshots: [],
+            candidateOutcomes: [],
+            assetSwitch: {
+                semanticsVersion: "asset_switch.v1",
+                windowStartSec: 1_700_000_000, windowEndSec: 1_700_086_400,
+                independentWindow: false, sizing: "fixed_entry_notional_non_compounding",
+                notionalPerEntry: 1_000, slippageRate: 0.001, commissionRate: 0.001,
+                valuation: "last_closed_candle_close_at_or_before_window_end",
+                coverage: { requestedAssets: 2, loadedAssets: 2, missingAssets: 0, invalidSeries: 0 },
+                arms: Object.fromEntries(armFields.map((field) => [field, arm])),
+                trades: [trade], tradeCount: streamedTrades.length,
+            },
+        } as unknown as TopMeanResultSummary;
+        const identity: NonNullable<TopMeanArchiveManifest["assetSwitchReplayIdentity"]> = {
+            replayMode: "asset_switch",
+            semanticsVersion: "asset_switch.v1",
+            windowStartSec: 1_700_000_000,
+            windowEndSec: 1_700_086_400,
+            evaluationCutoffSec: 1_700_100_000,
+            slippageRate: 0.001,
+            commissionRate: 0.001,
+            sizing: "fixed_entry_notional_non_compounding",
+            notionalPerEntry: 1_000,
+            capTiltWeight: "off",
+        };
+        const options = {
+            root,
+            canonicalAssets: ["AAPL", "MSFT"],
+            fingerprint: "pair-artifact-fingerprint",
+            manifest: { ...makeManifest(), assetSwitchReplayIdentity: identity },
+            assetSwitchTradesPath: tradeWriter.path,
+        };
+        const first = await archiveCompletedTopMeanRun(summary, request, options);
+        assert.equal(first.reason, "saved");
+        const runDir = join(root, "archive", "batch-open-score", request.runId);
+        const firstMeta = JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8")) as Record<string, any>;
+        assert.equal(firstMeta.schema, "top_mean_asset_switch_archive.v1");
+        assert.equal(firstMeta.replayMode, "asset_switch");
+        assert.deepEqual(firstMeta.replayIdentity, identity);
+        assert.equal(firstMeta.runFingerprint, "pair-artifact-fingerprint");
+        assert.notEqual(firstMeta.fingerprint, firstMeta.runFingerprint);
+        assert.equal(firstMeta.fingerprintVersion, "top_mean_asset_switch_fingerprint.v1");
+        assert.equal(existsSync(join(runDir, "meta.json.tmp")), false, "archive metadata is committed by rename");
+        assert.deepEqual(JSON.parse(readFileSync(join(runDir, "asset-switch-summary.json"), "utf8")).arms.topRaw, arm);
+        const archivedTrades = readFileSync(join(runDir, "asset-switch-trades.jsonl"), "utf8").trimEnd().split("\n");
+        assert.equal(archivedTrades.length, streamedTrades.length);
+        assert.equal(JSON.parse(archivedTrades[1_200]!).arm, "topMean", "TOP_MEAN detail survives the full archive stream");
+        for (const horizonFile of ["events-full.jsonl", "pool-snapshots.jsonl", "candidate-outcomes.jsonl", "candidate-features.jsonl"]) {
+            assert.equal(existsSync(join(runDir, horizonFile)), false, `${horizonFile} is horizon-only`);
+        }
+
+        const secondIdentity = { ...identity, slippageRate: 0.002 };
+        const second = await archiveCompletedTopMeanRun(summary, request, {
+            ...options,
+            manifest: { ...makeManifest(), assetSwitchReplayIdentity: secondIdentity },
+        });
+        assert.equal(second.reason, "saved");
+        const secondMeta = JSON.parse(readFileSync(join(runDir, "meta.json"), "utf8")) as Record<string, any>;
+        assert.equal(secondMeta.runFingerprint, firstMeta.runFingerprint);
+        assert.notEqual(secondMeta.fingerprint, firstMeta.fingerprint, "cost changes must change replay identity without changing pair-shard identity");
+    } finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+}
+
 async function testDisabledAndFailedWritesAreBestEffort(): Promise<void> {
     const root = mkdtempSync(join(tmpdir(), "top-mean-archive-disabled-"));
     try {
@@ -462,6 +566,7 @@ async function testReusedRunIdClearsStaleArchiveFiles(): Promise<void> {
 async function main(): Promise<void> {
     await testCompletedRunWritesArchive();
     await testCooldownArchiveIdentity();
+    await testAssetSwitchArchiveSchemaAndReplayIdentity();
     await testDisabledAndFailedWritesAreBestEffort();
     await testPhase0bStreamFailurePropagatesWithoutCrashing();
     await testReusedRunIdClearsStaleArchiveFiles();

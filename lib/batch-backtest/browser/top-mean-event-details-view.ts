@@ -9,6 +9,7 @@ import type {
     OpenScoreUsdEventDetail,
     OpenScoreUsdEventDetailSelector,
     OpenScoreUsdOngoingEventDetail,
+    ReplayArmField,
 } from "../open-score-replay/types";
 import type { TopMeanResultSummary } from "../sp500-top-mean-coordinator-engine";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
@@ -43,7 +44,12 @@ export function syncTopMeanOpenScoreDetailsControl(
         Array.isArray(summary.openScoreEventDetails)
         && summary.openScoreEventDetails.length > 0;
     const hasOngoingRows = buildOngoingEventDetails(summary).length > 0;
-    const hasDetails = annualHasDetails || fullRangeHasDetails || hasOngoingRows;
+    const annualHasSwitchTrades = summary.annualReports?.some(
+        (annual) => (annual.assetSwitch?.tradeCount ?? annual.assetSwitch?.trades?.length ?? 0) > 0,
+    ) === true;
+    const fullRangeHasSwitchTrades = (summary.assetSwitch?.tradeCount ?? summary.assetSwitch?.trades?.length ?? 0) > 0;
+    const hasDetails = annualHasDetails || fullRangeHasDetails || hasOngoingRows
+        || annualHasSwitchTrades || fullRangeHasSwitchTrades;
     dom.batchBacktestSp500TopMeanDetailsBtn.disabled = !hasDetails;
     dom.batchBacktestSp500TopMeanDetailsSelector.disabled = !hasDetails;
     dom.batchBacktestSp500TopMeanDetailsYear.disabled = !hasDetails;
@@ -82,6 +88,12 @@ function syncTopMeanDetailYearOptions(dom: BatchBacktestDom, summary: TopMeanRes
     }
     for (const annual of summary.annualReports ?? []) {
         years.add(annual.year);
+        for (const trade of annual.assetSwitch?.trades ?? []) {
+            years.add(new Date(trade.decisionTimeSec * 1000).getUTCFullYear());
+        }
+    }
+    for (const trade of summary.assetSwitch?.trades ?? []) {
+        years.add(new Date(trade.decisionTimeSec * 1000).getUTCFullYear());
     }
     const previous = dom.batchBacktestSp500TopMeanDetailsYear.value;
     const options = [
@@ -170,6 +182,9 @@ export function renderTopMeanOpenScoreEventDetails(
     selector: OpenScoreUsdEventDetailSelector,
     year: number | null = null,
 ): string {
+    if (summary.replayMode === "asset_switch") {
+        return renderAssetSwitchTradeDetails(summary, selector, year);
+    }
     const annualReports = summary.annualReports ?? [];
     const ongoingRows = buildOngoingEventDetails(summary);
     // Year slice: a client-side filter on decision time (UTC). It narrows
@@ -278,6 +293,73 @@ export function renderTopMeanOpenScoreEventDetails(
         }
         html += `</tbody></table></div></details>`;
     }
+    return html;
+}
+
+function selectorArm(selector: OpenScoreUsdEventDetailSelector): ReplayArmField | null {
+    const mapping: Partial<Record<OpenScoreUsdEventDetailSelector, ReplayArmField>> = {
+        TOP_RAW: "topRaw",
+        TOP_MEAN: "topMean",
+        TOP_MEAN_RAW_UNIQUE: "topMeanRawUnique",
+        TOP_RAW_PROFIT: "topRawProfit",
+        TOP_MEAN_PROFIT: "topMeanProfit",
+        TOP_RAW_PROFIT_NOW: "topRawProfitNow",
+        TOP_MEAN_PROFIT_NOW: "topMeanProfitNow",
+        TOP_RAW_PROFIT_NOW_CONF: "topRawProfitNowConf",
+        TOP_Z: "topZ",
+        BOT_RAW: "botRaw",
+        BOT_MEAN: "botMean",
+        BOT_MEAN_RAW_UNIQUE: "botMeanRawUnique",
+        BOT_RAW_PROFIT_NOW: "botRawProfitNow",
+        BOT_MEAN_PROFIT_NOW: "botMeanProfitNow",
+        BOT_Z: "botZ",
+    };
+    return mapping[selector] ?? null;
+}
+
+function renderAssetSwitchTradeDetails(
+    summary: TopMeanResultSummary,
+    selector: OpenScoreUsdEventDetailSelector,
+    year: number | null,
+): string {
+    const arm = selectorArm(selector);
+    const annuals = summary.annualReports ?? [];
+    const selectedAnnuals = year === null ? [] : annuals.filter((annual) => annual.year === year);
+    const section = year === null
+        ? summary.assetSwitch
+        : selectedAnnuals[0]?.assetSwitch;
+    const rows = (section?.trades ?? []).filter((trade) =>
+        arm !== null
+        && trade.arm === arm
+        && (year === null || new Date(trade.decisionTimeSec * 1000).getUTCFullYear() === year),
+    );
+    const total = section?.tradeCount ?? section?.trades?.length ?? 0;
+    const shipped = section?.trades?.length ?? 0;
+    let html = `<div class="batch-open-score-details-heading">Asset-Switch Trade Details — ${escapeHtml(selector)}</div>`;
+    html += `<div class="batch-open-score-details-note">These are filled long-only position records from an independent path-dependent replay. Each entry uses fixed $1,000 notional; net P&amp;L includes entry and exit costs. An open row is marked at the last closed candle available at that replay window's end. No horizon or random-control comparison is implied.</div>`;
+    if (total > shipped) {
+        html += `<div class="batch-report-warning">TRUNCATED FOR THE UI — the wire contains the most recent ${shipped.toLocaleString()} of ${total.toLocaleString()} trade records across all arms; this view shows ${rows.length.toLocaleString()} rows for the selected arm.</div>`;
+    }
+    if (rows.length === 0) {
+        html += `<div class="batch-open-score-details-empty">No ${escapeHtml(selector)} trade records for this replay window${year === null ? "" : ` in ${year}`}.</div>`;
+        return html;
+    }
+    const time = (value: number | null): string => value === null
+        ? "open"
+        : new Date(value * 1000).toISOString().slice(0, 19).replace("T", " ");
+    const money = (value: number | null): string => value === null || !Number.isFinite(value)
+        ? "n/a"
+        : `${value >= 0 ? "+" : "−"}$${Math.abs(value).toFixed(2)}`;
+    html += `<details open class="batch-open-score-details-section"><summary>${year === null ? "Full window" : `Calendar Year ${year}`} | ${rows.length.toLocaleString()} trade records</summary>`;
+    html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table"><thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Asset</th><th>Net P&amp;L</th><th>Costs</th><th>Holding</th><th>Status</th></tr></thead><tbody>`;
+    for (const trade of rows) {
+        const cost = trade.entryCost + trade.exitCost;
+        const holding = trade.holdingDurationSec === null
+            ? "open"
+            : `${(trade.holdingDurationSec / 86400).toFixed(1)} days`;
+        html += `<tr><td>${escapeHtml(time(trade.decisionTimeSec))}</td><td>${escapeHtml(time(trade.entryTimeSec))}</td><td>${escapeHtml(time(trade.exitTimeSec))}</td><td><strong>${escapeHtml(trade.asset)}</strong></td><td>${escapeHtml(money(trade.netPnl))}</td><td>$${cost.toFixed(2)}</td><td>${escapeHtml(holding)}</td><td>${escapeHtml(trade.status.toUpperCase())}</td></tr>`;
+    }
+    html += `</tbody></table></div></details>`;
     return html;
 }
 

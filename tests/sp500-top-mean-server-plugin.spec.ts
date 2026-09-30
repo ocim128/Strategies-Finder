@@ -906,6 +906,14 @@ async function testTopMeanRouteRejectsInvalidRunIdsAndDates(): Promise<void> {
     assert.equal(spaces.statusCode, 400);
     assert.equal(spaces.payload.error, "Invalid runId.");
 
+    const invalidReplayMode = await postTopMeanRunBody({
+        ...baseRequest,
+        runId: "spec_invalid_replay_mode",
+        replayMode: "future_mode",
+    });
+    assert.equal(invalidReplayMode.statusCode, 400);
+    assert.match(String(invalidReplayMode.payload.error), /replayMode/i);
+
     const malformedDate = await postTopMeanRunBody({
         ...baseRequest,
         runId: "spec_date_guard_run",
@@ -1367,6 +1375,43 @@ function testWireSafetyCapsEventDetailsAndStripsDiagnostics(): void {
         TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 55,
         "count reports the PRE-cap total",
     );
+
+    const switchTrade = {
+        arm: "topRaw", asset: "AAA", decisionTimeSec: 1_700_000_000,
+        entryTimeSec: 1_700_000_001, entryPrice: 100,
+        exitTimeSec: 1_700_000_100, exitPrice: 99,
+        holdingDurationSec: 99, netPnl: -10, entryCost: 0, exitCost: 0,
+        status: "closed",
+    };
+    const fullSwitchTrades = Array.from(
+        { length: TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 55 },
+        () => switchTrade,
+    );
+    const switchSummary = {
+        ...fullSummary,
+        replayMode: "asset_switch",
+        horizons: [],
+        assetSwitch: {
+            semanticsVersion: "asset_switch.v1",
+            trades: fullSwitchTrades,
+            tradeCount: fullSwitchTrades.length,
+        },
+        annualReports: [{
+            year: 2026, sampleFromSec: 1, sampleToSec: 2, replayMode: "asset_switch",
+            horizons: [], warnings: [], reportLines: [],
+            assetSwitch: {
+                semanticsVersion: "asset_switch.v1",
+                trades: fullSwitchTrades.slice(0, 10),
+                tradeCount: 10,
+            },
+        }],
+    } as unknown as TopMeanResultSummary;
+    const wireSwitch = toWireSafeTopMeanResultSummary(switchSummary);
+    assert.equal(wireSwitch.assetSwitch?.trades?.length, TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS);
+    assert.equal(wireSwitch.assetSwitch?.tradeCount, TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 55);
+    assert.equal(wireSwitch.annualReports?.[0]?.assetSwitch?.trades?.length, 10);
+    assert.equal(wireSwitch.annualReports?.[0]?.assetSwitch?.tradeCount, 10);
+    assert.equal(fullSwitchTrades.length, TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 55, "wire capping does not mutate archived trades");
 
     console.log("PASS: wire safety caps event details and strips archive-only diagnostics");
 }

@@ -1,6 +1,8 @@
 import type { Time } from "lightweight-charts";
 import type { ActiveCapTiltWeight } from "./cap-tilt-contract";
 
+export type TopMeanReplayMode = "horizon" | "asset_switch";
+
 export interface CompactTrade {
     type: "long" | "short";
     entryTime: Time;
@@ -85,6 +87,8 @@ export interface TopMeanRunManifest {
     capTiltWeight?: ActiveCapTiltWeight;
     /** Effective replay selector cooldown; does not affect reusable pair-backtest shards. */
     selectionCooldownBars?: number;
+    /** Replay-only discriminator; omitted old manifests mean horizon. */
+    replayMode?: TopMeanReplayMode;
     error?: string;
     archiveComplete?: boolean;
     archiveRequested?: boolean;

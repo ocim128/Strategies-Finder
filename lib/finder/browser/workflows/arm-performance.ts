@@ -183,7 +183,10 @@ async function runArmPerformanceFinderServer(args: {
 				const skippedPairSummary = skippedPairCount > 0
 					? ` · skipped ${skippedPairCount} ${skippedPairNoun} with missing data`
 					: '';
-				host.setStatus(`Arm Performance: ${event.plannedCandidates} configurations × ${event.pairCount} pairs · horizon ${event.horizon}${skippedPairSummary}`);
+				const replayLabel = event.replayMode === "asset_switch"
+					? "hold until asset changes"
+					: `horizon ${event.horizon ?? "?"}`;
+				host.setStatus(`Arm Performance: ${event.plannedCandidates} configurations × ${event.pairCount} pairs · ${replayLabel}${skippedPairSummary}`);
 			},
 			onArmProgress: (event) => {
 				if (event.runId !== runId || !isStillActive()) return;

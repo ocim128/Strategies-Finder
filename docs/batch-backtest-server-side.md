@@ -342,6 +342,58 @@ manifest, result summary, and archive metadata; cooldown-enabled archives use a
 distinct archive fingerprint while pair-backtest shards remain reusable.
 Cooldown changes require a new replay run and do not affect pair execution.
 
+**Replay mode** defaults to **Fixed horizon**. **Hold until switch** replaces
+the horizon comparisons with a separate position replay for all 15 selector
+arms. Each arm starts flat, holds one long target asset, and uses the existing
+pair-entry decision clock. The first unique pick enters at the next target
+open strictly after its decision. A unique pick of another asset schedules a
+sale at the held asset's next open, then buys the replacement at its first open
+at or after the sale; the positions never overlap. Repeating a pending destination does
+not delay its order. A changed destination replaces an unfilled purchase while
+preserving a scheduled sale. Selecting the held asset, a tie, or no pick
+cancels the pending order; a tie or no pick holds the actual position, or
+keeps the arm flat. Singleton pools are eligible. BOT arms remain long and use
+their existing bottom-ranking rules. `TOP_RAW_PROFIT` and `TOP_MEAN_PROFIT`
+remain labeled **LOOK-AHEAD RESEARCH**.
+
+The simulation uses a fixed $1,000 notional at each entry, without
+compounding. Arms are independent normalized research paths, not one shared
+account. Slippage is included in entry and exit prices; commission and
+slippage are reflected in P&L and are also shown as informational costs. The
+full-window cards show total net USD P&L (realized P&L plus open-position mark),
+realized P&L, open P&L, completed trades, costs, held asset, pending order, and
+data coverage. The final position stays open. Its value uses the last fully
+closed target candle at or before the effective window end and frozen run
+cutoff; it includes entry cost but no hypothetical exit fee. A pending order
+with no next target open before that boundary remains pending. Annual switch
+reports each start flat and are independent replays, not a breakdown of the
+continuous full-window path.
+
+The `Copy OPEN_SCORE` report includes a performance line for every arm in the
+full-window replay and each independent annual replay: status, total/realized/
+open USD P&L, closed trades, entries, costs, and current holding or pending
+order where present. In the Batch results UI, positive P&L is green and negative
+P&L is red; zero and unavailable values stay neutral.
+
+The effective window end is the earlier of the requested end and frozen
+evaluation cutoff. No pre-window selection creates a position. Missing target
+data, invalid prices or normalized timestamps, a gap over 30 days during an
+order or actual holding, or a terminal mark older than 30 days makes the
+affected arm incomplete and unavailable for ranking. Shorter gaps are allowed
+without interpolation. The result keeps a bounded preview per arm and an exact
+trade count. Completed trade records stream to the archive as they finalize,
+so the archive keeps the full JSONL history without retaining every row in
+memory. The 16-series price cache stays bounded while gap and validation
+metadata can be reused after a price array is evicted. This path-dependent
+output is stored under the distinct
+`top_mean_asset_switch_archive.v1` schema. It does not populate the fixed-horizon
+candidate-outcome diagnostics. The cross-sectional `currentSnapshot` remains
+a raw view and is distinct from each arm's held position and pending order.
+
+Changing replay mode requires a rerun and does not reinterpret a completed
+result. Horizon and cooldown controls are disabled in switch mode while their
+horizon values are retained. The switch replay does not use cooldown.
+
 ### Performance Diagnostics
 
 Completed runs include `performance` (`sp500_top_mean_performance.v1`) in the
@@ -361,15 +413,18 @@ the bottleneck.
 TOP_MEAN archive admission is controlled by the unchecked-by-default `Save full
 research archive (~150 MB / 5k pairs)` checkbox. An enabled request writes the
 permanent archive under `archive/batch-open-score/<runId>/`: the exact report,
-run metadata, and full and per-calendar-year event JSONL files. Older/direct API
-callers that omit `saveArchiveLog` retain the legacy behavior and request the
-archive; a present non-boolean value is rejected. `TOP_MEAN_ARCHIVE_LOG_DIR`
+run metadata, and mode-specific replay output. Older/direct API callers that
+omit `saveArchiveLog` retain the legacy behavior and request the archive; a
+present non-boolean value is rejected. `TOP_MEAN_ARCHIVE_LOG_DIR`
 still overrides the location, and an empty value is an absolute server veto.
-Only completed runs are archived. New archives use `top_mean_archive.v3`
-metadata with normalized run-manifest provenance and a causal feature sidecar;
-frozen legacy archives remain readable as `top_mean_archive.v2`. The streamed
-result and
-terminal status expose `archiveComplete`, `archiveRequested`, and, when
+Only completed runs are archived. Fixed-horizon archives use
+`top_mean_archive.v3` metadata with normalized run-manifest provenance and a
+causal feature sidecar; frozen legacy archives remain readable as
+`top_mean_archive.v2`. Switch archives use the separate
+`top_mean_asset_switch_archive.v1` schema and preserve their mode-specific
+summary and complete streamed trade history. Browser summaries and persisted
+previews retain up to 1,000 detail rows per arm. The streamed result and terminal status expose
+`archiveComplete`, `archiveRequested`, and, when
 applicable, `archiveDir` or `archiveError`. Archive writes remain best-effort,
 and saved archives have no TTL or cleanup sweep.
 

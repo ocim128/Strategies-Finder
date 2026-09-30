@@ -34,6 +34,7 @@ import {
     type TopMeanStatusResponse,
 } from "../batch-backtest/sp500-top-mean-coordinator-engine";
 import type { ReplayComparison } from "../batch-backtest/batch-open-score-usd-replay-engine";
+import type { AssetSwitchArmSummary, ReplayArmField } from "../batch-backtest/open-score-replay/types";
 import { TopMeanWorkerPool, type TopMeanPairFailure } from "../batch-backtest/sp500-top-mean-worker-pool";
 import type { EnumerationResult } from "../batch-backtest/sp500-pair-enumerator";
 import type { CapitalSettings } from "../types/backtest";
@@ -213,6 +214,57 @@ function buildCandidateResult(args: {
     failedPairDetails: readonly TopMeanPairFailure[];
 }): FinderArmPerformanceCandidate {
     const { plan, candidateId, status, result, input, failedPairDetails } = args;
+    const replayMode = input.options.armPerformance?.replayMode ?? "horizon";
+    const resolved = resolveCandidateSettings(plan, input);
+    const pairCount = input.enumeration.canonicalPairs.length;
+    const failedPairs = status.failedPairs;
+    const completedPairs = status.completedPairs;
+    const unknownFailureCount = Math.max(0, failedPairs - failedPairDetails.length);
+    const nonDataFailures = failedPairDetails.filter((failure) => failure.failureKind !== "missing_data");
+    if (unknownFailureCount > 0 || nonDataFailures.length > 0 || completedPairs + failedPairs !== pairCount) {
+        throw new Error(`Pair coverage failed (${completedPairs}/${pairCount} completed, ${failedPairs} failed).`);
+    }
+    const replayFailures = result.replayTargetLoadFailureCount ?? 0;
+    if (completedPairs === 0) {
+        throw new Error(`Pair coverage failed (0/${pairCount} completed, ${failedPairs} failed); no usable pair data remained.`);
+    }
+    const pairCoverage = {
+        requestedPairs: pairCount,
+        completedPairs,
+        failedPairs,
+        replayTargetLoadFailures: replayFailures,
+        noTradePairs: result.noTradePairs ?? 0,
+    };
+    if (replayMode === "asset_switch") {
+        if (result.replayMode !== "asset_switch" || !result.assetSwitch) {
+            throw new Error("TOP_MEAN child completed without the required asset-switch result section.");
+        }
+        const switchMetrics = {} as Record<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, AssetSwitchArmSummary>;
+        for (const [arm, field] of Object.entries(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<[
+            keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
+            ReplayArmField,
+        ]>) {
+            const metric = result.assetSwitch.arms[field];
+            if (!metric) throw new Error(`TOP_MEAN child omitted switch arm ${arm}.`);
+            switchMetrics[arm] = metric;
+        }
+        return {
+            candidateId,
+            candidateOrdinal: plan.candidateOrdinal,
+            strategyKey: plan.strategyKey,
+            strategyName: plan.strategyName,
+            replayMode,
+            params: resolved.params,
+            backtestSettings: resolved.backtestSettings,
+            ...(plan.exitStrategyKey ? { exitStrategyKey: plan.exitStrategyKey } : {}),
+            ...(plan.exitStrategyName ? { exitStrategyName: plan.exitStrategyName } : {}),
+            ...(plan.exitStrategyParams ? { exitStrategyParams: { ...plan.exitStrategyParams } } : {}),
+            pairCoverage,
+            assetSwitchMetrics: switchMetrics,
+            requestedEngineMode: input.useRustEnginePreference ? "rust" : "typescript",
+            actualEngineMode: status.actualEngineMode,
+        };
+    }
     const horizon = result.horizons.find((item) => item.horizon === input.options.armPerformance?.horizon);
     const emptyComparison: ReplayComparison = {
         events: 0,
@@ -258,37 +310,19 @@ function buildCandidateResult(args: {
             + "; returned horizons [" + returnedHorizons + "].",
         );
     }
-    const resolved = resolveCandidateSettings(plan, input);
-    const pairCount = input.enumeration.canonicalPairs.length;
-    const failedPairs = status.failedPairs;
-    const completedPairs = status.completedPairs;
-    const unknownFailureCount = Math.max(0, failedPairs - failedPairDetails.length);
-    const nonDataFailures = failedPairDetails.filter((failure) => failure.failureKind !== "missing_data");
-    if (unknownFailureCount > 0 || nonDataFailures.length > 0 || completedPairs + failedPairs !== pairCount) {
-        throw new Error(`Pair coverage failed (${completedPairs}/${pairCount} completed, ${failedPairs} failed).`);
-    }
-    const replayFailures = result.replayTargetLoadFailureCount ?? 0;
-    if (completedPairs === 0) {
-        throw new Error(`Pair coverage failed (0/${pairCount} completed, ${failedPairs} failed); no usable pair data remained.`);
-    }
     return {
         candidateId,
         candidateOrdinal: plan.candidateOrdinal,
         strategyKey: plan.strategyKey,
         strategyName: plan.strategyName,
-        horizon: input.options.armPerformance!.horizon,
+        replayMode: "horizon",
+        horizon: input.options.armPerformance!.horizon!,
         params: resolved.params,
         backtestSettings: resolved.backtestSettings,
         ...(plan.exitStrategyKey ? { exitStrategyKey: plan.exitStrategyKey } : {}),
         ...(plan.exitStrategyName ? { exitStrategyName: plan.exitStrategyName } : {}),
         ...(plan.exitStrategyParams ? { exitStrategyParams: { ...plan.exitStrategyParams } } : {}),
-        pairCoverage: {
-            requestedPairs: pairCount,
-            completedPairs,
-            failedPairs,
-            replayTargetLoadFailures: replayFailures,
-            noTradePairs: result.noTradePairs ?? 0,
-        },
+        pairCoverage,
         metrics: buildFinderArmPerformanceMetricsFromArms(armComparisons as never),
         ...(adjustedArmMetrics ? { metricsExTopContributor: adjustedArmMetrics } : {}),
         ...(contributorExclusions ? { contributorExclusions } : {}),
@@ -318,8 +352,9 @@ export async function runFinderArmPerformance(
         options: input.options,
         generateParamSets: deps.generatePlans,
     });
+    const replayMode = input.options.armPerformance?.replayMode ?? "horizon";
     const horizon = input.options.armPerformance?.horizon;
-    if (!horizon) throw new Error("Arm Performance horizon is missing.");
+    if (replayMode === "horizon" && !horizon) throw new Error("Arm Performance horizon is missing.");
     if (plans.length === 0) throw new Error("Finder produced no candidate configurations for this search.");
 
     // Sweep-scoped worker pool (phase 3): one construction serves every
@@ -381,8 +416,9 @@ async function runFinderArmPerformanceCandidates(
 ): Promise<FinderArmPerformanceCandidate[]> {
     // Validated by the outer entrypoint; re-read here because the helper is
     // also the only place request construction needs it.
+    const replayMode = input.options.armPerformance?.replayMode ?? "horizon";
     const horizon = input.options.armPerformance?.horizon;
-    if (!horizon) throw new Error("Arm Performance horizon is missing.");
+    if (replayMode === "horizon" && !horizon) throw new Error("Arm Performance horizon is missing.");
     const candidates: FinderArmPerformanceCandidate[] = [];
     const createCoordinator = deps.createCoordinator
         ?? ((request, baseDir, context) => new TopMeanCoordinatorEngine(request, baseDir, context));
@@ -404,12 +440,13 @@ async function runFinderArmPerformanceCandidates(
             backtestSettings: resolved.backtestSettings,
             capitalSettings: input.capitalSettings,
             interval: input.interval,
-            horizons: [horizon],
+            replayMode,
+            ...(replayMode === "horizon" ? { horizons: [horizon!] } : {}),
             pairListText: input.enumeration.canonicalPairs.join("\n"),
             resume: false,
             saveArchiveLog: false,
             useRustEnginePreference: input.useRustEnginePreference,
-            selectionCooldownBars: input.options.armPerformance?.selectionCooldownEnabled
+            selectionCooldownBars: replayMode === "horizon" && input.options.armPerformance?.selectionCooldownEnabled
                 ? input.options.armPerformance.selectionCooldownBars ?? 5
                 : 0,
             ...(input.workerCount !== undefined ? { workerCount: input.workerCount } : {}),
@@ -421,7 +458,7 @@ async function runFinderArmPerformanceCandidates(
             evaluationNowSec: input.evaluationCutoffSec,
             // Trusted-runner profile: children skip annual replays, the
             // current snapshot, per-row details, and result.json — the
-            // compact candidate result reads only horizon armComparisons.
+            // compact candidate result reads only scalar mode-specific arm summaries.
             executionProfile: "finder_arm",
             // Sweep-scoped pool (enableWorkerReuse): executed (but never torn
             // down) by the child; final termination stays with this runner's

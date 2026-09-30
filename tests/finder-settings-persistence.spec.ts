@@ -172,6 +172,7 @@ describe("normalizeFinderUiState", () => {
             universeSymbolsText: "AAPL\nMSFT",
             assetOpportunityOosMeasurementMode: "next_exit",
             armPerformanceHorizon: 20,
+            armPerformanceReplayMode: "asset_switch",
             armPerformanceExcludeTopContributor: true,
             armPerformanceEventFilterEnabled: true,
             armPerformanceMinEvents: 12,
@@ -180,6 +181,10 @@ describe("normalizeFinderUiState", () => {
             armPerformanceSelectionCooldownBars: 7,
         });
         expect(normalizeFinderUiState(state)).to.deep.equal(state);
+        writeFinderUiState(state);
+        expect(readFinderUiState().armPerformanceReplayMode).to.equal("asset_switch");
+        expect(normalizeFinderUiState({ armPerformanceReplayMode: "future_mode" }).armPerformanceReplayMode)
+            .to.equal("horizon");
     });
 
     it("treats tradeFilterEnabled as on unless explicitly false", () => {

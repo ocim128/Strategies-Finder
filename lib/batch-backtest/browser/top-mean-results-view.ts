@@ -16,6 +16,7 @@ import type { TopMeanCurrentSnapshot } from "../sp500-top-mean-stream-types";
 import type { TopMeanResultSummary } from "../sp500-top-mean-coordinator-engine";
 import { formatTopMeanPerformanceLines } from "../sp500-top-mean-performance";
 import { escapeHtml } from "../../html-escape";
+import { hasAssetSwitchDecisionEvents, REPLAY_ARM_FIELDS } from "../open-score-replay/arm-contract";
 
 /**
  * The Latest OPEN_SCORE card's arm picker is GENERATED inside the card (it is
@@ -356,6 +357,9 @@ export function renderTopMeanResults(
     // questions (cross-sectional "now" vs per-event historical edge).
     if (summary.currentSnapshot) {
         html += renderCurrentTopMeanBanner(summary.currentSnapshot, opts.tieMode);
+        if (summary.replayMode === "asset_switch") {
+            html += `<div class="batch-report-note">The current snapshot is a cross-sectional raw-score view. Asset-switch replay results below include their own held position and pending orders.</div>`;
+        }
     }
     if (summary.latestSelections) {
         html += renderLatestOpenScoreSelections(summary, opts.latestArm, opts.tieMode);
@@ -369,22 +373,73 @@ export function renderTopMeanResults(
         html += `</div>`;
     }
 
+    if (summary.replayMode === "asset_switch" && summary.assetSwitch) {
+        html += renderAssetSwitchReplay(summary.assetSwitch);
+    }
+
     // No per-horizon asset leaderboard section here on purpose: it rendered
     // every asset per horizon and became unusably long on large universes.
     // Top assets remain available via the Copy button (top 10 per horizon).
     const annualReports = Array.isArray(summary.annualReports) ? summary.annualReports : [];
     if (annualReports.length > 0) {
-        html += `<div class="batch-report-subheading batch-report-subheading--accent">OPEN_SCORE USD Calendar-Year Reports</div>`;
+        html += `<div class="batch-report-subheading batch-report-subheading--accent">${summary.replayMode === "asset_switch" ? "Independent Asset-Switch Calendar-Year Replays" : "OPEN_SCORE USD Calendar-Year Reports"}</div>`;
         for (const annual of annualReports) {
             const fromLabel = new Date(annual.sampleFromSec * 1000).toISOString().slice(0, 10);
             const toLabel = new Date(annual.sampleToSec * 1000).toISOString().slice(0, 10);
             html += `<details class="batch-report-details">`;
             html += `<summary>${escapeHtml(annual.year)} | ${escapeHtml(fromLabel)}..${escapeHtml(toLabel)}</summary>`;
             html += `<pre class="batch-report-pre">${escapeHtml(annual.reportLines.join("\n"))}</pre>`;
+            if (summary.replayMode === "asset_switch" && annual.assetSwitch) {
+                html += renderAssetSwitchReplay(annual.assetSwitch, `Independent ${annual.year} Asset-Switch Replay`);
+            }
             html += `</details>`;
         }
     }
     dom.batchBacktestSp500TopMeanResults.innerHTML = html;
+}
+
+function renderAssetSwitchReplay(
+    summary: NonNullable<TopMeanResultSummary["assetSwitch"]>,
+    heading = "Asset-Switch Replay",
+): string {
+    const money = (value: number | null): string => {
+        if (value === null || !Number.isFinite(value)) return "n/a";
+        const tone = value > 0 ? "is-positive" : value < 0 ? "is-negative" : "";
+        const sign = value > 0 ? "+" : value < 0 ? "−" : "";
+        return `<span${tone ? ` class="${tone}"` : ""}>${sign}$${Math.abs(value).toFixed(2)}</span>`;
+    };
+    let html = `<div class="batch-report-subheading batch-report-subheading--accent">${escapeHtml(heading)}</div>`;
+    html += `<div class="batch-report-note">${escapeHtml(summary.semanticsVersion)} | fixed $${summary.notionalPerEntry.toLocaleString()} per entry, non-compounding | costs include slippage and commission | entry and switch orders fill at the next target open. Each arm is a separate long-only position path; unavailable data is not ranked.</div>`;
+    const windowLabel = !hasAssetSwitchDecisionEvents(summary)
+        ? "No decision events"
+        : summary.windowStartSec === null
+            ? `Full history through ${new Date(summary.windowEndSec * 1000).toISOString().slice(0, 10)}`
+            : `${new Date(summary.windowStartSec * 1000).toISOString().slice(0, 10)}..${new Date(summary.windowEndSec * 1000).toISOString().slice(0, 10)}`;
+    html += `<div class="batch-report-note">Window: ${windowLabel} | target data ${summary.coverage.loadedAssets}/${summary.coverage.requestedAssets} loaded${summary.tradeCount !== undefined ? ` | ${summary.tradeCount.toLocaleString()} trade records` : ""}</div>`;
+    html += `<div class="batch-report-grid">`;
+    for (const arm of REPLAY_ARM_FIELDS) {
+        const result = summary.arms[arm];
+        if (!result) continue;
+        const position = result.openPosition;
+        const pending = result.pendingOrder;
+        const holding = position?.holdingDurationSec === null || position?.holdingDurationSec === undefined
+            ? ""
+            : ` | held ${(position.holdingDurationSec / 86400).toFixed(1)} days`;
+        const openLine = position
+            ? `<div class="batch-report-note">Open: ${escapeHtml(position.asset)} | mark ${money(position.openNetPnl)}${holding}</div>`
+            : "";
+        const pendingLine = pending
+            ? `<div class="batch-report-note">Pending ${escapeHtml(pending.side)}${pending.destinationAsset ? ` ${escapeHtml(pending.destinationAsset)}` : ""}${pending.scheduledTimeSec === null ? " | waiting for target data" : ` | ${new Date(pending.scheduledTimeSec * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`}</div>`
+            : "";
+        const lookAhead = arm === "topRawProfit" || arm === "topMeanProfit";
+        html += `<article class="batch-report-card"><div class="batch-report-title">${escapeHtml(arm)}${lookAhead ? " | LOOK-AHEAD RESEARCH" : ""}</div>`;
+        html += `<div><strong>${escapeHtml(result.status.replaceAll("_", " ").toUpperCase())}</strong> | total ${money(result.totalNetPnl)} | realized ${money(result.realizedNetPnl)} | open ${money(result.openPositionNetPnl)}</div>`;
+        html += `<div>${result.completedTrades.toLocaleString()} closed | ${result.enteredCount.toLocaleString()} entries | costs $${result.totalCosts.toFixed(2)}</div>`;
+        html += openLine + pendingLine;
+        html += `</article>`;
+    }
+    html += `</div>`;
+    return html;
 }
 
 /**

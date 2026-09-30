@@ -147,6 +147,21 @@ function assertRuleFailure(rule: TopMeanRule): void {
 }
 
 describe("top-mean-rule-checker semantics", () => {
+    it("rejects asset-switch archives instead of reading them as empty horizon studies", () => {
+        const archive: PoolRuleArchive = {
+            meta: { ...meta("fixture"), schema: "top_mean_asset_switch_archive.v1" } as PoolRuleArchive["meta"],
+            snapshots: [],
+            outcomes: [],
+            eventRows: [],
+        };
+        assert.throws(
+            () => normalizeTopMeanArchive({ archive, reportText: "asset-switch archive" }),
+            (error: unknown) => error instanceof Error
+                && error.message.includes("check=meta.schema")
+                && error.message.includes("top_mean_asset_switch_archive.v1"),
+        );
+    });
+
     it("uses the exact frozen discovery and validation fences", () => {
         assert.deepEqual(getTopMeanRuleWindow("discovery"), {
             name: "discovery",

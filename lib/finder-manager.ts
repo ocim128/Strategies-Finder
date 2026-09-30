@@ -84,6 +84,11 @@ export class FinderManager {
 		renderLatestResults: () => this.renderLatestResults(),
 		populateResortOptions: () => this.populateResortOptions(),
 		applyResort: () => this.applyResort(),
+		getArmPerformanceReplayMode: () => this.resultStore.latestResults.scope === "arm_performance"
+			? this.resultStore.latestResults.results[0]?.replayMode
+				?? this.resultStore.latestResults.runContext?.replayMode
+				?? "horizon"
+			: null,
 		requestRun: () => void this.controller.runFinder(),
 		renderRandomBenchmark: (mode, payload) => this.ui.renderRandomBenchmark(mode, payload as never),
 		selection: this.selection,

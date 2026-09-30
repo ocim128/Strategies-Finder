@@ -212,12 +212,11 @@ function compactStrategyQualityResult(result: FinderStrategyQualityResult): Find
 }
 
 function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate): FinderArmPerformanceCandidate {
-    return {
+    const common = {
         candidateId: candidate.candidateId,
         candidateOrdinal: candidate.candidateOrdinal,
         strategyKey: candidate.strategyKey,
         strategyName: candidate.strategyName,
-        horizon: candidate.horizon,
         params: { ...candidate.params },
         backtestSettings: { ...candidate.backtestSettings },
         requestedEngineMode: candidate.requestedEngineMode,
@@ -226,12 +225,31 @@ function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate
         ...(candidate.exitStrategyKey ? { exitStrategyKey: candidate.exitStrategyKey } : {}),
         ...(candidate.exitStrategyName ? { exitStrategyName: candidate.exitStrategyName } : {}),
         pairCoverage: { ...candidate.pairCoverage },
+    };
+    if (candidate.replayMode === "asset_switch") {
+        return {
+            ...common,
+            replayMode: "asset_switch",
+            assetSwitchMetrics: Object.fromEntries(
+                Object.entries(candidate.assetSwitchMetrics).map(([arm, metric]) => [arm, {
+                    ...metric,
+                    diagnosticCounts: { ...metric.diagnosticCounts },
+                    openPosition: metric.openPosition ? { ...metric.openPosition } : null,
+                    pendingOrder: metric.pendingOrder ? { ...metric.pendingOrder } : null,
+                }]),
+            ) as NonNullable<FinderArmPerformanceCandidate["assetSwitchMetrics"]>,
+        };
+    }
+    return {
+        ...common,
+        replayMode: "horizon",
+        horizon: candidate.horizon,
         metrics: Object.fromEntries(
             Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => {
                 const metric = candidate.metrics[arm as FinderArmPerformanceArm];
                 return [arm, metric ? compactFinderArmPerformanceMetric(metric) : undefined];
             }).filter(([, metric]) => metric !== undefined),
-        ) as FinderArmPerformanceCandidate["metrics"],
+        ) as NonNullable<FinderArmPerformanceCandidate["metrics"]>,
         ...(candidate.metricsExTopContributor ? {
             metricsExTopContributor: Object.fromEntries(
                 Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => {
@@ -333,23 +351,52 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
     }
     if (candidate.scope === "arm_performance") {
         const rows = candidate.results as unknown[];
+        const rawContext = candidate.runContext && typeof candidate.runContext === "object"
+            ? candidate.runContext as unknown as Record<string, unknown>
+            : null;
+        const contextMode = rawContext?.replayMode;
+        if (contextMode !== undefined && contextMode !== "horizon" && contextMode !== "asset_switch") return null;
+        const normalizedRows: FinderArmPerformanceCandidate[] = [];
+        let rowsMode: "horizon" | "asset_switch" | undefined;
         const valid = rows.every((row) => {
             if (!row || typeof row !== "object" || Array.isArray(row)) return false;
             const item = row as Record<string, unknown>;
             if (typeof item.candidateId !== "string" || !Number.isInteger(item.candidateOrdinal)) return false;
+            const replayMode = item.replayMode === undefined ? "horizon" : item.replayMode;
+            if (replayMode !== "horizon" && replayMode !== "asset_switch") return false;
+            if (rowsMode !== undefined && rowsMode !== replayMode) return false;
+            rowsMode = replayMode;
+            if (contextMode && replayMode !== contextMode) return false;
+            if (replayMode === "asset_switch") {
+                if (!item.assetSwitchMetrics || typeof item.assetSwitchMetrics !== "object" || Array.isArray(item.assetSwitchMetrics)) return false;
+                const switchMetrics = item.assetSwitchMetrics as Record<string, unknown>;
+                const complete = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).every((arm) => {
+                    const metric = switchMetrics[arm] as Record<string, unknown> | undefined;
+                    return !!metric && typeof metric === "object"
+                        && (metric.status === "complete" || metric.status === "no_entry" || metric.status === "incomplete")
+                        && Number.isInteger(metric.enteredCount)
+                        && Number.isInteger(metric.completedTrades);
+                });
+                if (!complete) return false;
+                normalizedRows.push({ ...item, replayMode: "asset_switch" } as unknown as FinderArmPerformanceCandidate);
+                return true;
+            }
             if (!item.metrics || typeof item.metrics !== "object" || Array.isArray(item.metrics)) return false;
             const metrics = item.metrics as Record<string, unknown>;
-            return Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).every((arm) => {
+            const metricsValid = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).every((arm) => {
                 const metric = metrics[arm];
                 return metric !== null && typeof metric === "object" && !Array.isArray(metric);
             });
+            if (!metricsValid || !Number.isInteger(item.horizon)) return false;
+            normalizedRows.push({ ...item, replayMode: "horizon" } as unknown as FinderArmPerformanceCandidate);
+            return true;
         });
         if (!valid) return null;
         return compactFinderLatestResults({
             scope: "arm_performance",
-            results: rows as FinderArmPerformanceCandidate[],
-            runContext: candidate.runContext && typeof candidate.runContext === "object"
-                ? candidate.runContext as FinderArmPerformanceRunContext
+            results: normalizedRows,
+            runContext: rawContext
+                ? { ...rawContext, replayMode: contextMode ?? "horizon" } as unknown as FinderArmPerformanceRunContext
                 : null,
             inventoryComplete: false,
         });

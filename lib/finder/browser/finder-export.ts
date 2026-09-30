@@ -201,24 +201,60 @@ export function buildArmPerformanceTopResultsPayload(args: {
 	selectedArm: FinderArmPerformanceArm;
 	scoringBasis?: FinderArmPerformanceScoringBasis;
 	displayFilter?: FinderArmPerformanceDisplayFilter;
-}) {
+}): {
+	[key: string]: any;
+	scope: "arm_performance";
+	results: Array<{ [key: string]: any }>;
+} {
 	const { results, runContext, inventoryComplete, selectedArm, scoringBasis = "raw", displayFilter = {} } = args;
+	const replayMode = results[0]?.replayMode ?? runContext?.replayMode ?? "horizon";
+	const effectiveBasis = replayMode === "asset_switch" ? "raw" : scoringBasis;
+	const filteredResults = displayFilter.eventFilterEnabled
+		? results.filter((candidate) => {
+			const metric = getFinderArmPerformanceMetric(candidate, selectedArm, effectiveBasis);
+			const count = replayMode === "asset_switch"
+				? (metric as { completedTrades?: number } | undefined)?.completedTrades ?? 0
+				: (metric as { events?: number } | undefined)?.events ?? 0;
+			return count >= (displayFilter.minEvents ?? 1)
+				&& (displayFilter.maxEvents == null || count <= displayFilter.maxEvents);
+		})
+		: [...results];
 	return {
 		scope: 'arm_performance' as const,
+		replayMode,
 		selectedArm,
-		scoringBasis,
-		eventFilter: {
-			enabled: displayFilter.eventFilterEnabled === true,
-			minEvents: displayFilter.minEvents ?? 1,
-			maxEvents: displayFilter.maxEvents ?? null,
-		},
-		selectionCooldownBars: runContext?.searchOptions?.armPerformance?.selectionCooldownEnabled
-			? runContext.searchOptions.armPerformance.selectionCooldownBars ?? 5
-			: 0,
-		rankingMetric: 'topMean',
+		scoringBasis: effectiveBasis,
+		...(replayMode === "asset_switch"
+			? {
+				completedTradeFilter: {
+					enabled: displayFilter.eventFilterEnabled === true,
+					minTrades: displayFilter.minEvents ?? 1,
+					maxTrades: displayFilter.maxEvents ?? null,
+				},
+				assetSwitchSemantics: {
+					semanticsVersion: "asset_switch.v1",
+					rankingMetric: "total_net_pnl_usd_including_open_mark",
+					sizing: "fixed_entry_notional_non_compounding",
+					notionalPerEntryUsd: 1_000,
+					positionDirection: "long_only",
+				},
+			}
+			: {
+				eventFilter: {
+					enabled: displayFilter.eventFilterEnabled === true,
+					minEvents: displayFilter.minEvents ?? 1,
+					maxEvents: displayFilter.maxEvents ?? null,
+				},
+				selectionCooldownBars: runContext?.searchOptions?.armPerformance?.selectionCooldownEnabled
+					? runContext.searchOptions.armPerformance.selectionCooldownBars ?? 5
+					: 0,
+			}),
+		rankingMetric: replayMode === "asset_switch" ? 'totalNetPnlUsd' : 'topMean',
 		runContext,
 		inventoryComplete,
-		results: results.map((candidate, index) => ({
+		results: filteredResults.map((candidate, index) => {
+			const candidateMode = candidate.replayMode ?? "horizon";
+			return {
 			rank: index + 1,
 			runId: runContext?.runId ?? null,
 			candidateId: candidate.candidateId,
@@ -226,18 +262,24 @@ export function buildArmPerformanceTopResultsPayload(args: {
 			strategyKey: candidate.strategyKey,
 			strategyName: candidate.strategyName,
 			interval: runContext?.interval ?? null,
-			horizon: candidate.horizon,
+			replayMode: candidateMode,
+			...(candidateMode === "horizon" ? { horizon: candidate.horizon } : {}),
 			params: candidate.params,
 			backtestSettings: candidate.backtestSettings,
 			exitStrategyKey: candidate.exitStrategyKey ?? null,
 			exitStrategyParams: candidate.exitStrategyParams ?? null,
 			pairCoverage: candidate.pairCoverage,
 			selectedArm,
-			selectedArmMetric: getFinderArmPerformanceMetric(candidate, selectedArm, scoringBasis) ?? null,
-			excludedContributor: candidate.contributorExclusions?.[selectedArm] ?? null,
-			allArmMetrics: candidate.metrics,
-			allArmMetricsExTopContributor: candidate.metricsExTopContributor ?? null,
-		})),
+			selectedArmMetric: getFinderArmPerformanceMetric(candidate, selectedArm, effectiveBasis) ?? null,
+			...(candidateMode === "horizon"
+				? {
+					excludedContributor: candidate.contributorExclusions?.[selectedArm] ?? null,
+					allArmMetrics: candidate.metrics,
+					allArmMetricsExTopContributor: candidate.metricsExTopContributor ?? null,
+				}
+				: { allArmSwitchMetrics: candidate.assetSwitchMetrics }),
+			};
+		}),
 	};
 }
 

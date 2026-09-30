@@ -326,11 +326,12 @@ function makeArmCandidate(ordinal: number, rawNow: number, raw: number): FinderA
         candidateOrdinal: ordinal,
         strategyKey: "arm_test",
         strategyName: "Arm Test",
+        replayMode: "horizon",
         horizon: 5,
         params: { threshold: ordinal + 1 },
         backtestSettings: { executionModel: "signal_close" } as any,
         pairCoverage: { requestedPairs: 500, completedPairs: 500, failedPairs: 0, replayTargetLoadFailures: 0, noTradePairs: 0 },
-        metrics: metrics as FinderArmPerformanceCandidate["metrics"],
+        metrics: metrics as NonNullable<FinderArmPerformanceCandidate["metrics"]>,
         requestedEngineMode: "typescript",
         actualEngineMode: "typescript",
     };
@@ -1183,6 +1184,42 @@ describe("Finder Arm Performance scope controls", () => {
         expect(dom.finderArmPerformanceSettings.style.display).to.equal("");
         expect(dom.finderTradeFilterSection.style.display).to.equal("none");
     });
+
+    it("retains horizon controls and keeps completed-result count labels after mode changes", () => {
+        const dom: any = createFakeFinderManagerDom();
+        let completedMode: "horizon" | "asset_switch" | null = null;
+        const controls = new FinderControls({
+            getDom: () => dom,
+            setStatus: () => {},
+            renderLatestResults: () => {},
+            populateResortOptions: () => {},
+            applyResort: () => {},
+            requestRun: () => {},
+            getArmPerformanceReplayMode: () => completedMode,
+            renderRandomBenchmark: () => {},
+            selection: { getVisibleStrategyKeys: () => [] } as any,
+        });
+        dom.finderArmPerformanceHorizon.value = "48";
+        dom.finderArmPerformanceSelectionCooldownEnabled.checked = true;
+        dom.finderArmPerformanceSelectionCooldownBars.value = "9";
+        controls.initFinderSettingsPersistenceUI();
+
+        dom.finderArmPerformanceReplayMode.value = "asset_switch";
+        dom.finderArmPerformanceReplayMode.dispatchEvent({ type: "change" });
+        expect(dom.finderArmPerformanceHorizon.disabled).to.equal(true);
+        expect(dom.finderArmPerformanceSelectionCooldownEnabled.disabled).to.equal(true);
+        expect(dom.finderArmPerformanceSelectionCooldownBars.disabled).to.equal(true);
+        expect(dom.finderArmPerformanceHorizon.value).to.equal("48");
+        expect(dom.finderArmPerformanceSelectionCooldownBars.value).to.equal("9");
+        expect((globalThis as any).document.getElementById("finderArmPerformanceMinEventsLabel").textContent).to.equal("Min trades");
+
+        completedMode = "asset_switch";
+        dom.finderArmPerformanceReplayMode.value = "horizon";
+        dom.finderArmPerformanceReplayMode.dispatchEvent({ type: "change" });
+        expect(dom.finderArmPerformanceHorizon.disabled).to.equal(false);
+        expect((globalThis as any).document.getElementById("finderArmPerformanceMinEventsLabel").textContent).to.equal("Min trades");
+        controls.flushPendingPersistence();
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -1448,6 +1485,58 @@ describe("Copy Diagnostics availability transitions", () => {
 // ---------------------------------------------------------------------------
 
 describe("FinderUI Arm Performance preview actions", () => {
+    it("renders horizon cards from contributor-excluded metrics and shows unavailable values", () => {
+        const ui = new FinderUI();
+        const base = makeArmCandidate(0, 1, 1);
+        const rawMetric = {
+            ...base.metrics!.TOP_RAW!,
+            events: 17,
+            topMean: 0.01,
+            randomMean: -0.02,
+            delta: 0.03,
+            ciLower: -0.04,
+            ciUpper: 0.05,
+        };
+        const adjustedMetric = {
+            ...rawMetric,
+            events: 4,
+            topMean: 0.5,
+            randomMean: -0.1,
+            delta: 0.6,
+            ciLower: 0.2,
+            ciUpper: 0.8,
+        };
+        const candidate = {
+            ...base,
+            metrics: { ...base.metrics, TOP_RAW: rawMetric },
+            metricsExTopContributor: { TOP_RAW: adjustedMetric },
+        } as FinderArmPerformanceCandidate;
+        ui.renderArmPerformanceResults([candidate], null, "TOP_RAW", false, "exclude_top_contributor", {}, false);
+
+        const findAllByClass = (root: any, className: string): any[] => {
+            if (!root) return [];
+            const found = root.className === className ? [root] : [];
+            for (const child of root.children ?? []) found.push(...findAllByClass(child, className));
+            return found;
+        };
+        const metricTexts = findAllByClass(elsById.get("finderList"), "finder-metrics")[0].children.map((node: any) => node.textContent);
+        expect(metricTexts).to.include("TOP CONTRIBUTOR EXCLUDED");
+        expect(metricTexts).to.include("Events 4");
+        expect(metricTexts).to.include("Mean +50.00%");
+        expect(metricTexts).to.include("Random -10.00%");
+        expect(metricTexts).to.not.include("Mean +1.00%");
+
+        const unavailableUi = new FinderUI();
+        unavailableUi.renderArmPerformanceResults([{
+            ...base,
+            metricsExTopContributor: {},
+        }], null, "TOP_RAW", false, "exclude_top_contributor", {}, false);
+        const unavailableMetrics = findAllByClass(elsById.get("finderList"), "finder-metrics").at(-1);
+        const unavailableTexts = unavailableMetrics.children.map((node: any) => node.textContent);
+        expect(unavailableTexts).to.include("Events n/a");
+        expect(unavailableTexts).to.include("Mean n/a");
+    });
+
     it("keeps Apply enabled when an incomplete cached preview has no run context", () => {
         const ui = new FinderUI();
         ui.renderArmPerformanceResults([makeArmCandidate(0, 10, 10)], null, "TOP_RAW", true);

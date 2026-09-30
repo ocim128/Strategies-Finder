@@ -44,6 +44,28 @@ describe("validateTopMeanRequestLimits", () => {
         expect(validateTopMeanRequestLimits({ horizons: [12], maxPairs: TOP_MEAN_MAX_PAIRS_MAX + 1 }).ok).to.equal(false);
     });
 
+    it("allows horizon-free asset-switch requests and normalizes replay-only fields", () => {
+        const omitted = validateTopMeanRequestLimits({ replayMode: "asset_switch" });
+        expect(omitted.ok).to.equal(true);
+        if (omitted.ok) {
+            expect(omitted.value.replayMode).to.equal("asset_switch");
+            expect(omitted.value.horizons).to.deep.equal([]);
+            expect(omitted.value.selectionCooldownBars).to.equal(0);
+        }
+
+        const supplied = validateTopMeanRequestLimits({
+            replayMode: "asset_switch",
+            horizons: [12, 24, 48],
+            selectionCooldownBars: 5,
+        });
+        expect(supplied.ok).to.equal(true);
+        if (supplied.ok) {
+            expect(supplied.value.horizons).to.deep.equal([]);
+            expect(supplied.value.selectionCooldownBars).to.equal(0);
+        }
+        expect(validateTopMeanRequestLimits({ replayMode: "future_mode", horizons: [12] }).ok).to.equal(false);
+    });
+
     it("normalizes cooldown off and enforces its finite integer bar bound", () => {
         const off = validateTopMeanRequestLimits({ horizons: [12] });
         expect(off.ok).to.equal(true);

@@ -287,7 +287,7 @@ async function main(): Promise<void> {
         params: candidate.params,
         horizon: candidate.horizon,
         pairCoverage: candidate.pairCoverage,
-        metrics: Object.fromEntries(Object.entries(candidate.metrics).map(([arm, comparison]) => [arm, {
+        metrics: Object.fromEntries(Object.entries(candidate.metrics ?? {}).map(([arm, comparison]) => [arm, {
             events: comparison.events,
             topMean: comparison.topMean,
         }])),

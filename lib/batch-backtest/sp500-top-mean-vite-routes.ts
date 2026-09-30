@@ -204,6 +204,7 @@ async function handleSp500TopMeanRunRequest(
     // substitute for rejecting huge horizon arrays / zero-or-fractional values /
     // pathological workerCount or maxPairs from direct callers or proxies.
     const limitCheck = validateTopMeanRequestLimits({
+        replayMode: req.replayMode,
         horizons: req.horizons,
         workerCount: req.workerCount,
         maxPairs: req.maxPairs,
@@ -213,6 +214,7 @@ async function handleSp500TopMeanRunRequest(
     if (!limitCheck.ok) {
         throw new HttpStatusError(400, limitCheck.error);
     }
+    req.replayMode = limitCheck.value.replayMode;
     req.horizons = limitCheck.value.horizons;
     if (limitCheck.value.workerCount !== undefined) {
         req.workerCount = limitCheck.value.workerCount;

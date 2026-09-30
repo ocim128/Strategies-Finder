@@ -25,6 +25,7 @@ export type TopMeanCapTiltWeight = CapTiltWeight;
 export type TopMeanActiveCapTiltWeight = ActiveCapTiltWeight;
 
 export type TopMeanValidatedLimits = {
+    replayMode: "horizon" | "asset_switch";
     horizons: number[];
     workerCount?: number;
     maxPairs?: number;
@@ -42,42 +43,40 @@ export type TopMeanLimitValidationResult =
  * legitimate UI values (handful of small horizons, 1..24 workers, bounded pairs).
  */
 export function validateTopMeanRequestLimits(input: {
-    horizons: unknown;
+    horizons?: unknown;
+    replayMode?: unknown;
     workerCount?: unknown;
     maxPairs?: unknown;
     capTiltWeight?: unknown;
     selectionCooldownBars?: unknown;
 }): TopMeanLimitValidationResult {
-    if (!Array.isArray(input.horizons) || input.horizons.length === 0) {
-        return { ok: false, error: "Missing required non-empty array: horizons." };
+    const replayMode = input.replayMode === undefined ? "horizon" : input.replayMode;
+    if (replayMode !== "horizon" && replayMode !== "asset_switch") {
+        return { ok: false, error: `Invalid replayMode "${String(replayMode)}". Allowed values: horizon, asset_switch.` };
     }
-    if (input.horizons.length > TOP_MEAN_HORIZONS_MAX_LENGTH) {
-        return {
-            ok: false,
-            error: `Too many horizons (${input.horizons.length}); limit is ${TOP_MEAN_HORIZONS_MAX_LENGTH}.`,
-        };
-    }
-
     const horizons: number[] = [];
-    const seen = new Set<number>();
-    for (const raw of input.horizons) {
-        if (typeof raw !== "number" || !Number.isFinite(raw) || !Number.isInteger(raw) || raw <= 0) {
+    if (replayMode === "horizon") {
+        if (!Array.isArray(input.horizons) || input.horizons.length === 0) {
+            return { ok: false, error: "Missing required non-empty array: horizons." };
+        }
+        if (input.horizons.length > TOP_MEAN_HORIZONS_MAX_LENGTH) {
             return {
                 ok: false,
-                error: "Each horizon must be a positive finite integer.",
+                error: `Too many horizons (${input.horizons.length}); limit is ${TOP_MEAN_HORIZONS_MAX_LENGTH}.`,
             };
         }
-        if (raw > TOP_MEAN_HORIZONS_MAX_VALUE) {
-            return {
-                ok: false,
-                error: `Horizon ${raw} exceeds the maximum of ${TOP_MEAN_HORIZONS_MAX_VALUE}.`,
-            };
+        const seen = new Set<number>();
+        for (const raw of input.horizons) {
+            if (typeof raw !== "number" || !Number.isFinite(raw) || !Number.isInteger(raw) || raw <= 0) {
+                return { ok: false, error: "Each horizon must be a positive finite integer." };
+            }
+            if (raw > TOP_MEAN_HORIZONS_MAX_VALUE) {
+                return { ok: false, error: `Horizon ${raw} exceeds the maximum of ${TOP_MEAN_HORIZONS_MAX_VALUE}.` };
+            }
+            if (seen.has(raw)) return { ok: false, error: `Duplicate horizon value: ${raw}.` };
+            seen.add(raw);
+            horizons.push(raw);
         }
-        if (seen.has(raw)) {
-            return { ok: false, error: `Duplicate horizon value: ${raw}.` };
-        }
-        seen.add(raw);
-        horizons.push(raw);
     }
 
     let workerCount: number | undefined;
@@ -145,11 +144,12 @@ export function validateTopMeanRequestLimits(input: {
     return {
         ok: true,
         value: {
+            replayMode,
             horizons,
             ...(workerCount !== undefined ? { workerCount } : {}),
             ...(maxPairs !== undefined ? { maxPairs } : {}),
             ...(capTiltWeight !== undefined ? { capTiltWeight } : {}),
-            selectionCooldownBars,
+            selectionCooldownBars: replayMode === "asset_switch" ? 0 : selectionCooldownBars,
         },
     };
 }

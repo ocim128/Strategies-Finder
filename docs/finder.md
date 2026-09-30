@@ -241,7 +241,8 @@ Arm Performance reuses Finder's selected strategies, Grid Sweep or Random
 Search, Runs / Strategy budget, risk controls, optional exit-strategy sampling,
 Run / Stop, result cards, Apply, and copy actions. Enter one supported local
 synthetic pair per line (or comma-separated), select an interval and one
-positive replay horizon, then run. The server accepts 1–5,000 pairs and rejects
+replay mode, then run. Fixed horizon mode also requires one positive replay
+horizon. The server accepts 1–5,000 pairs and rejects
 blank lists, single symbols, duplicate resolved pairs, provider conflicts,
 unsupported built-in strategies, and requests above its validated search
 limits. Pairs with missing local leg data are skipped, and the run reports how
@@ -260,15 +261,16 @@ returns compact summaries for all 15 arms. There is no arm selector before the
 run. `Re-Sort` sorts the complete retained configuration inventory locally,
 then applies `Top Results`; it does not launch pair backtests or rank individual
 pairs. `Run Sort` restores the default `TOP_RAW_PROFIT_NOW` order. Equal values
-keep candidate order and arms with no eligible events sort last. Grid and
-Random are supported. Genetic search, fifth/half data slices, trade-count
-filters, OOS gates, and chart trade filters are disabled for this scope.
+keep candidate order and unavailable arms sort last. Grid and Random are
+supported. Genetic search, fifth/half data slices, OOS gates, and chart trade
+filters are disabled for this scope.
 
-The sort value is the selected arm's **mean forward return** (`topMean`) at the
-chosen horizon. It is an equal-event research statistic, not compounded
-account P&L: events may overlap and do not model position sizing or a shared
-capital limit. The card also shows the comparison mean, eligible event count,
-pair coverage, and `deltaMed CI95`. `delta` is the median paired excess return;
+In Fixed horizon mode, the sort value is the selected arm's **mean forward
+return** (`topMean`) at the chosen horizon. It is an equal-event research
+statistic, not compounded account P&L: events may overlap and do not model
+position sizing or a shared capital limit. The card also shows the comparison
+mean, eligible event count, pair coverage, and `deltaMed CI95`. `delta` is the
+median paired excess return;
 the interval estimates that median, not `topMean`, and it does not correct for
 searching many configurations. Each configuration is measured on its own
 eligible event dates, so comparisons are not matched-event experiments. No
@@ -278,35 +280,85 @@ unavailable.
 The Arm Performance controls can change the displayed inventory without
 rerunning pair backtests:
 
-- **Exclude top contributor** switches ranking and cards to an adjusted
-  summary for every arm. For each configuration, arm, and horizon, the replay
-  finds the asset with the largest sum of paired excess returns, removes that
+- **Exclude top contributor** (Fixed horizon only) switches ranking and cards
+  to an adjusted summary for every arm. For each configuration, arm, and
+  horizon, the replay finds the asset with the largest sum of paired excess returns, removes that
   asset's selected events, and rebuilds the comparison and bootstrap interval.
   Ties use asset-name order, and the largest contribution is excluded even if
   every asset's total contribution is negative. This is a concentration
   sensitivity calculation, not a blacklist or a calibrated confidence test.
   Raw and adjusted summaries remain in the result; older snapshots without
   adjusted values show them as unavailable and need a rerun.
-- **Completed event count filter** uses inclusive minimum and optional maximum
-  comparison-event counts from the selected arm and active scoring basis. Empty
-  maximum means unlimited. The order is basis, event filter, sort, then Top
-  Results. The compact full candidate inventory stays available, so changing
-  arms or thresholds restores filtered rows without another run. Pair coverage
+- **Completed count filter** uses comparison-event counts in Fixed horizon mode
+  and completed-trade counts in switch mode. Minimum and optional maximum are
+  inclusive; an empty maximum means unlimited. The order is basis, filter,
+  sort, then Top Results. The compact full candidate inventory stays available,
+  so changing arms or thresholds restores filtered rows without another run. Pair coverage
   remains the actual run count.
-- **Block repeat asset selection** applies during the replay and therefore
-  requires a new run. It keeps separate cooldown state per configuration,
-  replay window, and selector arm. The bar count uses the selected target's
+- **Block repeat asset selection** (Fixed horizon only) applies during the
+  replay and therefore requires a new run. It keeps separate cooldown state
+  per configuration, replay window, and selector arm. The bar count uses the selected target's
   candles, including candles with no selection event: a selection at index 100
   with a 5-bar cooldown blocks through 105 and permits selection again at 106.
   A blocked rank falls through to the next eligible asset. A singleton can
   still be selected and start cooldown, but cannot form a paired comparison or
   count as a completed event. The maximum accepted cooldown is 10,000 bars.
 
-Cards and copied top-result metadata name the active basis, selected arm,
-completed events, excluded contributor when available, event-count filter, and
-the cooldown used by the run. Changing cooldown in the controls does not alter
-an existing result. Apply continues to use only the candidate's saved strategy
-and backtest settings; replay scoring controls are not applied to the chart.
+Fixed horizon cards and copied top-result metadata name the active basis,
+selected arm, completed events, excluded contributor when available, event
+filter, and the cooldown used by the run. Changing cooldown in the controls
+does not alter an existing result. Apply continues to use only the candidate's
+saved strategy and backtest settings; replay scoring controls are not applied
+to the chart.
+
+**Replay mode** defaults to **Fixed horizon**. **Hold until asset changes**
+runs a separate, path-dependent simulation for each of the 15 arms. Each arm
+starts flat and holds one long target-asset position. BOT arms still choose
+from their existing bottom-ranked candidates; they do not open short trades.
+The first unique pick enters at the target's next open strictly after the
+decision. Repeating the held asset leaves the position and costs unchanged.
+A unique pick of another asset schedules a sale at the held asset's next open
+and then a purchase at the replacement's first open at or after the sale. The two
+positions never overlap. A tie or no pick holds the actual position, or keeps
+the arm flat, and cancels any outstanding switch. A one-candidate pool can
+make a pick. The pair-entry decision clock is retained, so score changes at
+exit-only timestamps do not place orders.
+
+Switch mode uses a fixed $1,000 entry notional for every trade, without
+compounding. This is normalized research P&L, not a shared or self-financing
+account; each arm is independent, and fees are additional costs. Closed-trade
+net P&L includes entry and exit commission and slippage through the fill
+prices. Open-position P&L includes entry costs and uses the last fully closed
+target candle at or before the requested end and frozen run cutoff, without a
+hypothetical exit fee. Cards rank total net P&L in USD (realized plus the open
+mark). An entered arm with no closed trades remains rankable; a never-entered
+or incomplete arm is unavailable. Cards and Copy Top Results show total,
+realized, and open P&L, completed trades, costs, current holding, and pending
+order separately. The optional count filter then means **completed trades**.
+Re-Sort uses the completed result's mode even if the live control has changed.
+Switch-mode total, realized, and open P&L values are green when positive and red
+when negative.
+
+Switch mode disables the horizon, cooldown, and contributor-exclusion controls
+while retaining their saved horizon-mode values. A mode change requires a new
+run; it never reinterprets completed results. The exclusion basis is raw for
+switch results because removing past events would change a position path.
+Both modes persist through Finder settings and bounded result snapshots;
+legacy mode-less results are read as fixed horizon, and unknown future modes
+are not treated as horizon results. Copy output identifies the switch
+semantics and its $1,000 long-only sizing.
+
+Each run starts flat inside its effective date window. The frozen evaluation
+cutoff bounds both fills and the terminal mark; a pre-window selection does
+not create a position. Target timestamps are normalized before execution. A
+missing target series, invalid or non-monotonic timestamps, invalid required
+prices, a holding or order spanning a data gap over 30 days, or a terminal
+mark older than 30 days makes that arm incomplete and unrankable. Shorter
+calendar gaps are allowed without interpolation. A healthy series with no
+next open before the cutoff leaves a pending order, and an open position is
+marked rather than fabricated into a closing trade. `TOP_RAW_PROFIT` and
+`TOP_MEAN_PROFIT` remain labeled **LOOK-AHEAD RESEARCH** because their existing
+selection pools depend on full-window pair profit.
 
 `TOP_RAW_PROFIT` and `TOP_MEAN_PROFIT` use a full-window pair-profit gate that
 is known only after the backtest. They are labeled **LOOK-AHEAD RESEARCH** and

@@ -264,6 +264,13 @@
         </div>
         <div class="batch-coordinator-fields batch-form-grid">
             <div class="batch-field">
+                <label class="batch-field-label" for="batchBacktestSp500TopMeanReplayMode">Replay mode</label>
+                <select class="batch-field-input" id="batchBacktestSp500TopMeanReplayMode">
+                    <option value="horizon" selected>Fixed horizon</option>
+                    <option value="asset_switch">Hold until switch</option>
+                </select>
+            </div>
+            <div class="batch-field">
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanHorizons">Horizons</label>
                 <input class="batch-field-input" id="batchBacktestSp500TopMeanHorizons" type="text" value="12,24,48" placeholder="12,24,48">
             </div>
@@ -300,7 +307,7 @@
                     <option value="random">Pick randomly</option>
                 </select>
             </div>
-            <div class="batch-field batch-field--inline batch-field--check" title="Each TOP_MEAN selector arm independently blocks its previously selected asset for this many target candles, then falls through to its next eligible rank. Annual replay windows reset state.">
+            <div class="batch-field batch-field--inline batch-field--check" title="Fixed-horizon replay only. Each selector arm independently blocks its previously selected asset for this many target candles, then falls through to its next eligible rank. Annual replay windows reset state.">
                 <input id="batchBacktestSp500TopMeanSelectionCooldownEnabled" type="checkbox">
                 <label class="batch-field-label" for="batchBacktestSp500TopMeanSelectionCooldownEnabled">Block repeat selection</label>
             </div>
@@ -338,6 +345,12 @@
                     <option value="TOP_MEAN_PROFIT_NOW">TOP_MEAN_PROFIT_NOW</option>
                     <option value="TOP_RAW_PROFIT_NOW_CONF">TOP_RAW_PROFIT_NOW_CONF</option>
                     <option value="TOP_Z">TOP_Z</option>
+                    <option value="BOT_RAW">BOT_RAW</option>
+                    <option value="BOT_MEAN">BOT_MEAN</option>
+                    <option value="BOT_MEAN_RAW_UNIQUE">BOT_MEAN_RAW_UNIQUE</option>
+                    <option value="BOT_RAW_PROFIT_NOW">BOT_RAW_PROFIT_NOW</option>
+                    <option value="BOT_MEAN_PROFIT_NOW">BOT_MEAN_PROFIT_NOW</option>
+                    <option value="BOT_Z">BOT_Z</option>
                 </select>
             </div>
             <div class="batch-field batch-field--inline">

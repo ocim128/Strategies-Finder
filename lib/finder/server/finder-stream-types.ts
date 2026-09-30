@@ -139,7 +139,8 @@ export type FinderStreamEvent =
         plannedCandidates: number;
         pairCount: number;
         skippedPairCount?: number;
-        horizon: number;
+        replayMode?: "horizon" | "asset_switch";
+        horizon?: number;
     }
     | {
         type: "arm_progress";
@@ -498,7 +499,28 @@ export function toScalarCandidate(candidate: FinderUniverseCandidate): FinderUni
 export function toScalarArmPerformanceCandidate(
     candidate: FinderArmPerformanceCandidate,
 ): FinderArmPerformanceCandidate {
-    const metrics = {} as FinderArmPerformanceCandidate["metrics"];
+    const common = {
+        candidateId: candidate.candidateId,
+        candidateOrdinal: candidate.candidateOrdinal,
+        strategyKey: candidate.strategyKey,
+        strategyName: candidate.strategyName,
+        params: { ...candidate.params },
+        backtestSettings: { ...candidate.backtestSettings },
+        ...(candidate.exitStrategyKey ? { exitStrategyKey: candidate.exitStrategyKey } : {}),
+        ...(candidate.exitStrategyName ? { exitStrategyName: candidate.exitStrategyName } : {}),
+        ...(candidate.exitStrategyParams ? { exitStrategyParams: { ...candidate.exitStrategyParams } } : {}),
+        pairCoverage: { ...candidate.pairCoverage },
+        requestedEngineMode: candidate.requestedEngineMode,
+        actualEngineMode: candidate.actualEngineMode,
+    };
+    if (candidate.replayMode === "asset_switch") {
+        return {
+            ...common,
+            replayMode: "asset_switch",
+            assetSwitchMetrics: { ...candidate.assetSwitchMetrics },
+        };
+    }
+    const metrics = {} as NonNullable<FinderArmPerformanceCandidate["metrics"]>;
     const metricsExTopContributor = {} as NonNullable<FinderArmPerformanceCandidate["metricsExTopContributor"]>;
     for (const arm of Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]) {
         const metric = candidate.metrics[arm];
@@ -507,17 +529,9 @@ export function toScalarArmPerformanceCandidate(
         if (adjusted) metricsExTopContributor[arm] = compactFinderArmPerformanceMetric(adjusted);
     }
     return {
-        candidateId: candidate.candidateId,
-        candidateOrdinal: candidate.candidateOrdinal,
-        strategyKey: candidate.strategyKey,
-        strategyName: candidate.strategyName,
+        ...common,
+        replayMode: "horizon",
         horizon: candidate.horizon,
-        params: { ...candidate.params },
-        backtestSettings: { ...candidate.backtestSettings },
-        ...(candidate.exitStrategyKey ? { exitStrategyKey: candidate.exitStrategyKey } : {}),
-        ...(candidate.exitStrategyName ? { exitStrategyName: candidate.exitStrategyName } : {}),
-        ...(candidate.exitStrategyParams ? { exitStrategyParams: { ...candidate.exitStrategyParams } } : {}),
-        pairCoverage: { ...candidate.pairCoverage },
         metrics,
         ...(candidate.metricsExTopContributor ? { metricsExTopContributor } : {}),
         ...(candidate.contributorExclusions ? { contributorExclusions: { ...candidate.contributorExclusions } } : {}),

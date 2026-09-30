@@ -94,6 +94,13 @@ export type {
     OpenScoreUsdSharedTargetCacheEntry,
     OpenScoreUsdCapTiltWeight,
     RunOpenScoreUsdReplayOptions,
+    ReplayMode,
+    AssetSwitchArmStatus,
+    AssetSwitchPendingOrder,
+    AssetSwitchOpenPosition,
+    AssetSwitchTradeRecord,
+    AssetSwitchArmSummary,
+    AssetSwitchReplaySummary,
 } from "./open-score-replay/types";
 export {
     computeProfitNowConfidenceWeight,
@@ -115,6 +122,8 @@ import { sweepScoreEvents } from "./open-score-replay/event-sweep";
 import { buildCandidateViews, buildOutcomeRequests, selectAfterOutcomes } from "./open-score-replay/candidate-selection";
 import type { DecisionEvent } from "./open-score-replay/internal-types";
 import { buildReportLines } from "./open-score-replay/report";
+import { createEmptyAssetSwitchSummary, runAssetSwitchReplay } from "./open-score-replay/asset-switch";
+import { REPLAY_ARM_FIELDS } from "./open-score-replay/arm-contract";
 
 // ============================================================================
 // Main engine
@@ -152,14 +161,17 @@ export async function runOpenScoreUsdReplay(
     const bootstrapSamples = Math.max(200, Math.floor(options.bootstrapSamples ?? MAX_ACTIVE_BOOTSTRAP_SAMPLES));
     const warnings: string[] = [];
 
-    const horizons = [...new Set(options.horizons.filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h)))].sort((a, b) => a - b);
+    const replayMode = options.mode ?? "horizon";
+    const horizons = [...new Set((options.horizons ?? []).filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h)))].sort((a, b) => a - b);
     const emptyResult = (partial: Partial<OpenScoreUsdReplayResult>): OpenScoreUsdReplayResult => ({
+        mode: replayMode,
         pairs: 0, assets: 0, complete: false, omittedPairs: 0, omittedAssets: 0,
         totalEvents: 0, candidateEvents: 0, eligibleEvents: 0, horizons: [],
         latestSelections: null, degree: degreeSummary([], null),
+        ...(replayMode === "asset_switch" ? { assetSwitch: createEmptyAssetSwitchSummary(options, slippageRate, commissionRate) } : {}),
         warnings, reportLines: [], ...partial,
     });
-    if (horizons.length === 0) {
+    if (replayMode === "horizon" && horizons.length === 0) {
         return emptyResult({ reportLines: ["OPEN_SCORE USD | no valid horizons supplied (required in v1)."] });
     }
 
@@ -244,6 +256,7 @@ export async function runOpenScoreUsdReplay(
         assetNames,
         assetCount,
         selectionCooldownBars: options.selectionCooldownBars,
+        includeAllDecisionEvents: replayMode === "asset_switch",
         onPhase,
     });
     const views = candidateStage.views;
@@ -252,6 +265,88 @@ export async function runOpenScoreUsdReplay(
         (count, view) => count + (view.positives.length >= 2 ? 1 : 0),
         0,
     );
+
+    if (replayMode === "asset_switch") {
+        // Position simulation consumes the candidate snapshots directly and
+        // never consults fixed-horizon outcome eligibility or future returns.
+        events = [];
+        const switchOutcome = await runAssetSwitchReplay({
+            views,
+            assetNames,
+            options,
+            slippageRate,
+            commissionRate,
+            onPhase,
+            shouldStop,
+            pairCount,
+            assetCount,
+        });
+        if (!switchOutcome.ok) {
+            const { reportLine, pairs, assets, totalEvents: partialEvents } = switchOutcome.earlyExit;
+            return emptyResult({
+                reportLines: [reportLine],
+                ...(pairs !== undefined ? { pairs } : {}),
+                ...(assets !== undefined ? { assets } : {}),
+                ...(partialEvents !== undefined ? { totalEvents: partialEvents } : {}),
+            });
+        }
+        const assetSwitch = switchOutcome.result;
+        const incompleteArms = Object.values(assetSwitch.arms).filter((arm) => arm.status === "incomplete").length;
+        if (assetSwitch.coverage.missingAssets > 0) {
+            warnings.push(`${assetSwitch.coverage.missingAssets} selected target dataset(s) were missing; affected switch arms are unrankable.`);
+        }
+        if (assetSwitch.coverage.invalidSeries > 0) {
+            warnings.push(`${assetSwitch.coverage.invalidSeries} selected target dataset(s) had duplicate, nonmonotonic, or invalid normalized timestamps.`);
+        }
+        if (incompleteArms > 0) warnings.push(`${incompleteArms} switch arm(s) are incomplete and cannot be ranked.`);
+        warnings.push("Asset-switch replay uses independent, fixed $1,000 entries; P&L is normalized research P&L, not a self-financing account return.");
+        warnings.push("BOT arms remain long asset positions and use the existing bottom-ranking rules.");
+        warnings.push("TOP_RAW_PROFIT and TOP_MEAN_PROFIT use full-window pair profitability and are LOOK-AHEAD RESEARCH arms.");
+        warnings.push("Fixed-horizon comparisons, random-control deltas, contributor exclusions, and horizon-only Phase 0b rows do not apply to asset-switch replay.");
+        const degree = degreeSummary(assetNames.map((name) => staticDegree.get(name) ?? 0), null);
+        const complete = omittedPairs === 0
+            && assetSwitch.coverage.missingAssets === 0
+            && assetSwitch.coverage.invalidSeries === 0
+            && incompleteArms === 0;
+        const formatSwitchUsd = (value: number | null): string => value === null || !Number.isFinite(value)
+            ? "n/a"
+            : `${value < 0 ? "-" : "+"}$${Math.abs(value).toFixed(2)}`;
+        const reportLines = [
+            `OPEN_SCORE USD | ASSET SWITCH | ${assetSwitch.semanticsVersion}`,
+            `Window: ${assetSwitch.windowStartSec ?? "from first in-window decision"} to ${assetSwitch.windowEndSec}${assetSwitch.independentWindow ? " (independent window; starts flat)" : ""}`,
+            `Sizing: $${assetSwitch.notionalPerEntry} fixed entry notional per arm; non-compounding; slippage ${(assetSwitch.slippageRate * 100).toFixed(4)}%; commission ${(assetSwitch.commissionRate * 100).toFixed(4)}%.`,
+            `Decisions: ${totalEvents}; ordinary candidate events (pool >= 2): ${candidateComparisonEvents}; incomplete arms: ${incompleteArms}.`,
+            "Per-arm performance (USD):",
+            ...REPLAY_ARM_FIELDS.map((field) => {
+                const arm = assetSwitch.arms[field];
+                const holding = arm.openPosition
+                    ? ` | holding=${arm.openPosition.asset} mark=${formatSwitchUsd(arm.openPosition.openNetPnl)}`
+                    : "";
+                const pending = arm.pendingOrder
+                    ? ` | pending=${arm.pendingOrder.side}${arm.pendingOrder.destinationAsset ? ` ${arm.pendingOrder.destinationAsset}` : ""}`
+                    : "";
+                return `${field} | ${arm.status} | total=${formatSwitchUsd(arm.totalNetPnl)} | realized=${formatSwitchUsd(arm.realizedNetPnl)} | open=${formatSwitchUsd(arm.openPositionNetPnl)} | closed=${arm.completedTrades} | entries=${arm.enteredCount} | costs=$${arm.totalCosts.toFixed(2)}${holding}${pending}`;
+            }),
+            ...warnings.map((warning) => `Warning: ${warning}`),
+        ];
+        return {
+            mode: "asset_switch",
+            pairs: pairCount,
+            assets: assetCount,
+            complete,
+            omittedPairs,
+            omittedAssets: assetSwitch.coverage.missingAssets + assetSwitch.coverage.invalidSeries,
+            totalEvents,
+            candidateEvents: candidateComparisonEvents,
+            eligibleEvents: 0,
+            horizons: [],
+            assetSwitch,
+            latestSelections: null,
+            degree,
+            warnings,
+            reportLines,
+        };
+    }
 
 
     const includePoolSnapshots = options.includePoolSnapshots === true;
@@ -458,6 +553,7 @@ export async function runOpenScoreUsdReplay(
     });
 
     return {
+        mode: "horizon",
         pairs: pairCount,
         assets: assetCount,
         complete,

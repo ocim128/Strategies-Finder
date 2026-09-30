@@ -10,7 +10,14 @@ import type { BatchBacktestDom } from "../lib/batch-backtest/batch-backtest-dom"
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
 import { state } from "../lib/state";
 import { backtestService } from "../lib/backtest-service";
-import { readTopMeanActiveRun } from "../lib/batch-backtest/browser/batch-browser-store";
+import {
+    readTopMeanActiveRun,
+    readTopMeanReplayMode,
+    persistTopMeanReplayMode,
+    readLatestTopMeanResult,
+    persistLatestTopMeanResult,
+    TOP_MEAN_LATEST_RESULT_STORAGE,
+} from "../lib/batch-backtest/browser/batch-browser-store";
 import {
     createFakeBatchBacktestDom,
     createFakeBatchElement,
@@ -617,6 +624,201 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-owned");
     });
 
+    it("persists replay mode and disables switch-irrelevant controls without changing their values", () => {
+        expect(readTopMeanReplayMode()).to.equal("horizon");
+        const dom = setupForAnalysis();
+        dom.batchBacktestSp500TopMeanHorizons.value = "6,18";
+        dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked = true;
+        dom.batchBacktestSp500TopMeanSelectionCooldownBars.value = "9";
+        dom.batchBacktestSp500TopMeanReplayMode.value = "asset_switch";
+        dom.batchBacktestSp500TopMeanReplayMode.dispatchEvent(new Event("change"));
+
+        expect(dom.batchBacktestSp500TopMeanHorizons.disabled).to.equal(true);
+        expect(dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.disabled).to.equal(true);
+        expect(dom.batchBacktestSp500TopMeanSelectionCooldownBars.disabled).to.equal(true);
+        expect(dom.batchBacktestSp500TopMeanHorizons.value).to.equal("6,18");
+        expect(dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked).to.equal(true);
+        expect(dom.batchBacktestSp500TopMeanSelectionCooldownBars.value).to.equal("9");
+        expect(readTopMeanReplayMode()).to.equal("asset_switch");
+
+        dom.batchBacktestSp500TopMeanReplayMode.value = "horizon";
+        dom.batchBacktestSp500TopMeanReplayMode.dispatchEvent(new Event("change"));
+        expect(dom.batchBacktestSp500TopMeanHorizons.disabled).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.disabled).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanSelectionCooldownBars.value).to.equal("9");
+
+        persistTopMeanReplayMode("asset_switch");
+        expect(readTopMeanReplayMode()).to.equal("asset_switch");
+    });
+
+    it("restores switch results with bounded trade details and rejects unknown result modes", () => {
+        const armNames = [
+            "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
+            "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
+            "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",
+        ];
+        const arm = {
+            status: "complete", enteredCount: 1, completedTrades: 1,
+            realizedNetPnl: -1, openPositionNetPnl: null, totalNetPnl: -1,
+            partialRealizedNetPnl: -1, completedHoldingDurationSec: 3,
+            averageCompletedHoldingDurationSec: 3, totalCosts: 0,
+            openPosition: null, pendingOrder: null,
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        };
+        const trades = [{
+            arm: "topMean", asset: "TOP_MEAN_DETAIL", decisionTimeSec: -1,
+            entryTimeSec: 0, entryPrice: 100, exitTimeSec: 1,
+            exitPrice: 101, holdingDurationSec: 1, netPnl: 1,
+            entryCost: 0, exitCost: 0, status: "closed",
+        }, ...Array.from({ length: 1_005 }, (_, index) => ({
+            arm: "topRaw", asset: `A${index}`, decisionTimeSec: index,
+            entryTimeSec: index + 1, entryPrice: 100, exitTimeSec: index + 2,
+            exitPrice: 99, holdingDurationSec: 1, netPnl: -1,
+            entryCost: 0, exitCost: 0, status: "closed",
+        }))];
+        const result = {
+            ...topMeanResultFixture(),
+            replayMode: "asset_switch",
+            horizons: [],
+            annualReports: [],
+            assetSwitch: {
+                semanticsVersion: "asset_switch.v1",
+                windowStartSec: 0, windowEndSec: 10, independentWindow: false,
+                sizing: "fixed_entry_notional_non_compounding", notionalPerEntry: 1_000,
+                slippageRate: 0, commissionRate: 0,
+                valuation: "last_closed_candle_close_at_or_before_window_end",
+                coverage: { requestedAssets: 1, loadedAssets: 1, missingAssets: 0, invalidSeries: 0 },
+                arms: Object.fromEntries(armNames.map((name) => [name, arm])),
+                trades,
+                tradeCount: 1_006,
+            },
+        } as any;
+        persistLatestTopMeanResult(result);
+        const restored = readLatestTopMeanResult();
+        expect(restored?.replayMode).to.equal("asset_switch");
+        expect(restored?.assetSwitch?.trades).to.have.length(1_001);
+        expect(restored?.assetSwitch?.trades?.filter((row) => row.arm === "topRaw")).to.have.length(1_000);
+        expect(restored?.assetSwitch?.trades?.some((row) => row.asset === "TOP_MEAN_DETAIL")).to.equal(true);
+        expect(restored?.assetSwitch?.tradeCount).to.equal(1_006);
+
+        const envelope = JSON.parse((globalThis as any).localStorage.getItem(TOP_MEAN_LATEST_RESULT_STORAGE.key));
+        envelope.data.replayMode = "future_mode";
+        (globalThis as any).localStorage.setItem(TOP_MEAN_LATEST_RESULT_STORAGE.key, JSON.stringify(envelope));
+        expect(readLatestTopMeanResult()).to.equal(null);
+    });
+
+    it("renders annual switch arms as independent position replays with separate raw snapshot context", () => {
+        const dom = setupForAnalysis();
+        const arms = [
+            "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
+            "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
+            "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",
+        ];
+        const arm = {
+            status: "complete", enteredCount: 0, completedTrades: 0,
+            realizedNetPnl: 0, openPositionNetPnl: null, totalNetPnl: 0,
+            partialRealizedNetPnl: 0, completedHoldingDurationSec: 0,
+            averageCompletedHoldingDurationSec: null, totalCosts: 0,
+            openPosition: null, pendingOrder: null,
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        };
+        const makeSwitch = (independentWindow: boolean, net: number) => ({
+            semanticsVersion: "asset_switch.v1",
+            windowStartSec: 1_735_689_600, windowEndSec: 1_767_225_599,
+            independentWindow, sizing: "fixed_entry_notional_non_compounding",
+            notionalPerEntry: 1_000, slippageRate: 0, commissionRate: 0,
+            valuation: "last_closed_candle_close_at_or_before_window_end",
+            coverage: { requestedAssets: 1, loadedAssets: 1, missingAssets: 0, invalidSeries: 0 },
+            arms: Object.fromEntries(arms.map((name) => [name, { ...arm, totalNetPnl: net }])),
+        });
+        const result = {
+            ...topMeanResultFixture(),
+            replayMode: "asset_switch",
+            horizons: [],
+            assetSwitch: makeSwitch(false, 3),
+            currentSnapshot: {
+                snapshot: { asOf: 1, artifacts: 1, openPositions: 0, candidates: [], winners: [], reason: "empty" },
+                stats: { artifactsProcessed: 1, openPositions: 0, positiveCandidates: 0, staleEndpoints: 0, missingEndpoints: 0, malformedArtifacts: 0, tieCount: 0, durationMs: 0 },
+            },
+            annualReports: [{
+                year: 2025,
+                sampleFromSec: 1_735_689_600,
+                sampleToSec: 1_767_225_599,
+                replayMode: "asset_switch",
+                horizons: [],
+                assetSwitch: makeSwitch(true, -2),
+                warnings: [],
+                reportLines: ["annual independent report"],
+            }],
+            reportLines: [],
+        } as any;
+        svc().topMean.renderTopMeanResults(dom, result);
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("cross-sectional raw-score view");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Independent Asset-Switch Calendar-Year Replays");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Independent 2025 Asset-Switch Replay");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("LOOK-AHEAD RESEARCH");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("−$2.00");
+    });
+
+    it("shows full history for a full-history switch run with decisions and entries in the UI and copied output", async () => {
+        const dom = setupForAnalysis();
+        const arms = [
+            "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
+            "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
+            "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",
+        ];
+        const arm = {
+            status: "complete", enteredCount: 1, completedTrades: 0,
+            realizedNetPnl: null, openPositionNetPnl: 5, totalNetPnl: 5,
+            partialRealizedNetPnl: 0, completedHoldingDurationSec: 0,
+            averageCompletedHoldingDurationSec: null, totalCosts: 0,
+            openPosition: null, pendingOrder: null,
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        };
+        const windowEndSec = Math.floor(Date.parse("2024-02-03T00:00:00.000Z") / 1_000);
+        const result = {
+            ...topMeanResultFixture(),
+            replayMode: "asset_switch",
+            horizons: [],
+            assetSwitch: {
+                semanticsVersion: "asset_switch.v1",
+                decisionCount: 3,
+                windowStartSec: null,
+                windowEndSec,
+                independentWindow: false,
+                sizing: "fixed_entry_notional_non_compounding",
+                notionalPerEntry: 1_000,
+                slippageRate: 0,
+                commissionRate: 0,
+                valuation: "last_closed_candle_close_at_or_before_window_end",
+                coverage: { requestedAssets: 1, loadedAssets: 1, missingAssets: 0, invalidSeries: 0 },
+                arms: Object.fromEntries(arms.map((name) => [name, arm])),
+                trades: [],
+                tradeCount: 1,
+            },
+            reportLines: [],
+        } as any;
+        svc().topMean.latestTopMeanResult = result;
+        svc().topMean.renderTopMeanResults(dom, result);
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Full history through 2024-02-03");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("No decision events");
+
+        const priorNavigator = (globalThis as any).navigator;
+        let copiedText = "";
+        Object.defineProperty(globalThis, "navigator", {
+            configurable: true,
+            value: { clipboard: { writeText: async (text: string) => { copiedText = text; } } },
+        });
+        try {
+            await svc().topMean.copySp500TopMeanResults();
+        } finally {
+            if (priorNavigator === undefined) delete (globalThis as any).navigator;
+            else Object.defineProperty(globalThis, "navigator", { configurable: true, value: priorNavigator });
+        }
+        expect(copiedText).to.include("full history through 2024-02-03T00:00:00.000Z");
+        expect(copiedText).to.not.include("no decision events");
+    });
+
     it("restores the completed TOP_MEAN Coordinator result after a tab-style reset", () => {
         // Intent: a completed coordinator result is user-visible research
         // output, not transient run state. Reloading the Batch tab must restore
@@ -641,7 +843,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
         svc().loadPersistedLatestTopMeanResult(dom);
 
-        expect(svc().latestTopMeanResult).to.deep.equal(result);
+        expect(svc().latestTopMeanResult).to.deep.equal({ ...result, replayMode: "horizon" });
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("RESTORE_MARKER_ANNUAL_REPORT");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("AAA");
         expect(dom.batchBacktestSp500TopMeanCopyBtn.disabled).to.equal(false);

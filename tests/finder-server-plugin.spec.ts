@@ -2154,6 +2154,37 @@ describe("Finder Arm Performance request preflight", () => {
                     message,
                 );
             }
+
+            const switchPrepared = await prepareFinderArmPerformanceRunForTests({
+                ...body,
+                options: {
+                    ...body.options,
+                    armPerformance: {
+                        replayMode: "asset_switch",
+                        dateMode: "full",
+                        scoringBasis: "exclude_top_contributor",
+                        selectionCooldownEnabled: true,
+                        selectionCooldownBars: 5,
+                    },
+                },
+            } as any, baseDir);
+            expect(switchPrepared.options.armPerformance).to.include({
+                replayMode: "asset_switch",
+                scoringBasis: "raw",
+                selectionCooldownEnabled: false,
+                selectionCooldownBars: 5,
+            });
+            expect(switchPrepared.options.armPerformance?.horizon).to.equal(undefined);
+            await assert.rejects(
+                prepareFinderArmPerformanceRunForTests({
+                    ...body,
+                    options: {
+                        ...body.options,
+                        armPerformance: { replayMode: "future_mode", dateMode: "full" },
+                    },
+                } as any, baseDir),
+                /replayMode must be horizon or asset_switch/,
+            );
         } finally {
             rmSync(baseDir, { recursive: true, force: true });
         }

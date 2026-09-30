@@ -14,7 +14,7 @@ import { getFinderSelectionResult } from "./finder-engine";
 import { calculateFinderAssetOosAverageHorizonMetrics } from "./finder-asset-opportunity-oos";
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
 import type { FinderArmPerformanceArm, FinderArmPerformanceDisplayFilter } from "./finder-arm-performance-metrics";
-import { getFinderArmPerformanceMetric, type FinderArmPerformanceScoringBasis } from "./finder-arm-performance-metrics";
+import type { FinderArmPerformanceScoringBasis } from "./finder-arm-performance-metrics";
 
 function formatExitAlpha(value: number): string {
     return `${value >= 0 ? "+" : ""}${value.toFixed(2)} pp`;
@@ -651,10 +651,18 @@ export class FinderUI {
         const list = this.getListElement();
         const copyButton = this.getCopyButton();
         list.innerHTML = "";
+        const replayMode = results[0]?.replayMode ?? context?.replayMode ?? "horizon";
+        const countLabelMode = replayMode === "asset_switch";
+        const eventFilterLabel = document.getElementById("finderArmPerformanceEventFilterLabel");
+        const minFilterLabel = document.getElementById("finderArmPerformanceMinEventsLabel");
+        const maxFilterLabel = document.getElementById("finderArmPerformanceMaxEventsLabel");
+        if (eventFilterLabel) eventFilterLabel.textContent = countLabelMode ? "Completed trade count filter" : "Completed event count filter";
+        if (minFilterLabel) minFilterLabel.textContent = countLabelMode ? "Min trades" : "Min events";
+        if (maxFilterLabel) maxFilterLabel.textContent = countLabelMode ? "Max trades" : "Max events";
         if (results.length === 0) {
             setVisible("finderEmpty", true);
             if (copyButton) copyButton.disabled = true;
-			if (basis === "exclude_top_contributor" && adjustedMetricsUnavailable) {
+			if (replayMode === "horizon" && basis === "exclude_top_contributor" && adjustedMetricsUnavailable) {
 				const note = document.createElement("div");
 				note.className = "finder-sub finder-arm-performance-note";
 				note.textContent = "Contributor-excluded summaries are unavailable for this saved result. Rerun Finder to use this scoring basis.";
@@ -662,7 +670,9 @@ export class FinderUI {
 			} else if (filter.eventFilterEnabled) {
 				const note = document.createElement("div");
 				note.className = "finder-sub finder-arm-performance-note";
-				note.textContent = "No configurations match this arm and completed-event filter.";
+				note.textContent = replayMode === "asset_switch"
+					? "No configurations match this arm and completed-trade filter."
+					: "No configurations match this arm and completed-event filter.";
 				list.appendChild(note);
 			}
             return;
@@ -670,20 +680,25 @@ export class FinderUI {
 
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
+		const effectiveBasis = replayMode === "asset_switch" ? "raw" : basis;
 		const note = document.createElement("div");
 		note.className = "finder-sub finder-arm-performance-note";
-		const cooldownBars = context?.searchOptions.armPerformance?.selectionCooldownEnabled
+		const cooldownBars = replayMode === "horizon" && context?.searchOptions.armPerformance?.selectionCooldownEnabled
 			? context.searchOptions.armPerformance.selectionCooldownBars ?? 5
 			: 0;
 		const eventFilterText = filter.eventFilterEnabled
-			? `Event filter: ${filter.minEvents ?? 1}..${filter.maxEvents ?? "unlimited"} completed comparisons.`
-			: "Event filter: off.";
-		note.textContent = `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Basis: ${basis === "raw" ? "raw" : "top contributor excluded"}. ${eventFilterText} Cooldown: ${cooldownBars} bars${cooldownBars > 0 ? " (requires a new run to change)" : " (off)"}. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${basis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for older results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
+			? replayMode === "asset_switch"
+				? `Completed-trade filter: ${filter.minEvents ?? 1}..${filter.maxEvents ?? "unlimited"}.`
+				: `Event filter: ${filter.minEvents ?? 1}..${filter.maxEvents ?? "unlimited"} completed comparisons.`
+			: replayMode === "asset_switch" ? "Completed-trade filter: off." : "Event filter: off.";
+		note.textContent = replayMode === "asset_switch"
+			? `Asset-switch replay holds one long target-asset position per arm, starts flat, and enters fixed $1,000 non-compounding positions. Ranking uses total net P&L in USD, including the open mark; costs are informational. ${eventFilterText} Ties and no-pick decisions keep the current holding. A pending order is shown separately from the raw current snapshot.${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`
+			: `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Basis: ${effectiveBasis === "raw" ? "raw" : "top contributor excluded"}. ${eventFilterText} Cooldown: ${cooldownBars} bars${cooldownBars > 0 ? " (requires a new run to change)" : " (off)"}. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${effectiveBasis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for older results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
         list.appendChild(note);
 
         const fragment = document.createDocumentFragment();
         results.forEach((item, index) => {
-			const metric = getFinderArmPerformanceMetric(item, arm, basis);
+			const selectedSwitchMetric = item.replayMode === "asset_switch" ? item.assetSwitchMetrics[arm] : null;
             const title = document.createElement("div");
             title.className = "finder-title";
             const titleText = document.createElement("span");
@@ -700,16 +715,39 @@ export class FinderUI {
                 value === null || !Number.isFinite(value) ? "n/a" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
-			metrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.horizon || context?.horizon || "?"} bars`));
-			metrics.appendChild(this.createMetricChip(basis === "raw" ? "RAW" : "TOP CONTRIBUTOR EXCLUDED"));
-			metrics.appendChild(this.createMetricChip(`Events ${metric?.events ?? "n/a"}`));
-            metrics.appendChild(this.createMetricChip(`Mean ${formatPct(metric?.topMean ?? null)}`));
-            metrics.appendChild(this.createMetricChip(`Random ${formatPct(metric?.randomMean ?? null)}`));
-            metrics.appendChild(this.createMetricChip(`DeltaMed ${formatPct(metric?.delta ?? null)}`));
-            metrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(metric?.ciLower ?? null)}, ${formatPct(metric?.ciUpper ?? null)}]`));
+			const appendSwitchPnlChip = (label: string, value: number | null): void => {
+				const chip = this.createMetricChip(`${label} ${formatNullableCurrency(value)}`);
+				if (value !== null && Number.isFinite(value)) {
+					chip.classList.add("finder-metric-value");
+					if (value > 0) chip.classList.add("positive");
+					else if (value < 0) chip.classList.add("negative");
+				}
+				metrics.appendChild(chip);
+			};
+			metrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.replayMode === "horizon" ? `${item.horizon} bars` : "hold until asset changes"}`));
+			if (item.replayMode === "asset_switch") {
+				const switchMetric = selectedSwitchMetric!;
+				metrics.appendChild(this.createMetricChip(`Status ${switchMetric.status.replaceAll("_", " ")}`));
+				appendSwitchPnlChip("Total net P&L", switchMetric.totalNetPnl);
+				appendSwitchPnlChip("Realized", switchMetric.realizedNetPnl);
+				appendSwitchPnlChip("Open", switchMetric.openPositionNetPnl);
+				metrics.appendChild(this.createMetricChip(`Completed trades ${switchMetric.completedTrades} · entries ${switchMetric.enteredCount}`));
+				metrics.appendChild(this.createMetricChip(`Costs ${formatNullableCurrency(switchMetric.totalCosts)}`));
+				metrics.appendChild(this.createMetricChip("Fixed $1,000 per entry · non-compounding"));
+			} else {
+				const horizonMetric = effectiveBasis === "exclude_top_contributor"
+					? item.metricsExTopContributor?.[arm]
+					: item.metrics?.[arm];
+				metrics.appendChild(this.createMetricChip(effectiveBasis === "raw" ? "RAW" : "TOP CONTRIBUTOR EXCLUDED"));
+				metrics.appendChild(this.createMetricChip(`Events ${horizonMetric?.events ?? "n/a"}`));
+				metrics.appendChild(this.createMetricChip(`Mean ${formatPct(horizonMetric?.topMean ?? null)}`));
+				metrics.appendChild(this.createMetricChip(`Random ${formatPct(horizonMetric?.randomMean ?? null)}`));
+				metrics.appendChild(this.createMetricChip(`DeltaMed ${formatPct(horizonMetric?.delta ?? null)}`));
+				metrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(horizonMetric?.ciLower ?? null)}, ${formatPct(horizonMetric?.ciUpper ?? null)}]`));
+			}
 			metrics.appendChild(this.createMetricChip(`Pairs ${item.pairCoverage.completedPairs}/${item.pairCoverage.requestedPairs}`));
 			metrics.appendChild(this.createMetricChip(`No trade ${item.pairCoverage.noTradePairs}`));
-			if (basis === "exclude_top_contributor") {
+			if (effectiveBasis === "exclude_top_contributor" && item.replayMode === "horizon") {
 				const excluded = item.contributorExclusions?.[arm];
 				metrics.appendChild(this.createMetricChip(`Excluded ${excluded?.asset ?? "n/a"} (${excluded ? excluded.events : "n/a"} events)`));
 			}
@@ -721,6 +759,12 @@ export class FinderUI {
                 paramsText: this.formatParams(item.params),
                 detailLines: [
                     `Pair failures ${item.pairCoverage.failedPairs} · replay target load failures ${item.pairCoverage.replayTargetLoadFailures}`,
+                    ...(selectedSwitchMetric?.openPosition
+                        ? [`Holding ${selectedSwitchMetric.openPosition.asset} since ${new Date(selectedSwitchMetric.openPosition.entryTimeSec * 1000).toISOString()} · open P&L ${formatNullableCurrency(selectedSwitchMetric.openPosition.openNetPnl)}`]
+                        : []),
+                    ...(selectedSwitchMetric?.pendingOrder
+                        ? [`Pending ${selectedSwitchMetric.pendingOrder.side} ${selectedSwitchMetric.pendingOrder.destinationAsset ?? ""} from ${new Date(selectedSwitchMetric.pendingOrder.decisionTimeSec * 1000).toISOString()}${selectedSwitchMetric.pendingOrder.scheduledTimeSec !== null ? ` · scheduled ${new Date(selectedSwitchMetric.pendingOrder.scheduledTimeSec * 1000).toISOString()}` : " · no executable open within the window"}`]
+                        : []),
                     ...(item.exitStrategyKey ? [`Exit override ${item.exitStrategyName ?? item.exitStrategyKey} (${this.formatParams(item.exitStrategyParams ?? {})})`] : []),
                 ],
                 metrics,

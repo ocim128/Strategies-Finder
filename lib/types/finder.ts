@@ -4,8 +4,10 @@ import type { CapitalSettings } from "./backtest";
 import type { BacktestSettings } from "./strategies";
 import type { BacktestSettingsData } from "../settings-model";
 import type {
+    FinderArmPerformanceArm,
     FinderArmPerformanceCompleteMetrics,
 } from "../finder/finder-arm-performance-metrics";
+import type { ReplayMode, AssetSwitchArmSummary } from "../batch-backtest/open-score-replay/types";
 
 export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
 /**
@@ -111,7 +113,8 @@ export interface FinderAssetOpportunityOptions {
 }
 
 export interface FinderArmPerformanceOptions {
-    horizon: number;
+    replayMode?: ReplayMode;
+    horizon?: number;
     dateMode: "full" | "date_range";
     /** Display and ranking basis, applied to retained summaries without rerunning pair backtests. */
     scoringBasis?: "raw" | "exclude_top_contributor";
@@ -138,7 +141,8 @@ export interface FinderArmPerformanceRunContext {
         failureKind?: "missing_data" | "backtest";
     }>;
     interval: string;
-    horizon: number;
+    replayMode?: ReplayMode;
+    horizon?: number;
     dateMode: "full" | "date_range";
     sampleFromSec?: number;
     sampleToSec?: number;
@@ -163,19 +167,20 @@ export interface FinderArmPerformancePairCoverage {
     noTradePairs: number;
 }
 
-export interface FinderArmPerformanceCandidate {
+interface FinderArmPerformanceCandidateBase {
     candidateId: string;
     candidateOrdinal: number;
     strategyKey: string;
     strategyName: string;
-    horizon: number;
     params: StrategyParams;
     backtestSettings: BacktestSettings;
     exitStrategyKey?: string;
     exitStrategyName?: string;
     exitStrategyParams?: StrategyParams;
     pairCoverage: FinderArmPerformancePairCoverage;
-    metrics: FinderArmPerformanceCompleteMetrics;
+    metrics?: FinderArmPerformanceCompleteMetrics;
+    /** Per-arm switch metrics; never converted into fixed-horizon comparisons. */
+    assetSwitchMetrics?: Record<FinderArmPerformanceArm, AssetSwitchArmSummary>;
     /** Contributor-excluded summaries are additive and absent on legacy results. */
     metricsExTopContributor?: Partial<FinderArmPerformanceCompleteMetrics>;
     contributorExclusions?: Partial<Record<keyof FinderArmPerformanceCompleteMetrics, {
@@ -185,6 +190,11 @@ export interface FinderArmPerformanceCandidate {
     requestedEngineMode: "rust" | "typescript";
     actualEngineMode: string;
 }
+
+export type FinderArmPerformanceCandidate = FinderArmPerformanceCandidateBase & (
+    | { replayMode: "horizon"; horizon: number; metrics: FinderArmPerformanceCompleteMetrics; assetSwitchMetrics?: never }
+    | { replayMode: "asset_switch"; horizon?: never; metrics?: never; assetSwitchMetrics: Record<FinderArmPerformanceArm, AssetSwitchArmSummary> }
+);
 
 export interface FinderOptions {
     mode: FinderMode;

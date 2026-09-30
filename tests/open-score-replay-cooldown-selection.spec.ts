@@ -58,6 +58,43 @@ function makeDecisionEvent(
 }
 
 describe("OPEN_SCORE replay selection cooldown", () => {
+    it("reuses ranked winners for asset-switch picks and stores null for tied extrema", async () => {
+        const built = await buildCandidateViews({
+            events: [
+                makeDecisionEvent(100, [9, 6, 3], [1, 5, 4]),
+                makeDecisionEvent(101, [9, 9, 3], [5, 5, 1]),
+            ],
+            totalEvents: 2,
+            assetNames: ASSETS,
+            assetCount: ASSETS.length,
+            includeAllDecisionEvents: true,
+            onPhase: () => undefined,
+        });
+        const first = built.views[0]!.assetSwitchPicks!;
+        expect(first.topRaw).to.equal(built.views[0]!.topRaw);
+        expect(first.topMean).to.equal(built.views[0]!.topMean);
+        expect(first.topMeanRawUnique).to.equal(built.views[0]!.topMeanRawUnique);
+        expect(first.topRawProfitNow).to.equal(1);
+        expect(first.topMeanProfitNow).to.equal(1);
+        expect(first.topRawProfitNowConf).to.equal(1);
+        expect(first.topZ).to.equal(1);
+        expect(first.botRaw).to.equal(2);
+        expect(first.botMean).to.equal(2);
+        expect(first.botMeanRawUnique).to.equal(2);
+        expect(first.botRawProfitNow).to.equal(0);
+        expect(first.botMeanProfitNow).to.equal(0);
+        expect(first.botZ).to.equal(0);
+
+        const tied = built.views[1]!.assetSwitchPicks!;
+        expect(tied.topRaw).to.equal(null);
+        expect(tied.topMean).to.equal(null);
+        expect(tied.topMeanRawUnique).to.equal(null);
+        expect(tied.topRawProfit).to.equal(null);
+        expect(tied.topMeanProfit).to.equal(null);
+        expect(tied.topRawProfitNow).to.equal(null);
+        expect(tied.topMeanProfitNow).to.equal(null);
+    });
+
     it("retains ordinary singleton events so their selected asset starts cooldown", async () => {
         const built = await buildCandidateViews({
             events: [makeDecisionEvent(100, [3, 0, 0]), makeDecisionEvent(101, [5, 4, 3])],

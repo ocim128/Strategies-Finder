@@ -1,6 +1,6 @@
 import { createReadStream, createWriteStream, type WriteStream } from "node:fs";
 import { finished } from "node:stream";
-import { mkdir, readFile, readdir, rm, writeFile, copyFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile, copyFile, rename } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import { createHash } from "node:crypto";
 import path from "node:path";
@@ -42,6 +42,19 @@ export const TOP_MEAN_ARCHIVE_LOG_DIR_NAME = "batch-open-score";
 export interface TopMeanArchiveManifest {
     /** Effective per-selector replay cooldown; 0 means disabled. */
     selectionCooldownBars?: number;
+    /** Present only for switch archives; fixes the path-dependent archive identity. */
+    assetSwitchReplayIdentity?: {
+        replayMode: "asset_switch";
+        semanticsVersion: "asset_switch.v1";
+        windowStartSec: number | null;
+        windowEndSec: number;
+        evaluationCutoffSec: number;
+        slippageRate: number;
+        commissionRate: number;
+        sizing: "fixed_entry_notional_non_compounding";
+        notionalPerEntry: 1_000;
+        capTiltWeight: string;
+    };
     strategy: {
         key: string;
         params: unknown;
@@ -116,6 +129,10 @@ export interface TopMeanArchiveLogOptions {
     completedAt?: string;
     /** Coordinator-owned staged Phase 0b files, already closed before archive. */
     phase0bFiles?: TopMeanPhase0bArchiveFiles;
+    /** Full, streamed switch trades staged outside the bounded result preview. */
+    assetSwitchTradesPath?: string;
+    /** Full independent calendar-year trade streams staged outside result JSON. */
+    assetSwitchAnnualTradePaths?: Readonly<Record<number, string>>;
     /** Resolved archive root captured by the coordinator at run start. */
     archiveRoot?: string | null;
     /** Test seam proving metadata is written only after data files are sealed. */
@@ -137,6 +154,13 @@ export interface TopMeanPhase0bArchiveWriter {
     readonly files: TopMeanPhase0bArchiveFiles;
     onPoolSnapshot(row: PoolSnapshotRecord): Promise<void>;
     onCandidateOutcome(row: CandidateOutcomeRecord): void | Promise<void>;
+    close(): Promise<void>;
+    dispose(): Promise<void>;
+}
+
+export interface TopMeanAssetSwitchTradeWriter {
+    readonly path: string;
+    write(row: unknown): Promise<void>;
     close(): Promise<void>;
     dispose(): Promise<void>;
 }
@@ -489,6 +513,40 @@ async function hashFile(filename: string): Promise<string> {
     return hashBytes(await readFile(filename));
 }
 
+/** Stage full switch trade history incrementally without retaining it in memory. */
+export async function createTopMeanAssetSwitchTradeWriter(
+    root: string | undefined,
+    runId: string,
+    label: string,
+): Promise<TopMeanAssetSwitchTradeWriter> {
+    const runDir = getRunDir(runId, root);
+    const filePath = path.join(path.dirname(runDir), `${path.basename(runDir)}-asset-switch-trades-${label}.staging.jsonl`);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    const tracked = createTrackedJsonlStream(filePath);
+    let closePromise: Promise<void> | null = null;
+    return {
+        path: filePath,
+        write: (row) => writeStreamLine(tracked, row),
+        close: async () => {
+            closePromise ??= closeWriteStream(tracked);
+            await closePromise;
+        },
+        dispose: async () => {
+            try { await (closePromise ?? closeWriteStream(tracked)); } catch { /* best effort */ }
+            await rm(filePath, { force: true });
+        },
+    };
+}
+
+/** Commit meta.json last so readers never observe an incomplete archive. */
+async function writeArchiveMetaAtomically(runDir: string, meta: unknown, space?: number): Promise<void> {
+    const metaPath = path.join(runDir, "meta.json");
+    const temporaryPath = path.join(runDir, "meta.json.tmp");
+    const serialized = space === undefined ? JSON.stringify(meta) : JSON.stringify(meta, null, space);
+    await writeFile(temporaryPath, serialized, "utf8");
+    await rename(temporaryPath, metaPath);
+}
+
 async function builderSourceHash(): Promise<string> {
     return hashBytes(await readFile(new URL("./sp500-top-mean-causal-features.ts", import.meta.url)));
 }
@@ -540,10 +598,16 @@ export async function archiveCompletedTopMeanRun(
         const canonicalAssets = [...(options.canonicalAssets ?? [])];
         const runFingerprint = options.fingerprint
             ?? computeArchiveFingerprint(request, canonicalAssets);
-        const selectionCooldownBars = request.selectionCooldownBars ?? 0;
-        const fingerprint = selectionCooldownBars > 0
-            ? createHash("sha256").update(JSON.stringify({ runFingerprint, selectionCooldownBars })).digest("hex")
-            : runFingerprint;
+        const replayMode = request.replayMode ?? result.replayMode ?? "horizon";
+        const selectionCooldownBars = replayMode === "asset_switch" ? 0 : request.selectionCooldownBars ?? 0;
+        const fingerprint = replayMode === "asset_switch"
+            ? createHash("sha256").update(JSON.stringify({
+                runFingerprint,
+                replayIdentity: options.manifest.assetSwitchReplayIdentity,
+            })).digest("hex")
+            : selectionCooldownBars > 0
+                ? createHash("sha256").update(JSON.stringify({ runFingerprint, selectionCooldownBars })).digest("hex")
+                : runFingerprint;
         const runDir = path.join(archiveRoot, request.runId);
         const completedAt = options.completedAt
             ?? result.performance?.completedAt
@@ -616,6 +680,73 @@ export async function archiveCompletedTopMeanRun(
                 await rm(path.join(runDir, entry.name), { force: true });
             }
         }
+        if (replayMode === "asset_switch") {
+            const switchResult = result.assetSwitch;
+            if (!switchResult) throw new Error("Completed asset-switch run is missing its switch summary.");
+            const { trades: previewTrades = [], ...switchSummary } = switchResult;
+            await Promise.all([
+                writeFile(path.join(runDir, "report.txt"), result.reportLines.join("\n"), "utf8"),
+                writeFile(path.join(runDir, "asset-switch-summary.json"), JSON.stringify(switchSummary, null, 2), "utf8"),
+                options.assetSwitchTradesPath
+                    ? copyFile(options.assetSwitchTradesPath, path.join(runDir, "asset-switch-trades.jsonl"))
+                    : writeJsonlFile(path.join(runDir, "asset-switch-trades.jsonl"), previewTrades),
+            ]);
+            for (const annual of result.annualReports ?? []) {
+                if (!annual.assetSwitch) continue;
+                const { trades: annualTrades = [], ...annualSummary } = annual.assetSwitch;
+                const annualPath = options.assetSwitchAnnualTradePaths?.[annual.year];
+                await Promise.all([
+                    writeFile(
+                        path.join(runDir, `asset-switch-annual-${annual.year}-summary.json`),
+                        JSON.stringify(annualSummary, null, 2),
+                        "utf8",
+                    ),
+                    annualPath
+                        ? copyFile(annualPath, path.join(runDir, `asset-switch-annual-${annual.year}.jsonl`))
+                        : writeJsonlFile(path.join(runDir, `asset-switch-annual-${annual.year}.jsonl`), annualTrades),
+                ]);
+            }
+            const filenames = (await readdir(runDir, { withFileTypes: true }))
+                .filter((entry) => entry.isFile() && entry.name !== "meta.json")
+                .map((entry) => entry.name)
+                .sort(codeUnitCompare);
+            const fileHashes: Record<string, string> = {};
+            for (const filename of filenames) fileHashes[filename] = await hashFile(path.join(runDir, filename));
+            const meta = {
+                schema: "top_mean_asset_switch_archive.v1",
+                runId: request.runId,
+                completedAt,
+                interval: request.interval,
+                replayMode,
+                replaySemanticsVersion: switchResult.semanticsVersion,
+                replayIdentity: options.manifest.assetSwitchReplayIdentity,
+                selectionCooldownBars: 0,
+                sampleFromSec: options.manifest.assetSwitchReplayIdentity?.windowStartSec ?? null,
+                sampleToSec: options.manifest.assetSwitchReplayIdentity?.windowEndSec ?? null,
+                fingerprint,
+                runFingerprint,
+                fingerprintVersion: "top_mean_asset_switch_fingerprint.v1",
+                postAssemblyFingerprint: sha256LineList(filenames.map((filename) => `${filename}=${fileHashes[filename]}`)),
+                canonicalAssets,
+                counts: {
+                    pairs: result.counts.pairCount,
+                    assets: canonicalAssets.length,
+                    switchTrades: switchResult.tradeCount ?? previewTrades.length,
+                    annualWindows: result.annualReports?.filter((annual) => annual.assetSwitch).length ?? 0,
+                },
+                engine: performanceEngine,
+                useRustEnginePreference: request.useRustEnginePreference === true,
+                diagnostics: {
+                    fixedHorizonEventRows: "not_applicable",
+                    phase0bCandidateOutcomes: "not_applicable",
+                },
+                manifest,
+                files: fileHashes,
+            };
+            await options.beforeMetaWrite?.(filenames);
+            await writeArchiveMetaAtomically(runDir, meta, 2);
+            return { reason: "saved", archiveDir: runDir };
+        }
         await Promise.all([
             writeFile(path.join(runDir, "report.txt"), result.reportLines.join("\n"), "utf8"),
         ]);
@@ -657,7 +788,7 @@ export async function archiveCompletedTopMeanRun(
             runId: request.runId,
             completedAt,
             interval: request.interval,
-            horizons: request.horizons,
+            horizons: request.horizons ?? [],
             sampleFromSec: request.sampleFromSec ?? null,
             sampleToSec: request.sampleToSec ?? null,
             workerCount: request.workerCount ?? null,
@@ -701,7 +832,7 @@ export async function archiveCompletedTopMeanRun(
         // meta.json is deliberately the final write: its hashes describe only
         // sealed data files and never a partially assembled archive.
         await options.beforeMetaWrite?.(filenames);
-        await writeFile(path.join(runDir, "meta.json"), JSON.stringify(meta), "utf8");
+        await writeArchiveMetaAtomically(runDir, meta);
         return { reason: "saved", archiveDir: runDir };
     } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -713,6 +844,7 @@ export async function archiveCompletedTopMeanRun(
             if (archiveRoot) {
                 const runDir = path.join(archiveRoot, request.runId);
                 await rm(path.join(runDir, "meta.json"), { force: true });
+                await rm(path.join(runDir, "meta.json.tmp"), { force: true });
                 await rm(path.join(runDir, "candidate-features.jsonl"), { force: true });
             }
         } catch {

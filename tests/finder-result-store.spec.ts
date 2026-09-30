@@ -87,11 +87,12 @@ function makeArmCandidate(ordinal: number, rawNow: number, raw: number): FinderA
         candidateOrdinal: ordinal,
         strategyKey: "arm_test",
         strategyName: "Arm Test",
+        replayMode: "horizon",
         horizon: 5,
         params: { threshold: ordinal + 1 },
         backtestSettings: { executionModel: "signal_close" } as any,
         pairCoverage: { requestedPairs: 2, completedPairs: 2, failedPairs: 0, replayTargetLoadFailures: 0, noTradePairs: 0 },
-        metrics: metrics as FinderArmPerformanceCandidate["metrics"],
+        metrics: metrics as NonNullable<FinderArmPerformanceCandidate["metrics"]>,
         requestedEngineMode: "typescript",
         actualEngineMode: "typescript",
     };

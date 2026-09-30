@@ -21,6 +21,8 @@
 import { tieBreakDigest } from "../max-active-research-contract";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
 import type { BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback } from "./internal-types";
+import { REPLAY_ARM_FIELDS } from "./arm-contract";
+import type { ReplayArmField } from "./arm-contract";
 import { yieldLoop } from "./runtime";
 
 export interface CandidateStageResult {
@@ -36,10 +38,13 @@ export async function buildCandidateViews(args: {
     assetCount: number;
     /** Keep singleton events so they can start an enabled selector cooldown. */
     selectionCooldownBars?: number;
+    /** Switch replay needs every decision, including empty/singleton pools. */
+    includeAllDecisionEvents?: boolean;
     onPhase: ReplayPhaseCallback;
 }): Promise<CandidateStageResult> {
     const { events, totalEvents, assetNames, assetCount, onPhase } = args;
-    const retainSingletonEvents = Math.max(0, Math.floor(args.selectionCooldownBars ?? 0)) > 0;
+    const retainSingletonEvents = Math.max(0, Math.floor(args.selectionCooldownBars ?? 0)) > 0
+        || args.includeAllDecisionEvents === true;
     // --- Phase 3: build candidate sets; collect per-asset event requests ---
     onPhase("targets", "forming candidates", 0, totalEvents);
     const views: EventView[] = [];
@@ -153,7 +158,7 @@ export async function buildCandidateViews(args: {
         // A singleton cannot form a paired comparison, but with cooldown
         // enabled it still represents a real selection event and must be
         // retained so its selected asset starts cooling down.
-        if (positives.length >= 2 || (retainSingletonEvents && positives.length === 1)) {
+        if (positives.length >= 2 || (retainSingletonEvents && positives.length === 1) || args.includeAllDecisionEvents === true) {
             // Phase 0 freeze: tie-break by the versioned FNV-1a 64 digest of
             // `MAX_ACTIVE_TIE_VERSION|tieSeed|truncatedEventTimeSec|scoringAsset`.
             // Smallest digest wins. Asset name and input order are NEVER
@@ -216,9 +221,11 @@ export async function buildCandidateViews(args: {
                 }
                 return { winner, tiedCount: tiedAtTop.length };
             };
-            const topRaw = pickMax(positives, "raw");
-            const topMean = pickMax(positives, "mean");
-            const topMeanRawUniquePool = positives.filter((candidate) => candidate.mean === topMean.winner.mean);
+            const topRaw = positives.length > 0 ? pickMax(positives, "raw") : null;
+            const topMean = positives.length > 0 ? pickMax(positives, "mean") : null;
+            const topMeanRawUniquePool = topMean
+                ? positives.filter((candidate) => candidate.mean === topMean.winner.mean)
+                : [];
             let topMeanRawUnique = -1;
             let maxRawInTopMeanTie = -Infinity;
             for (const candidate of topMeanRawUniquePool) {
@@ -226,26 +233,88 @@ export async function buildCandidateViews(args: {
             }
             const topMeanRawMaxRows = topMeanRawUniquePool.filter((candidate) => candidate.raw === maxRawInTopMeanTie);
             if (topMeanRawMaxRows.length === 1) topMeanRawUnique = topMeanRawMaxRows[0]!.assetIndex;
+            const uniquePick = (
+                pool: readonly Candidate[],
+                key: "raw" | "mean" | "z",
+                direction: "max" | "min",
+            ): number | null => {
+                if (pool.length === 0) return null;
+                const score = (candidate: Candidate): number => key === "z"
+                    ? candidate.z ?? Number.NEGATIVE_INFINITY
+                    : candidate[key];
+                let best = score(pool[0]!);
+                for (let index = 1; index < pool.length; index += 1) {
+                    const value = score(pool[index]!);
+                    if (direction === "max" ? value > best : value < best) best = value;
+                }
+                let winner: number | null = null;
+                for (const candidate of pool) {
+                    if (score(candidate) !== best) continue;
+                    if (winner !== null) return null;
+                    winner = candidate.assetIndex;
+                }
+                return winner;
+            };
+            const bestMeanPool = (pool: readonly Candidate[], direction: "max" | "min"): Candidate[] => {
+                if (pool.length === 0) return [];
+                const best = pool.reduce((value, candidate) => direction === "max"
+                    ? Math.max(value, candidate.mean)
+                    : Math.min(value, candidate.mean),
+                direction === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY);
+                return pool.filter((candidate) => candidate.mean === best);
+            };
             // Profit-gated picks: same digest tie-break, own >= 2 pool gate.
-            const topRawProfit = profitPositives.length >= 2 ? pickMax(profitPositives, "raw") : null;
-            const topMeanProfit = profitPositives.length >= 2 ? pickMax(profitPositives, "mean") : null;
+            const poolMinimum = args.includeAllDecisionEvents === true ? 1 : 2;
+            const topRawProfit = profitPositives.length >= poolMinimum ? pickMax(profitPositives, "raw") : null;
+            const topMeanProfit = profitPositives.length >= poolMinimum ? pickMax(profitPositives, "mean") : null;
             // Causal picks: identical, over the point-in-time pool.
-            const topRawProfitNow = profitNowPositives.length >= 2 ? pickMax(profitNowPositives, "raw") : null;
-            const topMeanProfitNow = profitNowPositives.length >= 2 ? pickMax(profitNowPositives, "mean") : null;
-            const topRawProfitNowConf = profitNowConfidencePositives.length >= 2
+            const topRawProfitNow = profitNowPositives.length >= poolMinimum ? pickMax(profitNowPositives, "raw") : null;
+            const topMeanProfitNow = profitNowPositives.length >= poolMinimum ? pickMax(profitNowPositives, "mean") : null;
+            const topRawProfitNowConf = profitNowConfidencePositives.length >= poolMinimum
                 ? pickMax(profitNowConfidencePositives, "raw")
                 : null;
             // Causal z-surprise ranking over the profit-now pool.
-            const topZ = profitNowPositives.length >= 2
+            const topZ = profitNowPositives.length >= poolMinimum
                 ? pickMax(profitNowPositives, "z")
                 : null;
+            let switchPicks: Record<ReplayArmField, number | null> | undefined;
+            if (args.includeAllDecisionEvents === true) {
+                const uniqueWinner = (pick: { winner: Candidate; tiedCount: number } | null): number | null =>
+                    pick?.tiedCount === 1 ? pick.winner.assetIndex : null;
+                switchPicks = {
+                    // The ordinary ranking results already computed above
+                    // carry tie counts. Reuse them instead of ranking those
+                    // pools a second time just for switch replay.
+                    topRawProfitNow: uniqueWinner(topRawProfitNow),
+                    topMeanProfitNow: uniqueWinner(topMeanProfitNow),
+                    topRawProfitNowConf: uniqueWinner(topRawProfitNowConf),
+                    topZ: uniqueWinner(topZ),
+                    topRaw: uniqueWinner(topRaw),
+                    topMean: uniqueWinner(topMean),
+                    topMeanRawUnique: topMeanRawUnique >= 0 ? topMeanRawUnique : null,
+                    topRawProfit: uniqueWinner(topRawProfit),
+                    topMeanProfit: uniqueWinner(topMeanProfit),
+                    // BOT arms have no parallel display pick in this stage;
+                    // calculate only their unique extreme selectors here.
+                    botRawProfitNow: uniquePick(profitNowPositives, "raw", "min"),
+                    botMeanProfitNow: uniquePick(profitNowPositives, "mean", "min"),
+                    botZ: uniquePick(profitNowPositives, "z", "min"),
+                    botRaw: uniquePick(positives, "raw", "min"),
+                    botMean: uniquePick(positives, "mean", "min"),
+                    botMeanRawUnique: uniquePick(bestMeanPool(positives, "min"), "raw", "min"),
+                };
+                if (Object.keys(switchPicks).length !== REPLAY_ARM_FIELDS.length) {
+                    throw new Error("Asset-switch candidate mapping is incomplete.");
+                }
+            }
             views.push({
                 timeSec: ev.timeSec, positives,
                 profitPositives,
                 profitNowPositives,
                 profitNowConfidencePositives,
-                topRaw: topRaw.winner.assetIndex,
-                topMean: topMean.winner.assetIndex,
+                ...(switchPicks ? { assetSwitchPicks: switchPicks } : {}),
+                topRaw: topRaw?.winner.assetIndex ?? -1,
+                topMean: topMean?.winner.assetIndex ?? -1,
                 topMeanRawUnique,
                 topMeanRawUniquePool,
                 topRawProfit: topRawProfit?.winner.assetIndex ?? -1,
@@ -256,8 +325,8 @@ export async function buildCandidateViews(args: {
                 topZ: topZ?.winner.assetIndex ?? -1,
                 maxActivePairs,
                 ties: {
-                    RAW: topRaw.tiedCount >= 2 ? 1 : 0,
-                    MEAN: topMean.tiedCount >= 2 ? 1 : 0,
+                    RAW: (topRaw?.tiedCount ?? 0) >= 2 ? 1 : 0,
+                    MEAN: (topMean?.tiedCount ?? 0) >= 2 ? 1 : 0,
                 },
             });
         } else if (

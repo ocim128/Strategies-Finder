@@ -1,23 +1,12 @@
 import type { ReplayComparison } from "../batch-backtest/batch-open-score-usd-replay-engine";
+import type { AssetSwitchArmSummary, ReplayMode } from "../batch-backtest/open-score-replay/types";
+import { REPLAY_ARM_TO_FINDER_ARM } from "../batch-backtest/open-score-replay/arm-contract";
+import type { FinderArmField, ReplayArmField } from "../batch-backtest/open-score-replay/arm-contract";
 
 /** The fixed set of OPEN_SCORE USD arms exposed by Finder Arm Performance. */
-export const FINDER_ARM_PERFORMANCE_REPLAY_FIELDS = {
-    TOP_RAW_PROFIT_NOW: "topRawProfitNow",
-    TOP_MEAN_PROFIT_NOW: "topMeanProfitNow",
-    TOP_RAW_PROFIT_NOW_CONF: "topRawProfitNowConf",
-    TOP_Z: "topZ",
-    TOP_RAW: "topRaw",
-    TOP_MEAN: "topMean",
-    TOP_MEAN_RAW_UNIQUE: "topMeanRawUnique",
-    TOP_RAW_PROFIT: "topRawProfit",
-    TOP_MEAN_PROFIT: "topMeanProfit",
-    BOT_RAW_PROFIT_NOW: "botRawProfitNow",
-    BOT_MEAN_PROFIT_NOW: "botMeanProfitNow",
-    BOT_Z: "botZ",
-    BOT_RAW: "botRaw",
-    BOT_MEAN: "botMean",
-    BOT_MEAN_RAW_UNIQUE: "botMeanRawUnique",
-} as const satisfies Record<string, string>;
+export const FINDER_ARM_PERFORMANCE_REPLAY_FIELDS = Object.fromEntries(
+    Object.entries(REPLAY_ARM_TO_FINDER_ARM).map(([field, arm]) => [arm, field]),
+) as Readonly<Record<FinderArmField, ReplayArmField>>;
 
 export type FinderArmPerformanceArm = keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS;
 export type FinderArmPerformanceReplayField =
@@ -88,42 +77,63 @@ export function compactFinderArmComparison(comparison: ReplayComparison): Finder
 export function getFinderArmPerformanceRankValue(
     metrics: FinderArmPerformanceMetrics,
     arm: FinderArmPerformanceArm,
+    replayMode: ReplayMode = "horizon",
+    switchMetric?: AssetSwitchArmSummary,
 ): number | null {
+    if (replayMode === "asset_switch") {
+        return switchMetric?.status === "complete" && Number.isFinite(switchMetric.totalNetPnl)
+            ? switchMetric.totalNetPnl
+            : null;
+    }
     const metric = metrics[arm];
     if (!metric || metric.events <= 0 || !Number.isFinite(metric.topMean)) return null;
     return metric.topMean;
 }
 
 export function getFinderArmPerformanceMetric<Row extends {
-    metrics: FinderArmPerformanceMetrics;
+    replayMode?: ReplayMode;
+    metrics?: FinderArmPerformanceMetrics;
     metricsExTopContributor?: FinderArmPerformanceMetrics;
+    assetSwitchMetrics?: Partial<Record<FinderArmPerformanceArm, AssetSwitchArmSummary>>;
 }>(row: Row, arm: FinderArmPerformanceArm, basis: FinderArmPerformanceScoringBasis = "raw") {
+    if (row.replayMode === "asset_switch") return row.assetSwitchMetrics?.[arm];
     return basis === "exclude_top_contributor"
         ? row.metricsExTopContributor?.[arm]
-        : row.metrics[arm];
+        : row.metrics?.[arm];
 }
 
 /** Sort a copy of the complete inventory by topMean, preserving ordinal ties. */
 export function sortFinderArmPerformanceResults<Row extends {
     candidateOrdinal: number;
-    metrics: FinderArmPerformanceMetrics;
+    replayMode?: ReplayMode;
+    metrics?: FinderArmPerformanceMetrics;
     metricsExTopContributor?: FinderArmPerformanceMetrics;
+    assetSwitchMetrics?: Partial<Record<FinderArmPerformanceArm, AssetSwitchArmSummary>>;
 }>(rows: readonly Row[], arm: FinderArmPerformanceArm, filter: FinderArmPerformanceDisplayFilter = {}): Row[] {
     const basis = filter.basis ?? "raw";
     const filteredRows = filter.eventFilterEnabled
         ? rows.filter((row) => {
-            const events = getFinderArmPerformanceMetric(row, arm, basis)?.events ?? 0;
-            return events >= (filter.minEvents ?? 1)
-                && (filter.maxEvents == null || events <= filter.maxEvents);
+            const metric = getFinderArmPerformanceMetric(row, arm, basis);
+            const count = row.replayMode === "asset_switch"
+                ? (metric as AssetSwitchArmSummary | undefined)?.completedTrades ?? 0
+                : (metric as FinderArmPerformanceMetric | undefined)?.events ?? 0;
+            return count >= (filter.minEvents ?? 1)
+                && (filter.maxEvents == null || count <= filter.maxEvents);
         })
         : rows;
     return [...filteredRows].sort((left, right) => {
-        const leftValue = basis === "raw"
-            ? getFinderArmPerformanceRankValue(left.metrics, arm)
-            : getFinderArmPerformanceRankValue(left.metricsExTopContributor ?? {}, arm);
-        const rightValue = basis === "raw"
-            ? getFinderArmPerformanceRankValue(right.metrics, arm)
-            : getFinderArmPerformanceRankValue(right.metricsExTopContributor ?? {}, arm);
+        const leftMode = left.replayMode ?? "horizon";
+        const rightMode = right.replayMode ?? "horizon";
+        const leftValue = leftMode === "asset_switch"
+            ? getFinderArmPerformanceRankValue({}, arm, leftMode, left.assetSwitchMetrics?.[arm])
+            : getFinderArmPerformanceRankValue(
+                basis === "raw" ? left.metrics ?? {} : left.metricsExTopContributor ?? {}, arm,
+            );
+        const rightValue = rightMode === "asset_switch"
+            ? getFinderArmPerformanceRankValue({}, arm, rightMode, right.assetSwitchMetrics?.[arm])
+            : getFinderArmPerformanceRankValue(
+                basis === "raw" ? right.metrics ?? {} : right.metricsExTopContributor ?? {}, arm,
+            );
         if (leftValue === null && rightValue !== null) return 1;
         if (leftValue !== null && rightValue === null) return -1;
         if (leftValue !== null && rightValue !== null && leftValue !== rightValue) {

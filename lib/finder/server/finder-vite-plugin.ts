@@ -3111,10 +3111,15 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
         }
         return value;
     };
-    const scoringBasis = armOptions.scoringBasis === undefined ? "raw" : armOptions.scoringBasis;
-    if (scoringBasis !== "raw" && scoringBasis !== "exclude_top_contributor") {
+    const requestedScoringBasis = armOptions.scoringBasis === undefined ? "raw" : armOptions.scoringBasis;
+    if (requestedScoringBasis !== "raw" && requestedScoringBasis !== "exclude_top_contributor") {
         throw new HttpStatusError(400, "options.armPerformance.scoringBasis must be raw or exclude_top_contributor.");
     }
+    const replayMode = armOptions.replayMode === undefined ? "horizon" : armOptions.replayMode;
+    if (replayMode !== "horizon" && replayMode !== "asset_switch") {
+        throw new HttpStatusError(400, "options.armPerformance.replayMode must be horizon or asset_switch.");
+    }
+    const scoringBasis = replayMode === "asset_switch" ? "raw" : requestedScoringBasis;
     const eventFilterEnabled = readOptionalBoolean("eventFilterEnabled", false);
     const minEvents = readOptionalInteger("minEvents", 1, 0, 1_000_000);
     let maxEvents: number | null = null;
@@ -3122,17 +3127,22 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
         maxEvents = readOptionalInteger("maxEvents", 1, 0, 1_000_000);
         if (maxEvents < minEvents) throw new HttpStatusError(400, "options.armPerformance.maxEvents must be greater than or equal to minEvents.");
     }
-    const selectionCooldownEnabled = readOptionalBoolean("selectionCooldownEnabled", false);
+    const requestedSelectionCooldownEnabled = readOptionalBoolean("selectionCooldownEnabled", false);
     const selectionCooldownBars = readOptionalInteger(
         "selectionCooldownBars",
         5,
         0,
         TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX,
     );
-    if (selectionCooldownEnabled && selectionCooldownBars < 1) {
+    if (requestedSelectionCooldownEnabled && selectionCooldownBars < 1) {
         throw new HttpStatusError(400, "options.armPerformance.selectionCooldownBars must be positive when cooldown is enabled.");
     }
-    const horizonLimits = validateTopMeanRequestLimits({ horizons: [armOptions.horizon], capTiltWeight: "off" });
+    const selectionCooldownEnabled = replayMode === "horizon" && requestedSelectionCooldownEnabled;
+    const horizonLimits = validateTopMeanRequestLimits({
+        replayMode,
+        ...(replayMode === "horizon" ? { horizons: [armOptions.horizon] } : {}),
+        capTiltWeight: "off",
+    });
     if (!horizonLimits.ok) throw new HttpStatusError(400, horizonLimits.error);
     const dateMode = armOptions.dateMode;
     let dateWindow;
@@ -3174,7 +3184,8 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
         maxTrades: Number.POSITIVE_INFINITY,
         oosValidationEnabled: false,
         armPerformance: {
-            horizon: horizonLimits.value.horizons[0]!,
+            replayMode,
+            ...(replayMode === "horizon" ? { horizon: horizonLimits.value.horizons[0]! } : {}),
             dateMode: dateWindow.mode,
             scoringBasis,
             eventFilterEnabled,
@@ -3309,7 +3320,10 @@ async function handleArmPerformanceRunRequest(
         pairs: [...prepared.enumeration.canonicalPairs],
         skippedPairs: [...prepared.enumeration.skippedPairTokens],
         interval: prepared.interval,
-        horizon: prepared.options.armPerformance!.horizon,
+        replayMode: prepared.options.armPerformance!.replayMode ?? "horizon",
+        ...(prepared.options.armPerformance!.horizon !== undefined
+            ? { horizon: prepared.options.armPerformance!.horizon }
+            : {}),
         dateMode: prepared.options.armPerformance!.dateMode,
         ...(prepared.sampleFromSec !== undefined ? { sampleFromSec: prepared.sampleFromSec } : {}),
         ...(prepared.sampleToSec !== undefined ? { sampleToSec: prepared.sampleToSec } : {}),
@@ -3396,8 +3410,9 @@ async function handleArmPerformanceRunRequest(
                     strategyKeys: context.strategyKeys,
                     plannedCandidates: prepared.plans.length,
                     pairCount: prepared.enumeration.canonicalPairs.length,
+                    replayMode: context.replayMode ?? "horizon",
                     skippedPairCount,
-                    horizon: context.horizon,
+                    ...(context.horizon !== undefined ? { horizon: context.horizon } : {}),
                 });
                 try {
                     await runFinderArmPerformance({
