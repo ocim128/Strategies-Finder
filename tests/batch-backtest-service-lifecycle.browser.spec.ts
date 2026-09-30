@@ -1,4 +1,4 @@
-/** Browser-visible analysis lifecycle regressions not covered by plugin specs. */
+﻿/** Browser-visible analysis lifecycle regressions not covered by plugin specs. */
 import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";
 import {
@@ -15,6 +15,8 @@ import {
     createFakeBatchBacktestDom,
     createFakeBatchElement,
 } from "./helpers/fake-batch-backtest-dom";
+import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
+import { strategyRegistry } from "../strategyRegistry";
 
 function fakeEl(): any {
     return createFakeBatchElement();
@@ -1515,4 +1517,87 @@ describe("BatchBacktestService Balanced Generator lifecycle", () => {
 
         expect(svc().getActivePairListProvenance(), "provenance cleared after manual edit").to.equal(null);
     });
+
+    it("re-enables Generate & Apply after a Batch run ends", async () => {
+        // Regression: the run's finally-block calls setRunBusy(false) while
+        // runInFlight is still true, so the balanced-generator buttons were
+        // computed from a still-blocked lock and stayed disabled forever
+        // after the run. The server run is mocked as an immediate HTTP
+        // failure: it unwinds through the same finally-block as a success.
+        const dom = setupForAnalysis();
+        dom.batchBacktestSymbols.value = "BTCUSDT";
+        // Register the current strategy so the run preflight passes and the
+        // run reaches the mocked server (the failure path shares the same
+        // finally-block restore as a successful run).
+        // The settings reader instanceof-checks DOM element globals; the
+        // fake-DOM harness has none, so stub the three it touches.
+        const savedGlobals = {
+            HTMLInputElement: (globalThis as any).HTMLInputElement,
+            HTMLSelectElement: (globalThis as any).HTMLSelectElement,
+            HTMLTextAreaElement: (globalThis as any).HTMLTextAreaElement,
+        };
+        class FakeHtmlElement {}
+        (globalThis as any).HTMLInputElement = class extends FakeHtmlElement {};
+        (globalThis as any).HTMLSelectElement = class extends FakeHtmlElement {};
+        (globalThis as any).HTMLTextAreaElement = class extends FakeHtmlElement {};
+        // The fake rules <select multiple> has no selectedOptions.
+        (dom.batchBacktestTradeGateRules as any).selectedOptions = [];
+        const strategyKey = (state as any).currentStrategyKey as string;
+        const fakeStrategy = {
+            name: "lifecycle-test-strategy",
+            defaultParams: {},
+            params: [],
+            execute: () => ({ signals: [] }),
+        } as any;
+        registerLoadedBuiltInStrategy(strategyKey, fakeStrategy);
+        strategyRegistry.register(strategyKey, fakeStrategy);
+        await withMockFetch(() => ({
+            ok: false,
+            status: 500,
+            text: JSON.stringify({ error: "server exploded" }),
+        }), async () => {
+            await svc().runBatch();
+        });
+        // Prove the run actually reached the server call and unwound through
+        // the run's finally-block (not a preflight short-circuit).
+        expect(dom.batchBacktestStatus.textContent, "run reached the mocked server").to.include("server exploded");
+        expect(dom.batchBacktestBalancedGenerateBtn.disabled, "Generate & Apply must be clickable after the run ends").to.equal(false);
+        strategyRegistry.unregister(strategyKey);
+        unregisterLoadedBuiltInStrategy(strategyKey);
+        (globalThis as any).HTMLInputElement = savedGlobals.HTMLInputElement;
+        (globalThis as any).HTMLSelectElement = savedGlobals.HTMLSelectElement;
+        (globalThis as any).HTMLTextAreaElement = savedGlobals.HTMLTextAreaElement;
+    });
+
+    it("re-enables Generate & Apply when analysis busy state finishes", async () => {
+        // Regression: finishAnalysisBusy hard-disabled both balanced buttons
+        // and never restored them after clearing analysisInFlight.
+        const dom = setupForAnalysis();
+        svc().analysisInFlight = true;
+        svc().beginAnalysisBusy(dom);
+        expect(dom.batchBacktestBalancedGenerateBtn.disabled, "Generate & Apply disabled while analysis runs").to.equal(true);
+        await svc().finishAnalysisBusy(dom);
+        expect(dom.batchBacktestBalancedGenerateBtn.disabled, "Generate & Apply must be clickable after analysis ends").to.equal(false);
+    });
+
+    it("re-enables Generate & Apply after a Stop request settles", async () => {
+        // Regression: the post-Stop busy restore bakes the buttons disabled
+        // (runInFlight still held at setRunBusy time) and nothing refreshed
+        // them once pendingStopPromise settled.
+        const dom = setupForAnalysis();
+        svc().runInFlight = true;
+        svc().batchRun.setRunBusy(dom, false);
+        svc().runInFlight = false;
+        expect(dom.batchBacktestBalancedGenerateBtn.disabled, "precondition: buttons baked disabled by the busy restore").to.equal(true);
+        await withMockFetch(() => ({
+            ok: true,
+            status: 200,
+            text: JSON.stringify({ ok: true }),
+        }), async () => {
+            await svc().requestServerStop();
+        });
+        await new Promise((r) => setTimeout(r, 0));
+        expect(dom.batchBacktestBalancedGenerateBtn.disabled, "Generate & Apply must be clickable after Stop settles").to.equal(false);
+    });
 });
+

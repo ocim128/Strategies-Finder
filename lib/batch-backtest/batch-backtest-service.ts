@@ -527,6 +527,9 @@ export class BatchBacktestService {
         void pending.finally(() => {
             if (this.pendingStopPromise === pending) {
                 this.pendingStopPromise = null;
+                // The last settled Stop may have been the only flag blocking
+                // the Balanced Generator buttons; re-assert their state.
+                this.batchRun.updateBalancedGeneratorButtons(this.getDom());
             }
         });
         return request;
@@ -644,6 +647,9 @@ export class BatchBacktestService {
             try { await pending; } catch { /* stopServerWork swallows errors */ }
         }
         this.analysisInFlight = false;
+        // beginAnalysisBusy hard-disabled both Balanced Generator buttons;
+        // restore them from the now-unblocked lock state.
+        this.batchRun.updateBalancedGeneratorButtons(dom);
         dom.batchBacktestRunBtn.disabled = false;
         // Audit artifact-action-gating finding: route the post-analysis restore
         // through the shared helper so Mine, Stability, and OPEN_SCORE USD

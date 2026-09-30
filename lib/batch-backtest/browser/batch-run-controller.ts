@@ -267,6 +267,18 @@ export class BatchRunController {
         this.deps.resultsView.setRunBusy(dom, busy, this.deps.balancedLock());
     }
 
+    /**
+     * Re-assert ONLY the balanced-generator buttons from the current lock
+     * state, without touching the rest of the busy presentation. Lifecycle
+     * transitions that clear their owner flag AFTER a setRunBusy/render
+     * baked the buttons disabled (run finally ordering, analysis finish,
+     * Stop settling, reattach run-mismatch) call this so the buttons unlock
+     * instead of staying disabled until the next full busy render.
+     */
+    updateBalancedGeneratorButtons(dom: BatchBacktestDom): void {
+        this.deps.resultsView.updateBalancedGeneratorButtons(dom, this.deps.balancedLock());
+    }
+
     updateSummary(dom: BatchBacktestDom): void {
         this.deps.resultsView.updateSummary(dom, this.lastResults);
     }
@@ -330,6 +342,11 @@ export class BatchRunController {
             await this.runBatchInner();
         } finally {
             this.runInFlight = false;
+            // The inner finally restored Run/Stop while this controller's
+            // runInFlight was still held, so the balanced-generator buttons
+            // were rendered from a still-blocked lock and stayed disabled
+            // after the run. Re-assert them now that the flags are down.
+            this.updateBalancedGeneratorButtons(this.deps.getDom());
         }
     }
 
@@ -1339,6 +1356,12 @@ export class BatchRunController {
                     // controls so a reload does not retry a dead run id.
                     const staleRunId = this.activeServerRunId;
                     if (staleRunId) this.clearActiveServerRun(staleRunId);
+                    // setRunBusy(false) above rendered the buttons while
+                    // serverRunActive was still true; clearActiveServerRun
+                    // then dropped the flag without a re-render.
+                    if (!this.reattachPollingStopped) {
+                        this.updateBalancedGeneratorButtons(this.deps.getDom());
+                    }
                     return;
                 }
                 if (!payload.running || !payload.run) {
