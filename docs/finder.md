@@ -323,6 +323,9 @@ context; Copy Top Results includes the selected arm, all arm metrics, exact
 candidate settings, and the shared run id. A cached localStorage snapshot is a
 bounded preview: Re-Sort ranks the candidates currently available, while
 unseen candidates may rank higher until the full server inventory is restored.
+During a running sweep, the browser refreshes this preview periodically and
+keeps it visible after reload while status polling waits for the full terminal
+inventory.
 
 The evaluation cutoff is fixed for every configuration so later candidates do
 not gain newly closed candles or newly matured outcomes. It does not freeze

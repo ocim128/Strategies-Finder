@@ -70,13 +70,16 @@ Rust preference is forwarded to each child, and result rows record requested
 and actual engine modes.
 
 Finder streams each scalar candidate once and keeps live `/status` polling
-counts-only. The terminal `arm_done` event and terminal status response carry
-the authoritative completed rows plus the frozen run context: ordered pairs,
-settings, capital, horizon/date window, cutoff, cap-tilt baseline, and engine
-usage. Reload reattaches by the parent Finder run id; a server restart that no
-longer has the run returns unavailable instead of polling indefinitely. The
-bounded browser snapshot is only a preview if the server inventory cannot be
-recovered. Apply and copy use the terminal context rather than current menu
+counts-only. The browser saves a bounded, rate-limited Arm Performance preview
+while candidates arrive and keeps the matching preview visible after reload;
+it can be stale until the next checkpoint or terminal response. The terminal
+`arm_done` event and terminal status response carry the authoritative completed
+rows plus the frozen run context: ordered pairs, settings, capital,
+horizon/date window, cutoff, cap-tilt baseline, and engine usage. Reload
+reattaches by the parent Finder run id; a server restart that no longer has
+the run returns unavailable instead of polling indefinitely. If the server
+inventory cannot be recovered, Re-Sort remains limited to the bounded browser
+preview. Apply and copy use the terminal context rather than current menu
 controls.
 
 The inventory holds compact metrics for all 15 replay arms per successfully

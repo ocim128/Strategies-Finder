@@ -3,10 +3,11 @@
  * retained for post-run re-sort, the display limits, the run-time ordering
  * snapshot, and the Arm run/apply context. Browser-only.
  *
- * The store derives display views from full terminal inventories and never
- * renders, fetches, or touches localStorage — terminal persistence happens
- * through the `persistTerminalResults` callback the manager wires to the
- * snapshot writer. Provisional (persist=false) updates never write.
+ * The store derives display views from retained inventories and never
+ * renders, fetches, or touches localStorage — persistence happens through
+ * the `persistTerminalResults` callback the manager wires to the snapshot
+ * writer. Arm Performance may persist rate-limited bounded previews while a
+ * server run is active.
  */
 import {
 	FINDER_SORT_OPTIONS,
@@ -92,10 +93,10 @@ export class FinderResultStore {
 	/**
 	 * Adopt a result set for the UI. `persist` controls whether the snapshot
 	 * is written: provisional render callbacks (streamed candidates, mid-run
-	 * current-chart updates) must pass `false` so hundreds-of-KB serialization
-	 * + synchronous writes don't run on the render hot path. Persistence is
-	 * reserved for semantic checkpoints: terminal adoption, completed
-	 * current-chart results, and user-initiated re-sorts.
+	 * current-chart updates) should pass `false` so serialization and
+	 * synchronous writes don't run on every render frame. Persistence is used
+	 * for semantic checkpoints, including terminal adoption and bounded,
+	 * rate-limited Arm Performance previews during a long server run.
 	 */
 	setLatestResults(results: FinderLatestResults, persist = true): void {
 		this.latestResults = results;

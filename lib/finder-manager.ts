@@ -399,12 +399,29 @@ export class FinderManager {
 	}
 
 	private resetForServerRunAdoption(): void {
+		const activeRun = this.loadPersistedActiveServerRun();
+		const currentResults = this.resultStore.latestResults;
+		const armPreview = activeRun?.scope === 'arm_performance'
+			&& currentResults.scope === 'arm_performance'
+			&& !currentResults.inventoryComplete
+			&& currentResults.results.some((candidate) => candidate.candidateId.startsWith(`${activeRun.runId}:candidate-`))
+			? currentResults
+			: null;
 		this.resultStore.resetForNewRun();
 		this.resultStore.setRunDisplayLimits(this.controls.uiState.topN);
-		this.clearLatestResultsSnapshot();
-		// Volatile reattach progress view — the snapshot was cleared above and
-		// is only re-persisted at a terminal snapshot.
-		this.resultStore.setLatestResults(emptyFinderLatestResults(this.controls.uiState.scope), false);
+		if (armPreview) {
+			// Keep the last bounded checkpoint for this exact server run visible
+			// while counts-only status polling waits for the authoritative result.
+			this.resultStore.armPerformanceRunResults = [...armPreview.results];
+			this.resultStore.armPerformanceDefaultResults = [...armPreview.results];
+			this.resultStore.armPerformanceRunContext = armPreview.runContext;
+			this.resultStore.armPerformanceInventoryComplete = false;
+			this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.controls.uiState.topN);
+			this.resultStore.setLatestResults(armPreview, false);
+		} else {
+			this.clearLatestResultsSnapshot();
+			this.resultStore.setLatestResults(emptyFinderLatestResults(this.controls.uiState.scope), false);
+		}
 		this.renderLatestResults();
 	}
 

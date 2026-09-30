@@ -27,6 +27,8 @@ import type { FinderServerSession } from "../finder-server-session";
 import { clearFinderActiveServerRun, writeFinderActiveServerRun } from "../finder-persistence";
 import type { FinderRunHost } from "./finder-run-host";
 
+const ARM_PERFORMANCE_PREVIEW_PERSIST_INTERVAL_MS = 5_000;
+
 export interface ArmPerformanceWorkflowArgs {
 	host: FinderRunHost;
 	store: FinderResultStore;
@@ -152,6 +154,7 @@ async function runArmPerformanceFinderServer(args: {
 	let terminal: { ok: boolean; cancelled: boolean; error: string | null } | null = null;
 	let streamError: unknown = null;
 	let finalized = false;
+	let lastPreviewPersistedAt = 0;
 	const renderFrame = coalesceAnimationFrame(() => {
 		if (!finalized && isStillActive()) {
 			const selectedArm = args.getSelectedArm();
@@ -160,7 +163,14 @@ async function runArmPerformanceFinderServer(args: {
 			const inventory = [...candidatesById.values()];
 			store.armPerformanceRunResults = inventory;
 			const sorted = sortFinderArmPerformanceResults(inventory, sortArm, store.armPerformanceDisplayFilter);
-			store.setArmPerformanceLatestResults(sorted, false, options.topN, false);
+			// Keep a bounded local preview available across a browser reload while
+			// the server-owned run continues. Checkpoint at most every few seconds
+			// so localStorage serialization does not run on every render frame.
+			const now = Date.now();
+			const shouldPersistPreview = lastPreviewPersistedAt === 0
+				|| now - lastPreviewPersistedAt >= ARM_PERFORMANCE_PREVIEW_PERSIST_INTERVAL_MS;
+			store.setArmPerformanceLatestResults(sorted, shouldPersistPreview, options.topN, false);
+			if (shouldPersistPreview) lastPreviewPersistedAt = now;
 			host.renderLatestResults();
 		}
 	});

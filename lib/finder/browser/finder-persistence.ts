@@ -21,11 +21,11 @@ export const FINDER_RESULTS_STORAGE = {
 	version: 1,
 } as const;
 /**
- * Persisted active server-run id for Symbol Universe reattachment. Written
- * BEFORE `fetch('/api/finder/universe-run')` so a tab reload during a run
- * can identify the same server job and poll `/api/finder/status?runId=...`
- * to recover progress + final results. Cleared only after a matching
- * terminal response, explicit Stop, or a confirmed missing server job.
+ * Persisted active server-run id for server-owned Finder scopes. Written
+ * BEFORE the run request so a tab reload can identify the same job and poll
+ * `/api/finder/status?runId=...` for progress + final results. Cleared only
+ * after a matching terminal response, explicit Stop, or a confirmed missing
+ * server job.
  *
  * Schema version 1: just the run id + the scope that initiated it (so a
  * current-chart reload cannot adopt a universe server snapshot).
@@ -104,7 +104,7 @@ export function readFinderLatestResultsSnapshot(): FinderPersistedResultsState |
 	});
 }
 
-/** Terminal-only persistence: empty non-Arm inventories are never written. */
+/** Persist bounded snapshots/checkpoints; empty non-Arm inventories are never written. */
 export function writeFinderLatestResultsSnapshot(args: {
 	symbol: string;
 	interval: string;
