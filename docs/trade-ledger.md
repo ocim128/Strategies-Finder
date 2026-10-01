@@ -242,6 +242,14 @@ on the ORIGINAL run's survivorship is lookahead for a rule meant to run live.
 The v3 `horizons` field is sealed from legacy offline checker rules as well; pair-selection
 reads it through its separate outcome harness.
 
+Rule rows are read-only in TypeScript and at runtime. Assignment, deletion,
+property definition, prototype replacement, and preventing extensions all throw
+before the source row changes. This protects recorded outcomes and repeated
+evaluations that reuse prepared rows; a rule returns an admission decision rather
+than editing the dataset. The guard is in `createRuleRowProxy` in
+`lib/batch-backtest/trade-ledger-replay-core.ts`, covered by
+`tests/trade-ledger-checker.spec.ts`.
+
 **Replay semantics.** Per pair (pairs are independent in the engine â€” there is
 deliberately NO global cross-pair capital replay): sort candidates by decision time;
 the rule is applied BEFORE ordering; a candidate is admitted when an open slot is

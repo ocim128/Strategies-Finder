@@ -24,7 +24,7 @@ export const TRADE_LEDGER_IS_FRACTION = 0.6;
 export const TRADE_LEDGER_CONTROL_RUNS = 200;
 export const TRADE_LEDGER_CONTROL_SEED = 42;
 
-export type TradeLedgerRuleRow = Omit<TradeLedgerRow, typeof TRADE_LEDGER_RULE_FORBIDDEN_FIELDS[number]>;
+export type TradeLedgerRuleRow = Readonly<Omit<TradeLedgerRow, typeof TRADE_LEDGER_RULE_FORBIDDEN_FIELDS[number]>>;
 export type LedgerRule = (row: TradeLedgerRuleRow) => boolean;
 
 const RULE_ALLOWED_FIELDS: ReadonlySet<string> = new Set<string>(TRADE_LEDGER_RULE_ALLOWED_FIELDS);
@@ -38,11 +38,16 @@ function assertAllowedField(prop: string | symbol): void {
     );
 }
 
+function refuseRuleRowMutation(): never {
+    throw new Error("Rule tried to modify a read-only ledger row. Rules may only read identity/entry fields and feat_* fields.");
+}
+
 /**
  * Wrap a ledger row so a rule physically cannot reach outcome-ish fields.
  * get/has/ownKeys/getOwnPropertyDescriptor are ALL trapped: property reads,
  * `in` probes, `Object.keys` / `Object.entries` / spread (`{...row}`), and
- * descriptor reads of a forbidden key throw.
+ * descriptor reads of a forbidden key throw. All row mutations throw so a
+ * rule cannot replace recorded outcomes or contaminate later evaluations.
  */
 export function createRuleRowProxy(row: TradeLedgerRow): TradeLedgerRuleRow {
     return new Proxy(row as TradeLedgerRuleRow, {
@@ -64,6 +69,11 @@ export function createRuleRowProxy(row: TradeLedgerRow): TradeLedgerRuleRow {
             assertAllowedField(prop);
             return Reflect.getOwnPropertyDescriptor(target, prop);
         },
+        set: refuseRuleRowMutation,
+        defineProperty: refuseRuleRowMutation,
+        deleteProperty: refuseRuleRowMutation,
+        setPrototypeOf: refuseRuleRowMutation,
+        preventExtensions: refuseRuleRowMutation,
     });
 }
 

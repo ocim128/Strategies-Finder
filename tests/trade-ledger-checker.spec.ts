@@ -86,6 +86,28 @@ function baseRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
 }
 
 describe("trade ledger checker rule proxy (W1)", () => {
+    const mutations: Array<{ name: string; mutate: (row: TradeLedgerRuleRow) => unknown }> = [
+        { name: "assignment", mutate: (row) => { (row as { feat_atrPct: number }).feat_atrPct = 999; } },
+        { name: "Reflect.set on an outcome", mutate: (row) => Reflect.set(row, "asIf", null) },
+        { name: "property deletion", mutate: (row) => Reflect.deleteProperty(row, "asIf") },
+        { name: "property definition", mutate: (row) => Object.defineProperty(row, "feat_atrPct", { value: 999 }) },
+        { name: "prototype replacement", mutate: (row) => Object.setPrototypeOf(row, { feat_extra: 999 }) },
+        { name: "preventExtensions", mutate: (row) => Object.preventExtensions(row) },
+    ];
+
+    for (const { name, mutate } of mutations) {
+        it(`refuses ${name} without changing the source row`, () => {
+            const row = baseRow({});
+            const before = structuredClone(row);
+            const originalPrototype = Object.getPrototypeOf(row);
+            const proxy = createRuleRowProxy(row);
+            expect(() => mutate(proxy)).to.throw(/read-only ledger row/);
+            expect(row).to.deep.equal(before);
+            expect(Object.getPrototypeOf(row)).to.equal(originalPrototype);
+            expect(Object.isExtensible(row)).to.equal(true);
+        });
+    }
+
     it("allows identity, entry, and feat_* fields", () => {
         const proxy = createRuleRowProxy(baseRow({}));
         const rule: LedgerRule = (row) =>
@@ -140,6 +162,51 @@ function candidateRow(overrides: Partial<TradeLedgerRow>): TradeLedgerRow {
         ...overrides,
     });
 }
+
+describe("trade ledger rule mutation isolation", () => {
+    it("refuses outcome replacement in fresh and prepared evaluations and preserves later rule results", async () => {
+        for (const reusePrepared of [false, true]) {
+            const rows = [
+                candidateRow({ signalBarIndex: 0, signalTime: 0 }),
+                candidateRow({ signalBarIndex: 10, signalTime: 1000 }),
+            ];
+            const before = structuredClone(rows);
+            const replay = { ...replayParams, shift: 0 };
+            const input = {
+                folder: "fixture", ruleName: "mutation-isolation", rows, joinedRankCount: 0,
+                replay, controlRuns: 2,
+                ...(reusePrepared ? { prepared: prepareTradeLedgerReplay({ rows, replayParams: replay }) } : {}),
+            };
+            const acceptAll: LedgerRule = () => true;
+            const baseline = evaluateTradeLedgerRule({ ...input, rule: acceptAll });
+            const mutating: LedgerRule = (row) => {
+                Object.defineProperty(row, "asIf", {
+                    value: { fillTime: 0, fillPrice: 10, exitTime: 1, exitPrice: 100, pnlPercent: 900, barsHeld: 1, exitReason: "signal" },
+                });
+                return true;
+            };
+            expect(() => evaluateTradeLedgerRule({ ...input, rule: mutating })).to.throw(/read-only ledger row/);
+            let controlsCalled = false;
+            let caught: unknown;
+            try {
+                await evaluateTradeLedgerRuleAsync({ ...input, rule: mutating }, async () => {
+                    controlsCalled = true;
+                    return [];
+                });
+            } catch (error) {
+                caught = error;
+            }
+            expect((caught as Error)?.message).to.match(/read-only ledger row/);
+            expect(controlsCalled).to.equal(false);
+            expect(rows).to.deep.equal(before);
+            const after = evaluateTradeLedgerRule({ ...input, rule: acceptAll });
+            expect(after.isStats).to.deep.equal(baseline.isStats);
+            expect(after.holdoutStats).to.deep.equal(baseline.holdoutStats);
+            expect(after.resultInput).to.deep.equal(baseline.resultInput);
+            expect(after.controlMean).to.equal(baseline.controlMean);
+        }
+    });
+});
 
 describe("trade ledger replay (W2)", () => {
     const acceptAll: LedgerRule = () => true;

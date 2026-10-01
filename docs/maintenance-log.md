@@ -4,6 +4,27 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Protect ledger replay data from rule mutations
+
+- **Evidence:** `createRuleRowProxy` guarded reads but forwarded mutations to the
+  source row. A rule could replace the sealed `asIf` outcome before report
+  statistics used it, or alter features shared by later prepared evaluations.
+  Seven new regression cases failed before the fix, while the existing golden
+  report still passed.
+- **Change:** Made `TradeLedgerRuleRow` read-only and rejected assignment,
+  property definition/deletion, prototype replacement, and preventing extensions
+  on the rule proxy. The underlying loader-owned row remains writable for rank
+  joining. Covered unchanged source rows and later evaluations, fresh/prepared
+  paths, and rejection before the asynchronous control runner starts. Updated
+  the Trade Ledger guide; archive schemas and legitimate report values are unchanged.
+- **Checks:** `npm run test -- trade-ledger-checker.spec.ts
+  trade-ledger-parity-golden.spec.ts`, `npm run typecheck`,
+  `npm run typecheck:tests`, and `git diff --check` pass. The checker spec
+  includes actual worker-control parity; the golden covers both preparation modes
+  and the checker adapter. No full-suite run was performed for this change.
+- **Follow-up:** The denied-storage cleanup review from the prior entry remains
+  open; this run prioritized protection of replay report integrity.
+
 ## 2026-10-01 - Keep JSON persistence usable when storage access is denied
 
 - **Evidence:** Both JSON helpers checked `typeof localStorage` outside their
