@@ -778,7 +778,7 @@ export class TopMeanCoordinatorEngine {
                 executionOrderSha256: sha256LineList(this.executionPairs),
                 sortedSetSha256: sha256LineList([...this.executionPairs].sort((a, b) => a.localeCompare(b))),
                 source: {
-                    kind: this._request.pairListText?.trim() ? "custom_pair_list" : "sp500_default",
+                    kind: "custom_pair_list",
                     poolVersion: this.matchedPoolVersion,
                 },
                 construction: {
@@ -939,9 +939,7 @@ export class TopMeanCoordinatorEngine {
         try {
             // 1. Enumeration & Preflight
             this.currentPhase = "preflight";
-            this.progressText = this._request.pairListText?.trim()
-                ? "Preparing custom TOP_MEAN markets..."
-                : "Enumerating S&P 500 assets and pairs...";
+            this.progressText = "Preparing TOP_MEAN markets...";
             const enumRes = this.deps?.enumeration ?? enumerateSp500Pairs({
                 interval: this._request.interval,
                 maxPairs: this._request.maxPairs,

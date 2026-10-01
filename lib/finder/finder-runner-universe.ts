@@ -646,7 +646,7 @@ export async function runFinderUniverseExecution(
         // Copy Diagnostics) can see WHY every symbol failed instead of just
         // "No universe symbols could be loaded." This is the only signal the
         // user gets when the universe is empty; without it, debugging offline
-        // data sources like stock_market_data is guesswork.
+        // local data sources is guesswork.
         const failureDetail = [...loadFailures.entries()]
             .slice(0, 20)
             .map(([symbol, result]) => `${symbol}: ${result.error ?? "unknown error"}`)

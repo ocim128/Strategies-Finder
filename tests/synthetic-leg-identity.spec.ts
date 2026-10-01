@@ -14,17 +14,6 @@ import { parsePortfolioSyntheticPairSymbol } from "../lib/synthetic-pair-parser"
 
 describe("synthetic-leg-identity", () => {
     describe("canonicalizeLegIdentity — parity with existing parsers", () => {
-        it("preserves diamond-marked stock legs end-to-end (matches parseSyntheticPairToken)", () => {
-            // Existing parser keeps AAPL♦ as-is.
-            const existing = parseSyntheticPairToken("AAPL\u2666+BTCUSDT");
-            assert.deepEqual(existing, { baseSymbol: "AAPL\u2666", quoteSymbol: "BTCUSDT" });
-            // The leaf must keep the same loader symbol for the marked leg.
-            const id = canonicalizeLegIdentity("AAPL\u2666");
-            assert.equal(id?.loaderSymbol, "AAPL\u2666");
-            assert.equal(id?.emittedToken, "AAPL\u2666");
-            assert.equal(id?.scoringAsset, "AAPL");
-            assert.equal(id?.provider, "stock");
-        });
 
         it("preserves bullet-marked IBKR legs end-to-end", () => {
             const existing = parseSyntheticPairToken("NVDA\u2022+AAPL\u2022");
@@ -74,7 +63,10 @@ describe("synthetic-leg-identity", () => {
             assert.equal(canonicalizeLegIdentity("BTC+ETH"), null);
         });
 
-        it("rejects marker characters that are not proper suffix markers", () => {
+        it("rejects unsupported provider markers", () => {
+            assert.equal(canonicalizeLegIdentity("AAPL\u2666"), null);
+            assert.equal(parseSyntheticPairToken("AAPL\u2666+BTCUSDT"), null);
+            assert.equal(parsePortfolioSyntheticPairSymbol("AAPL\u2666+BTCUSDT"), null);
             // A diamond marker in the middle of the token is malformed.
             assert.equal(canonicalizeLegIdentity("AAP\u2666L"), null);
             // A leading marker is malformed.
@@ -120,7 +112,7 @@ describe("synthetic-leg-identity", () => {
             // NOTE: cross-provider collisions are reported separately and the
             // generator fails loudly, but dedupe itself preserves provider
             // distinction so a future "mixed" mode could surface the choice.
-            const stock = canonicalizeLegIdentity("AAPL\u2666")!;
+            const stock = canonicalizeLegIdentity("AAPLUSDT")!;
             const ibkr = canonicalizeLegIdentity("AAPL\u2022")!;
             const out = dedupeWithinProviderAliases([stock, ibkr]);
             assert.equal(out.length, 2);
@@ -143,7 +135,7 @@ describe("synthetic-leg-identity", () => {
 
         it("flags a cross-provider collision (stock ♦ vs IBKR • on AAPL)", () => {
             const ids = [
-                canonicalizeLegIdentity("AAPL\u2666")!,
+                canonicalizeLegIdentity("AAPLUSDT")!,
                 canonicalizeLegIdentity("AAPL\u2022")!,
             ];
             const collisions = detectAliasCollisions(ids);
@@ -154,9 +146,9 @@ describe("synthetic-leg-identity", () => {
 
         it("flags multiple independent collisions, sorted by scoring asset", () => {
             const ids = [
-                canonicalizeLegIdentity("MSFT\u2666")!,
+                canonicalizeLegIdentity("MSFTUSDT")!,
                 canonicalizeLegIdentity("MSFT\u2022")!,
-                canonicalizeLegIdentity("AAPL\u2666")!,
+                canonicalizeLegIdentity("AAPLUSDT")!,
                 canonicalizeLegIdentity("AAPL\u2022")!,
             ];
             const collisions = detectAliasCollisions(ids);
@@ -167,8 +159,8 @@ describe("synthetic-leg-identity", () => {
 
         it("does NOT flag the same token listed twice as a collision", () => {
             const ids = [
-                canonicalizeLegIdentity("AAPL\u2666")!,
-                canonicalizeLegIdentity("AAPL\u2666")!,
+                canonicalizeLegIdentity("AAPLUSDT")!,
+                canonicalizeLegIdentity("AAPLUSDT")!,
             ];
             // Same provider + same token -> not a cross-provider collision.
             assert.deepEqual(detectAliasCollisions(ids), []);
@@ -176,7 +168,7 @@ describe("synthetic-leg-identity", () => {
     });
 
     describe("parsePortfolioSyntheticPairSymbol — parity with existing parser", () => {
-        // These are the same fixtures already locked in stock-market-data.spec.ts.
+        // These are the same fixtures already locked in the IBKR and crypto parser specs.
         // We repeat them here so the shared-identity leaf's behavior can be
         // compared side-by-side with the existing portfolio parser.
         it("parses a Binance pair into base/quote assets and symbols", () => {
@@ -190,11 +182,6 @@ describe("synthetic-leg-identity", () => {
             });
         });
 
-        it("preserves diamond-marked stock legs", () => {
-            const parsed = parsePortfolioSyntheticPairSymbol("NVDA\u2666+AAPL\u2666");
-            assert.equal(parsed?.baseSymbol, "NVDA\u2666");
-            assert.equal(parsed?.baseAsset, "NVDA");
-        });
 
         it("preserves bullet-marked IBKR legs", () => {
             const parsed = parsePortfolioSyntheticPairSymbol("NVDA\u2022+AAPL\u2022");

@@ -153,7 +153,7 @@ describe('Candle cache', () => {
         expect(merged[1].close).to.equal(31);
     });
 
-    it('loads SP500 CSV candles as sorted deduped parsed candles', async () => {
+    it('loads IBKR CSV candles as sorted deduped parsed candles', async () => {
         const responses = [
             { status: 404, ok: false },
             {
@@ -174,7 +174,7 @@ describe('Candle cache', () => {
             return next as Response;
         }) as typeof fetch;
 
-        const candles = await loadSeedCandlesFromPriceData('CACHECSV', '1d');
+        const candles = await loadSeedCandlesFromPriceData('CACHECSV\u2022', '1d');
 
         expect(candles).to.not.equal(null);
         expect(candles?.map((bar) => Number(bar.time))).to.deep.equal([
@@ -182,39 +182,6 @@ describe('Candle cache', () => {
             Date.parse('2024-01-02T00:00:00Z') / 1000,
         ]);
         expect(candles?.[1].close).to.equal(12);
-    });
-
-    it('loads Indonesian stock CSV candles from the local daily seed folder', async () => {
-        const responses = [
-            { status: 404, ok: false },
-            { status: 404, ok: false },
-            {
-                status: 200,
-                ok: true,
-                text: async () => [
-                    'timestamp,open,low,high,close,volume',
-                    '2023-01-03,9200,9100,9300,9250,1500',
-                    '2023-01-02,9000,8900,9150,9100,1200',
-                ].join('\n'),
-            },
-        ];
-
-        globalThis.fetch = (async () => {
-            const next = responses.shift();
-            if (!next) throw new Error('unexpected fetch');
-            return next as Response;
-        }) as typeof fetch;
-
-        const candles = await loadSeedCandlesFromPriceData('BBCA', '1d');
-
-        expect(candles).to.not.equal(null);
-        expect(candles?.map((bar) => Number(bar.time))).to.deep.equal([
-            Date.parse('2023-01-02T00:00:00Z') / 1000,
-            Date.parse('2023-01-03T00:00:00Z') / 1000,
-        ]);
-        expect(candles?.[0].low).to.equal(8900);
-        expect(candles?.[0].high).to.equal(9150);
-        expect(candles?.[1].volume).to.equal(1500);
     });
 
     it('keeps IBKR local CSV cache entries separated by interval', async () => {

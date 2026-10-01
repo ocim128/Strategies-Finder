@@ -152,7 +152,7 @@ If you rename a UI id, update the partial, the feature DOM contract, and the con
 3. bundled `price-data/*`
 4. remote fetch from provider
 
-This ordering matters because Finder, Scanner, and repeated backtests depend on fast warm-cache reads.
+This ordering matters because Finder, Scanner, and repeated backtests depend on fast warm-cache reads. The local stock catalog contains IBKR data only; TOP_MEAN requires an explicit pair list.
 
 ### Server-Side Batch Backtest
 
@@ -314,7 +314,7 @@ These are intentionally narrower than the repo itself:
 - `AGENTS.md`: safe-change handbook for coding agents
 - `docs/backtest-endpoint.md`: local backtest endpoint usage and request contract
 - `docs/backtest-engines-typescript-rust.md`: TypeScript/Rust engine split, engine-selection rules, and wire contracts
-- `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and memory budget
+- `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, OPEN_SCORE USD Replay, TOP_MEAN, and memory budget
 - `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
 - `docs/trade-ledger.md`: archived trade-ledger formats and offline replay compatibility
 - `docs/selection-rules.md`: offline pair-selection rule contract and CLI research tools

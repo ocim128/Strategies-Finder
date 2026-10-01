@@ -79,7 +79,7 @@ Once synthetic data is loaded as the active chart, these features work normally:
 | Finder (single/random/genetic) | Works | Operates on active chart data |
 | Batch Backtest | Works | Replays the current strategy/settings across pasted real or synthetic pairs |
 | OPEN_SCORE USD (Batch) | Works | Historical open-position score replay over Batch synthetic/real pair artifacts |
-| S&P 500 TOP_MEAN (Batch) | Works | IBKR 4h synthetic-pair coordinator with historical replay and current snapshot output |
+| TOP_MEAN (Batch) | Works | Explicit IBKR/crypto pair-list coordinator with historical replay and current snapshot output |
 | Walk Forward | Works | Operates on active chart data |
 | Monte Carlo | Works | Uses backtest results |
 | Data Mining export | Works | Export CSV/JSON from loaded synthetic data |
@@ -152,13 +152,13 @@ The shared fetch → align → aggregate pipeline lives in `buildSyntheticPairFr
 - `tailSliceBars` — a caller can trim the final bars to a target limit.
 - `allowEmptyLegs` — Data Mining uses this to emit its own per-leg diagnostics before failing.
 
-### S&P 500 IBKR Synthetic Pairs & 4H Aggregation
+### IBKR Synthetic Pairs & 4H Aggregation
 
-For S&P 500 IBKR synthetic 4H pairs, 30m seed CSV files (`price-data/ibkr/csv/30m/`) are required. The ratio is built from 30m bars first and then aggregated to 4H to avoid conflating extremes from pre-aggregated 4H legs. The S&P 500 TOP_MEAN Coordinator (`lib/batch-backtest/sp500-pair-enumerator.ts`) enforces this invariant across the S&P 500 universe.
+For IBKR synthetic 4H pairs, 30m seed CSV files (`price-data/ibkr/csv/30m/`) are required. The ratio is built from 30m bars first and then aggregated to 4H to avoid conflating extremes from pre-aggregated 4H legs. The TOP_MEAN Coordinator (`lib/batch-backtest/sp500-pair-enumerator.ts`) enforces this invariant for IBKR legs in the supplied pair list.
 
 ### Tests
 
 - `tests/synthetic-pair-transform.spec.ts` — ratio formula, alignment, error handling, payload shape, pipeline helper
 - `tests/build-synthetic-pair-script.spec.ts` — CLI argument parsing
-- `tests/sp500-pair-enumerator.spec.ts` — S&P 500 IBKR 30m seed availability & canonical pair enumeration
+- `tests/sp500-pair-enumerator.spec.ts` — IBKR 30m seed availability & canonical pair enumeration
 

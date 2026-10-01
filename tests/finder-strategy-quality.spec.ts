@@ -157,7 +157,7 @@ describe("Finder Strategy Quality aggregation", () => {
             loadDataset: async () => {
                 throw new Error("local dataset unavailable");
             },
-            getProvider: () => "local-daily",
+            getProvider: () => "ibkr-local",
             yieldControl: async () => undefined,
             isCancelled: () => false,
             setProgress: () => undefined,
@@ -193,7 +193,7 @@ describe("Finder Strategy Quality aggregation", () => {
                 activeLoads -= 1;
                 return [candle];
             },
-            getProvider: () => "local-daily",
+            getProvider: () => "ibkr-local",
             yieldControl: async () => undefined,
             isCancelled: () => false,
             setProgress: () => undefined,

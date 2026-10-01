@@ -107,7 +107,6 @@ describe("finder server loader parity", () => {
             "buildSyntheticPairFromLegs",
             "deriveSyntheticSymbol",
             "pickSourceInterval",
-            "resolveEffectiveIntervalForSynthetic",
             "resolveSyntheticAvailableIntervals",
             "SyntheticLegCache",
             "buildLegCacheKey",

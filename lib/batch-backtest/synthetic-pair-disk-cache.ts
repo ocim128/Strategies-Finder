@@ -2,7 +2,7 @@
  * Server-side disk cache for synthetic pair OHLCV series.
  *
  * Caches pairs whose legs are file-backed OR Binance-backed (i.e. almost every
- * realistic pair). For file-backed legs (IBKR `•` / stock-market `♦` / synced
+ * realistic pair). For file-backed legs (IBKR `•` `♦` / synced
  * crypto), the seed CSV mtime gives the invalidation signal. Binance legs
  * without a synced crypto CSV use SQLite `series_meta` as the content
  * fingerprint — if the source has not changed since the pair was cached, the
@@ -52,8 +52,7 @@ import { isMainThread } from "node:worker_threads";
 import type { OHLCVData } from "../types/strategies";
 import {
     isIbkrSymbol,
-    isStockMarketSymbol,
-    stripMarkedLocalStockSymbol,
+    stripIbkrMarker,
 } from "../local-daily-datasets";
 import { fetchLocalApi } from "../local-api-transport";
 import { getCryptoCsvMtimeMs } from "./server-crypto-csv-loader";
@@ -107,7 +106,7 @@ export const LRU_TOUCH_THROTTLE_MS = 5 * 60_000;
 
 let cacheDirForTests: string | null = null;
 /**
- * Test-only override for the file-backed (IBKR / stock-market) seed CSV root.
+ * Test-only override for the file-backed (IBKR) seed CSV root.
  * Production resolves seeds against `process.cwd()/price-data/ibkr/csv/`. Tests
  * that exercise `computeSeedFingerprint`'s seed-mtime stat sensitivity redirect
  * this to a per-spec tempdir so they never touch warmed production seeds.
@@ -151,7 +150,7 @@ interface SeriesMetaResponse {
  * leg has no usable staleness signal — the pair must not be disk-cached in
  * that case, and the caller falls through to the in-memory build.
  *
- * - File-backed leg (IBKR `•` / stock-market `♦`): seed CSV mtime at the
+ * - File-backed leg (IBKR `•` `♦`): seed CSV mtime at the
  *   source interval. Touching the seed (IBKR sync, manual edit) invalidates.
  * - Binance leg: `series_meta.last_time` from the local SQLite DB. Appended
  *   bars move `last_time` forward and invalidate; rewinds are not detected
@@ -219,7 +218,7 @@ export function createSeedFingerprintMemo(): SeedFingerprintMemo {
 }
 
 async function legFingerprintSegment(symbol: string, sourceInterval: string): Promise<string | null> {
-    if (isIbkrSymbol(symbol) || isStockMarketSymbol(symbol)) {
+    if (isIbkrSymbol(symbol)) {
         return fileBackedSegment(symbol, sourceInterval);
     }
     // Crypto Data writes an inspectable CSV alongside SQLite. When present,
@@ -236,7 +235,7 @@ async function legFingerprintSegment(symbol: string, sourceInterval: string): Pr
 }
 
 async function fileBackedSegment(symbol: string, sourceInterval: string): Promise<string | null> {
-    const bare = stripMarkedLocalStockSymbol(symbol);
+    const bare = stripIbkrMarker(symbol);
     const mtime = await seedCsvMtimeMs(bare, sourceInterval);
     if (mtime === null) return null;
     return `file:${bare}:${sourceInterval}:${mtime}`;
@@ -299,11 +298,7 @@ async function loadSeriesMeta(symbol: string, interval: string): Promise<SeriesM
 /**
  * Resolve the seed CSV path for a bare ticker at a given interval.
  *
- * IBKR seeds live at `price-data/ibkr/csv/<interval>/<SYMBOL>.csv`. Stock-
- * market-data seeds (`♦`) share the same directory layout under
- * `price-data/ibkr/csv/` (the catalog reader treats them uniformly). If
- * stock-market-data ever moves to a different directory, this path needs to
- * track it; for now both go through the IBKR csv dir.
+ * IBKR seeds live at `price-data/ibkr/csv/<interval>/<SYMBOL>.csv`.
  *
  * Inlined here (instead of importing `getCsvPath` from `ibkr-data-vite-plugin`)
  * to keep this module free of the vite plugin's `vite` import.
@@ -598,7 +593,7 @@ export function __setSyntheticPairCacheDirForTests(dir: string | null): void {
 }
 
 /**
- * Test seam: redirect file-backed (IBKR / stock-market) seed CSV resolution to
+ * Test seam: redirect file-backed (IBKR) seed CSV resolution to
  * a per-spec tempdir so fingerprint tests don't write to or `statSync` against
  * warmed production seeds under `price-data/ibkr/csv/`. Pass `null` to restore
  * the production root.

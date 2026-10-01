@@ -4,12 +4,6 @@ import { debounce } from "../debounce";
 import { MAX_MOCK_BARS, MIN_MOCK_BARS } from "../dataProviders/mock";
 import { dataManager } from "../data-manager";
 import { assetSearchService, type Asset } from "../asset-search-service";
-import {
-    encodeLocalDailyAssetSelection,
-    getLocalDailyAssets,
-    parseLocalDailyAssetSelection,
-    type LocalDailyAsset,
-} from "../local-daily-datasets";
 import { uiManager } from "../ui-manager";
 import { escapeHtml } from "../html-escape";
 import {
@@ -20,7 +14,6 @@ import {
 import {
     setBinanceMarketType,
     setChartMode,
-    setCurrentInterval,
     setCurrentSymbol,
     setMockChartBars,
 } from "../state-actions";
@@ -36,124 +29,13 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
     const symbolSearchClear = dom.symbolSearchClear;
     const symbolSearchLoading = dom.symbolSearchLoading;
     const symbolSearchEmpty = dom.symbolSearchEmpty;
-    const localSp500Select = dom.localSp500Select;
     const mockBarsInput = dom.mockBarsInput;
     const chartModeToggle = dom.chartModeToggle;
     const chartModeLabel = dom.chartModeLabel;
 
     let isSearchInitialized = false;
     let selectedIndex = -1;
-    const localDailyAssetBySelection = new Map<string, LocalDailyAsset>();
-    const localDailySelectionBySymbol = new Map<string, string>();
     const getActiveBinanceMarketType = (): BinanceMarketType => state.binanceMarketType;
-    const syncLocalDailyPicker = () => {
-        if (!localSp500Select) return;
-        const currentSymbol = state.currentSymbol.trim().toUpperCase();
-        const selection = localDailySelectionBySymbol.get(currentSymbol);
-        if (selection) {
-            localSp500Select.value = selection;
-            return;
-        }
-        localSp500Select.value = '';
-    };
-
-    const applyLocalDailySelection = (selectionValue: string) => {
-        const parsed = parseLocalDailyAssetSelection(selectionValue);
-        if (!parsed) return;
-
-        const asset = localDailyAssetBySelection.get(selectionValue);
-        const normalizedSymbol = parsed.symbol;
-        dataManager.setProviderOverride(normalizedSymbol, asset?.provider ?? 'local-daily');
-        symbolDropdown.classList.remove('active');
-
-        const symbolChanged = normalizedSymbol !== state.currentSymbol;
-        const intervalChanged = state.currentInterval !== '1d';
-
-        if (intervalChanged) {
-            setCurrentInterval('1d');
-        }
-        if (symbolChanged) {
-            setCurrentSymbol(normalizedSymbol);
-        }
-        if (!symbolChanged && !intervalChanged) {
-            uiManager.updateSymbolDataSource(
-                'Loading',
-                'loading',
-                'Reloading local daily seed data.'
-            );
-            void dataManager.loadData(normalizedSymbol, '1d');
-        }
-
-        debugLogger.event('ui.symbol.local_daily_select', {
-            symbol: normalizedSymbol,
-            dataset: parsed.dataset,
-            interval: '1d',
-        });
-    };
-
-    const initializeLocalDailyPicker = async () => {
-        if (!localSp500Select) return;
-
-        localSp500Select.disabled = true;
-        localSp500Select.innerHTML = '<option value="">Loading local tickers...</option>';
-
-        try {
-            const assets = (await getLocalDailyAssets()).filter((asset) => asset.provider !== 'ibkr-local');
-            localDailyAssetBySelection.clear();
-            localDailySelectionBySymbol.clear();
-            localSp500Select.innerHTML = '';
-
-            if (assets.length === 0) {
-                localSp500Select.innerHTML = '<option value="">Local seed catalogs not found</option>';
-                localSp500Select.disabled = true;
-                return;
-            }
-
-            const placeholder = document.createElement('option');
-            placeholder.value = '';
-            placeholder.textContent = 'Pick local 1D seed...';
-            localSp500Select.appendChild(placeholder);
-
-            const groups = new Map<string, HTMLOptGroupElement>();
-            assets.forEach((asset) => {
-                const selection = encodeLocalDailyAssetSelection(asset);
-                localDailyAssetBySelection.set(selection, asset);
-                if (!localDailySelectionBySymbol.has(asset.symbol)) {
-                    localDailySelectionBySymbol.set(asset.symbol, selection);
-                }
-
-                let group = groups.get(asset.dataset);
-                if (!group) {
-                    group = document.createElement('optgroup');
-                    group.label = asset.datasetLabel;
-                    groups.set(asset.dataset, group);
-                    localSp500Select.appendChild(group);
-                }
-
-                const option = document.createElement('option');
-                option.value = selection;
-                option.textContent = `${asset.symbol} - ${asset.name}`;
-                group.appendChild(option);
-            });
-
-            localSp500Select.disabled = false;
-            syncLocalDailyPicker();
-        } catch {
-            localSp500Select.innerHTML = '<option value="">Failed to load local tickers</option>';
-            localSp500Select.disabled = true;
-        }
-    };
-
-    if (localSp500Select) {
-        localSp500Select.addEventListener('change', () => {
-            const selectionValue = localSp500Select.value.trim();
-            if (!selectionValue) return;
-            applyLocalDailySelection(selectionValue);
-        });
-
-        void initializeLocalDailyPicker();
-    }
-
     const syncChartModeToggle = () => {
         if (!chartModeToggle || !chartModeLabel) return;
         const isHA = state.chartMode === 'heikin-ashi';
@@ -244,9 +126,6 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         if (provider && provider !== 'mock') {
             dataManager.setProviderOverride(symbol, provider);
         }
-        if (provider === 'local-daily' && state.currentInterval !== '1d') {
-            setCurrentInterval('1d');
-        }
 
         document.querySelectorAll('.symbol-search-item, .dropdown-item').forEach(i => i.classList.remove('active'));
         const selectedItem = document.querySelector(`[data-symbol="${symbol}"]`);
@@ -262,8 +141,6 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         if (symbol !== state.currentSymbol) {
             debugLogger.event('ui.symbol.select', { symbol, displayName, provider });
             setCurrentSymbol(symbol);
-        } else if ((provider === 'bybit-tradfi' || provider === 'local-daily') && state.currentInterval === '1d') {
-            syncLocalDailyPicker();
         }
     };
 
@@ -434,12 +311,6 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
             }
         });
     });
-
-    if (localSp500Select) {
-        state.subscribe('currentSymbol', () => {
-            syncLocalDailyPicker();
-        });
-    }
 
     state.subscribe('binanceMarketType', (marketType) => {
         if (binanceMarketTypeSelect && binanceMarketTypeSelect.value !== marketType) {

@@ -2,27 +2,16 @@ import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { parseSp500CompanyInfoCsv, enumerateSp500Pairs, deriveReplayTargetsFromCanonicalPairs } from "../lib/batch-backtest/sp500-pair-enumerator";
+import { enumerateSp500Pairs, deriveReplayTargetsFromCanonicalPairs } from "../lib/batch-backtest/sp500-pair-enumerator";
 
 const FIXTURE_TICKERS = ["AAPL", "AMGN", "CVX", "GOOGL", "KO", "MSFT", "PANW"];
 
 function createPriceDataFixture(): string {
     const baseDir = mkdtempSync(join(tmpdir(), "sp500-pair-enumerator-"));
-    const companyInfoDir = join(
-        baseDir,
-        "price-data",
-        "sp500_comprehensive_dataset",
-        "sp500_comprehensive",
-    );
     const ibkrDir = join(baseDir, "price-data", "ibkr");
     const seedDir = join(ibkrDir, "csv", "30m");
-    mkdirSync(companyInfoDir, { recursive: true });
     mkdirSync(seedDir, { recursive: true });
 
-    writeFileSync(
-        join(companyInfoDir, "sp500_company_info.csv"),
-        `Ticker,Name\n${FIXTURE_TICKERS.map((ticker) => `${ticker},${ticker} Inc.`).join("\n")}\n`,
-    );
     writeFileSync(
         join(ibkrDir, "catalog.json"),
         JSON.stringify({ entries: FIXTURE_TICKERS.map((symbol) => ({ symbol })) }),
@@ -31,40 +20,6 @@ function createPriceDataFixture(): string {
         writeFileSync(join(seedDir, `${ticker}.csv`), "time,open,high,low,close,volume\n");
     }
     return baseDir;
-}
-
-function testParseCsv(): void {
-    const csvContent = `Ticker,Name,Sector,Industry,MarketCap,Country,Website,Employees
-AAPL,Apple Inc.,Technology,Consumer Electronics,3888777003008,United States,https://www.apple.com,150000.0
-MSFT,Microsoft Corporation,Technology,Software - Infrastructure,2952363507712,United States,https://www.microsoft.com,228000.0
-GOOGL,Alphabet Inc.,Communication Services,Internet Content & Information,3810313371648,United States,https://abc.xyz,190820.0
-`;
-    const tickers = parseSp500CompanyInfoCsv(csvContent);
-    assert.deepEqual(tickers, ["AAPL", "MSFT", "GOOGL"]);
-}
-
-function testEnumerationOrderingAndExclusion(baseDir: string): void {
-    const res = enumerateSp500Pairs({ interval: "4h", baseDir });
-    assert.equal(res.counts.sp500AssetsCount, 7);
-    assert.equal(res.counts.catalogAssetsCount, 7);
-    assert.equal(res.counts.usable30mSeedCount, 7);
-    assert.equal(res.counts.usableTargetIntervalCount, 7);
-    assert.deepEqual(res.eligibleAssets, FIXTURE_TICKERS);
-    const expectedPairs = [
-        "AAPL\u2022+AMGN\u2022", "AAPL\u2022+CVX\u2022", "AAPL\u2022+GOOGL\u2022", "AAPL\u2022+KO\u2022", "AAPL\u2022+MSFT\u2022", "AAPL\u2022+PANW\u2022",
-        "AMGN\u2022+CVX\u2022", "AMGN\u2022+GOOGL\u2022", "AMGN\u2022+KO\u2022", "AMGN\u2022+MSFT\u2022", "AMGN\u2022+PANW\u2022",
-        "CVX\u2022+GOOGL\u2022", "CVX\u2022+KO\u2022", "CVX\u2022+MSFT\u2022", "CVX\u2022+PANW\u2022",
-        "GOOGL\u2022+KO\u2022", "GOOGL\u2022+MSFT\u2022", "GOOGL\u2022+PANW\u2022",
-        "KO\u2022+MSFT\u2022", "KO\u2022+PANW\u2022", "MSFT\u2022+PANW\u2022",
-    ];
-    assert.equal(res.counts.pairCount, 21);
-    assert.deepEqual(res.canonicalPairs, expectedPairs, "all unique unordered pairs in canonical order");
-    assert.deepEqual(res.excludedAssets, []);
-    assert.equal(res.counts.excludedPairsCount, 0);
-
-    const capped = enumerateSp500Pairs({ interval: "4h", baseDir, maxPairs: 5 });
-    assert.equal(capped.counts.pairCount, 5);
-    assert.deepEqual(capped.canonicalPairs, expectedPairs.slice(0, 5), "the cap retains the ordered prefix");
 }
 
 function testCustomPairListText(baseDir: string): void {
@@ -166,8 +121,8 @@ function testDeriveReplayTargetsFromCanonicalPairs(): void {
 function main(): void {
     const baseDir = createPriceDataFixture();
     try {
-        testParseCsv();
-        testEnumerationOrderingAndExclusion(baseDir);
+        assert.throws(() => enumerateSp500Pairs({ baseDir }), /explicit pair list/);
+        assert.throws(() => enumerateSp500Pairs({ baseDir, pairListText: "  " }), /explicit pair list/);
         testCustomPairListText(baseDir);
         testCustomCryptoMarkets();
         testDeriveReplayTargetsFromCanonicalPairs();

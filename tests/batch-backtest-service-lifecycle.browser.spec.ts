@@ -506,8 +506,24 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(requestBody.saveArchiveLog).to.equal(false);
     });
 
+    it("rejects an empty TOP_MEAN pair list before submitting a run", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestSymbols.value = "   ";
+        const service = svc();
+        service.resolveTopMeanBuiltInStrategy = async () => ({ strategyKey: "test", strategy: { defaultParams: {} } });
+        const urls: string[] = [];
+        await withMockFetch((url) => {
+            urls.push(String(url));
+            return { ok: false, status: 500, text: "unexpected request" };
+        }, async () => { await service.runSp500TopMeanCoordinator(); });
+        expect(urls).to.deep.equal([]);
+        expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("Enter a pair list");
+        expect(readTopMeanActiveRun()).to.equal(null);
+    });
+
     it("restores Run and preserves an HTTP 413 without reattaching a rejected TOP_MEAN run", async () => {
         const dom = setupForAnalysis();
+        dom.batchBacktestSymbols.value = "BTCUSDT+ETHUSDT";
         const service = svc();
         service.resolveTopMeanBuiltInStrategy = async () => ({
             strategyKey: "test", strategy: { defaultParams: {} },

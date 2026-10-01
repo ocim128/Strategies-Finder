@@ -201,7 +201,7 @@ export class DataFetcher {
             }
         }
 
-        if (provider === 'local-daily' || provider === 'ibkr-local') {
+        if (provider === 'ibkr-local') {
             return { data: [], source: 'local' };
         }
 
@@ -312,7 +312,7 @@ export class DataFetcher {
             ? await this.loadNonBinanceLocalData(symbol, interval, limit, options?.signal)
             : null;
 
-        if (provider === 'local-daily' || provider === 'ibkr-local') {
+        if (provider === 'ibkr-local') {
             return localNonBinance ? trimToLastCandles(localNonBinance.candles, limit) : [];
         }
 
@@ -638,7 +638,7 @@ export class DataFetcher {
             return this.fetchBybitTradFiChartData(chain, symbol, interval, signal);
         }
 
-        if (chain.provider === 'local-daily' || chain.provider === 'ibkr-local') {
+        if (chain.provider === 'ibkr-local') {
             return this.fetchLocalDailyChartData(chain, symbol, interval);
         }
 

@@ -11,7 +11,7 @@
  * not pull browser-bound Finder state into the Vite config bundle.
  */
 
-import { isIbkrSymbol, isMarkedLocalStockSymbol, markIbkrSymbol } from "./local-daily-datasets";
+import { isIbkrSymbol, markIbkrSymbol } from "./local-daily-datasets";
 
 // Quote suffix list used by the batch/Finder synthetic-pair contract.
 // (`lib/synthetic-pair-parser.ts` has its own
@@ -52,7 +52,7 @@ export function normalizeSyntheticPairProviderMarkers(symbol: string): string {
     if (!isIbkrSymbol(base) && !isIbkrSymbol(quote)) return normalized;
 
     const normalizeLeg = (leg: string): string => {
-        if (isMarkedLocalStockSymbol(leg)) return leg;
+        if (isIbkrSymbol(leg)) return leg;
         if (QUOTE_SUFFIXES.some((suffix) => leg.endsWith(suffix) && leg.length > suffix.length)) return leg;
         return markIbkrSymbol(leg);
     };
@@ -62,10 +62,10 @@ export function normalizeSyntheticPairProviderMarkers(symbol: string): string {
 
 /**
  * Parse a synthetic pair token of the form `BASE+QUOTE` (e.g. `ZEC+APT`,
- * `NVDA•+AAPL•`, `♦JPM+♦BAC`). Returns the marked-or-Binance-resolved leg
+ * `NVDA•+AAPL•`). Returns the marked-or-Binance-resolved leg
  * symbols, or `null` when the token is not a synthetic pair.
  *
- * Diamond-marked (♦) and bullet-marked (•) legs are offline stock / IBKR
+ * Bullet-marked (•) legs are IBKR
  * tickers and must NOT be funneled through `resolveToBinanceSymbol`, which
  * would append `USDT` and strip the marker's provider-routing hint.
  */
@@ -75,8 +75,9 @@ export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; q
     const baseRaw = symbol.slice(0, plusIdx).trim().toUpperCase();
     const quoteRaw = symbol.slice(plusIdx + 1).trim().toUpperCase();
     if (!baseRaw || !quoteRaw) return null;
+    if (![baseRaw, quoteRaw].every((leg) => /^[A-Z0-9._\u2022-]+$/.test(leg))) return null;
     return {
-        baseSymbol: isMarkedLocalStockSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw),
-        quoteSymbol: isMarkedLocalStockSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
+        baseSymbol: isIbkrSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw),
+        quoteSymbol: isIbkrSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
     };
 }

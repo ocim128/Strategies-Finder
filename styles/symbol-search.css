@@ -376,10 +376,6 @@
     box-shadow: var(--focus-ring-soft);
 }
 
-.local-csv-select {
-    min-width: 210px;
-    max-width: 240px;
-}
 
 .mock-model-input {
     width: 110px;

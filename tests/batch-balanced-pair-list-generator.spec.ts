@@ -28,8 +28,8 @@ function degreeFromAssets(pairs: readonly string[], assets: readonly string[]): 
     const out: Record<string, number> = {};
     // Strip the loader suffix to get the scoring asset for each leg.
     const strip = (token: string): string => {
-        // Diamond (U+2666) or bullet (U+2022) marker -> scoring asset is the bare ticker.
-        if (token.endsWith("\u2666") || token.endsWith("\u2022")) {
+        // IBKR bullet (U+2022) marker -> scoring asset is the bare ticker.
+        if (token.endsWith("\u2022") || token.endsWith("\u2022")) {
             return token.slice(0, -1);
         }
         // Quote-suffix strip (longest known first).
@@ -118,9 +118,9 @@ describe("balanced-pair-list-generator", () => {
             }
         });
 
-        it("fails loudly on a cross-provider AAPL collision (stock ♦ vs IBKR •)", () => {
+        it("fails loudly on a cross-provider AAPL collision (market vs IBKR)", () => {
             const r = generateBalancedPairList({
-                assets: ["AAPL\u2666", "AAPL\u2022", "MSFT\u2666"],
+                assets: ["AAPLUSDT", "AAPL\u2022", "MSFTUSDT"],
                 maxPairs: 10,
             });
             assert.equal(r.ok, false);
@@ -129,14 +129,14 @@ describe("balanced-pair-list-generator", () => {
                 assert.equal(r.aliasCollisions[0]!.scoringAsset, "AAPL");
                 // Both tokens are reported; order is by emission. Just check membership.
                 const tokens = r.aliasCollisions[0]!.tokens;
-                assert.ok(tokens.includes("AAPL\u2666"), `missing diamond: ${tokens.join(",")}`);
+                assert.ok(tokens.includes("AAPLUSDT"), `missing market token: ${tokens.join(",")}`);
                 assert.ok(tokens.includes("AAPL\u2022"), `missing bullet: ${tokens.join(",")}`);
             }
         });
 
-        it("treats marked stock tokens with the same scoring asset as the same asset", () => {
+        it("treats IBKR tokens with the same scoring asset as the same asset", () => {
             const r = generateBalancedPairList({
-                assets: ["AAPL\u2666", "AAPL\u2666", "MSFT\u2666"],
+                assets: ["AAPL\u2022", "AAPL\u2022", "MSFT\u2022"],
                 maxPairs: 10,
             });
             assert.equal(r.ok, true);
@@ -466,21 +466,6 @@ describe("balanced-pair-list-generator", () => {
     });
 
     describe("emitted token format", () => {
-        it("emits marked-provider tokens verbatim (stock ♦ preserved end-to-end)", () => {
-            const r = generateBalancedPairList({
-                assets: ["AAPL\u2666", "MSFT\u2666", "NVDA\u2666"],
-                maxPairs: BATCH_MAX_SYMBOLS,
-            });
-            assert.equal(r.ok, true);
-            if (r.ok) {
-                for (const p of r.pairs) {
-                    const [a, b] = p.split("+");
-                    assert.ok(a!.endsWith("\u2666"), `${a} missing diamond`);
-                    assert.ok(b!.endsWith("\u2666"), `${b} missing diamond`);
-                }
-            }
-        });
-
         it("emits marked-provider tokens verbatim (IBKR • preserved end-to-end)", () => {
             const r = generateBalancedPairList({
                 assets: ["AAPL\u2022", "MSFT\u2022", "NVDA\u2022"],

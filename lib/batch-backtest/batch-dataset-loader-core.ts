@@ -1,11 +1,10 @@
 import { debugLogger } from "../debug-logger";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
-import { isIbkrSymbol, isMarkedLocalStockSymbol, isStockMarketSymbol } from "../local-daily-datasets";
+import { isIbkrSymbol } from "../local-daily-datasets";
 import {
     buildSyntheticPairFromLegs,
     deriveSyntheticSymbol,
     pickSourceInterval,
-    resolveEffectiveIntervalForSynthetic,
     resolveSyntheticAvailableIntervals,
 } from "../../scripts/lib/synthetic-pair";
 import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "../data/constants";
@@ -221,17 +220,11 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         if (diagnostics) diagnostics.requests += 1;
         try {
             const synthParts = parseSyntheticPairToken(symbol);
-            const effectiveInterval = resolveEffectiveIntervalForSynthetic(
-                symbol,
-                synthParts?.baseSymbol ?? null,
-                synthParts?.quoteSymbol ?? null,
-                interval,
-            );
             if (synthParts) {
                 return (await loadSyntheticPair(
                     synthParts.baseSymbol,
                     synthParts.quoteSymbol,
-                    effectiveInterval,
+                    interval,
                     signal,
                     context,
                     false,
@@ -243,32 +236,32 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             // ratio pairs use 30m legs and 1h/2h target series are aggregated from
             // those same 30m candles. Otherwise Batch succeeds while the miner
             // asks for absent 1h/2h CSVs and reports zero target assets.
-            if (isIbkrSymbol(symbol) && (effectiveInterval === "1h" || effectiveInterval === "2h")) {
+            if (isIbkrSymbol(symbol) && (interval === "1h" || interval === "2h")) {
                 const source = await options.fetchHistorical(symbol, "30m", DATA_CHART_TOTAL_LIMIT, {
                     signal,
                     offline: true,
                 });
                 if (signal?.aborted) return [];
                 if (source.length > 0) {
-                    return resampleOHLCV(source, effectiveInterval);
+                    return resampleOHLCV(source, interval);
                 }
             }
 
-            const data = await options.fetchDetached(symbol, effectiveInterval, { signal, offline: true });
+            const data = await options.fetchDetached(symbol, interval, { signal, offline: true });
             if (signal?.aborted) return [];
             if (data.length === 0 && isIbkrSymbol(symbol)) {
                 throw new Error(
-                    `No IBKR local candles found for ${symbol} ${effectiveInterval}. Batch uses the current chart interval; download that IBKR timeframe first or switch the chart interval to one that exists.`
+                    `No IBKR local candles found for ${symbol} ${interval}. Batch uses the current chart interval; download that IBKR timeframe first or switch the chart interval to one that exists.`
                 );
             }
 
-            const staleFragmentThreshold = resolveStaleFragmentBarThreshold(effectiveInterval);
+            const staleFragmentThreshold = resolveStaleFragmentBarThreshold(interval);
             if (data.length > 0 && data.length < staleFragmentThreshold) {
                 debugLogger.warn(`${options.logPrefix}.stale_fragment_refetch`, {
-                    symbol, interval: effectiveInterval, cachedBars: data.length, threshold: staleFragmentThreshold,
+                    symbol, interval: interval, cachedBars: data.length, threshold: staleFragmentThreshold,
                 });
                 const targetBars = DATA_CHART_TOTAL_LIMIT;
-                const offlineDeep = await options.fetchHistorical(symbol, effectiveInterval, targetBars, {
+                const offlineDeep = await options.fetchHistorical(symbol, interval, targetBars, {
                     signal,
                     offline: true,
                 });
@@ -276,7 +269,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 if (offlineDeep.length >= staleFragmentThreshold) {
                     return offlineDeep;
                 }
-                const refetched = await options.fetchHistorical(symbol, effectiveInterval, targetBars, { signal });
+                const refetched = await options.fetchHistorical(symbol, interval, targetBars, { signal });
                 if (signal?.aborted) return [];
                 return Math.max(refetched.length, offlineDeep.length) === refetched.length
                     ? refetched
@@ -297,16 +290,10 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     ): Promise<BatchDatasetLoadResult> {
         const synthParts = parseSyntheticPairToken(symbol);
         if (!synthParts) return { data: await load(symbol, interval, signal, context) };
-        const effectiveInterval = resolveEffectiveIntervalForSynthetic(
-            symbol,
-            synthParts.baseSymbol,
-            synthParts.quoteSymbol,
-            interval,
-        );
         return loadSyntheticPair(
             synthParts.baseSymbol,
             synthParts.quoteSymbol,
-            effectiveInterval,
+            interval,
             signal,
             context,
             true,
@@ -326,9 +313,8 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         if (diagnostics) diagnostics.syntheticPairRequests += 1;
 
         const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
-        const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
         const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
-        const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
+        const source = pickSourceInterval(interval, 12, available);
         const sourceInterval = source?.sourceInterval ?? interval;
         const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
         const pairKey = buildPairCacheKey({
@@ -524,9 +510,8 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         context?: BatchDatasetLoadContext,
     ): Promise<Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">> {
         try {
-            const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
             const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
-            const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
+            const source = pickSourceInterval(interval, 12, available);
             const sourceInterval = source?.sourceInterval ?? interval;
             const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * (source?.ratio ?? 1), DATA_CHART_TOTAL_LIMIT);
             let [base, quote] = await Promise.all([
@@ -586,7 +571,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         }
         if (diagnostics) diagnostics.legCacheMisses += 1;
 
-        const markedLeg = isMarkedLocalStockSymbol(sourceSymbol);
+        const markedLeg = isIbkrSymbol(sourceSymbol);
         const minHealthyLegBars = Math.max(1_000, Math.floor(sourceBars * 0.25));
         const fetchLeg = (offline: boolean): Promise<OHLCVData[]> => {
             if (diagnostics) {

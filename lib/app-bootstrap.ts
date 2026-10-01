@@ -25,7 +25,7 @@ import { bindFormAccessibility } from "./form-accessibility";
 import { strategyPanelController } from "./strategy-panel-controller";
 import { getOptionalElement } from "./dom-utils";
 import { setBinanceMarketType, setCurrentInterval, setCurrentStrategyKey, setCurrentSymbol } from "./state-actions";
-import { getLocalDailyAsset, isIbkrSymbol, isStockMarketSymbol } from "./local-daily-datasets";
+import { getLocalDailyAsset, isIbkrSymbol } from "./local-daily-datasets";
 import { coalesceAnimationFrame } from "./render-scheduler";
 import { markAppTiming, logAppTimingSnapshot } from "./app-timing";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
@@ -62,18 +62,8 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
         settingsManager.applySettings(savedSettings);
 
         if (savedSettings.currentSymbol) {
-            // Skip the 6-catalog local-daily lookup on the critical startup
-            // path for symbols that cannot be in any local-daily dataset.
-            // Stock-market symbols are always diamond-marked at runtime; the
-            // unmarked S&P 500 / Indonesian datasets only hold short bare
-            // all-letter tickers. Crypto/forex/commodity symbols therefore
-            // can never match and would otherwise force six network catalog
-            // fetches + parses just to conclude "no match".
             const candidate = savedSettings.currentSymbol.trim().toUpperCase();
-            const mightBeLocalDaily = isStockMarketSymbol(candidate)
-                || isIbkrSymbol(candidate)
-                || (/^[A-Z]{1,6}$/.test(candidate) && !candidate.endsWith("USDT"));
-            if (mightBeLocalDaily) {
+            if (isIbkrSymbol(candidate)) {
                 const localDailyAsset = await getLocalDailyAsset(candidate);
                 if (localDailyAsset) {
                     dataManager.setProviderOverride(localDailyAsset.symbol, localDailyAsset.provider);

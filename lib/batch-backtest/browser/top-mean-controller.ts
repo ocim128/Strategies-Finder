@@ -232,6 +232,11 @@ export class TopMeanController {
             return;
         }
         const horizons = horizonsParsed?.kind === "valid" ? horizonsParsed.horizons : undefined;
+        const pairListText = dom.batchBacktestSymbols?.value.trim();
+        if (!pairListText) {
+            dom.batchBacktestSp500TopMeanProgressText.textContent = "Error: Enter a pair list before running TOP_MEAN.";
+            return;
+        }
 
         const workersParsed = parseTopMeanMenuOptionalPositiveInt(dom.batchBacktestSp500TopMeanWorkers.value);
         if (workersParsed.kind === "invalid") {
@@ -295,9 +300,6 @@ export class TopMeanController {
             stopButtonDisplay: dom.batchBacktestSp500TopMeanStopBtn.style.display,
         });
 
-        const pairListTextRaw = dom.batchBacktestSymbols ? dom.batchBacktestSymbols.value.trim() : "";
-        const pairListText = pairListTextRaw.length > 0 ? pairListTextRaw : undefined;
-
         // Optional decision-event date window for the phase-3 OPEN_SCORE USD
         // replay (YYYY-MM-DD); blank = full history. Mirrors the OPEN_SCORE USD
         // From/To controls. Pair backtests (phase 2) still cover full history.
@@ -316,7 +318,7 @@ export class TopMeanController {
             strategyParams: paramManager.getValues(strategy),
             backtestSettings: backtestService.getBacktestSettings(),
             capitalSettings: backtestService.getCapitalSettings(),
-            interval: pairListText ? state.currentInterval : "4h",
+            interval: state.currentInterval,
             replayMode,
             ...(horizons ? { horizons } : {}),
             ...(replayMode === "horizon" ? { selectionCooldownBars } : {}),

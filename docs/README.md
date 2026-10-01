@@ -12,7 +12,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, and prepared execution.
 - [backtest-endpoint.md](backtest-endpoint.md) - local HTTP endpoint request/response contract.
 - [backtest-engines-typescript-rust.md](backtest-engines-typescript-rust.md) - TypeScript/Rust engine split, engine-selection fences, capability handshake, and wire contracts.
-- [batch-backtest-server-side.md](batch-backtest-server-side.md) - Batch server runtime, analysis artifacts, OPEN_SCORE USD Replay endpoint, S&P 500 TOP_MEAN coordinator, and memory budget.
+- [batch-backtest-server-side.md](batch-backtest-server-side.md) - Batch server runtime, analysis artifacts, OPEN_SCORE USD Replay endpoint, TOP_MEAN coordinator, and memory budget.
 - [finder.md](finder.md) - Finder menu scopes, settings, ranking and Re-Sort invariants, server lifecycle, data contracts, and safe-change checklist.
 - [finder-server-side.md](finder-server-side.md) - server-owned Finder Symbol Universe and Asset Opportunity jobs, parallel batch worker pool, JSONL run log, heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`.
 - [finder-asset-opportunity-resort-guide.md](finder-asset-opportunity-resort-guide.md) - how to add an Asset Opportunity Re-Sort metric end to end (browser control, archive contract, tests).

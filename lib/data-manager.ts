@@ -290,7 +290,7 @@ export class DataManager {
         if (!isBinanceDataProvider(provider)) {
             this.setProviderOverride(symbol, provider);
         }
-        if (provider === 'local-daily' || provider === 'ibkr-local') {
+        if (provider === 'ibkr-local') {
             debugLogger.info('data.stream.skip_local_daily', { symbol, interval });
             return;
         }

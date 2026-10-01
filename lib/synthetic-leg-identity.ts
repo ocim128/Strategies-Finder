@@ -16,10 +16,10 @@
  *     asset (so the generator cannot emit both `BTC+ETH` and `BTCUSDT+ETH`
  *     as if they were different relationships);
  *   - reject cross-provider alias collisions loudly (`AAPL•` (IBKR) and
- *     `AAPL♦` (stock_market_data) score the same asset via different data
+ *     `AAPLUSDT` (market) score the same asset via different data
  *     sources; the generator must not silently pick one);
  *   - emit the exact token the Batch textarea / loader expects for a given
- *     provider (`AAPL♦`, `AAPL•`, `BTCUSDT`).
+ *     provider (`AAPLUSDT`, `AAPL•`, `BTCUSDT`).
  *
  * The existing parsers are NOT modified here — they keep their public
  * results verbatim. The generator calls this leaf directly so generation,
@@ -28,10 +28,8 @@
 
 import {
     IBKR_SYMBOL_SUFFIX,
-    STOCK_MARKET_SYMBOL_SUFFIX,
     isIbkrSymbol,
-    isMarkedLocalStockSymbol,
-    stripMarkedLocalStockSymbol,
+    stripIbkrMarker,
 } from "./local-daily-datasets";
 
 // ---------------------------------------------------------------------------
@@ -90,16 +88,16 @@ export function stripKnownQuoteSuffix(upper: string): string {
 // Provider
 // ---------------------------------------------------------------------------
 
-export type LegProvider = "market" | "ibkr" | "stock";
+export type LegProvider = "market" | "ibkr";
 
 // ---------------------------------------------------------------------------
 // Canonical identity
 // ---------------------------------------------------------------------------
 
 export interface CanonicalLegIdentity {
-    /** Token to emit in the generated pair list (e.g. `BTCUSDT`, `AAPL♦`, `AAPL•`). */
+    /** Token to emit in the generated pair list (e.g. `BTCUSDT`, `AAPLUSDT`, `AAPL•`). */
     emittedToken: string;
-    /** Symbol the data loader expects (e.g. `BTCUSDT`, `AAPL♦`, `AAPL•`). */
+    /** Symbol the data loader expects (e.g. `BTCUSDT`, `AAPLUSDT`, `AAPL•`). */
     loaderSymbol: string;
     /** Scoring asset identity (e.g. `BTC`, `AAPL`). */
     scoringAsset: string;
@@ -126,40 +124,17 @@ export function canonicalizeLegIdentity(rawToken: string): CanonicalLegIdentity 
     if (!trimmed) return null;
     if (trimmed.includes("+")) return null;
 
-    // IBKR bullet marker (U+2022) and stock diamond marker (U+2666) route
-    // the leg to non-Binance providers. The marker must be a SUFFIX; a
-    // marker anywhere else (e.g. `♦AAPL`, `AA♦PL`) is malformed.
-    if (isMarkedLocalStockSymbol(trimmed)) {
-        const bare = stripMarkedLocalStockSymbol(trimmed);
-        if (!bare) return null;
-        // Reject marker in the middle of the token (the strip helper removes
-        // a trailing marker; if the result still contains one, the input was
-        // malformed).
-        if (bare !== bare.replace(/\s+/, "")) return null;
-        if (isIbkrSymbol(trimmed)) {
-            // IBKR bullet marker preserved end-to-end.
-            if (!trimmed.endsWith(IBKR_SYMBOL_SUFFIX)) return null;
-            return {
-                emittedToken: `${bare}${IBKR_SYMBOL_SUFFIX}`,
-                loaderSymbol: `${bare}${IBKR_SYMBOL_SUFFIX}`,
-                scoringAsset: bare,
-                provider: "ibkr",
-            };
-        }
-        // Stock diamond marker preserved end-to-end.
-        if (!trimmed.endsWith(STOCK_MARKET_SYMBOL_SUFFIX)) return null;
+    if (isIbkrSymbol(trimmed)) {
+        const bare = stripIbkrMarker(trimmed);
+        if (!bare || !/^[A-Z0-9._-]+$/.test(bare)) return null;
         return {
-            emittedToken: `${bare}${STOCK_MARKET_SYMBOL_SUFFIX}`,
-            loaderSymbol: `${bare}${STOCK_MARKET_SYMBOL_SUFFIX}`,
+            emittedToken: `${bare}${IBKR_SYMBOL_SUFFIX}`,
+            loaderSymbol: `${bare}${IBKR_SYMBOL_SUFFIX}`,
             scoringAsset: bare,
-            provider: "stock",
+            provider: "ibkr",
         };
     }
-
-    // Reject stray marker characters that are NOT a proper suffix marker.
-    if (trimmed.includes(IBKR_SYMBOL_SUFFIX) || trimmed.includes(STOCK_MARKET_SYMBOL_SUFFIX)) {
-        return null;
-    }
+    if (!/^[A-Z0-9._-]+$/.test(trimmed)) return null;
 
     // Binance / market path: if the token already ends with a known quote
     // suffix, keep it verbatim (loader symbol == emitted token). Otherwise
@@ -178,7 +153,7 @@ export function canonicalizeLegIdentity(rawToken: string): CanonicalLegIdentity 
 /**
  * Group canonical identities by their alias-collision key. The collision key
  * is the SCORING ASSET alone — `BTC` and `BTCUSDT` collapse to one slot
- * (same provider), while stock `AAPL♦` and IBKR `AAPL•` collide ACROSS
+ * (same provider), while market `AAPLUSDT` and IBKR `AAPL•` collide ACROSS
  * providers (the generator fails loudly instead of picking a data source).
  *
  * Within one provider, two tokens mapping to the same scoring asset are

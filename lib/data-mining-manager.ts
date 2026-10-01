@@ -588,7 +588,6 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
         if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
         if (provider === 'ibkr-local') return 'IBKR Local';
-        if (provider === 'local-daily') return 'Local Daily';
         if (provider === 'mock') return 'Mock';
         return provider;
     }

@@ -1,6 +1,6 @@
 import type { BinanceDataProvider } from "../binance-market";
 
-export type DataProvider = BinanceDataProvider | 'bybit-tradfi' | 'local-daily' | 'ibkr-local';
+export type DataProvider = BinanceDataProvider | 'bybit-tradfi' | 'ibkr-local';
 
 export type HistoricalFetchProgress = {
     fetched: number;

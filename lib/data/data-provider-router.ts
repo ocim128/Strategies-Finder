@@ -7,7 +7,7 @@ import {
 } from "../binance-market";
 import { state } from "../state";
 import { tradfiSearchService } from "../tradfi-search-service";
-import { isIbkrSymbol, isStockMarketSymbol } from "../local-daily-datasets";
+import { isIbkrSymbol } from "../local-daily-datasets";
 
 export class DataProviderRouter {
     private providerOverrideBySymbol: Map<string, Exclude<DataProvider, BinanceDataProvider>> = new Map();
@@ -27,13 +27,6 @@ export class DataProviderRouter {
         const normalizedSymbol = symbol.trim().toUpperCase();
         if (this.providerOverrideBySymbol.has(normalizedSymbol)) {
             return this.providerOverrideBySymbol.get(normalizedSymbol)!;
-        }
-        // Diamond-marked symbols are always offline stock_market_data lookups.
-        // Self-resolves so typed-in or pasted marked symbols don't accidentally
-        // route to Binance if the explicit override wasn't set first.
-        if (isStockMarketSymbol(normalizedSymbol)) {
-            this.providerOverrideBySymbol.set(normalizedSymbol, 'local-daily');
-            return 'local-daily';
         }
         if (isIbkrSymbol(normalizedSymbol)) {
             this.providerOverrideBySymbol.set(normalizedSymbol, 'ibkr-local');
@@ -63,7 +56,6 @@ export class DataProviderRouter {
         if (provider === 'binance-futures') return 'Binance Futures';
         if (provider === 'bybit-tradfi') return 'Bybit TradFi';
         if (provider === 'ibkr-local') return 'IBKR Local';
-        if (provider === 'local-daily') return 'Local Daily';
         return 'Binance Spot';
     }
 }

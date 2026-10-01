@@ -324,13 +324,13 @@ and is encoded as a string; old rows may omit it and render as `n/a`. The
 optional `openPosition` scalar (`{ side }`) is the only per-trade-derived
 open-position payload and feeds Copy Open Positions; old rows may omit it.
 
-## S&P 500 TOP_MEAN UI Coordinator
+## TOP_MEAN UI Coordinator
 
-The S&P 500 TOP_MEAN UI Coordinator runs a long-running batch evaluation over the canonical pair universe formed from S&P 500 IBKR assets.
+The TOP_MEAN UI Coordinator runs a long-running batch evaluation over an explicit list of IBKR or crypto markets and synthetic pairs. A nonempty Pairs list is required in the UI and API; there is no bundled default universe. Legacy `sp500-*` route and saved-result names remain compatible.
 
 ### Architecture
 
-1. **Preflight & Enumeration**: Intersection of `sp500_company_info.csv`, `price-data/ibkr/catalog.json`, and 30m seed CSV files.
+1. **Preflight & Enumeration**: Resolve the explicit pair list; IBKR legs must appear in `price-data/ibkr/catalog.json` and have 30m seed CSV files.
 2. **Worker Pool Execution**: Node worker threads (`sp500-top-mean-worker.ts`) execute built-in strategy across pair shards and write atomic `CompactPairArtifact` files under `artifacts/sp500-top-mean/<runId>/shards/`.
 3. **Replay & Asset Ranking**: Invokes `runOpenScoreUsdReplay` using target asset price series and compact pair artifacts, yielding TOP_MEAN asset ranking summaries.
 

@@ -1,44 +1,9 @@
 import type { DataProvider } from "./types/data-providers";
 import { fetchWithTimeoutAndRetry } from "./dataProviders/fetch-helpers";
 
-export type LocalDailyDatasetKey =
-    | "sp500"
-    | "indonesian-stock"
-    | "ibkr-stock"
-    | "forbes2000-stock"
-    | "nasdaq-stock"
-    | "nyse-stock"
-    | "sp500-stock";
+export type LocalDailyDatasetKey = "ibkr-stock";
 
-// Diamond suffix marking stock_market_data symbols so they namespace apart
-// from Binance/Bybit/indonesian-stock sources. The marker is preserved
-// end-to-end through .trim().toUpperCase(), so cache/SQLite/IndexedDB keys
-// stay distinct from the bare ticker.
-export const STOCK_MARKET_SYMBOL_SUFFIX = "\u2666"; // diamond
-export const IBKR_SYMBOL_SUFFIX = "\u2022"; // bullet
-
-const STOCK_MARKET_DATASET_KEYS: ReadonlySet<LocalDailyDatasetKey> = new Set([
-    "forbes2000-stock",
-    "nasdaq-stock",
-    "nyse-stock",
-    "sp500-stock",
-]);
-
-const IBKR_DATASET_KEYS: ReadonlySet<LocalDailyDatasetKey> = new Set([
-    "ibkr-stock",
-]);
-
-export function markStockSymbol(symbol: string): string {
-    const normalized = symbol.trim().toUpperCase();
-    if (!normalized) return normalized;
-    return normalized.endsWith(STOCK_MARKET_SYMBOL_SUFFIX)
-        ? normalized
-        : `${normalized}${STOCK_MARKET_SYMBOL_SUFFIX}`;
-}
-
-export function isStockMarketSymbol(symbol: string): boolean {
-    return symbol.trim().endsWith(STOCK_MARKET_SYMBOL_SUFFIX);
-}
+export const IBKR_SYMBOL_SUFFIX = "\u2022";
 
 export function markIbkrSymbol(symbol: string): string {
     const normalized = symbol.trim().toUpperCase();
@@ -59,39 +24,13 @@ export function stripIbkrMarker(symbol: string): string {
         : trimmed.toUpperCase();
 }
 
-export function isMarkedLocalStockSymbol(symbol: string): boolean {
-    return isStockMarketSymbol(symbol) || isIbkrSymbol(symbol);
-}
-
-export function stripStockMarketMarker(symbol: string): string {
-    const trimmed = symbol.trim();
-    return trimmed.endsWith(STOCK_MARKET_SYMBOL_SUFFIX)
-        ? trimmed.slice(0, -STOCK_MARKET_SYMBOL_SUFFIX.length).toUpperCase()
-        : trimmed.toUpperCase();
-}
-
-export function stripMarkedLocalStockSymbol(symbol: string): string {
-    return isIbkrSymbol(symbol)
-        ? stripIbkrMarker(symbol)
-        : stripStockMarketMarker(symbol);
-}
-
-export function isStockMarketDatasetKey(key: string): boolean {
-    return STOCK_MARKET_DATASET_KEYS.has(key as LocalDailyDatasetKey);
-}
-
-export function isIbkrDatasetKey(key: string): boolean {
-    return IBKR_DATASET_KEYS.has(key as LocalDailyDatasetKey);
-}
-
 export interface LocalDailyDatasetConfig {
     key: LocalDailyDatasetKey;
     label: string;
     catalogUrl: string;
-    catalogFormat: "csv" | "json";
     candlesBasePath: string;
     supportedIntervals?: readonly string[];
-    provider: Extract<DataProvider, "bybit-tradfi" | "local-daily" | "ibkr-local">;
+    provider: Extract<DataProvider, "ibkr-local">;
 }
 
 export interface LocalDailyAsset {
@@ -99,7 +38,7 @@ export interface LocalDailyAsset {
     name: string;
     dataset: LocalDailyDatasetKey;
     datasetLabel: string;
-    provider: Extract<DataProvider, "bybit-tradfi" | "local-daily" | "ibkr-local">;
+    provider: Extract<DataProvider, "ibkr-local">;
     sector?: string;
 }
 
@@ -109,61 +48,12 @@ type LocalPriceDataCatalogResponse = {
 
 export const LOCAL_DAILY_DATASETS: readonly LocalDailyDatasetConfig[] = [
     {
-        key: "sp500",
-        label: "S&P 500",
-        catalogUrl: "/price-data/sp500_comprehensive_dataset/sp500_comprehensive/sp500_company_info.csv",
-        catalogFormat: "csv",
-        candlesBasePath: "/price-data/sp500_comprehensive_dataset/sp500_comprehensive/individual_analysis",
-        provider: "bybit-tradfi",
-    },
-    {
-        key: "indonesian-stock",
-        label: "Indonesian Stocks",
-        catalogUrl: "/api/local-price-data/indonesian-stock/catalog",
-        catalogFormat: "json",
-        candlesBasePath: "/price-data/indonesian-stock",
-        provider: "local-daily",
-    },
-    {
         key: "ibkr-stock",
         label: "IBKR Local",
         catalogUrl: "/api/local-price-data/ibkr/catalog",
-        catalogFormat: "json",
         candlesBasePath: "/price-data/ibkr/csv",
         supportedIntervals: ["1d", "4h", "1h", "30m", "15m", "5m", "1m"],
         provider: "ibkr-local",
-    },
-    {
-        key: "forbes2000-stock",
-        label: "Stock Market \u2014 Forbes 2000",
-        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=forbes2000",
-        catalogFormat: "json",
-        candlesBasePath: "/price-data/stock_market_data/forbes2000/csv",
-        provider: "local-daily",
-    },
-    {
-        key: "nasdaq-stock",
-        label: "Stock Market \u2014 NASDAQ",
-        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=nasdaq",
-        catalogFormat: "json",
-        candlesBasePath: "/price-data/stock_market_data/nasdaq/csv",
-        provider: "local-daily",
-    },
-    {
-        key: "nyse-stock",
-        label: "Stock Market \u2014 NYSE",
-        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=nyse",
-        catalogFormat: "json",
-        candlesBasePath: "/price-data/stock_market_data/nyse/csv",
-        provider: "local-daily",
-    },
-    {
-        key: "sp500-stock",
-        label: "Stock Market \u2014 S&P 500",
-        catalogUrl: "/api/local-price-data/stock-market/catalog?dataset=sp500",
-        catalogFormat: "json",
-        candlesBasePath: "/price-data/stock_market_data/sp500/csv",
-        provider: "local-daily",
     },
 ];
 
@@ -202,33 +92,6 @@ export function getLocalDailyDatasetConfig(key: LocalDailyDatasetKey): LocalDail
     return LOCAL_DAILY_DATASETS.find((dataset) => dataset.key === key) ?? null;
 }
 
-function parseCsvLine(line: string): string[] {
-    const values: string[] = [];
-    let current = "";
-    let inQuotes = false;
-
-    for (let i = 0; i < line.length; i += 1) {
-        const ch = line[i];
-        if (ch === "\"") {
-            if (inQuotes && line[i + 1] === "\"") {
-                current += "\"";
-                i += 1;
-                continue;
-            }
-            inQuotes = !inQuotes;
-            continue;
-        }
-        if (ch === "," && !inQuotes) {
-            values.push(current.trim());
-            current = "";
-            continue;
-        }
-        current += ch;
-    }
-    values.push(current.trim());
-    return values;
-}
-
 function toAsset(
     config: LocalDailyDatasetConfig,
     symbol: string,
@@ -237,15 +100,7 @@ function toAsset(
 ): LocalDailyAsset | null {
     const trimmedSymbol = symbol.trim().toUpperCase();
     if (!trimmedSymbol) return null;
-    // Stock-market datasets namespace their symbols with the diamond marker
-    // so they never collide with bare tickers from other providers. The
-    // catalog endpoint already returns marked symbols, but re-marking here
-    // keeps the asset shape consistent regardless of which path fed it in.
-    const normalizedSymbol = isStockMarketDatasetKey(config.key)
-        ? markStockSymbol(stripStockMarketMarker(trimmedSymbol))
-        : isIbkrDatasetKey(config.key)
-            ? markIbkrSymbol(stripIbkrMarker(trimmedSymbol))
-            : trimmedSymbol;
+    const normalizedSymbol = markIbkrSymbol(stripIbkrMarker(trimmedSymbol));
     return {
         symbol: normalizedSymbol,
         name: name.trim() || normalizedSymbol,
@@ -254,36 +109,6 @@ function toAsset(
         provider: config.provider,
         ...(sector.trim() ? { sector: sector.trim() } : {}),
     };
-}
-
-function parseSp500Catalog(rawCsv: string, config: LocalDailyDatasetConfig): LocalDailyAsset[] {
-    const lines = rawCsv
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-    if (lines.length === 0) return [];
-
-    const header = parseCsvLine(lines[0]).map((value) => value.toLowerCase());
-    const tickerIdx = header.indexOf("ticker");
-    const nameIdx = header.indexOf("name");
-    const sectorIdx = header.indexOf("sector");
-    if (tickerIdx < 0 || nameIdx < 0) return [];
-
-    const bySymbol = new Map<string, LocalDailyAsset>();
-    for (let i = 1; i < lines.length; i += 1) {
-        const row = parseCsvLine(lines[i]);
-        const asset = toAsset(
-            config,
-            row[tickerIdx] ?? "",
-            row[nameIdx] ?? "",
-            sectorIdx >= 0 ? row[sectorIdx] ?? "" : ""
-        );
-        if (asset && !bySymbol.has(asset.symbol)) {
-            bySymbol.set(asset.symbol, asset);
-        }
-    }
-
-    return Array.from(bySymbol.values()).sort(compareLocalAssets);
 }
 
 function parseJsonCatalog(payload: LocalPriceDataCatalogResponse, config: LocalDailyDatasetConfig): LocalDailyAsset[] {
@@ -326,9 +151,7 @@ async function loadDatasetAssets(config: LocalDailyDatasetConfig): Promise<Local
             );
             if (!response.ok) return [];
 
-            const assets = config.catalogFormat === "csv"
-                ? parseSp500Catalog(await response.text(), config)
-                : parseJsonCatalog(await response.json() as LocalPriceDataCatalogResponse, config);
+            const assets = parseJsonCatalog(await response.json() as LocalPriceDataCatalogResponse, config);
             assetCacheByDataset.set(config.key, assets);
             indexedCacheByDataset.set(config.key, buildIndexedAssets(assets));
             return assets;
@@ -415,16 +238,4 @@ async function getIndexedLocalDailyAssets(
     // `loadDatasetAssets` populates `indexedCacheByDataset` as a side effect.
     await Promise.all(configs.map((config) => loadDatasetAssets(config)));
     return configs.flatMap((config) => indexedCacheByDataset.get(config.key) ?? []);
-}
-
-export function encodeLocalDailyAssetSelection(asset: LocalDailyAsset): string {
-    return `${asset.dataset}:${asset.symbol}`;
-}
-
-export function parseLocalDailyAssetSelection(value: string): { dataset: LocalDailyDatasetKey; symbol: string } | null {
-    const [rawDataset, rawSymbol] = value.split(":", 2);
-    const dataset = rawDataset as LocalDailyDatasetKey;
-    const symbol = (rawSymbol ?? "").trim().toUpperCase();
-    if (!symbol || !getLocalDailyDatasetConfig(dataset)) return null;
-    return { dataset, symbol };
 }

@@ -158,7 +158,6 @@ export type UiEventHandlersDom = UiEventRequiredDom & {
     symbolSearchClear: HTMLElement | null;
     symbolSearchLoading: HTMLElement | null;
     symbolSearchEmpty: HTMLElement | null;
-    localSp500Select: HTMLSelectElement | null;
     mockBarsInput: HTMLInputElement | null;
     chartModeToggle: HTMLButtonElement | null;
     chartModeLabel: HTMLElement | null;
@@ -199,7 +198,6 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         symbolSearchClear: getOptionalElement("symbolSearchClear"),
         symbolSearchLoading: getOptionalElement("symbolSearchLoading"),
         symbolSearchEmpty: getOptionalElement("symbolSearchEmpty"),
-        localSp500Select: getOptionalElement<HTMLSelectElement>("localSp500Select"),
         mockBarsInput: getOptionalElement<HTMLInputElement>("mockBarsInput"),
         chartModeToggle: getOptionalElement<HTMLButtonElement>("chartModeToggle"),
         chartModeLabel: getOptionalElement("chartModeLabel"),

@@ -84,7 +84,7 @@ export class DataPersistence {
         trusted = false
     ): OHLCVData[] {
         const normalized = this.normalizeExternalCandles(candles, trusted);
-        return provider === 'bybit-tradfi' || provider === 'local-daily' || provider === 'ibkr-local'
+        return provider === 'bybit-tradfi' || provider === 'ibkr-local'
             ? normalizeTradFiDailyCandles(normalized, interval)
             : normalized;
     }

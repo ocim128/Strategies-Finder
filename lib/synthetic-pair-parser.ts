@@ -6,8 +6,8 @@
  */
 
 import {
-    isMarkedLocalStockSymbol,
-    stripMarkedLocalStockSymbol,
+    isIbkrSymbol,
+    stripIbkrMarker,
 } from "./local-daily-datasets";
 import { deriveSyntheticSymbol } from "../scripts/lib/synthetic-pair";
 
@@ -44,21 +44,18 @@ export function parsePortfolioSyntheticPairSymbol(symbol: string): ParsedSynthet
         return null;
     }
 
-    const baseRaw = normalized.slice(0, plusIdx);
-    const quoteRaw = normalized.slice(plusIdx + 1);
-    // Diamond-marked legs are offline stock_market_data tickers and must
-    // bypass resolveToBinanceSymbol, which strips non-alphanumerics and
-    // appends `USDT` — both would corrupt the marker that routes the leg
-    // to the local-daily provider.
-    const baseSymbol = isMarkedLocalStockSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw);
-    const quoteSymbol = isMarkedLocalStockSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw);
+    const baseRaw = normalized.slice(0, plusIdx).trim();
+    const quoteRaw = normalized.slice(plusIdx + 1).trim();
+    if (![baseRaw, quoteRaw].every((leg) => /^[A-Z0-9._\u2022-]+$/.test(leg))) return null;
+    const baseSymbol = isIbkrSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw);
+    const quoteSymbol = isIbkrSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw);
     if (!baseSymbol || !quoteSymbol || baseSymbol === quoteSymbol) {
         return null;
     }
 
     return {
-        baseAsset: isMarkedLocalStockSymbol(baseSymbol) ? stripMarkedLocalStockSymbol(baseSymbol) : stripKnownQuoteSuffix(baseSymbol),
-        quoteAsset: isMarkedLocalStockSymbol(quoteSymbol) ? stripMarkedLocalStockSymbol(quoteSymbol) : stripKnownQuoteSuffix(quoteSymbol),
+        baseAsset: isIbkrSymbol(baseSymbol) ? stripIbkrMarker(baseSymbol) : stripKnownQuoteSuffix(baseSymbol),
+        quoteAsset: isIbkrSymbol(quoteSymbol) ? stripIbkrMarker(quoteSymbol) : stripKnownQuoteSuffix(quoteSymbol),
         baseSymbol,
         quoteSymbol,
         syntheticSymbol: deriveSyntheticSymbol(baseSymbol, quoteSymbol),

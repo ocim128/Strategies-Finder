@@ -13,7 +13,7 @@ import type { OHLCVData } from '../../lib/types/strategies';
 import { parseOhlcvBars } from './ohlcv-file';
 import { parseIntervalSeconds } from '../../lib/interval-utils';
 import { SYNTHETIC_SOURCE_BARS_LIMIT } from '../../lib/data/constants';
-import { getLocalDailyDatasetConfig, isIbkrSymbol, isMarkedLocalStockSymbol, isStockMarketSymbol } from '../../lib/local-daily-datasets';
+import { getLocalDailyDatasetConfig, isIbkrSymbol } from '../../lib/local-daily-datasets';
 
 // ============================================================================
 // Public types
@@ -338,7 +338,7 @@ export function resolveSyntheticSourceBars(targetBars: number, sourceRatio = 1):
 /**
  * Returns IBKR's on-disk `supportedIntervals` allowlist when either leg is
  * IBKR-marked, so {@link pickSourceInterval} only considers seed intervals
- * that IBKR actually stores. Returns `undefined` for crypto/diamond legs so
+ * that IBKR actually stores. Returns `undefined` for crypto legs so
  * the original behavior (any divisible interval) is preserved.
  *
  * Centralized here so all three gate sites (buildSyntheticPairFromLegs,
@@ -405,20 +405,13 @@ export async function buildSyntheticPairFromLegs(args: {
 }): Promise<SyntheticPairFromLegsResult> {
     const { interval, targetBars, fetchLeg, baseSymbol, quoteSymbol } = args;
     const minBars = args.minBars ?? 1;
-    // Diamond-marked legs (offline stock_market_data) only have `1d` bars, so
-    // source-interval subdivision would fetch legs at an interval that has no
-    // data and every pair would fail. Bullet-marked IBKR legs CAN have
-    // intraday bars (30m, 1h, 4h...), so they take the normal subdivision
-    // path. The discriminator is the diamond marker specifically, not the
-    // combined `isMarkedLocalStockSymbol`.
-    const diamondLeg = isStockMarketSymbol(baseSymbol) || isStockMarketSymbol(quoteSymbol);
     // Disk-aware seed: when one or both legs are IBKR, restrict candidates to
     // intervals IBKR actually stores. pickSourceInterval('1d') would otherwise
     // pick '2h' (ratio 12) which no IBKR symbol has on disk — this filter
     // makes it skip 2h and fall back to the target interval itself when no
     // finer interval in `supportedIntervals` divides evenly within the cap.
     const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
-    const source = diamondLeg ? null : pickSourceInterval(interval, 12, available);
+    const source = pickSourceInterval(interval, 12, available);
     const sourceInterval = source?.sourceInterval ?? interval;
     const rawSourceBars = resolveSyntheticSourceBars(targetBars, source?.ratio ?? 1);
     const sourceBars = args.sourceBarsCap
@@ -693,35 +686,8 @@ function normalizeSymbol(value: string): string {
     return value.trim().toUpperCase();
 }
 
-/**
- * Stock-market symbols (offline stock_market_data) only have `1d` bars. When
- * a marked symbol or synthetic leg is involved, the requested interval must be
- * coerced to `1d` or the local-daily loader returns empty and the whole
- * universe/batch load fails. Mixed pairs (e.g. BTCUSDT+AAPL♦) also coerce
- * because one daily-only leg forces the whole pair to daily resolution.
- *
- * Centralized here so Finder and Batch Backtest apply the same rule.
- */
-export function resolveEffectiveIntervalForSynthetic(
-    symbol: string,
-    baseSymbol: string | null,
-    quoteSymbol: string | null,
-    interval: string,
-): string {
-    const involvesStockMarket =
-        isStockMarketSymbol(symbol)
-        || (baseSymbol !== null && isStockMarketSymbol(baseSymbol))
-        || (quoteSymbol !== null && isStockMarketSymbol(quoteSymbol));
-    return involvesStockMarket ? '1d' : interval;
-}
-
 export function deriveSyntheticSymbol(baseSymbol: string, quoteSymbol: string): string {
-    // When either leg carries the diamond marker (offline stock_market_data
-    // namespace), the suffix-stripping logic below would silently drop the
-    // shared marker and produce an ambiguous bare-ticker synthetic. Switch to
-    // an explicit `leg+leg` join so the result stays namespaced, e.g.
-    // NVDA♦ + AAPL♦ => NVDA♦+AAPL♦.
-    if (isMarkedLocalStockSymbol(baseSymbol) || isMarkedLocalStockSymbol(quoteSymbol)) {
+    if (isIbkrSymbol(baseSymbol) || isIbkrSymbol(quoteSymbol)) {
         return `${baseSymbol}+${quoteSymbol}`;
     }
 

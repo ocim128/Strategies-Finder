@@ -1,11 +1,9 @@
 import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "../data/constants";
 import { parseIntervalSeconds } from "../interval-utils";
-import { isStockMarketSymbol } from "../local-daily-datasets";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
 import type { OHLCVData } from "../types/strategies";
 import {
     pickSourceInterval,
-    resolveEffectiveIntervalForSynthetic,
     resolveSyntheticAvailableIntervals,
 } from "../../scripts/lib/synthetic-pair";
 import {
@@ -187,23 +185,16 @@ export function createRankPairsRecentLoader(
         if (signal?.aborted) return [];
         const targetBars = Math.max(1, Math.floor(requestedTargetBars));
 
-        const effectiveInterval = resolveEffectiveIntervalForSynthetic(
-            symbol,
-            parts.baseSymbol,
-            parts.quoteSymbol,
-            interval,
-        );
-        const diamondLeg =
-            isStockMarketSymbol(parts.baseSymbol) || isStockMarketSymbol(parts.quoteSymbol);
+
         const available = resolveSyntheticAvailableIntervals(parts.baseSymbol, parts.quoteSymbol);
-        const source = diamondLeg ? null : pickSourceInterval(effectiveInterval, 12, available);
-        const sourceInterval = source?.sourceInterval ?? effectiveInterval;
+        const source = pickSourceInterval(interval, 12, available);
+        const sourceInterval = source?.sourceInterval ?? interval;
         const ratio = source?.ratio ?? 1;
-        const shallowBars = recentSourceBars(effectiveInterval, ratio, targetBars);
+        const shallowBars = recentSourceBars(interval, ratio, targetBars);
         const [base, quote] = await loadPairLegs(
             parts.baseSymbol,
             parts.quoteSymbol,
-            effectiveInterval,
+            interval,
             sourceInterval,
             shallowBars,
             targetBars,
@@ -213,7 +204,7 @@ export function createRankPairsRecentLoader(
             base,
             quote,
             sourceInterval,
-            effectiveInterval,
+            interval,
             targetBars,
         );
 
@@ -227,7 +218,7 @@ export function createRankPairsRecentLoader(
                 const [deepBase, deepQuote] = await loadPairLegs(
                     parts.baseSymbol,
                     parts.quoteSymbol,
-                    effectiveInterval,
+                    interval,
                     sourceInterval,
                     fullSourceBars,
                     targetBars,
@@ -237,7 +228,7 @@ export function createRankPairsRecentLoader(
                     deepBase,
                     deepQuote,
                     sourceInterval,
-                    effectiveInterval,
+                    interval,
                     targetBars,
                 );
             }

@@ -146,7 +146,7 @@ afterEach(() => {
 });
 
 // --------------------------------------------------------------------------
-// File-backed (IBKR / stock-market) legs
+// File-backed (IBKR) legs
 // --------------------------------------------------------------------------
 
 test("file-backed fingerprint is a string with version + bare tickers", async () => {

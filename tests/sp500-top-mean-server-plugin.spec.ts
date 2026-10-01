@@ -932,7 +932,14 @@ async function testTopMeanRouteRejectsInvalidRunIdsAndDates(): Promise<void> {
         capitalSettings: { initialCapital: 10000 },
         interval: "4h",
         horizons: [12],
+        pairListText: "BTCUSDT+ETHUSDT",
     };
+
+    for (const pairListText of [undefined, "", "   ", 123]) {
+        const missingPairs = await postTopMeanRunBody({ ...baseRequest, runId: "spec_missing_pairs", pairListText });
+        assert.equal(missingPairs.statusCode, 400);
+        assert.match(String(missingPairs.payload.error), /explicit pair list/);
+    }
 
     const pathLike = await postTopMeanRunBody({
         ...baseRequest,

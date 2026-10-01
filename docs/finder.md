@@ -247,7 +247,7 @@ blank lists, single symbols, duplicate resolved pairs, provider conflicts,
 unsupported built-in strategies, and requests above its validated search
 limits. Pairs with missing local leg data are skipped, and the run reports how
 many were skipped. At least one pair must have usable data. A blank pair list
-never expands to the default S&P 500 universe.
+requires an explicit pair list and has no bundled default universe.
 
 If a pair passes preflight but its candles are missing or too short when a
 candidate runs, that pair is skipped for that candidate and the remaining
