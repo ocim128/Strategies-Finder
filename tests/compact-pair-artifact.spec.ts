@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { rmSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
+import { rmSync, writeFileSync, mkdtempSync, utimesSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 import {
     computeRunFingerprint,
+    getRunDir,
     saveManifest,
     loadManifest,
     writeShardArtifacts,
@@ -21,18 +23,13 @@ import {
     cleanOldArtifacts,
 } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 
-const testBaseDir = resolve(process.cwd(), "temp_test_artifacts");
+const testBaseDir = mkdtempSync(resolve(tmpdir(), "compact-pair-artifact-"));
 
 function cleanup(): void {
-    if (existsSync(testBaseDir)) {
-        rmSync(testBaseDir, { recursive: true, force: true });
-    }
+    rmSync(testBaseDir, { recursive: true, force: true });
 }
 
 async function runTests(): Promise<void> {
-    cleanup();
-    mkdirSync(testBaseDir, { recursive: true });
-
     try {
         // 1. Test Fingerprint
         const fp1 = computeRunFingerprint({
@@ -307,6 +304,11 @@ async function runTests(): Promise<void> {
         assert.strictEqual(await readShardArtifactsAsync(neighborRun, 0, testBaseDir), cachedNeighbor);
         assert.throws(() => evictRunParsedShardCache("../escape", testBaseDir), /Invalid runId/);
         await assert.rejects(() => readShardArtifactsAsync("../escape", 0, testBaseDir), /Invalid runId/);
+        // Explicit expiry avoids sub-millisecond directory mtimes racing Date.now().
+        const expiredAt = new Date("2000-01-01T00:00:00Z");
+        for (const run of [cacheRun, neighborRun]) {
+            utimesSync(getRunDir(run, testBaseDir), expiredAt, expiredAt);
+        }
         cleanOldArtifacts(testBaseDir, -1);
         assert.equal(evictRunParsedShardCache(cacheRun, testBaseDir), 0, "retention already evicted deleted runs");
         assert.equal(evictRunParsedShardCache(neighborRun, testBaseDir), 0);

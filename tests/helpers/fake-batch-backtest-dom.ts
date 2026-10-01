@@ -1,3 +1,4 @@
+import { createFakeElement } from "./fake-element";
 /**
  * Shared fake Batch DOM factory derived from `BATCH_BACKTEST_REQUIRED_IDS`.
  * Keeps browser lifecycle fixtures aligned with the live DOM contract so
@@ -10,50 +11,7 @@ import {
 } from "../../lib/batch-backtest/batch-backtest-dom";
 
 export function createFakeBatchElement(): any {
-    const listeners = new Map<string, Array<(ev?: { type: string }) => void>>();
-    const classes = new Set<string>();
-    const el: any = {
-        style: { display: "", width: "" },
-        disabled: false,
-        value: "",
-        checked: false,
-        textContent: "",
-        hidden: false,
-        innerHTML: "",
-        classList: {
-            add(...cls: string[]) { for (const c of cls) classes.add(c); },
-            remove(...cls: string[]) { for (const c of cls) classes.delete(c); },
-            toggle(cls: string, force?: boolean) {
-                if (force === undefined) { if (classes.has(cls)) classes.delete(cls); else classes.add(cls); }
-                else if (force) classes.add(cls); else classes.delete(cls);
-            },
-            contains(cls: string) { return classes.has(cls); },
-        },
-        replaceChildren: () => { el.children = []; },
-        appendChild: (child: any) => { el.children = el.children ?? []; el.children.push(child); return child; },
-        querySelectorAll: () => [],
-        addEventListener: (type: string, handler: (ev?: { type: string }) => void) => {
-            const arr = listeners.get(type) ?? [];
-            arr.push(handler);
-            listeners.set(type, arr);
-        },
-        removeEventListener: () => {},
-        dispatchEvent: (ev: { type: string }): boolean => {
-            const arr = listeners.get(ev.type);
-            if (!arr || arr.length === 0) return false;
-            for (const handler of arr) handler(ev);
-            return true;
-        },
-        click(): boolean {
-            const arr = listeners.get("click");
-            if (!arr || arr.length === 0) return false;
-            for (const handler of arr) handler();
-            return true;
-        },
-        children: [] as any[],
-        setAttribute: () => {},
-    };
-    return el;
+    return createFakeElement();
 }
 
 const DEFAULT_VALUES: Partial<Record<(typeof BATCH_BACKTEST_REQUIRED_IDS)[number], string>> = {

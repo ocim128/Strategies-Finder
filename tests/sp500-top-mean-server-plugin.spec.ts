@@ -16,6 +16,7 @@ import {
     TOP_MEAN_REPLAY_TARGET_PREFETCH_CONCURRENCY,
     TopMeanCoordinatorEngine,
     type TopMeanResultSummary,
+    type TopMeanCoordinatorRunRequest,
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
 import {
     computeRunFingerprint,
@@ -25,7 +26,9 @@ import {
     saveManifest,
     writeShardArtifacts,
 } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
-import { enumerateSp500Pairs } from "../lib/batch-backtest/sp500-pair-enumerator";
+import type { EnumerationResult } from "../lib/batch-backtest/sp500-pair-enumerator";
+import { clearServerBatchDatasetCaches } from "../lib/batch-backtest/server-batch-data-loader";
+import { makeBacktestSettings, makeCapitalSettings } from "./helpers/backtest-settings-fixtures";
 import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 import { computeCurrentTopMeanSnapshot } from "../lib/batch-backtest/sp500-top-mean-current-snapshot";
 import type { Time } from "lightweight-charts";
@@ -361,6 +364,71 @@ async function testResultSummaryFieldIsOptional(): Promise<void> {
     console.log("PASS: TopMeanResultSummary.currentSnapshot is optional");
 }
 
+/** Real coordinator and CSV replay, isolated from local catalogs and user data.
+ * This script runs its scenarios sequentially; the loader resolves CSVs from cwd.
+ */
+async function withCoordinatorFixture(
+    run: (baseDir: string, enumeration: EnumerationResult) => Promise<void>,
+): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "top-mean-coordinator-"));
+    const originalCwd = process.cwd();
+    const originalFetch = globalThis.fetch;
+    let networkRequests = 0;
+    const assets = ["AAPL", "MSFT", "NVDA", "Q1", "Q2", "Q3", "Q4", "Q5", "Q6"];
+    const canonicalPairs = [
+        "AAPL\u2022+Q1\u2022", "AAPL\u2022+Q2\u2022",
+        "MSFT\u2022+Q3\u2022", "MSFT\u2022+Q4\u2022",
+        "NVDA\u2022+Q5\u2022", "NVDA\u2022+Q6\u2022",
+    ];
+    const enumeration: EnumerationResult = {
+        canonicalPairs,
+        eligibleAssets: assets,
+        eligibleTargets: assets.map((asset) => ({ asset, symbol: `${asset}\u2022` })),
+        excludedAssets: [],
+        skippedPairTokens: [],
+        rejectedPairTokens: [],
+        counts: {
+            sp500AssetsCount: assets.length, catalogAssetsCount: assets.length,
+            usable30mSeedCount: assets.length, usableTargetIntervalCount: assets.length,
+            pairCount: canonicalPairs.length, excludedAssetsCount: 0, excludedPairsCount: 0,
+        },
+    };
+    try {
+        const csvDir = join(baseDir, "price-data", "ibkr", "csv", "4h");
+        mkdirSync(csvDir, { recursive: true });
+        const rows = Array.from({ length: 400 }, (_, index) => {
+            const price = 100 + index * 0.1;
+            return `${1_689_000_000 + index * 14_400},${price},${price + 1},${price - 1},${price + 0.5},1000`;
+        });
+        for (const asset of assets) {
+            writeFileSync(join(csvDir, `${asset}.csv`), `time,open,high,low,close,volume\n${rows.join("\n")}\n`);
+        }
+        process.chdir(baseDir);
+        clearServerBatchDatasetCaches();
+        globalThis.fetch = async () => {
+            networkRequests += 1;
+            throw new Error("Unexpected network request in coordinator fixture");
+        };
+        await run(baseDir, enumeration);
+        assert.equal(networkRequests, 0, "coordinator regressions must run entirely on fixture data");
+    } finally {
+        globalThis.fetch = originalFetch;
+        process.chdir(originalCwd);
+        clearServerBatchDatasetCaches();
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+}
+
+function openCoordinatorArtifact(...args: Parameters<typeof openArtifact>): CompactPairArtifact {
+    const artifact = openArtifact(...args);
+    return {
+        ...artifact,
+        symbol: `${artifact.baseAsset}\u2022+${artifact.quoteAsset}\u2022`,
+        baseSymbol: `${artifact.baseAsset}\u2022`,
+        quoteSymbol: `${artifact.quoteAsset}\u2022`,
+    };
+}
+
 /**
  * F4 integration test: drives the REAL TopMeanCoordinatorEngine.run() end-to-end
  * and proves the snapshot seam:
@@ -375,86 +443,73 @@ async function testResultSummaryFieldIsOptional(): Promise<void> {
  * persistence seam from the worker/data-loader stack.
  */
 async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void> {
-    // The engine ties one `baseDir` to BOTH the artifact root and enumeration's
-    // catalog lookup. A temp baseDir would make enumeration fail to find the
-    // S&P 500 catalog, so we omit baseDir (artifacts land in the worktree's
-    // artifacts/sp500-top-mean/<runId>) and clean up that specific run dir.
-    const runId = `spec_integration_${Date.now()}`;
-    const endpoint = 1_700_000_000;
-    const baseDir = undefined;
+    await withCoordinatorFixture(async (baseDir, enumRes) => {
+        const runId = "spec_integration";
+        const endpoint = 1_700_000_000;
+        const request: TopMeanCoordinatorRunRequest = {
+            runId,
+            strategyKey: "close_location_median_alignment",
+            strategyParams: { lookback: 20, threshold: 0.5 },
+            backtestSettings: makeBacktestSettings(),
+            capitalSettings: makeCapitalSettings(),
+            interval: "4h",
+            horizons: [12],
+            pairListText: enumRes.canonicalPairs.join("\n"),
+            resume: true,
+            saveArchiveLog: false,
+            useRustEnginePreference: false,
+            selectionCooldownBars: 5,
+        };
+        const fingerprint = computeRunFingerprint({
+            strategyKey: request.strategyKey,
+            strategyParams: request.strategyParams,
+            backtestSettings: request.backtestSettings,
+            capitalSettings: request.capitalSettings,
+            interval: "4h",
+            useRustEnginePreference: false,
+            canonicalAssets: enumRes.eligibleAssets,
+            canonicalPairs: enumRes.canonicalPairs,
+        });
 
-    // Use the SAME pairListText the engine will use, so enumeration returns a
-    // deterministic canonical-asset list we can fingerprint.
-    const pairListText = "AAPL•+MSFT•\nAAPL•+NVDA•";
-    const enumRes = enumerateSp500Pairs({ interval: "4h", pairListText });
-    if (enumRes.canonicalPairs.length === 0) {
-        // Catalog not available in this environment — skip, not fail.
-        console.log("SKIP: integration test (S&P 500 catalog not available in this env)");
-        return;
-    }
+        // Pre-write a completed manifest + shard 0 with six open long pairs that
+        // produce a clean 3-way tie: AAPL, MSFT, NVDA each as base in 2 pairs and
+        // never as a positive leg elsewhere -> each nets +2, activePairs 2,
+        // mean 1.0 -> 3-way tie. The reducer must surface all three (no silent
+        // tie-break), which the coordinator then persists verbatim.
+        const shardZero: CompactPairArtifact[] = [
+            openCoordinatorArtifact(0, "AAPL+Q1", "long", endpoint),
+            openCoordinatorArtifact(1, "AAPL+Q2", "long", endpoint),
+            openCoordinatorArtifact(2, "MSFT+Q3", "long", endpoint),
+            openCoordinatorArtifact(3, "MSFT+Q4", "long", endpoint),
+            openCoordinatorArtifact(4, "NVDA+Q5", "long", endpoint),
+            openCoordinatorArtifact(5, "NVDA+Q6", "long", endpoint),
+        ];
+        writeShardArtifacts(runId, 0, shardZero, baseDir);
 
-    const request: Record<string, unknown> = {
-        runId,
-        strategyKey: "close_location_median_alignment",
-        strategyParams: { lookback: 20, threshold: 0.5 },
-        backtestSettings: { direction: "long", slippage: 0, commission: 0 },
-        capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 },
-        interval: "4h",
-        horizons: [12],
-        pairListText,
-        resume: true,
-        saveArchiveLog: false,
-        useRustEnginePreference: false,
-        selectionCooldownBars: 5,
-    };
-    const fingerprint = computeRunFingerprint({
-        strategyKey: request.strategyKey as string,
-        strategyParams: request.strategyParams,
-        backtestSettings: request.backtestSettings,
-        capitalSettings: request.capitalSettings,
-        interval: "4h",
-        useRustEnginePreference: false,
-        canonicalAssets: enumRes.eligibleAssets,
-        canonicalPairs: enumRes.canonicalPairs,
-    });
+        const manifest: TopMeanRunManifest = {
+            schema: "top_mean_run_manifest.v1",
+            runId,
+            status: "running",
+            fingerprint,
+            strategyKey: "close_location_median_alignment",
+            interval: "4h",
+            pairCount: enumRes.canonicalPairs.length,
+            shardSize: 50,
+            totalShards: 1,
+            completedShards: [0],
+            failedShards: [],
+            completedPairsCount: shardZero.length,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        saveManifest(manifest, baseDir);
 
-    // Pre-write a completed manifest + shard 0 with six open long pairs that
-    // produce a clean 3-way tie: AAPL, MSFT, NVDA each as base in 2 pairs and
-    // never as a positive leg elsewhere -> each nets +2, activePairs 2,
-    // mean 1.0 -> 3-way tie. The reducer must surface all three (no silent
-    // tie-break), which the coordinator then persists verbatim.
-    const shardZero: CompactPairArtifact[] = [
-        openArtifact(0, "AAPL+Q1", "long", endpoint),
-        openArtifact(1, "AAPL+Q2", "long", endpoint),
-        openArtifact(2, "MSFT+Q3", "long", endpoint),
-        openArtifact(3, "MSFT+Q4", "long", endpoint),
-        openArtifact(4, "NVDA+Q5", "long", endpoint),
-        openArtifact(5, "NVDA+Q6", "long", endpoint),
-    ];
-    writeShardArtifacts(runId, 0, shardZero, baseDir);
-
-    const manifest: TopMeanRunManifest = {
-        schema: "top_mean_run_manifest.v1",
-        runId,
-        status: "running",
-        fingerprint,
-        strategyKey: "close_location_median_alignment",
-        interval: "4h",
-        pairCount: enumRes.canonicalPairs.length,
-        shardSize: 50,
-        totalShards: 1,
-        completedShards: [0],
-        failedShards: [],
-        completedPairsCount: 3,
-        failedPairsCount: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-    };
-    saveManifest(manifest, baseDir);
-
-    let engine: TopMeanCoordinatorEngine | null = null;
-    try {
-        engine = new TopMeanCoordinatorEngine(request as any, baseDir);
+        let engine: TopMeanCoordinatorEngine | null = null;
+        engine = new TopMeanCoordinatorEngine(request, baseDir, {
+            enumeration: enumRes,
+            evaluationNowSec: 1_760_000_000,
+        });
         const events: Array<{ type: string; [k: string]: unknown }> = [];
         let sawSnapshot = false;
 
@@ -553,14 +608,7 @@ async function testRunIntegratesSnapshotAndPersistsBeforeReplay(): Promise<void>
         });
 
         console.log("PASS: run() integrates reducer, emits snapshot, persists before replay (F1+F4)");
-    } finally {
-        // Clean up ONLY this test's run dir from the worktree artifact root.
-        try {
-            rmSync(getRunDir(runId, baseDir), { recursive: true, force: true });
-        } catch {
-            // Best-effort cleanup.
-        }
-    }
+    });
 }
 
 async function testTopMeanRouteRejectsNonBooleanArchiveFlag(): Promise<void> {
@@ -714,123 +762,114 @@ async function testStaleRunningManifestReconcilesToInterrupted(): Promise<void> 
  * test above locks the snapshot path for engines without the profile).
  */
 async function testFinderArmProfileSkipsAnnualSnapshotAndResultJson(): Promise<void> {
-    const runId = `spec_finder_arm_${Date.now()}`;
-    const baseDir = undefined;
-    const pairListText = "AAPL\u2022+MSFT\u2022\nAAPL\u2022+NVDA\u2022";
-    const enumRes = enumerateSp500Pairs({ interval: "4h", pairListText });
-    if (enumRes.canonicalPairs.length === 0) {
-        console.log("SKIP: finder_arm profile test (S&P 500 catalog not available in this env)");
-        return;
-    }
+    await withCoordinatorFixture(async (baseDir, enumRes) => {
+        const runId = "spec_finder_arm";
+        const request: TopMeanCoordinatorRunRequest = {
+            runId,
+            strategyKey: "close_location_median_alignment",
+            strategyParams: { lookback: 20, threshold: 0.5 },
+            backtestSettings: makeBacktestSettings(),
+            capitalSettings: makeCapitalSettings(),
+            interval: "4h",
+            horizons: [12],
+            pairListText: enumRes.canonicalPairs.join("\n"),
+            // Spans 2022-2024: WITHOUT the profile this derives three annual
+            // replay passes on top of the full-window pass (their progress text
+            // is asserted absent below).
+            sampleFromSec: 1_660_000_000,
+            sampleToSec: 1_730_000_000,
+            resume: true,
+            saveArchiveLog: false,
+            useRustEnginePreference: false,
+        };
+        const fingerprint = computeRunFingerprint({
+            strategyKey: request.strategyKey,
+            strategyParams: request.strategyParams,
+            backtestSettings: request.backtestSettings,
+            capitalSettings: request.capitalSettings,
+            interval: "4h",
+            useRustEnginePreference: false,
+            canonicalAssets: enumRes.eligibleAssets,
+            canonicalPairs: enumRes.canonicalPairs,
+        });
 
-    const request: Record<string, unknown> = {
-        runId,
-        strategyKey: "close_location_median_alignment",
-        strategyParams: { lookback: 20, threshold: 0.5 },
-        backtestSettings: { direction: "long", slippage: 0, commission: 0 },
-        capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 },
-        interval: "4h",
-        horizons: [12],
-        pairListText,
-        // Spans 2022-2024: WITHOUT the profile this derives three annual
-        // replay passes on top of the full-window pass (their progress text
-        // is asserted absent below).
-        sampleFromSec: 1_660_000_000,
-        sampleToSec: 1_730_000_000,
-        resume: true,
-        saveArchiveLog: false,
-        useRustEnginePreference: false,
-    };
-    const fingerprint = computeRunFingerprint({
-        strategyKey: request.strategyKey as string,
-        strategyParams: request.strategyParams,
-        backtestSettings: request.backtestSettings,
-        capitalSettings: request.capitalSettings,
-        interval: "4h",
-        useRustEnginePreference: false,
-        canonicalAssets: enumRes.eligibleAssets,
-        canonicalPairs: enumRes.canonicalPairs,
-    });
+        // Trade entries INSIDE the 2022-2024 sample window (entryTime 1 would
+        // predate sampleFromSec and the full-window replay would legitimately
+        // report zero decision events -> empty horizons).
+        const inWindowTrades = [{
+            type: "long" as const,
+            entryTime: 1_690_000_000 as Time,
+            exitTime: 1_690_003_600 as Time,
+            exitReason: "end_of_data" as const,
+        }];
+        const shardZero: CompactPairArtifact[] = [
+            openCoordinatorArtifact(0, "AAPL+Q1", "long", 1_700_000_000, inWindowTrades),
+            openCoordinatorArtifact(1, "AAPL+Q2", "long", 1_700_000_000, inWindowTrades),
+            openCoordinatorArtifact(2, "MSFT+Q3", "long", 1_700_000_000, inWindowTrades),
+            openCoordinatorArtifact(3, "MSFT+Q4", "long", 1_700_000_000, inWindowTrades),
+            openCoordinatorArtifact(4, "NVDA+Q5", "long", 1_700_000_000, inWindowTrades),
+            openCoordinatorArtifact(5, "NVDA+Q6", "long", 1_700_000_000, inWindowTrades),
+        ];
+        writeShardArtifacts(runId, 0, shardZero, baseDir);
 
-    // Trade entries INSIDE the 2022-2024 sample window (entryTime 1 would
-    // predate sampleFromSec and the full-window replay would legitimately
-    // report zero decision events -> empty horizons).
-    const inWindowTrades = [{
-        type: "long" as const,
-        entryTime: 1_690_000_000 as Time,
-        exitTime: 1_690_003_600 as Time,
-        exitReason: "end_of_data" as const,
-    }];
-    const shardZero: CompactPairArtifact[] = [
-        openArtifact(0, "AAPL+Q1", "long", 1_700_000_000, inWindowTrades),
-        openArtifact(1, "AAPL+Q2", "long", 1_700_000_000, inWindowTrades),
-        openArtifact(2, "MSFT+Q3", "long", 1_700_000_000, inWindowTrades),
-        openArtifact(3, "MSFT+Q4", "long", 1_700_000_000, inWindowTrades),
-        openArtifact(4, "NVDA+Q5", "long", 1_700_000_000, inWindowTrades),
-        openArtifact(5, "NVDA+Q6", "long", 1_700_000_000, inWindowTrades),
-    ];
-    writeShardArtifacts(runId, 0, shardZero, baseDir);
+        const manifest: TopMeanRunManifest = {
+            schema: "top_mean_run_manifest.v1",
+            runId,
+            status: "running",
+            fingerprint,
+            strategyKey: "close_location_median_alignment",
+            interval: "4h",
+            pairCount: enumRes.canonicalPairs.length,
+            shardSize: 50,
+            totalShards: 1,
+            completedShards: [0],
+            failedShards: [],
+            completedPairsCount: shardZero.length,
+            failedPairsCount: 0,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+        };
+        saveManifest(manifest, baseDir);
 
-    const manifest: TopMeanRunManifest = {
-        schema: "top_mean_run_manifest.v1",
-        runId,
-        status: "running",
-        fingerprint,
-        strategyKey: "close_location_median_alignment",
-        interval: "4h",
-        pairCount: enumRes.canonicalPairs.length,
-        shardSize: 50,
-        totalShards: 1,
-        completedShards: [0],
-        failedShards: [],
-        completedPairsCount: 6,
-        failedPairsCount: 0,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-    };
-    saveManifest(manifest, baseDir);
-
-    const engine = new TopMeanCoordinatorEngine(request as any, baseDir, {
-        enumeration: enumRes,
-        evaluationNowSec: 1_760_000_000,
-        executionProfile: "finder_arm",
-    });
-    const events: Array<{ type: string; [k: string]: unknown }> = [];
-    try {
+        const engine = new TopMeanCoordinatorEngine(request, baseDir, {
+            enumeration: enumRes,
+            evaluationNowSec: 1_760_000_000,
+            executionProfile: "finder_arm",
+        });
+        const events: Array<{ type: string; [k: string]: unknown }> = [];
         await engine.run((event: unknown) => {
             events.push(event as { type: string; [k: string]: unknown });
         });
-    } finally {
-        rmSync(getRunDir(runId, baseDir), { recursive: true, force: true });
-    }
 
-    const types = events.map((e) => e.type);
-    assert.equal(
-        types.filter((type) => type === "current_snapshot").length,
-        0,
-        "finder_arm must not emit a current_snapshot event",
-    );
-    assert.equal(
-        events.filter((e) => String(e.text ?? "").includes("OPEN_SCORE USD replay for 20")).length,
-        0,
-        "finder_arm must not run annual calendar replay passes",
-    );
-    const done = events.find((e) => e.type === "done" && e.interrupted !== true) as
-        | { result?: TopMeanResultSummary }
-        | undefined;
-    assert.ok(done?.result?.completed, "the finder_arm run must complete");
-    const result = done.result!;
-    assert.ok(result.horizons.length > 0, "the full-window replay must still run");
-    assert.equal(result.annualReports?.length ?? 0, 0, "finder_arm returns no annual reports");
-    assert.equal(result.openScoreEventDetails, undefined, "finder_arm omits per-row event details");
-    assert.equal(result.ongoingEventDetails, undefined, "finder_arm omits ongoing event details");
-    assert.equal(result.currentSnapshot, undefined, "finder_arm omits the current snapshot");
-    assert.equal(
-        existsSync(join(getRunDir(runId, baseDir), "result.json")),
-        false,
-        "finder_arm must not write result.json",
-    );
-    console.log("PASS: finder_arm profile runs the full-window replay only");
+        const types = events.map((e) => e.type);
+        assert.equal(
+            types.filter((type) => type === "current_snapshot").length,
+            0,
+            "finder_arm must not emit a current_snapshot event",
+        );
+        assert.equal(
+            events.filter((e) => String(e.text ?? "").includes("OPEN_SCORE USD replay for 20")).length,
+            0,
+            "finder_arm must not run annual calendar replay passes",
+        );
+        const done = events.find((e) => e.type === "done" && e.interrupted !== true) as
+            | { result?: TopMeanResultSummary }
+            | undefined;
+        assert.ok(done?.result?.completed, "the finder_arm run must complete");
+        const result = done.result!;
+        assert.ok(result.horizons.length > 0, "the full-window replay must still run");
+        assert.equal(result.replayTargetLoadFailureCount, 0, "the fixture supplies all replay targets");
+        assert.equal(result.annualReports?.length ?? 0, 0, "finder_arm returns no annual reports");
+        assert.equal(result.openScoreEventDetails, undefined, "finder_arm omits per-row event details");
+        assert.equal(result.ongoingEventDetails, undefined, "finder_arm omits ongoing event details");
+        assert.equal(result.currentSnapshot, undefined, "finder_arm omits the current snapshot");
+        assert.equal(
+            existsSync(join(getRunDir(runId, baseDir), "result.json")),
+            false,
+            "finder_arm must not write result.json",
+        );
+        console.log("PASS: finder_arm profile runs the full-window replay only");
+    });
 }
 
 /**
@@ -1167,30 +1206,23 @@ function testReplayProgressThrottleAndCacheBound(): void {
  * without market data (the replay short-circuits on zero trade deltas).
  */
 async function testStopDuringArchiveStaysInterrupted(): Promise<void> {
-    const pairListText = "AAPL•+MSFT•\nAAPL•+NVDA•";
-    const enumRes = enumerateSp500Pairs({ interval: "4h", pairListText });
-    if (enumRes.canonicalPairs.length === 0) {
-        console.log("SKIP: stop-during-archive test (S&P 500 catalog not available in this env)");
-        return;
-    }
-    const baseDir = undefined;
-    const runId = `spec_stop_archive_${Date.now()}`;
-    try {
-        const request: Record<string, unknown> = {
+    await withCoordinatorFixture(async (baseDir, enumRes) => {
+        const runId = "spec_stop_archive";
+        const request: TopMeanCoordinatorRunRequest = {
             runId,
             strategyKey: "close_location_median_alignment",
             strategyParams: { lookback: 20, threshold: 0.5 },
-            backtestSettings: { direction: "long", slippage: 0, commission: 0 },
-            capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 },
+            backtestSettings: makeBacktestSettings(),
+            capitalSettings: makeCapitalSettings(),
             interval: "4h",
             horizons: [12],
-            pairListText,
+            pairListText: enumRes.canonicalPairs.join("\n"),
             resume: true,
             saveArchiveLog: true,
             useRustEnginePreference: false,
         };
         const fingerprint = computeRunFingerprint({
-            strategyKey: request.strategyKey as string,
+            strategyKey: request.strategyKey,
             strategyParams: request.strategyParams,
             backtestSettings: request.backtestSettings,
             capitalSettings: request.capitalSettings,
@@ -1203,7 +1235,7 @@ async function testStopDuringArchiveStaysInterrupted(): Promise<void> {
         // One completed shard with EMPTY trades: the replay scan finds zero
         // trade deltas and returns an empty result instead of failing on
         // missing target datasets.
-        writeShardArtifacts(runId, 0, [openArtifact(0, "AAPL+Q1", "long", 1_700_000_000, [])], baseDir);
+        writeShardArtifacts(runId, 0, [openCoordinatorArtifact(0, "AAPL+Q1", "long", 1_700_000_000, [])], baseDir);
         saveManifest({
             schema: "top_mean_run_manifest.v1",
             runId,
@@ -1224,7 +1256,9 @@ async function testStopDuringArchiveStaysInterrupted(): Promise<void> {
 
         let engine: TopMeanCoordinatorEngine | null = null;
         let archiveCalls = 0;
-        engine = new TopMeanCoordinatorEngine(request as any, baseDir, {
+        engine = new TopMeanCoordinatorEngine(request, baseDir, {
+            enumeration: enumRes,
+            evaluationNowSec: 1_760_000_000,
             archiveCompletedRun: async () => {
                 archiveCalls += 1;
                 // Stop DURING the archive await — the completion commit below
@@ -1252,16 +1286,8 @@ async function testStopDuringArchiveStaysInterrupted(): Promise<void> {
 
         const persisted = loadManifest(runId, baseDir);
         assert.equal(persisted?.status, "interrupted", "manifest must remain interrupted after Stop");
-    } finally {
-        // baseDir is undefined (worktree artifact root) so enumeration can
-        // resolve the S&P catalog; clean only this run's dir.
-        try {
-            rmSync(getRunDir(runId, baseDir), { recursive: true, force: true });
-        } catch {
-            // Best-effort cleanup.
-        }
-    }
-    console.log("PASS: stop during archive finalization stays interrupted");
+        console.log("PASS: stop during archive finalization stays interrupted");
+    });
 }
 
 /**

@@ -125,46 +125,49 @@ describe("server Asset Opportunity signal cache", () => {
         expect(cache.getWindow("new", 0, 2)).to.deep.equal(signal);
     });
 
-    it("does not yield after the final slow candidate", async () => {
-        let yields = 0;
-        const strategy: Strategy = {
-            name: "Final Candidate Strategy",
-            description: "Keeps the regression test above the cooperative-yield threshold.",
-            defaultParams: { marker: 1 },
-            paramLabels: { marker: "Marker" },
-            execute(data) {
-                const startedAt = performance.now();
-                while (performance.now() - startedAt < 1_100) {
-                    // Simulate a candidate backtest that already monopolizes
-                    // the event loop; yielding after its final result adds no
-                    // responsiveness and can wait behind other workers.
-                }
-                const latest = data[data.length - 1];
-                return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
-            },
-        };
+    for (const candidateCount of [1, 2]) {
+        const label = candidateCount === 1
+            ? "does not yield after the final slow candidate"
+            : "yields after a slow candidate when another candidate remains";
+        it(label, async (t) => {
+            let nowMs = 0;
+            t.mock.method(performance, "now", () => nowMs);
+            let yields = 0;
+            const strategy: Strategy = {
+                name: "Final Candidate Strategy",
+                description: "Keeps the regression test above the cooperative-yield threshold.",
+                defaultParams: { marker: 1 },
+                paramLabels: { marker: "Marker" },
+                execute(data) {
+                    // Cross the real yield threshold without blocking the event loop.
+                    nowMs += 1_100;
+                    const latest = data[data.length - 1];
+                    return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+                },
+            };
 
-        const output = await runServerAssetIsSearch({
-            ohlcvData: makeCandles(40),
-            symbol: "FINAL",
-            interval: "5m",
-            options: makeOptions(),
-            settings,
-            capitalSettings,
-            selectedStrategy: { key: "final_candidate_strategy", name: strategy.name, strategy },
-            generateParamSets: () => [{ marker: 1 }],
-            useRustEnginePreference: false,
-            confirmationStrategiesLoaded: true,
-            isCancelled: () => false,
-            yieldControl: async () => {
-                yields += 1;
-            },
+            const output = await runServerAssetIsSearch({
+                ohlcvData: makeCandles(40),
+                symbol: "FINAL",
+                interval: "5m",
+                options: makeOptions(),
+                settings,
+                capitalSettings,
+                selectedStrategy: { key: "final_candidate_strategy", name: strategy.name, strategy },
+                generateParamSets: () => Array.from({ length: candidateCount }, (_, index) => ({ marker: index + 1 })),
+                useRustEnginePreference: false,
+                confirmationStrategiesLoaded: true,
+                isCancelled: () => false,
+                yieldControl: async () => {
+                    yields += 1;
+                },
+            });
+
+            expect(output.candidateEvaluationsCompleted).to.equal(candidateCount);
+            expect(yields).to.equal(candidateCount - 1);
+            expect(output.timingsMs.yielding).to.equal(0);
         });
-
-        expect(output.candidateEvaluationsCompleted).to.equal(1);
-        expect(yields).to.equal(0);
-        expect(output.timingsMs.yielding).to.equal(0);
-    });
+    }
 
     it("skips the historical pass after a definitive non-fresh precheck", async () => {
         let executeCalls = 0;

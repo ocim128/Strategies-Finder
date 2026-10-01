@@ -3,7 +3,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseSp500CompanyInfoCsv, enumerateSp500Pairs, deriveReplayTargetsFromCanonicalPairs } from "../lib/batch-backtest/sp500-pair-enumerator";
-import { stripIbkrMarker } from "../lib/local-daily-datasets";
 
 const FIXTURE_TICKERS = ["AAPL", "AMGN", "CVX", "GOOGL", "KO", "MSFT", "PANW"];
 
@@ -46,32 +45,33 @@ GOOGL,Alphabet Inc.,Communication Services,Internet Content & Information,381031
 
 function testEnumerationOrderingAndExclusion(baseDir: string): void {
     const res = enumerateSp500Pairs({ interval: "4h", baseDir });
-    assert.ok(res.counts.sp500AssetsCount > 0, "Should detect S&P 500 assets");
-    assert.ok(res.counts.catalogAssetsCount >= 0, "Catalog count >= 0");
-    assert.ok(res.eligibleAssets.length >= 0, "Eligible assets array exists");
+    assert.equal(res.counts.sp500AssetsCount, 7);
+    assert.equal(res.counts.catalogAssetsCount, 7);
+    assert.equal(res.counts.usable30mSeedCount, 7);
+    assert.equal(res.counts.usableTargetIntervalCount, 7);
+    assert.deepEqual(res.eligibleAssets, FIXTURE_TICKERS);
+    const expectedPairs = [
+        "AAPL\u2022+AMGN\u2022", "AAPL\u2022+CVX\u2022", "AAPL\u2022+GOOGL\u2022", "AAPL\u2022+KO\u2022", "AAPL\u2022+MSFT\u2022", "AAPL\u2022+PANW\u2022",
+        "AMGN\u2022+CVX\u2022", "AMGN\u2022+GOOGL\u2022", "AMGN\u2022+KO\u2022", "AMGN\u2022+MSFT\u2022", "AMGN\u2022+PANW\u2022",
+        "CVX\u2022+GOOGL\u2022", "CVX\u2022+KO\u2022", "CVX\u2022+MSFT\u2022", "CVX\u2022+PANW\u2022",
+        "GOOGL\u2022+KO\u2022", "GOOGL\u2022+MSFT\u2022", "GOOGL\u2022+PANW\u2022",
+        "KO\u2022+MSFT\u2022", "KO\u2022+PANW\u2022", "MSFT\u2022+PANW\u2022",
+    ];
+    assert.equal(res.counts.pairCount, 21);
+    assert.deepEqual(res.canonicalPairs, expectedPairs, "all unique unordered pairs in canonical order");
+    assert.deepEqual(res.excludedAssets, []);
+    assert.equal(res.counts.excludedPairsCount, 0);
 
-    // Test canonical ordering and exclusion of reverse pairs
-    for (const pair of res.canonicalPairs) {
-        const parts = pair.split("+");
-        assert.equal(parts.length, 2, "Pair should contain 2 assets split by +");
-        const baseClean = stripIbkrMarker(parts[0]);
-        const quoteClean = stripIbkrMarker(parts[1]);
-        assert.ok(baseClean < quoteClean, `Base asset ${baseClean} must be strictly less than quote asset ${quoteClean}`);
-    }
-
-    // Verify maxPairs cap
-    if (res.canonicalPairs.length > 5) {
-        const capped = enumerateSp500Pairs({ baseDir, maxPairs: 5 });
-        assert.equal(capped.canonicalPairs.length, 5);
-        assert.equal(capped.counts.pairCount, 5);
-    }
+    const capped = enumerateSp500Pairs({ interval: "4h", baseDir, maxPairs: 5 });
+    assert.equal(capped.counts.pairCount, 5);
+    assert.deepEqual(capped.canonicalPairs, expectedPairs.slice(0, 5), "the cap retains the ordered prefix");
 }
 
 function testCustomPairListText(baseDir: string): void {
     const customText = `CVX•+AMGN•\nPANW•+CVX•\nKO•+PANW•`;
     const res = enumerateSp500Pairs({ interval: "4h", baseDir, pairListText: customText });
-    assert.ok(res.counts.pairCount <= 3, "Should parse custom pair list lines");
-    assert.ok(res.canonicalPairs.length > 0, "Should extract canonical pairs from custom list");
+    assert.equal(res.counts.pairCount, 3);
+    assert.deepEqual(res.canonicalPairs, ["CVX\u2022+AMGN\u2022", "PANW\u2022+CVX\u2022", "KO\u2022+PANW\u2022"]);
 
     const bareLocal = enumerateSp500Pairs({
         interval: "4h",

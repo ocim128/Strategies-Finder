@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import type { TradeLedgerProvenance, TradeLedgerRankRow, TradeLedgerRow } from "../lib/batch-backtest/trade-ledger-schema";
 import { createTradeLedgerControlPool } from "../lib/batch-backtest/trade-ledger-control-pool";
@@ -516,14 +517,11 @@ function fixtureRow(bar: number, atr: number, pnl: number): TradeLedgerRow {
 }
 
 describe("trade ledger checker report (replay)", () => {
-    const fixtureDir = path.join(process.cwd(), "artifacts", "test-logs", "trade-ledger-checker-spec");
+    const fixtureDir = mkdtempSync(path.join(tmpdir(), "trade-ledger-checker-spec-"));
     const ruleFile = path.join(fixtureDir, "rule.ts");
     const cheatingRuleFile = path.join(fixtureDir, "cheating-rule.ts");
 
     before(() => {
-        rmSync(fixtureDir, { recursive: true, force: true });
-        mkdirSync(fixtureDir, { recursive: true });
-
         // b0 admit(+10) | b1 blocked(busy) | b2 rejected(atr 0.5) | b3 admit(+20)
         // b4 blocked | b5 admit(-5) | b6 blocked | b7 admit(+30) | b8 blocked | b9 admit(+5)
         const rows = [
@@ -597,7 +595,7 @@ describe("trade ledger checker report (replay)", () => {
         } catch (error) {
             message = error instanceof Error ? error.message : String(error);
         }
-        expect(message).to.contain("re-run the batch to regenerate");
+        expect(message).to.contain("ledger v1 is unsupported");
         rmSync(v1Dir, { recursive: true, force: true });
     });
 
@@ -643,11 +641,10 @@ describe("trade ledger checker report (replay)", () => {
 // ============================================================================
 
 describe("trade ledger checker incomplete-ledger guard (W1)", () => {
-    const fixtureDir = path.join(process.cwd(), "artifacts", "test-logs", "trade-ledger-incomplete-spec");
+    let fixtureDir: string;
 
     beforeEach(() => {
-        rmSync(fixtureDir, { recursive: true, force: true });
-        mkdirSync(fixtureDir, { recursive: true });
+        fixtureDir = mkdtempSync(path.join(tmpdir(), "trade-ledger-incomplete-spec-"));
         writeFileSync(path.join(fixtureDir, "provenance.json"), JSON.stringify(eligibleProvenance));
         writeFileSync(path.join(fixtureDir, "ledger.jsonl"), JSON.stringify(fixtureRow(0, 2, 10)) + "\n");
         writeFileSync(path.join(fixtureDir, "signal-ranks.jsonl"), "");

@@ -1,3 +1,4 @@
+import { makeBacktestSettings, makeCapitalSettings } from "./helpers/backtest-settings-fixtures";
 import assert from "node:assert/strict";
 import {
     isTopMeanEngineDiagnosticSample,
@@ -28,8 +29,8 @@ async function runWorkerParityTest(): Promise<void> {
         ],
         strategyKey: "dema_confirmation",
         strategyParams: { lookback: 20, threshold: 0.5 },
-        backtestSettings: { direction: "long", slippage: 0, commission: 0 } as any,
-        capitalSettings: { initialCapital: 10000, positionSize: 100, commission: 0, sizingMode: "capital_pct", fixedTradeAmount: 1000 } as any,
+        backtestSettings: makeBacktestSettings(),
+        capitalSettings: makeCapitalSettings(),
         interval: "4h",
         useRustEnginePreference: false,
     };
@@ -115,7 +116,7 @@ function testDataEndTimeFromClosedCandleArray(): void {
     // is the OPEN bar's time — which must NOT be used as dataEndTime. This is
     // the exact trap F2 fixes: reading the prepared array's last element would
     // yield openBarTime instead of closedBarTime.
-    const prepared = prepareClosedCandleData(candles, "4h", { direction: "long" }, nowSec);
+    const prepared = prepareClosedCandleData(candles, "4h", makeBacktestSettings(), nowSec);
     const preparedTailTime = Number(prepared[prepared.length - 1]!.time);
     assert.equal(preparedTailTime, openBarTime, "prepared array tail is the bridged OPEN bar in next_open mode");
     assert.notEqual(preparedTailTime, closedBarTime, "prepared tail must NOT equal the closed bar time");

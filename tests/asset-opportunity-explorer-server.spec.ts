@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { waitFor } from "./helpers/wait-for";
 import { afterEach, describe, it } from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -565,12 +566,7 @@ function waitForQueuedScan(
     key: string,
     label = `scan ${key} in flight`,
 ): Promise<void> {
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline) {
-        if ((gates.get(key)?.length ?? 0) > 0) return Promise.resolve();
-        return new Promise((resolve) => setTimeout(resolve, 5)).then(() => waitForQueuedScan(gates, key, label));
-    }
-    return Promise.reject(new Error(`timed out waiting for ${label}`));
+    return waitFor(() => (gates.get(key)?.length ?? 0) > 0, 2_000, label);
 }
 
 function releaseScan(gates: Map<string, Array<() => void>>, key: string): void {

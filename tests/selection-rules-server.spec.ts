@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { waitFor } from "./helpers/wait-for";
 import { afterEach, describe, it } from "node:test";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -63,13 +64,7 @@ function makeResponse(): any {
 
 /** The run route installs its owner across several async hops; wait for it. */
 async function waitForRunInstall(): Promise<void> {
-    // Wall-clock deadline, not a tick count: under load the async route
-    // handler can take more than any fixed number of event-loop turns to
-    // reach ownership, which made the mid-run read 404 spuriously.
-    const deadline = Date.now() + 5_000;
-    while (Date.now() < deadline && getRunOwnerForTests() === 0) {
-        await new Promise((resolve) => setTimeout(resolve, 5));
-    }
+    await waitFor(() => getRunOwnerForTests() !== 0, 5_000, "selection-rule run ownership");
 }
 
 function makeLedgerRow(args: {
