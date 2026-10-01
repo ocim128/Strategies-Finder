@@ -43,6 +43,7 @@ import { adjacent_range_gap_open_intrabar_reclaim } from "./lib/adjacent_range_g
 import { extreme_age_consolidation_decay_fade } from "./lib/extreme_age_consolidation_decay_fade";
 import { window_giveback_directional_asymmetry } from "./lib/window_giveback_directional_asymmetry";
 import { adjacent_overlap_coagulation_continuation } from "./lib/adjacent_overlap_coagulation_continuation";
+import { directional_body_streak_exhaustion } from "./lib/directional_body_streak_exhaustion__20260816T140500Z";
 
 export interface StrategyManifestEntry {
     key: string;
@@ -91,6 +92,7 @@ export const strategyManifest: readonly StrategyManifestEntry[] = [
     { key: "extreme_age_consolidation_decay_fade", strategy: extreme_age_consolidation_decay_fade },
     { key: "window_giveback_directional_asymmetry", strategy: window_giveback_directional_asymmetry },
     { key: "adjacent_overlap_coagulation_continuation", strategy: adjacent_overlap_coagulation_continuation },
+    { key: "directional_body_streak_exhaustion", strategy: directional_body_streak_exhaustion },
 ];
 
 export function createStrategiesRecordFromManifest(

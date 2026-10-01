@@ -4,6 +4,24 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Sync the missing built-in strategy manifests
+
+- **Evidence:** The full suite found all four generated-manifest checks out of
+  sync. `directional_body_streak_exhaustion` existed in the source library but
+  was absent from the eager registry, browser summary, lazy loaders, and key
+  list, so users could not select or load it as a built-in. The full run had
+  241 passes and 8 failures before this fix.
+- **Change:** Ran the documented manifest generator to register the existing
+  strategy in all four generated files; no strategy source changed.
+- **Checks:** `npm run strategies:sync-manifest`,
+  `npm run test -- strategy-manifest-sync.spec.ts`,
+  `npm run test -- new-strategy-lib-smoke.spec.ts`, `npm run typecheck`, and
+  `git diff --check` pass.
+- **Follow-up:** The prior full run also failed Finder Asset Opportunity cache
+  capacity, metadata, export diagnostics, and server-plugin specs; pair-list
+  pool registry; and trade-ledger checker/parity. Rerun the suite to confirm
+  those failures' current status.
+
 ## 2026-10-01 - Restore Trade Gate batch integration test seam
 
 - **Evidence:** `tests/trade-gate.spec.ts` failed 9 of 10 tests because its
@@ -16,8 +34,9 @@ repeating the same investigation.
   `npm run typecheck:tests`, and `git diff --check` pass.
 - **Follow-up:** The last broad run also failed Finder asset-opportunity cache
   capacity, metadata, export diagnostics, and server-plugin specs; pair-list
-  pool registry; strategy manifest sync; and trade-ledger checker/parity.
-  Rerun the broad suite to confirm their current status.
+  pool registry; strategy manifest sync; and trade-ledger checker/parity. The
+  strategy manifest drift is fixed in the newer entry; rerun the broad suite
+  to confirm the other failures' current status.
 
 ## 2026-10-01 - Repair endpoint parity confirmation fixture
 

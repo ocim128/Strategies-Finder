@@ -44,4 +44,5 @@ export const builtInStrategyLoaders: Record<string, () => Promise<Strategy>> = {
     "extreme_age_consolidation_decay_fade": () => import("./lib/extreme_age_consolidation_decay_fade").then(m => m.extreme_age_consolidation_decay_fade),
     "window_giveback_directional_asymmetry": () => import("./lib/window_giveback_directional_asymmetry").then(m => m.window_giveback_directional_asymmetry),
     "adjacent_overlap_coagulation_continuation": () => import("./lib/adjacent_overlap_coagulation_continuation").then(m => m.adjacent_overlap_coagulation_continuation),
+    "directional_body_streak_exhaustion": () => import("./lib/directional_body_streak_exhaustion__20260816T140500Z").then(m => m.directional_body_streak_exhaustion),
 };

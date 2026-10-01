@@ -42,4 +42,5 @@ export const builtInStrategyKeys: readonly string[] = [
     "extreme_age_consolidation_decay_fade",
     "window_giveback_directional_asymmetry",
     "adjacent_overlap_coagulation_continuation",
+    "directional_body_streak_exhaustion",
 ];

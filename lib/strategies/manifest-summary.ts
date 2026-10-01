@@ -406,4 +406,14 @@ export const builtInStrategySummary: readonly BuiltInStrategySummary[] = [
         walkForwardParams: ["min_final_overlap"],
     },
     },
+    {
+        key: "directional_body_streak_exhaustion",
+        name: "Directional Body Streak Exhaustion",
+        description: "Reversal fade when a directional streak of bars exhausts and turns on current bar.",
+        metadata: {
+        role: "entry",
+        direction: "both",
+        walkForwardParams: ["minStreak"]
+    },
+    },
 ];
