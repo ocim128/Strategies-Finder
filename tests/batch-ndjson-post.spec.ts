@@ -17,9 +17,9 @@ type FetchResponse = {
     text?: string;
 };
 
-function ndjsonStream(lines: object[]): ReadableStream<Uint8Array> {
+function ndjsonStream(lines: object[], trailingNewline = true): ReadableStream<Uint8Array> {
     const encoder = new TextEncoder();
-    const content = lines.map((l) => JSON.stringify(l)).join("\n") + "\n";
+    const content = lines.map((l) => JSON.stringify(l)).join("\n") + (trailingNewline ? "\n" : "");
     return new ReadableStream<Uint8Array>({
         start(controller) {
             controller.enqueue(encoder.encode(content));
@@ -51,6 +51,22 @@ function mockFetch(responder: (url: string, init?: any) => FetchResponse | Promi
 }
 
 describe("postBatchNdjson (audit NDJSON-POST-helper finding)", () => {
+    it("retains the completed result when the terminal record has no trailing newline", async () => {
+        const result = { type: "done", summary: "2 pairs completed", totals: { completed: 2 } };
+        mockFetch(() => ({
+            ok: true,
+            status: 200,
+            body: ndjsonStream([{ type: "start", total: 2 }, result], false),
+        }));
+        let completed: unknown;
+        await postBatchNdjson<{ type: string }>({
+            endpoint: "/api/batch-backtest/run",
+            body: {},
+            handlers: { onDone: (event) => { completed = event; } },
+        });
+        expect(completed).to.deep.equal(result);
+    });
+
     it("dispatches stream events to typed handlers and resolves after `done`", async () => {
         const events: string[] = [];
         const observed: string[] = [];

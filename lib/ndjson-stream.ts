@@ -5,6 +5,7 @@ import { parseJsonPreservingNonFinite } from "./json-utils";
  * Maps event types to camelCase handlers, e.g. 'symbol_complete' ->
  * 'onSymbolComplete'. Malformed non-empty lines always fail with their 1-based
  * line number; silently accepting a partial protocol is never safe.
+ * A final non-empty record at clean EOF is processed even without a newline.
  *
  * `requireTerminal` (default false): when true, a stream that reaches EOF
  *   without first processing a terminal event throws. The default terminal
@@ -53,6 +54,23 @@ export async function consumeNdjsonStream<T extends { type: string }>(
         return "on" + camel.charAt(0).toUpperCase() + camel.slice(1);
     };
 
+    const processLine = (rawLine: string): boolean => {
+        lineNumber += 1;
+        const line = rawLine.trim();
+        if (!line) return false;
+        let event: T;
+        try {
+            event = parseJsonPreservingNonFinite(line) as T;
+        } catch {
+            throw new MalformedNdjsonLineError(lineNumber);
+        }
+        options?.onEvent?.(event);
+        const handler = handlers[toHandlerKey(event.type)];
+        if (handler) handler(event);
+        sawTerminal = terminalTypes.includes(event.type);
+        return sawTerminal;
+    };
+
     try {
         for (;;) {
             const { done, value } = await reader.read();
@@ -60,28 +78,15 @@ export async function consumeNdjsonStream<T extends { type: string }>(
             buffer += decoder.decode(value, { stream: true });
             let newlineIndex: number;
             while ((newlineIndex = buffer.indexOf("\n")) >= 0) {
-                const line = buffer.slice(0, newlineIndex).trim();
+                const line = buffer.slice(0, newlineIndex);
                 buffer = buffer.slice(newlineIndex + 1);
-                lineNumber += 1;
-                if (!line) continue;
-                let event: T;
-                try {
-                    event = parseJsonPreservingNonFinite(line) as T;
-                } catch {
-                    throw new MalformedNdjsonLineError(lineNumber);
-                }
-                options?.onEvent?.(event);
-                const handlerKey = toHandlerKey(event.type);
-                const handler = handlers[handlerKey];
-                if (handler) {
-                    handler(event);
-                }
-                if (terminalTypes.includes(event.type)) {
-                    sawTerminal = true;
-                    return;
-                }
+                if (processLine(line)) return;
             }
         }
+        // Flush decoder state only after clean EOF. A read error must still
+        // propagate rather than admitting a possibly truncated final record.
+        buffer += decoder.decode();
+        if (buffer && processLine(buffer)) return;
         if (options?.requireTerminal && !sawTerminal) {
             throw new StreamEndedBeforeTerminalError();
         }

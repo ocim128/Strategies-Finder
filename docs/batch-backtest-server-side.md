@@ -78,6 +78,14 @@ Batch Run and OPEN_SCORE USD Replay require
 the Vite server runtime. Both `vite dev` and `vite preview` register these
 endpoints; a static-only deployment does not.
 
+The shared browser stream reader (`lib/ndjson-stream.ts`) processes a final
+non-empty JSON record at clean EOF even when it has no trailing newline.
+Batch still requires a terminal event (`done`/`fatal`, or the caller's configured
+types); EOF without one triggers recovery. Malformed records, including an
+unterminated final record, fail with their 1-based line number. A stream read
+error propagates without admitting a buffered final record. The transport
+contract is covered by `ndjson-stream.spec.ts` and `batch-ndjson-post.spec.ts`.
+
 ## Starting the dev server with extra heap
 
 A 1000-pair run plus retained analysis artifacts holds several GB of OHLCV /

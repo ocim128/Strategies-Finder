@@ -486,6 +486,11 @@ infer server ownership for another Finder mode from the shared result types.
 - If the initiating NDJSON stream breaks without a reload, the same tab polls
   the scoped status endpoint to terminal. It never promotes provisional
   streamed candidates to the final result.
+- The shared browser reader (`lib/ndjson-stream.ts`) dispatches the final JSON
+  record at clean EOF even without a trailing newline, including Finder's
+  configured terminal event types. Malformed final records fail with their
+  line number; EOF without the required terminal event remains an interrupted
+  stream. See `tests/ndjson-stream.spec.ts`.
 
 ## Memory
 

@@ -4,6 +4,30 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Preserve final streamed results at clean EOF
+
+- **Evidence:** The shared browser NDJSON reader only dispatched newline-ended
+  records and discarded its remaining buffer at EOF. Six new regression cases
+  failed before the fix: terminal records without a newline appeared interrupted,
+  final progress was lost, malformed final records were ignored, and final-event
+  handler errors never reached callers. Finder, Batch, and data-download clients
+  use this reader.
+- **Change:** Reused one record dispatcher for newline-delimited records and the
+  decoder's final buffer at clean EOF. Required terminal events, line-numbered
+  parse errors, handler errors, and reader-lock cleanup retain their behavior.
+  Added multibyte/chunk-boundary, custom-terminal, whitespace, read-error, and
+  Batch transport coverage; documented the Finder and Batch stream contract.
+- **Checks:** All five focused specs pass: `ndjson-stream.spec.ts`,
+  `batch-ndjson-post.spec.ts`, `finder-manager-lifecycle.browser.spec.ts`,
+  `finder-asset-opportunity-stream.spec.ts`, and
+  `batch-backtest-service-lifecycle.browser.spec.ts`. `npm run typecheck`,
+  `npm run typecheck:tests`, and `git diff --check` pass.
+- **Follow-up:** Triage confirmed four existing failures in Finder Asset
+  Opportunity metadata, Finder export diagnostics, Trade Ledger checker, and
+  Trade Ledger parity golden. The checker expects retired regeneration advice;
+  the golden fixture hash differs on this CRLF checkout. The Finder server-plugin
+  spec now passes. No full-suite run was performed for this change.
+
 ## 2026-10-01 - Align Finder cache capacity checks with signal reserve
 
 - **Evidence:** The full run failed the pair-cache capacity spec: it expected
