@@ -258,9 +258,12 @@ export function saveLatestResultsSnapshot(input: LatestResultsSnapshotInput): vo
 }
 
 export function clearPersistedLatestResults(): void {
-    if (typeof localStorage === "undefined") return;
     try {
-        localStorage.removeItem(BATCH_RESULTS_STORAGE.key);
+        // Storage acquisition can throw just like removeItem. Cleanup must
+        // not interrupt run startup or leave stale result actions enabled.
+        const storage = globalThis.localStorage;
+        if (storage === undefined) return;
+        storage.removeItem(BATCH_RESULTS_STORAGE.key);
     } catch (error) {
         debugLogger.error("batch_backtest.latest_results_clear_failed", {
             error: error instanceof Error ? error.message : String(error),

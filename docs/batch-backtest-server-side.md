@@ -273,6 +273,14 @@ Finder result snapshots. Persisted rows are scalar-only: `data`, `signals`,
 `result.trades`, and `result.equityCurve` are stripped before writing to
 localStorage. Reloading restores the rendered rows and Copy Results output.
 
+Clearing the persisted snapshot is best-effort: unavailable storage, denied
+access to the storage accessor, or a failed removal must not interrupt Batch
+startup or in-memory result invalidation. Storage failures are logged as
+`batch_backtest.latest_results_clear_failed`; old rows and their copy/analysis
+actions are still cleared. A snapshot whose removal failed may remain stored.
+This contract is covered by `batch-backtest-service-lifecycle.browser.spec.ts`
+and `batch-backtest-snapshot.spec.ts`.
+
 OPEN_SCORE USD is not restored from localStorage because it needs heavy per-row
 artifacts. In server-side mode, the reattach status endpoint can still
 re-enable the OPEN_SCORE USD button while the server artifact TTL is valid and

@@ -4,6 +4,26 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Finish Batch result invalidation when storage is denied
+
+- **Evidence:** `clearPersistedLatestResults` acquired `localStorage` outside
+  its error boundary. Denied accessor access interrupted `clearStaleRows` before
+  clearing rows or disabling OPEN_SCORE USD/copy actions. The same helper runs
+  before a new Batch server request. A new lifecycle regression reproduced the
+  interrupted clear; the removal-method failure case already passed.
+- **Change:** Acquire storage inside the cleanup error boundary, keeping removal
+  best-effort and preserving its error log. Covered accessor and method denial
+  through the real result-clear lifecycle, plus successful targeted deletion and
+  absent storage. Documented that a snapshot can remain stored after failed
+  removal while in-memory invalidation still completes.
+- **Checks:** All four focused specs pass: `batch-backtest-service-lifecycle.browser.spec.ts`,
+  `batch-backtest-snapshot.spec.ts`, `persisted-json.spec.ts`, and
+  `settings-compat.spec.ts`. `npm run typecheck`, `npm run typecheck:tests`, and
+  `git diff --check` pass. The baseline full suite passed all 246 current specs
+  before this patch; it was not repeated after the focused checks.
+- **Follow-up:** This resolves the Batch cleanup issue named in the prior
+  denied-storage entry. No saved schema changed.
+
 ## 2026-10-01 - Protect ledger replay data from rule mutations
 
 - **Evidence:** `createRuleRowProxy` guarded reads but forwarded mutations to the

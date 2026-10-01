@@ -8,6 +8,31 @@ import {
 } from "../lib/batch-backtest/batch-backtest-snapshot";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { BacktestResult, OHLCVData, Signal, Time } from "../lib/types/strategies";
+import { BATCH_RESULTS_STORAGE, clearPersistedLatestResults } from "../lib/batch-backtest/browser/batch-browser-store";
+
+describe("Batch snapshot cleanup", () => {
+    it("removes only the latest-results snapshot and tolerates absent storage", () => {
+        const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+        const entries = new Map([
+            [BATCH_RESULTS_STORAGE.key, "old results"],
+            ["playground_app_settings", "saved settings"],
+        ]);
+        Object.defineProperty(globalThis, "localStorage", {
+            configurable: true,
+            value: { removeItem: (key: string) => entries.delete(key) },
+        });
+        try {
+            clearPersistedLatestResults();
+            expect(entries.has(BATCH_RESULTS_STORAGE.key)).to.equal(false);
+            expect(entries.get("playground_app_settings")).to.equal("saved settings");
+            delete (globalThis as { localStorage?: Storage }).localStorage;
+            expect(() => clearPersistedLatestResults()).not.to.throw();
+        } finally {
+            if (originalDescriptor) Object.defineProperty(globalThis, "localStorage", originalDescriptor);
+            else delete (globalThis as { localStorage?: Storage }).localStorage;
+        }
+    });
+});
 
 function makeData(): OHLCVData[] {
     return [

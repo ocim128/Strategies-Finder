@@ -1525,6 +1525,40 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestOpenScoreUsdBtn.disabled, "OPEN_SCORE USD disabled after clear").to.equal(true);
     });
 
+    for (const failureMode of ["accessor", "removeItem"] as const) {
+        it(`clears stale rows and analysis actions when storage ${failureMode} is denied`, () => {
+            const dom = setupForAnalysis();
+            const controller = svc().batchRun;
+            controller.setLastResults([{ symbol: "BTCUSDT", status: "no_trades" }]);
+            dom.batchBacktestResults.appendChild(fakeEl());
+            dom.batchBacktestCopyBtn.disabled = false;
+            dom.batchBacktestCopyOpenPositionsBtn.disabled = false;
+            svc().updateArtifactActionButtons(dom);
+            expect(dom.batchBacktestOpenScoreUsdBtn.disabled).to.equal(false);
+            const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage")!;
+            const storage = globalThis.localStorage;
+            const originalRemove = storage.removeItem;
+            const denied = () => { throw new DOMException("Storage access denied", "SecurityError"); };
+            if (failureMode === "accessor") {
+                Object.defineProperty(globalThis, "localStorage", { configurable: true, get: denied });
+            } else {
+                storage.removeItem = denied;
+            }
+            try {
+                expect(() => svc().clearStaleResults(dom)).not.to.throw();
+                expect(controller.getLastResults()).to.deep.equal([]);
+                expect(dom.batchBacktestResults.children).to.have.length(0);
+                expect(dom.batchBacktestOpenScoreUsdBtn.disabled).to.equal(true);
+                expect(dom.batchBacktestCopyBtn.disabled).to.equal(true);
+                expect(dom.batchBacktestCopyOpenPositionsBtn.disabled).to.equal(true);
+                expect(svc().lastRunFingerprint).to.equal(null);
+            } finally {
+                storage.removeItem = originalRemove;
+                Object.defineProperty(globalThis, "localStorage", originalDescriptor);
+            }
+        });
+    }
+
     it("rejects a second runBatch synchronously while one is in flight (audit single-flight finding)", async () => {
         // Intent being locked (AGENTS.md rule 8): the browser-side runInFlight
         // guard fires BEFORE any await and before the Run button is disabled,
