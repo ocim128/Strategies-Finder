@@ -14,7 +14,10 @@ replace IBKR as a source of truth, or run as a scheduled cloud job.
 - The default Alpaca feed is `iex`; the default adjustment is `split`.
 - `period=max` and `period=all` are supported by translating the request into
   a full-range paginated fetch. Bounded periods such as `1y`, `6m`, or `30d`
-  are also supported.
+  are also supported. A bounded period is a strict calendar-time limit for
+  both Download and Sync: `4d` requests only the last four days. Sync's
+  overlap is clipped to that limit, and an empty window is reported without
+  fetching an earlier week.
 - Alpaca credentials are read only by the Vite/Node process from
   `ALPACA_API_KEY` and `ALPACA_API_SECRET`.
 
@@ -52,12 +55,19 @@ exports them before launching Vite. Optional server-side overrides are
 
 Both actions merge fetched rows with the existing CSV. This is intentional:
 an Alpaca download must not destroy older history when its requested window is
-shorter than the file already on disk. When a split-adjusted interval has no
-recorded Alpaca adjustment provenance, or Alpaca reports a split since its last
-full-history refresh, the workflow fetches the complete adjusted history. A
-complete same-provider refresh replaces that interval's old rows so pre-split
-bars cannot remain at a stale nominal price scale. An incomplete full refresh
-leaves the existing CSV untouched.
+shorter than the file already on disk. The resulting CSV can therefore contain
+more than the selected period; the UI's `+N bars` counts fetched rows.
+
+A fresh Alpaca download records its feed, adjustment, and split-adjustment
+date, including for bounded periods. When existing Alpaca rows lack that
+provenance, the settings change their price scale, a later split is detected,
+or the split lookup fails, a bounded request fails for that symbol and leaves
+its CSV and catalog unchanged. It asks for **Download** with **Data Period
+max**; it never silently expands a bounded request into full history. A
+complete explicit full refresh replaces a same-provider interval's old rows
+so pre-split bars cannot remain at a stale nominal price scale. An incomplete
+full refresh leaves the existing CSV untouched. Download onto another provider
+remains an explicit mixed-source merge within the selected period.
 
 The catalog records the provider as follows:
 
@@ -88,9 +98,9 @@ daily and is not a source for a derived `4h` file.
 - Alpaca and IBKR data can differ in feed, adjustments, coverage, and latest
   bar availability. Treat `mixed` intervals as an explicit research choice.
 - Alpaca's split-adjusted bars change historical prices after a reverse or
-  forward split. The catalog records feed, adjustment, and the last complete
-  split-adjusted refresh date; a later split triggers a complete refresh of
-  that interval before new results are merged.
+  forward split. The catalog records feed, adjustment, and the established
+  split-adjustment date; a later split requires an explicit max/all refresh
+  of that interval before new results are merged.
 - API keys never appear in URLs, catalog JSON, CSV files, NDJSON events, or
   returned per-symbol results.
 - Stop/cancellation has a no-write invariant for the affected symbol.

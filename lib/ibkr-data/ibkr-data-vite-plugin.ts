@@ -1780,9 +1780,9 @@ export function assertSourceConstraints(
  * no `period=max` parameter, so the app's max/all periods map to an epoch
  * start and rely on the fetcher's pagination to return all available bars.
  * For incremental Alpaca syncs, the caller passes `startOverride` (the
- * catalog's last bar time) so the window overlaps existing data — the merge
- * step's last-write-wins dedup handles the overlap safely. Exported for unit
- * tests.
+ * catalog's last bar time) so the window overlaps existing data within the
+ * selected period. The merge step's last-write-wins dedup handles the overlap
+ * safely. Exported for unit tests.
  */
 export function resolveAlpacaWindow(
     period: string,
@@ -1796,9 +1796,10 @@ export function resolveAlpacaWindow(
         }
     }
     const endMs = nowMs;
+    const earliestStartMs = periodMs === null ? 0 : Math.max(0, endMs - periodMs);
     const startMs = startOverrideMs !== undefined && Number.isFinite(startOverrideMs)
-        ? Math.max(0, startOverrideMs)
-        : periodMs === null ? 0 : endMs - periodMs;
+        ? Math.max(earliestStartMs, startOverrideMs)
+        : earliestStartMs;
     return {
         start: new Date(startMs).toISOString(),
         end: new Date(endMs).toISOString(),
@@ -1831,8 +1832,6 @@ type AlpacaSymbolWorker = (
     config?: AlpacaConfig,
 ) => Promise<Record<string, unknown>>;
 
-const ALPACA_SHORT_WINDOW_MAX_MS = 7 * 24 * 60 * 60 * 1000;
-const ALPACA_EMPTY_WINDOW_FALLBACK_MS = 7 * 24 * 60 * 60 * 1000;
 /**
  * Concurrent in-flight symbols for the Alpaca batch loop. Bounded so Alpaca's
  * per-key rate limits stay observable; pagination remains sequential WITHIN a
@@ -1850,6 +1849,20 @@ export async function syncOneAlpacaSymbol(
     config: AlpacaConfig = resolveAlpacaConfig(),
 ): Promise<Record<string, unknown>> {
     const startedAt = Date.now();
+    const cancelledResult = (): Record<string, unknown> => ({
+        symbol,
+        markedSymbol: markIbkrSymbol(symbol),
+        interval,
+        bars: 0,
+        fetchedBars: 0,
+        firstTime: null,
+        lastTime: null,
+        filePath: getCsvPath(symbol, interval),
+        cancelled: true,
+        complete: false,
+        stopReason: "cancelled",
+        source: "alpaca",
+    });
     const existingEntry = findCatalogEntry(catalog, symbol);
     const existingInterval = existingEntry?.intervals[interval];
     const existingSource = existingInterval?.source;
@@ -1869,48 +1882,43 @@ export async function syncOneAlpacaSymbol(
     if (!timeframe) {
         throw new HttpStatusError(400, `Alpaca source does not support interval "${interval}".`);
     }
+    if (signal?.aborted) return cancelledResult();
 
     const existingCandles = readCsvCandles(symbol, interval);
+    // Validate the selected period before any provider request. Bounded
+    // downloads and syncs must never silently expand to all available history.
+    const requestedWindow = resolveAlpacaWindow(period);
+    const fullHistoryRequested = isMaxHistoryPeriod(period);
 
     const adjustmentTokens = config.adjustment.toLowerCase().split(",").map((part) => part.trim());
     const splitAdjusted = adjustmentTokens.includes("split") || adjustmentTokens.includes("all");
     const splitAdjustedThrough = existingInterval?.splitAdjustedThrough;
     const sameAlpacaPriceScale = existingInterval?.alpacaFeed === config.feed
         && existingInterval?.alpacaAdjustment === config.adjustment;
-    let refreshFullHistory = false;
+    const existingHasAlpacaBars = existingCandles.length > 0
+        && (existingSource === "alpaca" || existingSource === "mixed");
+    let refreshFullHistory = fullHistoryRequested && !syncOnly && existingHasAlpacaBars;
 
     // Alpaca's split adjustment is retroactive. An incremental sync only
     // fetches recent bars, so an old pre-split series otherwise stays at its
     // old nominal price scale while newly fetched bars use the new scale.
-    // Old catalog entries have no adjustment provenance and get one complete
-    // refresh before incremental syncing is trusted.
-    if (splitAdjusted && (existingInterval || existingCandles.length > 0)) {
+    // Old Alpaca catalog entries need one explicit max/all refresh before
+    // incremental merging is trusted. A Download onto another provider is
+    // the existing opt-in mixed-source workflow, not an Alpaca history repair.
+    if (splitAdjusted && existingHasAlpacaBars && !refreshFullHistory) {
         if (!sameAlpacaPriceScale || !splitAdjustedThrough) {
             refreshFullHistory = true;
         } else {
             try {
                 const splits = await fetchAlpacaSplits(config, symbol, signal);
-                const adjustedThroughToday = new Date().toISOString().slice(0, 10);
+                const adjustedThroughToday = requestedWindow.end.slice(0, 10);
                 refreshFullHistory = splits.some(
                     (split) => split.executionDate > splitAdjustedThrough
                         && split.executionDate <= adjustedThroughToday,
                 );
             } catch (error) {
                 if (signal?.aborted) {
-                    return {
-                        symbol,
-                        markedSymbol: markIbkrSymbol(symbol),
-                        interval,
-                        bars: 0,
-                        fetchedBars: 0,
-                        firstTime: null,
-                        lastTime: null,
-                        filePath: getCsvPath(symbol, interval),
-                        cancelled: true,
-                        complete: false,
-                        stopReason: "cancelled" as const,
-                        source: "alpaca" as const,
-                    };
+                    return cancelledResult();
                 }
                 // A corporate-actions lookup failure must not silently bless
                 // an incremental merge. A full adjusted-bar refresh can still
@@ -1925,6 +1933,12 @@ export async function syncOneAlpacaSymbol(
             }
         }
     }
+    if (refreshFullHistory && !fullHistoryRequested) {
+        throw new HttpStatusError(
+            409,
+            `Alpaca cannot safely merge the requested ${period} window for ${symbol} (${interval}): existing split-adjusted prices need a full refresh. Run Download with Data Period max to refresh them. The existing dataset was left unchanged.`,
+        );
+    }
 
     // Incremental sync overlaps the last bar for late corrections, except
     // when an adjustment change requires Alpaca's complete split-adjusted
@@ -1935,45 +1949,15 @@ export async function syncOneAlpacaSymbol(
     const startOverrideMs = !refreshFullHistory && syncOnly && Number.isFinite(existingLastMs)
         ? existingLastMs - (ALPACA_SYNC_OVERLAP_MS_BY_INTERVAL[interval] ?? 2 * 24 * 60 * 60 * 1000)
         : undefined;
-    const window = resolveAlpacaWindow(refreshFullHistory ? "max" : period, Date.now(), startOverrideMs);
+    const window = refreshFullHistory
+        ? resolveAlpacaWindow("max", Date.parse(requestedWindow.end))
+        : resolveAlpacaWindow(period, Date.parse(requestedWindow.end), startOverrideMs);
 
-    let result = await fetchAlpacaBars(
+    const result = await fetchAlpacaBars(
         config,
         { symbol, timeframe, start: window.start, end: window.end },
         signal,
     );
-    const periodMs = parsePeriodToMs(period);
-    if (
-        !syncOnly
-        && result.candles.length === 0
-        && result.stopReason === "covered"
-        && periodMs !== null
-        && periodMs <= ALPACA_SHORT_WINDOW_MAX_MS
-        && signal?.aborted !== true
-    ) {
-        const fallbackStart = new Date(
-            Math.max(0, Date.parse(window.start) - ALPACA_EMPTY_WINDOW_FALLBACK_MS),
-        ).toISOString();
-        const initialPages = result.pages;
-        const initialRetries = result.retries;
-        debugLogger.info("alpaca.fetch.empty_window_fallback", {
-            target: "alpaca",
-            symbol,
-            interval,
-            period,
-            fallbackDays: 7,
-        });
-        const fallbackResult = await fetchAlpacaBars(
-            config,
-            { symbol, timeframe, start: fallbackStart, end: window.end },
-            signal,
-        );
-        result = {
-            ...fallbackResult,
-            pages: initialPages + fallbackResult.pages,
-            retries: initialRetries + fallbackResult.retries,
-        };
-    }
     const isCancelled = (): boolean => result.stopReason === "cancelled" || signal?.aborted === true;
 
     // Cancellation invariant: no CSV/catalog writes if aborted. Mirrors
@@ -1987,20 +1971,7 @@ export async function syncOneAlpacaSymbol(
             bars: result.candles.length,
             durationMs: Date.now() - startedAt,
         });
-        return {
-            symbol,
-            markedSymbol: markIbkrSymbol(symbol),
-            interval,
-            bars: 0,
-            fetchedBars: 0,
-            firstTime: null,
-            lastTime: null,
-            filePath: getCsvPath(symbol, interval),
-            cancelled: true,
-            complete: false,
-            stopReason: "cancelled" as const,
-            source: "alpaca" as const,
-        };
+        return cancelledResult();
     }
     if (result.candles.length === 0) {
         throw new HttpStatusError(502, `Alpaca returned no ${interval} bars for ${symbol} in the requested window.`);
@@ -2032,9 +2003,8 @@ export async function syncOneAlpacaSymbol(
     // Catalog source: if the interval already existed with a DIFFERENT
     // source, this is now a multi-provider file — label it `"mixed"` so the
     // catalog stays honest. A fresh interval (no prior bars, or already
-    // Alpaca) records `"alpaca"`. `"mixed"` intervals stay ineligible for
-    // Alpaca sync (the source guard above still requires `"alpaca"`), so the
-    // user must consciously decide to keep merging.
+    // Alpaca) records `"alpaca"`. Later syncs keep mixed intervals labelled
+    // honestly and check the adjustment provenance of their Alpaca rows.
     const catalogSource: IbkrIntervalMeta["source"] = existingHasBars && existingSource !== "alpaca"
         ? "mixed"
         : "alpaca";
@@ -2055,8 +2025,8 @@ export async function syncOneAlpacaSymbol(
             alpacaAdjustment: config.adjustment,
             ...(splitAdjusted
                 ? {
-                    splitAdjustedThrough: refreshFullHistory
-                        ? new Date().toISOString().slice(0, 10)
+                    splitAdjustedThrough: refreshFullHistory || !existingHasAlpacaBars
+                        ? requestedWindow.end.slice(0, 10)
                         : existingInterval?.splitAdjustedThrough,
                 }
                 : {}),

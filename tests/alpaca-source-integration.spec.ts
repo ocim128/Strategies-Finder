@@ -447,11 +447,13 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
     beforeEach(() => {
         // Stub fetch to return one Alpaca-shaped bar so the worker has data
         // to merge. No real network, no real creds.
-        globalThis.fetch = (async () => ({
+        globalThis.fetch = (async (input: RequestInfo | URL) => ({
             ok: true,
             status: 200,
             headers: { get: () => null },
-            json: async () => ({ bars: [{ t: "2026-07-23T19:30:00Z", o: 207, h: 209, l: 206, c: 208, v: 1000 }] }),
+            json: async () => input.toString().includes("/corporate-actions")
+                ? { corporate_actions: {} }
+                : { bars: [{ t: "2026-07-23T19:30:00Z", o: 207, h: 209, l: 206, c: 208, v: 1000 }] },
             text: async () => "",
         }) as unknown as Response) as typeof fetch;
     });
@@ -545,7 +547,7 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         assert.equal(catalog.entries[0]!.intervals["30m"]!.stopReason, "data_gap");
     });
 
-    it("extends a short empty download window across the prior market week", async () => {
+    it("reports an empty short download without fetching outside the requested window", async () => {
         const requestedUrls: string[] = [];
         let calls = 0;
         globalThis.fetch = (async (input: RequestInfo | URL) => {
@@ -569,13 +571,14 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
         };
         const config = { apiKey: "PK", apiSecret: "sk", host: "https://data.alpaca.markets", feed: "iex", adjustment: "split" };
 
-        const result = await syncOneAlpacaSymbol(catalog as never, FALLBACK_SYMBOL, "30m", "1d", false, undefined, config as never);
-
-        assert.equal(calls, 2);
-        assert.equal(result.fetchedBars, 1);
-        const firstStart = Date.parse(new URL(requestedUrls[0]!).searchParams.get("start")!);
-        const fallbackStart = Date.parse(new URL(requestedUrls[1]!).searchParams.get("start")!);
-        assert.equal(firstStart - fallbackStart, 7 * 24 * 60 * 60 * 1000);
+        await assert.rejects(
+            syncOneAlpacaSymbol(catalog as never, FALLBACK_SYMBOL, "30m", "1d", false, undefined, config as never),
+            /returned no 30m bars.*requested window/,
+        );
+        assert.equal(calls, 1);
+        const request = new URL(requestedUrls[0]!);
+        assert.equal(Date.parse(request.searchParams.get("end")!) - Date.parse(request.searchParams.get("start")!), 24 * 60 * 60 * 1000);
+        assert.equal(catalog.entries.length, 0);
     });
 });
 
