@@ -57,6 +57,9 @@ support `feat_rank`.
 The row-builder golden fixture remains the parity oracle. The gate regression
 spec also checks that the shared values are unchanged and that
 `candidatesAtTime` is available to a predicate.
+Its server integration case runs the production Batch processor against a
+temporary certified archive and checks the resulting gate counters and
+certification provenance.
 
 ## Counters and limits
 

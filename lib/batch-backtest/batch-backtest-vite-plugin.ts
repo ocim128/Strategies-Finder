@@ -2665,6 +2665,9 @@ export const __testInternals = {
         return ensureCurrentArtifactStoreDir();
     },
     parseTradeGateOptionsForTests: parseTradeGateOptions,
+    setTradeGateArchiveRootForTests(root: string | null): void {
+        tradeGateArchiveRoot = root;
+    },
     async resolveTradeGateForTests(serverRoot: string, options: TradeGateRunOptions): Promise<TradeGate> {
         const resolved = await resolveTradeGate(serverRoot, options);
         await resolved.loaderRun.dispose();

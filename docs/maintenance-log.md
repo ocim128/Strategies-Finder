@@ -4,6 +4,21 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Restore Trade Gate batch integration test seam
+
+- **Evidence:** `tests/trade-gate.spec.ts` failed 9 of 10 tests because its
+  server-run case called `__testInternals.setTradeGateArchiveRootForTests`,
+  which was missing after the ledger-root rename in the prior feature-removal
+  commit. That prevented coverage of real Batch gate counters and provenance.
+- **Change:** Restored the test-only setter for the current Trade Gate archive
+  root and documented the server integration regression contract.
+- **Checks:** `npm run test -- trade-gate.spec.ts`, `npm run typecheck`,
+  `npm run typecheck:tests`, and `git diff --check` pass.
+- **Follow-up:** The last broad run also failed Finder asset-opportunity cache
+  capacity, metadata, export diagnostics, and server-plugin specs; pair-list
+  pool registry; strategy manifest sync; and trade-ledger checker/parity.
+  Rerun the broad suite to confirm their current status.
+
 ## 2026-10-01 - Repair endpoint parity confirmation fixture
 
 - **Evidence:** The confirmation agreement test used 1m candle timestamps at
@@ -22,8 +37,8 @@ repeating the same investigation.
   9 failed out of 249 selected specs.
 - **Follow-up:** Triage the remaining full-suite failures in Finder asset
   opportunity cache/metadata, Finder export diagnostics, Finder server plugin,
-  pair-list pool registry, strategy manifest sync, Trade Gate, and trade-ledger
-  checker/parity specs.
+  pair-list pool registry, strategy manifest sync, and trade-ledger
+  checker/parity specs. Trade Gate is corrected in the newer entry.
 
 ## 2026-10-01 - Keep pair-feature source pins portable across Windows
 
