@@ -37,7 +37,6 @@ import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-s
 import { computeOpenPosition } from "./batch-open-positions";
 import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
 import type { BacktestResult } from "../types/strategies";
-import type { TradeGateProvenance, TradeGateStats } from "./trade-gate";
 
 /**
  * Explicit scalar-only projection of {@link BacktestResult} for Batch transport.
@@ -63,7 +62,6 @@ export type BatchScalarBacktestResult = Pick<
     | "avgWin"
     | "avgLoss"
     | "sharpeRatio"
-    | "tradeGateStats"
 > & {
     trades: [];
     equityCurve: [];
@@ -92,7 +90,6 @@ export function toScalarBacktestResult(
         avgWin: result.avgWin,
         avgLoss: result.avgLoss,
         sharpeRatio: result.sharpeRatio,
-        ...(result.tradeGateStats ? { tradeGateStats: result.tradeGateStats } : {}),
         trades: [],
         equityCurve: [],
     };
@@ -173,10 +170,6 @@ export type BatchStreamEvent =
          * USD engine reads it to label the report HOLDOUT vs EXPLORATORY.
          */
         verifiedPairListProvenance?: PairListProvenanceV1 | null;
-        /** Selected EDGE-CANDIDATE rules and source hashes used by this run. */
-        tradeGateProvenance?: TradeGateProvenance | null;
-        /** Aggregate entry-gate counters across completed pair results. */
-        tradeGateStats?: TradeGateStats | null;
     }
     | { type: "fatal"; error: string; runId?: string };
 
@@ -239,8 +232,6 @@ export type BatchLiveRunStatus = {
     /** Terminal phase; `"running"` while the run owns the server. */
     phase: BatchStatusRunPhase;
     summary: string | null;
-    tradeGateProvenance?: TradeGateProvenance | null;
-    tradeGateStats?: TradeGateStats | null;
 };
 
 /**
@@ -275,8 +266,6 @@ export type BatchTerminalRunStatus = {
     pairListProvenanceMeta: BatchRunPairListProvenanceMeta | null;
     universeCounts: BatchUniverseCounts | null;
     researchRegistrationMeta: { registration: MaxActiveResearchRegistrationV1 | null; status: "verified" | "manual/unverified"; reason?: string } | null;
-    tradeGateProvenance: TradeGateProvenance | null;
-    tradeGateStats: TradeGateStats | null;
 };
 
 /**

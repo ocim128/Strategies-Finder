@@ -33,19 +33,7 @@ import { debugLogger } from "../debug-logger";
 import { createDisconnectSafeStream, HttpStatusError, registerLocalJsonRoute, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
-import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset, loadServerBatchDatasetWithMetadata } from "./server-batch-data-loader";
-import {
-    buildTradeLedgerRowsForPair,
-    type TradeLedgerRow,
-    type TradeLedgerRowContext,
-} from "./trade-ledger-row-builder";
-import { discoverTradeGateCatalog, resolveTradeGateFolder, resolveTradeGateRule } from "./trade-gate-catalog";
-import { toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
-import { createTradeGateStats, addTradeGateStats, type TradeGate, type TradeGatePairContext, type TradeGateProvenance, type TradeGateStats } from "./trade-gate";
-import { createTradeGateRuleLoaderRun, type TradeGateRuleLoaderRun } from "./trade-gate-rule-loader";
-import type { TradeGateRunOptions } from "./trade-gate-wire";
-import { evaluateReplayEligibility } from "./trade-ledger-asif";
-import { resolveExecutorBacktestSettings } from "../backtest-executor";
+import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset } from "./server-batch-data-loader";
 import type {
     BatchSyntheticPairArtifact,
 } from "./batch-synthetic-artifact";
@@ -582,8 +570,6 @@ let abortController: AbortController | null = null;
 // running after the user clicks Stop.
 let analysisAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-/** Vite's app root for locating existing Trade Gate archives. */
-let tradeGateArchiveRoot: string | null = null;
 
 /**
  * Stop-before-ownership race closer (audit Finding 5). When Stop arrives BEFORE
@@ -697,10 +683,6 @@ export type BatchRunSnapshot = {
      * "manual/unverified".
      */
     researchRegistrationMeta?: { registration: MaxActiveResearchRegistrationV1 | null; status: "verified" | "manual/unverified"; reason?: string } | null;
-    /** Gate archive/rule hashes used by the server-side run. */
-    tradeGateProvenance?: TradeGateProvenance | null;
-    /** Aggregate gate counters across completed pair results. */
-    tradeGateStats?: TradeGateStats | null;
 };
 
 interface StoredMineArtifactMeta {
@@ -969,115 +951,6 @@ export function resolveServerBatchHeapWarning(symbolCount: number, heapLimitMb =
 }
 
 // ---------------------------------------------------------------------------
-// Trade Gate
-// ---------------------------------------------------------------------------
-const MAX_TRADE_GATE_RULES = 16;
-
-function parseTradeGateOptions(raw: unknown): TradeGateRunOptions | null {
-    if (!raw || typeof raw !== "object") return null;
-    if ((raw as { enabled?: unknown }).enabled !== true) return null;
-    const folderId = (raw as { folderId?: unknown }).folderId;
-    const ruleIds = (raw as { ruleIds?: unknown }).ruleIds;
-    if (typeof folderId !== "string" || !folderId.trim() || folderId.includes("/") || folderId.includes("\\")) {
-        throw new HttpStatusError(400, "Trade Gate requires a safe archive folder id.");
-    }
-    if (!Array.isArray(ruleIds) || ruleIds.length < 1 || ruleIds.length > MAX_TRADE_GATE_RULES) {
-        throw new HttpStatusError(400, `Trade Gate requires 1-${MAX_TRADE_GATE_RULES} rule ids.`);
-    }
-    const cleaned: string[] = [];
-    for (const value of ruleIds) {
-        if (typeof value !== "string" || !/^[A-Za-z0-9._-]+$/.test(value) || cleaned.includes(value)) {
-            throw new HttpStatusError(400, "Trade Gate rule ids must be unique safe filenames.");
-        }
-        cleaned.push(value);
-    }
-    return { enabled: true, folderId: folderId.trim(), ruleIds: cleaned };
-}
-
-interface ResolvedTradeGate {
-    gate: TradeGate;
-    loaderRun: TradeGateRuleLoaderRun;
-}
-
-async function resolveTradeGate(
-    serverRoot: string,
-    options: TradeGateRunOptions,
-): Promise<ResolvedTradeGate> {
-    const loaderRun = await createTradeGateRuleLoaderRun();
-    try {
-        // Resolve the folder and all rules against one fresh catalog snapshot.
-        // A Gate run can select up to 16 rules; resolving each rule without the
-        // snapshot would rescan and rehash the entire ledger catalog per rule.
-        const catalog = await discoverTradeGateCatalog(serverRoot);
-        const folder = await resolveTradeGateFolder(serverRoot, options.folderId, catalog);
-        if (!folder) throw new Error(`Trade Gate archive folder not found: ${options.folderId}.`);
-        if (!folder.entry.runnable) {
-            throw new Error(`Trade Gate archive folder is not runnable: ${folder.entry.refusalReason ?? "unknown reason"}.`);
-        }
-        const certification = folder.entry.latestCertification;
-        if (!certification) throw new Error(`Trade Gate folder has no archived certified rules: ${options.folderId}.`);
-        const edgeRules = new Map(certification.edgeRules.map((rule) => [rule.ruleId, rule]));
-        const rules: Array<TradeGate["rules"][number]> = [];
-        for (const ruleId of options.ruleIds) {
-            const edgeRule = edgeRules.get(ruleId);
-            if (!edgeRule) {
-                throw new Error(`Trade Gate rule ${ruleId} is not an EDGE-CANDIDATE in the latest archive certification ${certification.certificationId}.`);
-            }
-            const resolved = await resolveTradeGateRule(serverRoot, ruleId, catalog);
-            if (!resolved || resolved.entry.sourceHash !== edgeRule.sourceHash) {
-                throw new Error(`Trade Gate rule ${ruleId} changed after certification ${certification.certificationId}; refresh its archive.`);
-            }
-            const source = await readFile(resolved.absolutePath, "utf8");
-            if (/\bfeat_rank\b/.test(source)) {
-                throw new Error(`Trade Gate rule ${ruleId} reads feat_rank, which is not permitted for certification.`);
-            }
-            const evaluate = await loaderRun.loadRule({
-                ruleId,
-                sourcePath: resolved.absolutePath,
-                source,
-                sourceHash: edgeRule.sourceHash,
-            });
-            rules.push({
-                ruleId,
-                ruleName: edgeRule.ruleName,
-                sourceHash: edgeRule.sourceHash,
-                evaluate,
-            });
-        }
-        const provenance: TradeGateProvenance = {
-            schema: "batch.trade_gate.v2",
-            folderId: options.folderId,
-            certificationId: certification.certificationId,
-            rules: rules.map(({ ruleId, ruleName, sourceHash }) => ({ ruleId, ruleName, sourceHash })),
-        };
-        return { gate: { enabled: true, provenance, rules, pairs: new Map() }, loaderRun };
-    } catch (error) {
-        await loaderRun.dispose();
-        throw error;
-    }
-}
-
-function resolveTradeGateRowContext(input: {
-    backtestSettings: BacktestSettings;
-    capitalSettings: CapitalSettings;
-    interval: string;
-}): TradeLedgerRowContext {
-    const resolved = resolveExecutorBacktestSettings(
-        { ...input.backtestSettings, interval: input.interval } as BacktestSettings,
-        input.interval,
-    );
-    const eligibility = evaluateReplayEligibility(resolved, input.capitalSettings);
-    return {
-        tradeDirection: eligibility.params.tradeDirection,
-        executionModel: eligibility.params.executionModel,
-        maxOpenTrades: eligibility.params.maxOpenTrades,
-        cooldownBars: eligibility.params.cooldownBars,
-        slippageRate: eligibility.params.slippageRate,
-        ledgerHorizons: [],
-    };
-}
-
-// ---------------------------------------------------------------------------
 // Run + Miner core (factored out of the HTTP handlers for testability)
 // ---------------------------------------------------------------------------
 
@@ -1089,7 +962,7 @@ type BatchPairTimingLogger = {
     finish: () => void;
 };
 
-function createBatchPairTimingLogger(phase: "pre-pass" | "main"): BatchPairTimingLogger {
+function createBatchPairTimingLogger(phase: "main"): BatchPairTimingLogger {
     const starts = new Map<number, number>();
     let completed = 0;
     let totalMs = 0;
@@ -1141,119 +1014,8 @@ function createBatchPairTimingLogger(phase: "pre-pass" | "main"): BatchPairTimin
     };
 }
 
-function buildTradeGatePairContexts(
-    rowsByPair: ReadonlyMap<string, readonly TradeLedgerRow[]>,
-    isCancelled?: () => boolean,
-): Map<string, TradeGatePairContext> {
-    const pairsByTime = new Map<number, Set<string>>();
-    for (const rows of rowsByPair.values()) {
-        for (const row of rows) {
-            if (isCancelled?.()) throw new Error("Trade Gate run was stopped during feature assignment.");
-            let pairs = pairsByTime.get(row.signalTime);
-            if (!pairs) {
-                pairs = new Set<string>();
-                pairsByTime.set(row.signalTime, pairs);
-            }
-            pairs.add(row.pair);
-        }
-    }
-
-    const pairContexts = new Map<string, TradeGatePairContext>();
-    for (const [pair, rows] of rowsByPair) {
-        const featuresBySignalKey = new Map<string, TradeGateFeatureRow>();
-        for (const row of rows) {
-            if (isCancelled?.()) throw new Error("Trade Gate run was stopped during feature assignment.");
-            const pairs = pairsByTime.get(row.signalTime);
-            featuresBySignalKey.set(
-                tradeGateSignalKey(row.signalBarIndex, row.direction),
-                toTradeGateFeatureRow(row, pairs?.size ?? 0),
-            );
-        }
-        pairContexts.set(pair, { pair, featuresBySignalKey });
-    }
-    return pairContexts;
-}
-
-async function prepareTradeGateFeatureContexts(
-    input: BatchBacktestRunInput,
-    gate: TradeGate,
-    isCancelled: () => boolean,
-    writer: StreamWriter,
-): Promise<TradeGate> {
-    const rowContext = resolveTradeGateRowContext(input);
-    const rowsByPair = new Map<string, TradeLedgerRow[]>();
-    const timing = createBatchPairTimingLogger("pre-pass");
-    writer({ type: "progress", percent: 0, text: "Trade Gate: building causal feature pre-pass...", status: "Trade Gate: building causal feature pre-pass..." });
-    try {
-        await runBatchBacktest({
-            ...input,
-            tradeGate: undefined,
-            useRustEnginePreference: false,
-            pruneResultArtifacts: true,
-        }, {
-            setProgress: (percent, text) => {
-                if (!isCancelled()) {
-                    writer({ type: "progress", percent: percent * 0.5, text: `Trade Gate pre-pass: ${text}`, status: `Trade Gate pre-pass: ${text}` });
-                }
-            },
-            setStatus: () => {},
-            onSymbolStart: (index, symbol) => timing.start(index, symbol),
-            onSymbolComplete: (_index, result, completionContext) => {
-                try {
-                    if (isCancelled()) return;
-                    if (!result.data || !result.result || !completionContext?.signals) return;
-                    const pairRows = buildTradeLedgerRowsForPair({
-                        pair: result.symbol,
-                        data: result.data,
-                        signals: completionContext.signals,
-                        trades: result.result.trades,
-                        context: rowContext,
-                        baseSymbol: completionContext.baseSymbol,
-                        quoteSymbol: completionContext.quoteSymbol,
-                        baseCloses: completionContext.baseCloses,
-                        quoteCloses: completionContext.quoteCloses,
-                    });
-                    rowsByPair.set(result.symbol, pairRows.rows);
-                } finally {
-                    timing.complete(_index, result.symbol);
-                }
-            },
-            isCancelled,
-        });
-    } finally {
-        timing.finish();
-    }
-    if (isCancelled()) throw new Error("Trade Gate run was stopped during the feature pre-pass.");
-
-    const pairContexts = buildTradeGatePairContexts(rowsByPair, isCancelled);
-    writer({ type: "progress", percent: 50, text: "Trade Gate: causal feature pre-pass complete.", status: "Trade Gate: causal feature pre-pass complete." });
-    return { ...gate, pairs: pairContexts };
-}
-
-function summarizeTradeGateStats(results: readonly BatchBacktestSymbolResult[]): TradeGateStats | null {
-    const stats = createTradeGateStats();
-    let present = false;
-    for (const row of results) {
-        if (!row.result?.tradeGateStats) continue;
-        present = true;
-        addTradeGateStats(stats, row.result.tradeGateStats);
-    }
-    return present ? stats : null;
-}
-
-/**
- * Core batch loop, factored out of the HTTP handler so it can be tested with a
- * stubbed loader and writer without spinning up Vite. Mirrors
- * `processSyncBatch` in the IBKR plugin.
- *
- * `owner` keys cancellation: the loop bails as soon as `runOwner !== owner`
- * (Stop force-bumped the lock or a newer run took it). The shared
- * `abortController` cancels in-flight dataset loads.
- */
 export async function processRunBatch(
-    input: BatchBacktestRunInput & {
-        tradeGateOptions?: TradeGateRunOptions | null;
-    },
+    input: BatchBacktestRunInput,
     writer: StreamWriter,
     owner: number,
     runId: string = "",
@@ -1320,9 +1082,6 @@ export async function processRunBatch(
         backtestSettings: input.backtestSettings,
         capitalSettings: input.capitalSettings,
         interval: input.interval,
-        ...(input.tradeGateOptions?.enabled
-            ? { tradeGate: input.tradeGateOptions }
-            : {}),
         ...(pairListProvenanceMeta.status === "verified" && pairListProvenanceMeta.provenance
             ? { pairListProvenance: pairListProvenanceMeta.provenance }
             : {}),
@@ -1334,22 +1093,11 @@ export async function processRunBatch(
     let cancelled = false;
     let lastProgressAt = 0;
     let lastProgressPercent = -1;
-    let resolvedTradeGate: ResolvedTradeGate | null = null;
     const mainTiming = createBatchPairTimingLogger("main");
     // setProgress already carries the status; do not emit it twice per symbol.
     try {
-        resolvedTradeGate = input.tradeGateOptions?.enabled
-            ? await resolveTradeGate(tradeGateArchiveRoot ?? process.cwd(), input.tradeGateOptions)
-            : null;
-        const executionInput = resolvedTradeGate
-            ? await prepareTradeGateFeatureContexts(input, resolvedTradeGate.gate, lostOwnership, writer)
-            : null;
-        if (runState === snapshot && executionInput) {
-            snapshot.tradeGateProvenance = executionInput.provenance;
-        }
         const output = await runBatchBacktest({
             ...input,
-            ...(executionInput ? { tradeGate: executionInput } : {}),
             pruneResultArtifacts: true,
         }, {
             setProgress: (percent, text) => {
@@ -1424,14 +1172,11 @@ export async function processRunBatch(
             }
         }
 
-        const tradeGateStats = summarizeTradeGateStats(output.results);
-
         if (runState === snapshot) {
             snapshot.completed = attemptedSymbols;
             snapshot.failed = output.failedSymbols.length;
             snapshot.currentSymbol = null;
             snapshot.cancelled = cancelled;
-            snapshot.tradeGateStats = tradeGateStats;
         }
         // R-F1: only stamp the global run-provenance fields if THIS run still
         // owns the snapshot. An unwinding old run whose ownership was taken by
@@ -1464,9 +1209,6 @@ export async function processRunBatch(
             : `Done — ${attemptedSymbols} pairs`;
         if (output.failedSymbols.length > 0) {
             terminalSummary += `, ${output.failedSymbols.length} failed`;
-        }
-        if (tradeGateStats) {
-            terminalSummary += ` | Trade Gate evaluated ${tradeGateStats.signalsEvaluated}, admitted ${tradeGateStats.admitted}, rejected ${tradeGateStats.rejectedByGate}, blocked ${tradeGateStats.blocked}`;
         }
         // Audit artifact-stats finding: when a run retains some but not all
         // Mine artifacts (disk pressure on a 1000-pair run), surface the
@@ -1524,8 +1266,6 @@ export async function processRunBatch(
             verifiedPairListProvenance: snapshot.pairListProvenanceMeta?.status === "verified"
                 ? snapshot.pairListProvenanceMeta.provenance
                 : null,
-            tradeGateProvenance: snapshot.tradeGateProvenance ?? null,
-            tradeGateStats,
         });
 
         // Schedule the TTL release only if the run produced mineable
@@ -1571,8 +1311,6 @@ export async function processRunBatch(
         if (currentArtifactStore === store) {
             await releaseLastResults("run_fatal");
         }
-    } finally {
-        if (resolvedTradeGate) await resolvedTradeGate.loaderRun.dispose();
     }
 }
 
@@ -1683,7 +1421,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     const backtestSettings = (body.backtestSettings ?? {}) as BacktestSettings;
     const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
     const useRustEnginePreference = body.useRustEnginePreference === true;
-    const tradeGateOptions = parseTradeGateOptions(body.tradeGate);
     await releaseLastResults("new_run");
         if (runOwner !== owner) {
             throw new HttpStatusError(409, "Batch run was stopped before it started.");
@@ -1712,7 +1449,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     capitalSettings,
                     symbols,
                     useRustEnginePreference,
-                    tradeGateOptions,
                     // Phase 3 MAX_ACTIVE: carry the verified pair-list provenance
                     // and the research registration into the run so the snapshot
                     // and the OPEN_SCORE USD report can name the provenance status
@@ -1720,9 +1456,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     pairListProvenance,
                     maxActiveResearchRegistration,
                     loadDataset: (sym, intv, signal) => loadServerBatchDataset(sym, intv, signal),
-                    ...(tradeGateOptions
-                        ? { loadDatasetWithContext: (sym: string, intv: string, signal?: AbortSignal) => loadServerBatchDatasetWithMetadata(sym, intv, signal) }
-                        : {}),
                 },
                 (event) => stream!.write(event),
                 owner,
@@ -2279,8 +2012,6 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: s
                 // run completes. `phase === "running"` here.
                 phase: runState.phase,
                 summary: runState.summary,
-                tradeGateProvenance: runState.tradeGateProvenance ?? null,
-                tradeGateStats: runState.tradeGateStats ?? null,
                 // Audit Finding 5: runId lets a reloaded tab reconcile that
                 // THIS run is still the one it started.
                 runId: runState.runId,
@@ -2333,8 +2064,6 @@ function handleStatusRequest(afterRow = 0, limitRaw?: number, requestedRunId?: s
                 pairListProvenanceMeta: runState.pairListProvenanceMeta ?? null,
                 universeCounts: runState.universeCounts ?? null,
                 researchRegistrationMeta: runState.researchRegistrationMeta ?? null,
-                tradeGateProvenance: runState.tradeGateProvenance ?? null,
-                tradeGateStats: runState.tradeGateStats ?? null,
             }
             : null,
     };
@@ -2366,7 +2095,6 @@ export function batchBacktestVitePlugin(): Plugin {
     return {
         name: "batch-backtest",
         configureServer(server) {
-            tradeGateArchiveRoot = server.config.root ?? process.cwd();
             // Best-effort: sweep orphaned dirs from a prior crash without
             // blocking dev-server registration (audit Finding 4).
             void sweepOrphanedMineArtifactDirs();
@@ -2377,13 +2105,12 @@ export function batchBacktestVitePlugin(): Plugin {
             // manifest forever. Best-effort + async-safe: it is synchronous
             // and small (one manifest per run dir), and failures are swallowed
             // inside.
-            reconcileInterruptedManifestsOnStartup(tradeGateArchiveRoot);
+            reconcileInterruptedManifestsOnStartup(server.config.root ?? process.cwd());
             registerBatchRoutes(server.middlewares);
         },
         configurePreviewServer(server) {
-            tradeGateArchiveRoot = server.config.root ?? process.cwd();
             void sweepOrphanedMineArtifactDirs();
-            reconcileInterruptedManifestsOnStartup(tradeGateArchiveRoot);
+            reconcileInterruptedManifestsOnStartup(server.config.root ?? process.cwd());
             registerBatchRoutes(server.middlewares);
         },
     };
@@ -2440,21 +2167,6 @@ export function createBatchOwnerLocksAdapter(): BatchOwnerLocks {
 
 /** Install all Batch routes; exposed through test internals for route tests. */
 function registerBatchRoutes(middlewares: any): void {
-        registerLocalJsonRoute(middlewares, "/api/trade-gate/catalog", {
-            methods: ["GET"],
-            unauthorizedMessage: "Unauthorized: Trade Gate catalog is local-only.",
-            onAuthorized: async ({ res }) => {
-                const catalog = await discoverTradeGateCatalog(tradeGateArchiveRoot ?? process.cwd());
-                sendJson(res, 200, {
-                    ok: true,
-                    catalogRoot: catalog.catalogRoot,
-                    generatedAt: Date.now(),
-                    folders: catalog.folders,
-                    rules: catalog.rules,
-                });
-            },
-        });
-
         // Audit Finding 2 (and the F1 Finder auth gate): every Batch route
         // gates on the same loopback/bearer policy as IBKR and strategy-admin,
         // so a Vite server exposed via --host / tunnel / reverse proxy can't
@@ -2537,7 +2249,6 @@ function registerBatchRoutes(middlewares: any): void {
 // the IBKR sync pattern. The HTTP handlers set those before invoking the
 // factored functions; tests need a way to do the same without spinning up Vite.
 export const __testInternals = {
-    buildTradeGatePairContextsForTests: buildTradeGatePairContexts,
     releaseLastResults,
     hasStoredMineArtifacts,
     getParsedArtifactCacheSizeForTests(): number {
@@ -2664,13 +2375,5 @@ export const __testInternals = {
     ensureMineArtifactDirForTests(): string {
         return ensureCurrentArtifactStoreDir();
     },
-    parseTradeGateOptionsForTests: parseTradeGateOptions,
-    setTradeGateArchiveRootForTests(root: string | null): void {
-        tradeGateArchiveRoot = root;
-    },
-    async resolveTradeGateForTests(serverRoot: string, options: TradeGateRunOptions): Promise<TradeGate> {
-        const resolved = await resolveTradeGate(serverRoot, options);
-        await resolved.loaderRun.dispose();
-        return resolved.gate;
-    },
+
 };

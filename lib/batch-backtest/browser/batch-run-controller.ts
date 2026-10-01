@@ -7,7 +7,7 @@
  * server-run id/artifacts flags, benchmark inputs, reattach timers/backoff).
  * Cross-workflow coordination stays with the facade: the busy gate is
  * injected (`isUiBusy`), the balanced-generator lock inputs via `balancedLock`,
- * trade-gate validation via `resolveTradeGate`, and the shared pending-Stop
+ * and the shared pending-Stop
  * sequencing via `requestServerStop`.
  */
 import { ensureBuiltInStrategyLoaded } from "../../strategies/built-in-catalog";
@@ -51,7 +51,6 @@ import type { StrategyParams, BacktestSettings } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import type { BatchResultsView } from "./batch-results-view";
-import { buildBatchRunTradeGateBodyField } from "../trade-gate-wire";
 import {
     clearPersistedActiveServerRun,
     clearPersistedLatestResults,
@@ -60,7 +59,6 @@ import {
     readLatestResultsSnapshot,
     saveLatestResultsSnapshot,
     type BatchPersistedActiveServerRun,
-    type BatchTradeGateOptions,
 } from "./batch-browser-store";
 
 type BatchStatusRowsPage = {
@@ -77,8 +75,6 @@ export class BatchRunController {
         isUiBusy: () => boolean;
         /** Balanced-generator lock inputs, computed from facade state. */
         balancedLock: () => { blocked: boolean; hasResult: boolean };
-        /** Facade trade-gate validation (may await a catalog refresh). */
-        resolveTradeGate: (dom: BatchBacktestDom) => Promise<BatchTradeGateOptions | null>;
         getPairListProvenance: () => PairListProvenanceV1 | null;
         /** Shared pending-Stop sequencing (facade-owned; never coalesced). */
         requestServerStop: () => Promise<void>;
@@ -145,7 +141,6 @@ export class BatchRunController {
         resultsView: BatchResultsView;
         isUiBusy: () => boolean;
         balancedLock: () => { blocked: boolean; hasResult: boolean };
-        resolveTradeGate: (dom: BatchBacktestDom) => Promise<BatchTradeGateOptions | null>;
         getPairListProvenance: () => PairListProvenanceV1 | null;
         requestServerStop: () => Promise<void>;
     }) {
@@ -372,8 +367,6 @@ export class BatchRunController {
         const backtestSettings = backtestService.getBacktestSettings();
         const capitalSettings = backtestService.getCapitalSettings();
         const interval = state.currentInterval;
-        let tradeGateOptions = await this.deps.resolveTradeGate(dom);
-        if (tradeGateOptions === null) return;
         const runFingerprint = buildBatchRunFingerprint({
             symbols,
             strategyKey,
@@ -382,7 +375,6 @@ export class BatchRunController {
             capitalSettings,
             interval,
             pairListProvenance: this.deps.getPairListProvenance(),
-            ...(tradeGateOptions.enabled ? { tradeGate: tradeGateOptions } : {}),
         });
 
         // Invalidate any in-flight run and claim this one. The stale run will
@@ -435,7 +427,7 @@ export class BatchRunController {
         let runOutcome: BatchBenchmarkRunOutcome = "done";
         let reachedTerminal = false;
         try {
-            await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint, tradeGateOptions, (finalOutcome) => {
+            await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint, (finalOutcome) => {
                 // The server path resolves its terminal outcome AFTER all
                 // recovery attempts. Capture it here so the benchmark reflects
                 // what actually happened (done / cancelled) instead of guessing
@@ -503,7 +495,6 @@ export class BatchRunController {
         capitalSettings: CapitalSettings,
         interval: string,
         runFingerprint: string,
-        tradeGateOptions: BatchTradeGateOptions,
         onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
     ): Promise<void> {
         // Audit Finding 5: generate a per-run id and send it on the /run body
@@ -527,7 +518,6 @@ export class BatchRunController {
                 capitalSettings,
                 useRustEnginePreference: shouldUseRustEngine(),
                 runId,
-                ...buildBatchRunTradeGateBodyField(tradeGateOptions),
                 // Phase 3 MAX_ACTIVE: attach the active pair-list provenance
                 // (and null registration — Phase 4 commits it server-side).
                 // The server verifies the hash, retains the meta on the run

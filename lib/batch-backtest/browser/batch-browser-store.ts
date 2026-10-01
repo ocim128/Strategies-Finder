@@ -9,7 +9,6 @@
 import { readPersistedJson, writePersistedJson } from "../../persisted-json";
 import { debugLogger } from "../../debug-logger";
 import { REPLAY_ARM_FIELDS } from "../open-score-replay/arm-contract";
-import type { TradeGateRunOptions } from "../trade-gate-wire";
 import {
     compactBatchBacktestResultsSnapshot,
     normalizeBatchBacktestResultsSnapshot,
@@ -31,36 +30,6 @@ export const BATCH_ACTIVE_SERVER_RUN_STORAGE = {
     schema: "batch_backtest.active_server_run",
     version: 1,
 } as const;
-
-export const BATCH_TRADE_GATE_STORAGE = {
-    key: "playground_batch_backtest_trade_gate",
-    schema: "batch_backtest.trade_gate",
-    version: 1,
-} as const;
-
-export type BatchTradeGateOptions = TradeGateRunOptions;
-
-export function readPersistedTradeGateOptions(): BatchTradeGateOptions {
-    return readPersistedJson<BatchTradeGateOptions>({
-        ...BATCH_TRADE_GATE_STORAGE,
-        fallback: { enabled: false, folderId: "", ruleIds: [] },
-        migrate: (ctx) => {
-            const data = ctx.data;
-            if (!data || typeof data !== "object" || Array.isArray(data)) {
-                return { enabled: false, folderId: "", ruleIds: [] };
-            }
-            const source = data as Partial<BatchTradeGateOptions>;
-            const ruleIds = Array.isArray(source.ruleIds)
-                ? source.ruleIds.filter((value): value is string => typeof value === "string").slice(0, 16)
-                : [];
-            return {
-                enabled: source.enabled === true,
-                folderId: typeof source.folderId === "string" ? source.folderId : "",
-                ruleIds,
-            };
-        },
-    });
-}
 
 export type BatchPersistedActiveServerRun = {
     runId: string;

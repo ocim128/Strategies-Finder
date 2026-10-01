@@ -11,7 +11,6 @@ import type { OHLCVData } from "../types/strategies";
 import {
     createBatchDatasetLoaderCore,
     type BatchDatasetCacheStats,
-    type BatchDatasetLoadResult,
     type BatchDatasetLoadContext,
 } from "./batch-dataset-loader-core";
 import {
@@ -98,15 +97,6 @@ export async function loadServerBatchDataset(
     context?: BatchDatasetLoadContext,
 ): Promise<OHLCVData[]> {
     return loader.load(symbol, interval, signal, context);
-}
-
-export async function loadServerBatchDatasetWithMetadata(
-    symbol: string,
-    interval: string,
-    signal?: AbortSignal,
-    context?: BatchDatasetLoadContext,
-): Promise<BatchDatasetLoadResult> {
-    return loader.loadWithMetadata(symbol, interval, signal, context);
 }
 
 export function clearServerBatchDatasetCaches(): void {

@@ -2,7 +2,7 @@
 
 This guide records the format of existing trade-ledger archives. The current Batch
 application does not create new archives. Existing folders remain readable by the
-offline replay checker, Pair Selection, and Trade Gate compatibility catalog.
+offline replay checker and Pair Selection.
 
 ## Run folder layout
 
@@ -14,8 +14,8 @@ offline replay checker, Pair Selection, and Trade Gate compatibility catalog.
     summary.json         # totals, per-pair suppression rates, completeness (run end)
 ```
 
-These are historical artifacts. The row builder remains shared with Trade Gate, and
-the offline checker and Pair Selection continue to read compatible archived folders.
+These are historical artifacts. The offline checker and Pair Selection continue to
+read compatible archived folders.
 The current Batch run route does not write ledger files.
 
 ### provenance.json
@@ -47,10 +47,10 @@ for example `[24]`.
 
 ### Replay eligibility guard
 
-`evaluateReplayEligibility` (`lib/batch-backtest/trade-ledger-asif.ts`) evaluates the
-run's executor-resolved settings. Admission rules change WHICH trades exist, so
-per-candidate outcomes must not depend on prior accepted-trade history. The guard
-records `replayEligible: false` (with reasons) for:
+Archived `replay` metadata records whether the source run supported an as-if
+replay. Admission rules change which trades exist, so per-candidate outcomes
+must not depend on prior accepted-trade history. Archives record
+`replayEligible: false` (with reasons) for:
 
 - **Adaptive take-profit** â€” any `takeProfitMode` other than `fixed`
   (`adaptive_take_profit:<mode>`).
@@ -112,7 +112,7 @@ Each row also carries the configured `ledgerHorizons` (default `[24]`) under
 `horizons`. These outcomes are the pair spread's fixed-horizon judging values for
 pair selection; they match the coordinator's per-asset outcome semantics instead
 of following the frozen strategy's signal-exit or max-hold path. The `asIf` column
-stays available for the legacy gate/replay loop.
+stays available for the legacy offline replay loop.
 
 The alignment is exact: the entry bar is the row's fill bar (`signal_close` offset
 0, `next_open`/`next_close` offset 1 from the signal bar), and `H` means the close
@@ -125,38 +125,16 @@ The pair-selection checker requires `ledgerVersion: 3` and reads the selected H
 from `provenance.ledgerHorizons`; pass an optional third CLI argument to name a
 different configured horizon. A horizon absent from that provenance is refused.
 
-### As-if outcomes: engine math, no parallel exit engine
+### As-if outcomes (archived field)
 
-The as-if walk (`resolveAsIfOutcome` in `trade-ledger-asif.ts`) reuses the engine's
-own code at every step:
-
-- Entry levels (`stopLossPrice`, `takeProfitPrice`, `riskPerShare`,
-  `partialTargetPrice`) come from `resolveInitialExitLevels` â€” the arming math
-  extracted from `position-builder.ts` (`buildPositionFromSignal` calls the SAME
-  helper; there is one source for entry-level semantics).
-- The exit walk calls the engine's exported per-bar handlers â€”
-  `processPositionExits` (stop/TP/partial/path/min-hold/max-hold/time-stop fills) and
-  `updatePositionState` (trailing stop, break-even, extreme price) â€” in the engine's
-  per-bar order: open-only exits â†’ signal exits â†’ full exits â†’ state update, with the
-  same same-bar entry gate (`allowSameBarExit`).
-- Signal exits come from the REAL merged exit path: `resolveExitStrategyOverrideSignals`
-  (exported from `backtest-executor.ts` for exactly this purpose) + `mergeExitStrategySignals`
-  + `prepareSignals`. There is no parallel exit resolution anywhere.
-- pnl uses `calculateTradeExitDetails` â€” the engine's trade-close math, so as-if
-  `pnlPercent` is identical to what a real trade at that entry would book
-  (slippage on both sides + commission).
-- End-of-data exits at the last bar's raw close, matching the engine's
-  `end_of_data` trades.
-
-Known approximations (documented, tested): an entry candidate at most one bar before
-an admitted trade's exit bar is treated as blocked (the engine can sometimes re-enter
-on the exit bar itself); entries whose sizing bar precedes the ATR window arm no
-levels (ATR is null there for the engine as well).
+Historical rows may include `asIf` outcomes and an `asIfReason`. The offline
+checker uses those recorded values to replay archived candidate selections;
+this repository no longer produces new trade-ledger rows.
 
 ### Feature definitions (all causal â€” bars at or before the signal bar only)
 
-Bump `TRADE_LEDGER_FEATURE_VERSION` whenever the feature set changes (v3 = 3; the
-checker and Trade Gate remain able to read v2 folders).
+Bump `TRADE_LEDGER_FEATURE_VERSION` whenever the archived feature set changes
+(v3 = 3; the checker remains able to read v2 folders).
 
 - `feat_entryRangePosition` â€” signal bar's close located within the PRIOR bar's
   `[low, high]` range, percent; null when the prior range is zero or `i < 1`.
@@ -261,7 +239,7 @@ reads and `in` probes of forbidden fields throw, and field enumeration
 unconditionally. Sealed fields: `exitTime`, `exitPrice`, `pnlPercent`, `fees`,
 `exitReason`, `asIf`, `asIfReason`, plus `executed`/`notExecutedReason` â€” conditioning
 on the ORIGINAL run's survivorship is lookahead for a rule meant to run live.
-The v3 `horizons` field is sealed from legacy gate rules as well; pair-selection
+The v3 `horizons` field is sealed from legacy offline checker rules as well; pair-selection
 reads it through its separate outcome harness.
 
 **Replay semantics.** Per pair (pairs are independent in the engine â€” there is
@@ -292,24 +270,7 @@ Rejected candidates occupy nothing. Right-censored candidates are counted as blo
   variance), so they are demoted to lines explicitly labeled "scale-dependent
   (compounded)" and shown for information only; the report footer states this.
 
-## Discipline
-
-1. **Invent rules on IS only.** The IS slice exists to generate and refine candidate
-   rules. Look at the HOLDOUT numbers during mining and you have burned the holdout.
-2. **Holdout is sealed for finalists.** Only rules that already survived IS scrutiny
-   get a single holdout read, and every holdout read consumes trust â€” keep the count
-   small and honest.
-3. **Certify once, from raw data.** The finally-chosen strategy + rule must be
-   re-run ONCE through the real engine from raw data â€” the rule applied live (its
-   admissions change the trade sequence), not by re-scoring the ledger â€” as
-   independent certification before any capital is exposed.
-4. Replay assumes exits are history-independent; only mine on
-   `replayEligible: true` folders.
-
 ## Tests
 
-- `tests/trade-ledger-row-builder.spec.ts` covers causal rows, replay outcomes,
-  execution classification, and completion-context forwarding.
 - `tests/trade-ledger-checker.spec.ts` covers archived-format replay, rule safety,
   controls, ranks, incomplete archives, and report values.
-- `tests/trade-gate.spec.ts` covers archive catalog compatibility and live gating.

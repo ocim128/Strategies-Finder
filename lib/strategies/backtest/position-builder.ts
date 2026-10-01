@@ -29,9 +29,8 @@ export interface SmartSizingState {
 
 /**
  * Initial stop/target levels and per-share risk armed at entry, exactly as
- * `buildPositionFromSignal` computes them. Extracted so the trade-ledger
- * as-if engine (trade-ledger-asif.ts) reuses THE SAME arming math instead of
- * duplicating it — there is exactly one source for entry-level semantics.
+ * `buildPositionFromSignal` computes them. Keeping the calculation in one
+ * helper gives all real entries the same entry-level semantics.
  */
 export interface InitialExitLevels {
     stopLossPrice: number | null;

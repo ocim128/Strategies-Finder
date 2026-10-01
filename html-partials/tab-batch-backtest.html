@@ -63,28 +63,6 @@
         </div>
         </details>
 
-        <div class="batch-balanced-generator" aria-label="Trade Gate">
-            <div class="batch-balanced-generator-heading">
-                <span class="batch-balanced-generator-label">Trade Gate</span>
-                <span class="batch-balanced-generator-note">Apply previously certified local rules to new entry signals during this server-side Batch run.</span>
-            </div>
-            <div class="batch-balanced-generator-controls batch-form-grid">
-                <div class="batch-field batch-field--inline batch-field--check" title="Apply trusted EDGE-CANDIDATE rules as an OR gate before new entries. Server-side only.">
-                    <input id="batchBacktestTradeGateToggle" type="checkbox">
-                    <label class="batch-field-label" for="batchBacktestTradeGateToggle">Apply Trade Gate</label>
-                </div>
-                <div class="batch-field batch-field--inline batch-field--wide">
-                    <label class="batch-field-label" for="batchBacktestTradeGateFolder">Rule archive</label>
-                    <select class="param-input" id="batchBacktestTradeGateFolder"></select>
-                </div>
-                <div class="batch-field batch-field--full">
-                    <label class="batch-field-label" for="batchBacktestTradeGateRules">EDGE-CANDIDATE rules (OR)</label>
-                    <select class="param-input" id="batchBacktestTradeGateRules" multiple size="4"></select>
-                </div>
-            </div>
-            <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestTradeGateEstimate" role="status"></div>
-            <div class="batch-miner-status batch-miner-status--multiline" id="batchBacktestTradeGateWarning" role="alert"></div>
-        </div>
     </section>
 
     <div class="batch-actions batch-execution-actions">

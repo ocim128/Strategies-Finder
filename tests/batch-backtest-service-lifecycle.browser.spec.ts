@@ -1774,8 +1774,6 @@ describe("BatchBacktestService Balanced Generator lifecycle", () => {
         (globalThis as any).HTMLInputElement = class extends FakeHtmlElement {};
         (globalThis as any).HTMLSelectElement = class extends FakeHtmlElement {};
         (globalThis as any).HTMLTextAreaElement = class extends FakeHtmlElement {};
-        // The fake rules <select multiple> has no selectedOptions.
-        (dom.batchBacktestTradeGateRules as any).selectedOptions = [];
         const strategyKey = (state as any).currentStrategyKey as string;
         const fakeStrategy = {
             name: "lifecycle-test-strategy",

@@ -117,10 +117,6 @@ export interface BacktestExecutorRequest {
         forceDisableSignalExits?: boolean;
         /** Skip trade simulation when primary signals cannot reach this entry count. */
         minimumPotentialEntrySignals?: number;
-        /** Server-side Batch entry gate. */
-        tradeGate?: import("./batch-backtest/trade-gate").TradeGate;
-        /** Pair key used to select the gate's causal feature context. */
-        tradeGatePair?: string;
     };
     /** Pre-computed closed candle data. When provided, skips selectClosedCandleData internally. */
     closedCandleDataOverride?: OHLCVData[];
@@ -261,9 +257,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         ...(executorTimings ? { executorTimings: { ...executorTimings } } : {}),
     });
     const { ohlcvData, interval, strategyKey, strategyParams, backtestSettings, capitalSettings } = req;
-    if (req.context.tradeGate && isBrowser()) {
-        throw new Error("Trade Gate is server-side only; run it through the Batch server route.");
-    }
     const nowSec = req.context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = req.context.blockRange ?? null;
     const strategy = req.strategy ?? await ensureBuiltInStrategyLoaded(strategyKey);
@@ -499,9 +492,6 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     if (req.backtestRunOptions?.forceDisableSignalExits === true) {
         typescriptRequirementReasons.push("Exit Alpha control run requires TypeScript");
     }
-    if (req.context.tradeGate) {
-        typescriptRequirementReasons.push("Trade Gate requires TypeScript");
-    }
     if (!isRustSupportedTradeSizingMode(resolvedCapital.sizingMode)) {
         typescriptRequirementReasons.push(`${resolvedCapital.sizingMode} position sizing requires TypeScript`);
     }
@@ -583,13 +573,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                     advancedSizing: resolvedCapital.advancedSizing,
                 },
                 undefined,
-                req.context.tradeGate
-                    ? {
-                        ...(req.backtestRunOptions ?? {}),
-                        tradeGate: req.context.tradeGate,
-                        tradeGatePair: req.primarySymbol,
-                    }
-                    : req.backtestRunOptions
+                req.backtestRunOptions
             );
         } finally {
             req.context.typescriptSimulationConcurrency?.leave();
@@ -648,9 +632,6 @@ export async function executeBacktestFromSignals(
     context: BacktestExecutionContext
 ): Promise<BacktestExecutorResult> {
     throwIfBacktestCancelled(context.signal);
-    if (context.tradeGate) {
-        throw new Error("Trade Gate is supported only by the Batch server route.");
-    }
     const nowSec = context.nowSec ?? Math.floor(Date.now() / 1000);
     const blockRange = context.blockRange ?? null;
     const resolvedSettings = resolveExecutorBacktestSettings(settings, interval);
@@ -827,9 +808,8 @@ function resolveBacktestSignalsForData(args: {
  *
  * Returned signals are NOT tagged here; mergeExitStrategySignals tags them exitOnly.
  *
- * Exported for the trade-ledger as-if engine (trade-ledger-asif.ts): the per-pair
- * exit-signal series must come from THIS resolution — the same one a real run
- * performs — never from a parallel reimplementation.
+ * The per-pair exit-signal series used by a backtest comes from this resolution,
+ * so the run and signal preparation path share the same implementation.
  */
 export async function resolveExitStrategyOverrideSignals(args: {
     data: OHLCVData[];

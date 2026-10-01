@@ -29,10 +29,8 @@ import type { CapitalSettings } from "../types/backtest";
 import { compareTime } from "../strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
-import { isTradeGateEvaluationError, type TradeGate } from "./trade-gate";
 import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
 import { computeOpenPosition, type OpenPositionInfo } from "./batch-open-positions";
-import type { BatchDatasetLoadResult } from "./batch-dataset-loader-core";
 export { parseBatchSymbols } from "./batch-run-contract";
 
 // ============================================================================
@@ -98,21 +96,9 @@ export interface BatchBacktestSymbolResult {
 
 /**
  * Per-symbol context handed to `onSymbolComplete` alongside the row. The row's
- * `signals` field is dropped for non-synthetic pairs (memory contract), but the
- * Trade Gate row building needs the pair's engine-consumed signals for every
- * pair, so the runner passes them here without retaining them on the row.
- * The reference dies as soon as the completion callback returns.
+ * `signals` field is dropped for non-synthetic pairs to keep the retained row
+ * compact. Signal consumers can read signals while the engine callback runs.
  */
-export interface BatchSymbolCompletionContext {
-    signals?: Signal[];
-    /** Canonical leg context supplied by a loader that owns the pair definition. */
-    baseSymbol?: string;
-    quoteSymbol?: string;
-    /** Leg closes aligned to the completed pair's bar timestamps. */
-    baseCloses?: readonly (number | null)[];
-    quoteCloses?: readonly (number | null)[];
-}
-
 export interface BatchBacktestTradeSummary {
     avgHoldBars: number | null;
     maxHoldBars: number | null;
@@ -150,16 +136,8 @@ export interface BatchBacktestRunInput {
      * `shouldAttemptRust` in `lib/backtest-executor.ts` for the full rationale.
      */
     useRustEnginePreference?: boolean;
-    /** Server-side Trade Gate context. Omitted for ordinary Batch runs. */
-    tradeGate?: TradeGate;
     /** Loads one symbol's OHLCV series without touching the live chart. */
     loadDataset: (symbol: string, interval: string, signal?: AbortSignal) => Promise<OHLCVData[]>;
-    /** Optional loader-owned pair context for ledger features. */
-    loadDatasetWithContext?: (
-        symbol: string,
-        interval: string,
-        signal?: AbortSignal,
-    ) => Promise<BatchDatasetLoadResult>;
     /**
      * Minimum bar count for a loaded dataset to be considered usable. Loads
      * that return a positive but smaller number of bars (typical of a stale
@@ -187,14 +165,10 @@ export interface BatchBacktestRunCallbacks {
      * can apply backpressure instead of unbounded queueing (audit Finding 2).
      * Synchronous return values remain valid; the await is a no-op for them.
      *
-     * The third argument carries the pair's engine-consumed signals even when
-     * the row itself dropped them (non-synthetic rows, see
-     * {@link BatchSymbolCompletionContext}).
      */
     onSymbolComplete?: (
         index: number,
         result: BatchBacktestSymbolResult,
-        context?: BatchSymbolCompletionContext,
     ) => void | Promise<void>;
     /**
      * Fired once per attempted symbol at the top of the iteration, before
@@ -241,10 +215,9 @@ export async function runBatchBacktest(
     const notifyComplete = async (
         index: number,
         row: BatchBacktestSymbolResult,
-        context?: BatchSymbolCompletionContext,
     ): Promise<void> => {
         const startedAt = performance.now();
-        await callbacks.onSymbolComplete?.(index, row, context);
+        await callbacks.onSymbolComplete?.(index, row);
         timings.completionCallbackMs += performance.now() - startedAt;
     };
 
@@ -273,16 +246,14 @@ export async function runBatchBacktest(
     // The Finder universe runner parallelizes loads the same way via
     // mapWithConcurrencyLimit.
     const PREFETCH_AHEAD = 4;
-    const inflight: Promise<BatchDatasetLoadResult>[] = [];
+    const inflight: Promise<OHLCVData[]>[] = [];
     const startPrefetch = (idx: number) => {
         // The promise is consumed by the serial loop in order. Attach a
         // no-op catch so that if the loop breaks early on cancel (leaving
         // up to PREFETCH_AHEAD promises unawaited) and one of them later
         // rejects on a network error, it doesn't surface as an unhandled
         // rejection. The consumer path handles errors itself via try/catch.
-        const p = input.loadDatasetWithContext
-            ? input.loadDatasetWithContext(symbols[idx], input.interval, abort.signal)
-            : input.loadDataset(symbols[idx], input.interval, abort.signal).then((data) => ({ data }));
+        const p = input.loadDataset(symbols[idx], input.interval, abort.signal);
         p.catch(() => { /* abandoned prefetch; error surfaced by consumer path */ });
         inflight.push(p);
     };
@@ -307,13 +278,11 @@ export async function runBatchBacktest(
         const loadPromise = inflight.shift()!;
 
         let data: OHLCVData[] = [];
-        let datasetContext: BatchDatasetLoadResult = { data: [] };
         try {
             const loadStartedAt = performance.now();
-            datasetContext = await loadPromise.finally(() => {
+            data = await loadPromise.finally(() => {
                 timings.datasetWaitMs += performance.now() - loadStartedAt;
             });
-            data = datasetContext.data;
             if (cancelCheck() || abort.signal.aborted) break;
             if (!Array.isArray(data) || data.length === 0) {
                 const failure: BatchBacktestSymbolResult = {
@@ -396,7 +365,6 @@ export async function runBatchBacktest(
                     useRustEnginePreference: input.useRustEnginePreference,
                     nowSec,
                     signal: abort.signal,
-                    ...(input.tradeGate ? { tradeGate: input.tradeGate } : {}),
                 },
                 backtestRunOptions: {
                     includeAdvancedAnalytics: false,
@@ -412,17 +380,10 @@ export async function runBatchBacktest(
             const projectionStartedAt = performance.now();
             const result = buildSymbolResult(symbol, data, output.result, output.signals, preResolvedCapital);
             timings.resultProjectionMs += performance.now() - projectionStartedAt;
-            await notifyComplete(i, result, {
-                signals: output.signals,
-                baseSymbol: datasetContext.baseSymbol,
-                quoteSymbol: datasetContext.quoteSymbol,
-                baseCloses: datasetContext.baseCloses,
-                quoteCloses: datasetContext.quoteCloses,
-            });
+            await notifyComplete(i, result);
             results[i] = input.pruneResultArtifacts ? pruneResultArtifacts(result) : result;
         } catch (error) {
             if (cancelCheck()) break;
-            if (isTradeGateEvaluationError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
             const failure: BatchBacktestSymbolResult = {
                 symbol,

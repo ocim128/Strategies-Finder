@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import type { TradeLedgerProvenance, TradeLedgerRankRow, TradeLedgerRow } from "../lib/batch-backtest/trade-ledger-row-builder";
+import type { TradeLedgerProvenance, TradeLedgerRankRow, TradeLedgerRow } from "../lib/batch-backtest/trade-ledger-schema";
 import { createTradeLedgerControlPool } from "../lib/batch-backtest/trade-ledger-control-pool";
 import {
     TRADE_LEDGER_CONTROL_RUNS,

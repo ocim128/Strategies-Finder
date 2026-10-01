@@ -23,14 +23,10 @@ import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import { isBatchResultSortKey } from "./batch-results-sort";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
-import {
-    type BatchPersistedActiveServerRun,
-    type BatchTradeGateOptions,
-} from "./browser/batch-browser-store";
+import { type BatchPersistedActiveServerRun } from "./browser/batch-browser-store";
 import { TopMeanController } from "./browser/top-mean-controller";
 import { BatchRunController } from "./browser/batch-run-controller";
 import { OpenScoreController } from "./browser/open-score-controller";
-import { TradeGateControls } from "./browser/trade-gate-controls";
 import { BalancedPairListControls } from "./browser/balanced-pair-list-controls";
 import type { TopMeanResultSummary } from "./sp500-top-mean-coordinator-engine";
 import {
@@ -115,14 +111,13 @@ export class BatchBacktestService {
     });
     // Batch run workflow owner (browser/batch-run-controller.ts). Created
     // closed over this facade; the injected callbacks keep cross-workflow
-    // coordination (busy gate, balanced lock, trade gate, pending Stop)
+    // coordination (busy gate, balanced lock, pending Stop)
     // owned by the facade.
     private readonly batchRun: BatchRunController = new BatchRunController({
         getDom: () => this.getDom(),
         resultsView: this.resultsView,
         isUiBusy: () => this.isBatchUiBusy(),
         balancedLock: () => this.balancedGeneratorLockState(),
-        resolveTradeGate: (dom) => this.resolveTradeGateForRun(dom),
         getPairListProvenance: () => this.balanced.getActiveProvenance(),
         requestServerStop: () => this.requestServerStop(),
     });
@@ -138,8 +133,6 @@ export class BatchBacktestService {
         lastRunInterval: () => this.batchRun.getLastRunInterval(),
         reissueStopIfNeeded: () => this.reissueStopIfNeeded(),
     });
-    // Trade Gate form controls (catalog + persisted options).
-    private readonly tradeGate = new TradeGateControls();
     // Balanced Generator controls (generate/copy + applied-list provenance).
     private readonly balanced = new BalancedPairListControls({
         getDom: () => this.getDom(),
@@ -183,7 +176,6 @@ export class BatchBacktestService {
         const dom = this.getDom();
         this.bindEvents(dom);
         this.batchRun.refreshSortHeader(dom);
-        this.restoreTradeGateOptions(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
         this.loadPersistedLatestTopMeanResult(dom);
@@ -198,7 +190,6 @@ export class BatchBacktestService {
         this.batchRun.setServerRunActive(this.activeServerRunId !== null);
         this.updateSummary(dom);
         this.initialized = true;
-        void this.refreshTradeGateCatalog();
         // Reattach to a server-side run that started before page load.
         void this.reattachToInProgressServerRun();
         void this.reattachToInProgressTopMeanRun();
@@ -352,43 +343,6 @@ export class BatchBacktestService {
         dom.batchBacktestBalancedCopyBtn.addEventListener("click", () => {
             void this.copyBalancedPairList();
         });
-        dom.batchBacktestTradeGateToggle.addEventListener("change", () => {
-            this.persistTradeGateOptions(dom);
-            this.clearStaleResults(dom);
-            this.updateSummary(dom);
-            this.renderTradeGateSelection(dom);
-        });
-        dom.batchBacktestTradeGateFolder.addEventListener("change", () => {
-            this.persistTradeGateOptions(dom);
-            this.clearStaleResults(dom);
-            this.renderTradeGateSelection(dom);
-        });
-        dom.batchBacktestTradeGateRules.addEventListener("change", () => {
-            this.persistTradeGateOptions(dom);
-            this.clearStaleResults(dom);
-            this.renderTradeGateSelection(dom);
-        });
-    }
-
-    private restoreTradeGateOptions(dom: BatchBacktestDom): void {
-        this.tradeGate.restoreOptions(dom);
-    }
-
-
-    private persistTradeGateOptions(dom: BatchBacktestDom): void {
-        this.tradeGate.persistOptions(dom);
-    }
-
-    private async refreshTradeGateCatalog(): Promise<boolean> {
-        return this.tradeGate.refreshCatalog(() => this.getDom());
-    }
-
-    private renderTradeGateSelection(dom: BatchBacktestDom): void {
-        this.tradeGate.renderSelection(dom);
-    }
-
-    private validateTradeGateSelection(dom: BatchBacktestDom): BatchTradeGateOptions | null {
-        return this.tradeGate.validateSelection(dom);
     }
 
     /**
@@ -433,21 +387,6 @@ export class BatchBacktestService {
 
     private async copyOpenPositionPairs(): Promise<void> {
         await this.batchRun.copyOpenPositionPairs();
-    }
-
-    /**
-     * Trade-gate preflight for a Batch run: validate the selection and, when
-     * the gate is enabled but the catalog has not loaded, refresh once and
-     * revalidate. Facade-owned because it spans the gate controls and the
-     * run preflight.
-     */
-    private async resolveTradeGateForRun(dom: BatchBacktestDom): Promise<BatchTradeGateOptions | null> {
-        let tradeGateOptions = this.validateTradeGateSelection(dom);
-        if (dom.batchBacktestTradeGateToggle.checked && !this.tradeGate.getCatalog()) {
-            await this.refreshTradeGateCatalog();
-            tradeGateOptions = this.validateTradeGateSelection(dom);
-        }
-        return tradeGateOptions;
     }
 
     /**

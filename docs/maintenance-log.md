@@ -40,22 +40,6 @@ repeating the same investigation.
   pool registry; and trade-ledger checker/parity. Pair-list line-ending drift
   is fixed in the newer entry; rerun the suite to confirm the other failures.
 
-## 2026-10-01 - Restore Trade Gate batch integration test seam
-
-- **Evidence:** `tests/trade-gate.spec.ts` failed 9 of 10 tests because its
-  server-run case called `__testInternals.setTradeGateArchiveRootForTests`,
-  which was missing after the ledger-root rename in the prior feature-removal
-  commit. That prevented coverage of real Batch gate counters and provenance.
-- **Change:** Restored the test-only setter for the current Trade Gate archive
-  root and documented the server integration regression contract.
-- **Checks:** `npm run test -- trade-gate.spec.ts`, `npm run typecheck`,
-  `npm run typecheck:tests`, and `git diff --check` pass.
-- **Follow-up:** The last broad run also failed Finder asset-opportunity cache
-  capacity, metadata, export diagnostics, and server-plugin specs; pair-list
-  pool registry; strategy manifest sync; and trade-ledger checker/parity. The
-  strategy manifest drift and pair-list line-ending drift are fixed in newer
-  entries; rerun the broad suite to confirm the other failures' current status.
-
 ## 2026-10-01 - Repair endpoint parity confirmation fixture
 
 - **Evidence:** The confirmation agreement test used 1m candle timestamps at
@@ -69,13 +53,11 @@ repeating the same investigation.
   signal agreement instead of failing in setup.
 - **Checks:** `npm run test -- backtest-endpoint-parity.spec.ts`,
   `npm run typecheck`, and `git diff --check` pass. `npm run typecheck:tests`
-  still fails on the unrelated missing `__testInternals.setTradeGateArchiveRootForTests`
-  member in `tests/trade-gate.spec.ts`. The full suite reports 240 passed and
-  9 failed out of 249 selected specs.
+  still had 9 failures out of 249 selected specs.
 - **Follow-up:** Triage the remaining full-suite failures in Finder asset
   opportunity cache/metadata, Finder export diagnostics, Finder server plugin,
   pair-list pool registry, strategy manifest sync, and trade-ledger
-  checker/parity specs. Trade Gate is corrected in the newer entry.
+  checker/parity specs.
 
 ## 2026-10-01 - Keep pair-feature source pins portable across Windows
 

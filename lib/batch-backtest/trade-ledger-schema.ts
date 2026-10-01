@@ -5,7 +5,7 @@
  * consumers can share the schema without pulling in the row builder.
  */
 
-import type { ExecutionModel, Trade, TradeDirection } from "../types/strategies";
+import type { Trade } from "../types/strategies";
 
 // ============================================================================
 // Constants (bump versions whenever the schema or the feature set changes)
@@ -15,7 +15,7 @@ export const TRADE_LEDGER_VERSION = 3;
 export const TRADE_LEDGER_FEATURE_VERSION = 3;
 /** Ledger versions retained for legacy as-if replay consumers. */
 export const TRADE_LEDGER_SUPPORTED_VERSIONS = [2, 3] as const;
-/** Feature versions accepted by the legacy checker and Trade Gate. */
+/** Feature versions accepted by the legacy checker. */
 export const TRADE_LEDGER_SUPPORTED_FEATURE_VERSIONS = [2, 3] as const;
 export const TRADE_LEDGER_DEFAULT_HORIZONS = [24] as const;
 
@@ -144,7 +144,7 @@ export interface TradeLedgerRow {
     feat_candidatesAtTime: number | null;
     /**
      * As-if outcome for EVERY entry signal (engine math, see
-     * trade-ledger-asif.ts). Null ONLY when right-censored (no fill bar) or
+     * archived replay calculation). Null ONLY when right-censored (no fill bar) or
      * when the run is not replay-eligible — never zero-filled.
      */
     asIf: TradeLedgerAsIfOutcome | null;
@@ -249,16 +249,4 @@ export interface TradeLedgerReplayProvenance {
     disableSignalExits: boolean;
     slippageRate: number;
     commissionRate: number;
-}
-
-/** Resolved per-run settings the row builder needs (mirrors the engine gate). */
-export interface TradeLedgerRowContext {
-    tradeDirection: TradeDirection;
-    executionModel: ExecutionModel;
-    /** Infinity for unlimited overlap (resolved settings may carry Infinity). */
-    maxOpenTrades: number;
-    cooldownBars: number;
-    slippageRate: number;
-    /** Fixed forward horizons, in whole bars. Defaults to [24]. */
-    ledgerHorizons?: number[];
 }

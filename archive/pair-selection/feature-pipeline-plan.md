@@ -1,4 +1,4 @@
-> Historical proposal: the Batch archive-capture workflow described below has been removed. Existing artifacts remain readable by the legacy checker and Trade Gate.
+> Historical proposal: the Batch archive-capture workflow described below has been removed. Existing artifacts remain readable by the legacy checker and Pair Selection.
 
 # Pair-selection feature pipeline implementation contract
 

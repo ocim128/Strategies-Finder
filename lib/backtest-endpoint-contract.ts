@@ -14,7 +14,6 @@ import type {
 } from "./types/strategies";
 import type { CapitalSettings } from "./types/backtest";
 import type { RustCapabilities, RustDiagnosticPhase } from "./rust-engine-client";
-import type { TradeGate } from "./batch-backtest/trade-gate";
 
 // ============================================================================
 // Engine mode
@@ -90,7 +89,6 @@ export interface BacktestExecutionContext {
     typescriptSimulationConcurrency?: TypescriptSimulationConcurrencyTracker;
 
     /** Server-side Batch entry gate; absent for ordinary backtests. */
-    tradeGate?: TradeGate;
 }
 
 // ============================================================================

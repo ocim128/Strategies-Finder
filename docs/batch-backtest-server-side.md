@@ -49,7 +49,7 @@ changes a fingerprint is a behavior change — investigate, don't re-bless.
 
 `BatchBacktestService` remains the composition root and public facade: it
 wires the DOM contract, owns cross-workflow coordination (`isBatchUiBusy`,
-balanced-generator lock, trade-gate preflight, pending-Stop sequencing —
+balanced-generator lock, pending-Stop sequencing —
 deliberately uncoalesced — and `clearStaleResults` across owners), composes
 disposal, and exposes typed accessors rather than letting children see its
 internals. Do not pass the whole service into a child module.
@@ -63,7 +63,6 @@ internals. Do not pass the whole service into a child module.
 | `top-mean-results-view.ts` | Current-snapshot banner, latest-arm card, display tie-breaks, copy text | lifecycle spec |
 | `top-mean-event-details-view.ts` | Details sections, year filter, ONGOING rows, truncation notices | lifecycle spec |
 | `batch-browser-store.ts` | Storage keys/versions/migrations for settings, active-run markers, compact snapshots (data only; no DOM) | `batch-backtest-snapshot.spec.ts` |
-| `trade-gate-controls.ts` | Gate catalog fetch, persisted options, selection render/validate | `batch-ndjson-post.spec.ts` (transport) |
 | `balanced-pair-list-controls.ts` | Generate-and-apply, copy, applied-list provenance | `batch-balanced-pair-list-generator.spec.ts` |
 
 Memory ownership: the replay engine's per-window arrays are released only at

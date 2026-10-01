@@ -124,7 +124,7 @@
 
 /* ------------------------------------------------------------------
  * Form grid — shared field layout for the coordinator, OPEN_SCORE USD,
- * trade-ledger, and trade-gate control clusters. Responsive auto-fit
+ * trade-ledger control clusters. Responsive auto-fit
  * columns; inline (label-left) fields switch to stacked labels so every
  * field in the cluster reads the same way.
  * ------------------------------------------------------------------ */
@@ -289,17 +289,6 @@
     font-size: var(--font-size-xs);
     white-space: pre-wrap;
     color: var(--text-secondary);
-}
-
-/* Sweep folder + rule lists read better in the mono face. */
-#batchBacktestTradeGateFolder,
-#batchBacktestTradeGateRules {
-    font-family: var(--font-family-mono);
-    font-size: var(--font-size-xs);
-}
-
-#batchBacktestTradeGateRules {
-    min-height: 5.5rem;
 }
 
 /* Pair count readout beside the textarea heading */
@@ -686,10 +675,6 @@
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-s);
     padding: var(--space-2) var(--space-2-5);
-}
-
-#batchBacktestTradeGateWarning:not(:empty) {
-    border-left: 3px solid var(--warning);
 }
 
 /* ------------------------------------------------------------------
