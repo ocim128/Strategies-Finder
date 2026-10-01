@@ -4,6 +4,24 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Make pair-list integrity checks line-ending portable
+
+- **Evidence:** The broad suite failed `pairlist-pool-registry.spec.ts` because
+  `core.autocrlf=true` checks out the committed LF text files as CRLF, while the
+  expected generated list uses LF. The registry hash itself is computed from
+  canonical LF-joined pair entries and still matched.
+- **Change:** Normalize CRLF to LF only for text-export comparisons, including
+  the optional local archive copies. The test still checks all pair tokens,
+  order, markers, final newline, and the pinned registry hash. Documented the
+  canonical hash and checkout contract in the pool guide.
+- **Checks:** `npm run test -- pairlist-pool-registry.spec.ts`,
+  `npm run typecheck:tests`, and `git diff --check` pass. The preceding full
+  run had 242 passes and 7 failures, including this portability failure.
+- **Follow-up:** The other failures were Finder Asset Opportunity cache
+  capacity, metadata, export diagnostics, and server-plugin specs, plus the
+  trade-ledger checker and parity golden specs. Rerun the full suite to verify
+  their current status.
+
 ## 2026-10-01 - Sync the missing built-in strategy manifests
 
 - **Evidence:** The full suite found all four generated-manifest checks out of
@@ -19,8 +37,8 @@ repeating the same investigation.
   `git diff --check` pass.
 - **Follow-up:** The prior full run also failed Finder Asset Opportunity cache
   capacity, metadata, export diagnostics, and server-plugin specs; pair-list
-  pool registry; and trade-ledger checker/parity. Rerun the suite to confirm
-  those failures' current status.
+  pool registry; and trade-ledger checker/parity. Pair-list line-ending drift
+  is fixed in the newer entry; rerun the suite to confirm the other failures.
 
 ## 2026-10-01 - Restore Trade Gate batch integration test seam
 
@@ -35,8 +53,8 @@ repeating the same investigation.
 - **Follow-up:** The last broad run also failed Finder asset-opportunity cache
   capacity, metadata, export diagnostics, and server-plugin specs; pair-list
   pool registry; strategy manifest sync; and trade-ledger checker/parity. The
-  strategy manifest drift is fixed in the newer entry; rerun the broad suite
-  to confirm the other failures' current status.
+  strategy manifest drift and pair-list line-ending drift are fixed in newer
+  entries; rerun the broad suite to confirm the other failures' current status.
 
 ## 2026-10-01 - Repair endpoint parity confirmation fixture
 

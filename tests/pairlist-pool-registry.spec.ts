@@ -10,6 +10,11 @@ const root = process.cwd();
 const docsDir = join(root, "docs", "pairlist-pools");
 const registryPath = join(docsDir, "BAL679.v1.json");
 const textPath = join(docsDir, "BAL679.v1.txt");
+
+function normalizeLineEndings(value: string): string {
+    return value.replace(/\r\n/g, "\n");
+}
+
 const registry = JSON.parse(readFileSync(registryPath, "utf8")) as {
     schema: string;
     poolVersion: string;
@@ -73,8 +78,9 @@ const markedPairs = registry.pairs.map((pair) => {
     return `${markIbkrSymbol(base.scoringAsset)}+${markIbkrSymbol(quote.scoringAsset)}`;
 });
 const markedPairText = `${markedPairs.join("\n")}\n`;
-assert.equal(readFileSync(textPath, "utf8"), markedPairText);
-assert.notEqual(createHash("sha256").update(readFileSync(textPath, "utf8"), "utf8").digest("hex"), pairHash);
+const checkedOutPairText = normalizeLineEndings(readFileSync(textPath, "utf8"));
+assert.equal(checkedOutPairText, markedPairText);
+assert.notEqual(createHash("sha256").update(checkedOutPairText, "utf8").digest("hex"), pairHash);
 
 const canonicalPairSet = normalizeAssetPairSet(registry.pairs);
 const markedPairSet = normalizeAssetPairSet(markedPairs);
@@ -90,7 +96,10 @@ const archiveDir = join(root, "archive", "batch-open-score", "pools");
 for (const filename of ["BAL679.v1.json", "BAL679.v1.txt"]) {
     const archivePath = join(archiveDir, filename);
     if (existsSync(archivePath)) {
-        assert.deepEqual(readFileSync(archivePath), readFileSync(join(docsDir, filename)));
+        assert.equal(
+            normalizeLineEndings(readFileSync(archivePath, "utf8")),
+            normalizeLineEndings(readFileSync(join(docsDir, filename), "utf8")),
+        );
     }
 }
 
