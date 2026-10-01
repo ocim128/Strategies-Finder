@@ -6,6 +6,9 @@
  * versioned FNV-1a tie-break digest, maintains the strict-past TOP_Z Welford
  * history, and captures profit-only events (no ordinary pool).
  *
+ * buildAssetSwitchDecisions: resolves the same 15 switch arms in one pass per
+ * event and retains only their decisions for the path-dependent replay.
+ *
  * buildOutcomeRequests: groups requested event indexes by asset so each target
  * dataset is loaded once, consumed, and released.
  *
@@ -20,7 +23,7 @@
  */
 import { tieBreakDigest } from "../max-active-research-contract";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
-import type { BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback } from "./internal-types";
+import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback } from "./internal-types";
 import { REPLAY_ARM_FIELDS } from "./arm-contract";
 import type { ReplayArmField } from "./arm-contract";
 import { yieldLoop } from "./runtime";
@@ -28,6 +31,12 @@ import { yieldLoop } from "./runtime";
 export interface CandidateStageResult {
     views: EventView[];
     profitOnlyEvents: ProfitOnlyEvent[];
+}
+
+export interface AssetSwitchCandidateStageResult {
+    decisions: AssetSwitchDecision[];
+    candidateComparisonEvents: number;
+    selectedAssets: Set<string>;
 }
 
 export async function buildCandidateViews(args: {
@@ -38,7 +47,7 @@ export async function buildCandidateViews(args: {
     assetCount: number;
     /** Keep singleton events so they can start an enabled selector cooldown. */
     selectionCooldownBars?: number;
-    /** Switch replay needs every decision, including empty/singleton pools. */
+    /** Legacy full-view fixtures can retain empty/singleton switch events. */
     includeAllDecisionEvents?: boolean;
     onPhase: ReplayPhaseCallback;
 }): Promise<CandidateStageResult> {
@@ -353,6 +362,249 @@ export async function buildCandidateViews(args: {
         }
     }
     return { views, profitOnlyEvents };
+}
+
+class SwitchRankedMaximum {
+    private bestValue = Number.NEGATIVE_INFINITY;
+    private winner: number | null = null;
+    private winnerDigest: string | null = null;
+
+    constructor(
+        private readonly assetNames: readonly string[],
+        private readonly digestFor: (assetIndex: number) => string,
+    ) {}
+
+    consider(value: number, assetIndex: number): void {
+        if (this.winner === null || value > this.bestValue) {
+            this.bestValue = value;
+            this.winner = assetIndex;
+            this.winnerDigest = null;
+            return;
+        }
+        if (value !== this.bestValue) return;
+        const candidateDigest = this.digestFor(assetIndex);
+        this.winnerDigest ??= this.digestFor(this.winner);
+        if (candidateDigest < this.winnerDigest
+            || (candidateDigest === this.winnerDigest && this.assetNames[assetIndex]! < this.assetNames[this.winner]!)) {
+            this.winner = assetIndex;
+            this.winnerDigest = candidateDigest;
+        }
+    }
+
+    result(): number | null {
+        return this.winner;
+    }
+}
+
+class SwitchUniqueExtreme {
+    private bestValue: number;
+    private winner: number | null = null;
+    private winnerCount = 0;
+
+    constructor(private readonly direction: "max" | "min") {
+        this.bestValue = direction === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+    }
+
+    consider(value: number, assetIndex: number): void {
+        const better = this.direction === "max" ? value > this.bestValue : value < this.bestValue;
+        if (this.winnerCount === 0 || better) {
+            this.bestValue = value;
+            this.winner = assetIndex;
+            this.winnerCount = 1;
+        } else if (value === this.bestValue) {
+            this.winnerCount += 1;
+            this.winner = null;
+        }
+    }
+
+    result(): number | null {
+        return this.winnerCount === 1 ? this.winner : null;
+    }
+}
+
+class SwitchMeanRawUnique {
+    private bestMean: number;
+    private bestRaw: number;
+    private winner: number | null = null;
+    private winnerCount = 0;
+
+    constructor(private readonly direction: "max" | "min") {
+        this.bestMean = direction === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+        this.bestRaw = direction === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY;
+    }
+
+    consider(mean: number, raw: number, assetIndex: number): void {
+        const betterMean = this.direction === "max" ? mean > this.bestMean : mean < this.bestMean;
+        if (this.winnerCount === 0 || betterMean) {
+            this.bestMean = mean;
+            this.bestRaw = raw;
+            this.winner = assetIndex;
+            this.winnerCount = 1;
+            return;
+        }
+        if (mean !== this.bestMean) return;
+        const betterRaw = this.direction === "max" ? raw > this.bestRaw : raw < this.bestRaw;
+        if (betterRaw) {
+            this.bestRaw = raw;
+            this.winner = assetIndex;
+            this.winnerCount = 1;
+        } else if (raw === this.bestRaw) {
+            this.winnerCount += 1;
+            this.winner = null;
+        }
+    }
+
+    result(): number | null {
+        return this.winnerCount === 1 ? this.winner : null;
+    }
+}
+
+/**
+ * Build the switch replay's minimal event stream directly. Horizon mode needs
+ * the candidate pools retained on EventView; switch mode needs only its arm
+ * picks, so this path resolves those picks in one asset pass and releases each
+ * score snapshot as soon as it has been consumed.
+ */
+export async function buildAssetSwitchDecisions(args: {
+    events: readonly DecisionEvent[];
+    totalEvents: number;
+    assetNames: readonly string[];
+    assetCount: number;
+    onPhase: ReplayPhaseCallback;
+    onEventProcessed?: (eventIndex: number) => void;
+}): Promise<AssetSwitchCandidateStageResult> {
+    const { events, totalEvents, assetNames, assetCount, onPhase, onEventProcessed } = args;
+    onPhase("targets", "forming asset-switch decisions", 0, totalEvents);
+    const decisions: AssetSwitchDecision[] = [];
+    const selectedAssets = new Set<string>();
+    const zWelfordMean = new Float64Array(assetCount);
+    const zWelfordM2 = new Float64Array(assetCount);
+    const zWelfordCount = new Float64Array(assetCount);
+    let candidateComparisonEvents = 0;
+
+    const zSurprise = (assetIndex: number, score: number): number => {
+        const n = zWelfordCount[assetIndex]!;
+        if (n <= 0) return score;
+        const variance = zWelfordM2[assetIndex]! / n;
+        const z = (score - zWelfordMean[assetIndex]!) / Math.max(Math.sqrt(variance), 1);
+        return Number.isFinite(z) ? z : 0;
+    };
+    const updateZStats = (assetIndex: number, score: number): void => {
+        const n = zWelfordCount[assetIndex]!;
+        const mean = zWelfordMean[assetIndex]!;
+        const delta = score - mean;
+        const nextMean = mean + delta / (n + 1);
+        zWelfordM2[assetIndex] = zWelfordM2[assetIndex]! + delta * (score - nextMean);
+        zWelfordMean[assetIndex] = nextMean;
+        zWelfordCount[assetIndex] = n + 1;
+    };
+
+    for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+        const event = events[eventIndex]!;
+        let digestCache: Map<number, string> | null = null;
+        const digestFor = (assetIndex: number): string => {
+            const cached = digestCache?.get(assetIndex);
+            if (cached !== undefined) return cached;
+            const digest = tieBreakDigest(event.timeSec, assetNames[assetIndex]!);
+            (digestCache ??= new Map()).set(assetIndex, digest);
+            return digest;
+        };
+
+        const topRaw = new SwitchRankedMaximum(assetNames, digestFor);
+        const topMean = new SwitchRankedMaximum(assetNames, digestFor);
+        const topMeanRawUnique = new SwitchMeanRawUnique("max");
+        const topRawProfit = new SwitchRankedMaximum(assetNames, digestFor);
+        const topMeanProfit = new SwitchRankedMaximum(assetNames, digestFor);
+        const topRawProfitNow = new SwitchRankedMaximum(assetNames, digestFor);
+        const topMeanProfitNow = new SwitchRankedMaximum(assetNames, digestFor);
+        const topRawProfitNowConf = new SwitchRankedMaximum(assetNames, digestFor);
+        const topZ = new SwitchRankedMaximum(assetNames, digestFor);
+        const botRaw = new SwitchUniqueExtreme("min");
+        const botMean = new SwitchUniqueExtreme("min");
+        const botMeanRawUnique = new SwitchMeanRawUnique("min");
+        const botRawProfitNow = new SwitchUniqueExtreme("min");
+        const botMeanProfitNow = new SwitchUniqueExtreme("min");
+        const botZ = new SwitchUniqueExtreme("min");
+        let positiveCount = 0;
+
+        for (let assetIndex = 0; assetIndex < assetCount; assetIndex += 1) {
+            const raw = event.rawScore[assetIndex]!;
+            const activePairs = event.activePairCount[assetIndex]!;
+            if (raw > 0) {
+                const mean = activePairs > 0 ? raw / activePairs : raw;
+                positiveCount += 1;
+                topRaw.consider(raw, assetIndex);
+                topMean.consider(mean, assetIndex);
+                topMeanRawUnique.consider(mean, raw, assetIndex);
+                botRaw.consider(raw, assetIndex);
+                botMean.consider(mean, assetIndex);
+                botMeanRawUnique.consider(mean, raw, assetIndex);
+            }
+
+            const rawProfit = event.rawScoreProfit[assetIndex]!;
+            if (rawProfit > 0) {
+                const count = event.activePairCountProfit[assetIndex]!;
+                topRawProfit.consider(rawProfit, assetIndex);
+                topMeanProfit.consider(count > 0 ? rawProfit / count : rawProfit, assetIndex);
+            }
+
+            const rawProfitNow = event.rawScoreProfitNow[assetIndex]!;
+            if (rawProfitNow > 0) {
+                const count = event.activePairCountProfitNow[assetIndex]!;
+                const mean = count > 0 ? rawProfitNow / count : rawProfitNow;
+                const z = zSurprise(assetIndex, rawProfitNow);
+                topRawProfitNow.consider(rawProfitNow, assetIndex);
+                topMeanProfitNow.consider(mean, assetIndex);
+                topZ.consider(z, assetIndex);
+                botRawProfitNow.consider(rawProfitNow, assetIndex);
+                botMeanProfitNow.consider(mean, assetIndex);
+                botZ.consider(z, assetIndex);
+            }
+
+            const rawProfitNowConf = event.rawScoreProfitNowConf[assetIndex]!;
+            if (rawProfitNowConf > 0) topRawProfitNowConf.consider(rawProfitNowConf, assetIndex);
+
+            // Each asset's TOP_Z history is independent. Read its prior
+            // statistics above, then incorporate this event before advancing
+            // to the next asset; this preserves strict-past semantics without
+            // a second pass over the score snapshots.
+            updateZStats(assetIndex, rawProfitNow);
+        }
+        if (positiveCount >= 2) candidateComparisonEvents += 1;
+
+        const picks: AssetSwitchDecision["picks"] = {
+            topRawProfitNow: topRawProfitNow.result(),
+            topMeanProfitNow: topMeanProfitNow.result(),
+            topRawProfitNowConf: topRawProfitNowConf.result(),
+            topZ: topZ.result(),
+            topRaw: topRaw.result(),
+            topMean: topMean.result(),
+            topMeanRawUnique: topMeanRawUnique.result(),
+            topRawProfit: topRawProfit.result(),
+            topMeanProfit: topMeanProfit.result(),
+            botRawProfitNow: botRawProfitNow.result(),
+            botMeanProfitNow: botMeanProfitNow.result(),
+            botZ: botZ.result(),
+            botRaw: botRaw.result(),
+            botMean: botMean.result(),
+            botMeanRawUnique: botMeanRawUnique.result(),
+        };
+        for (const arm of REPLAY_ARM_FIELDS) {
+            const selectedIndex = picks[arm];
+            if (selectedIndex !== null) {
+                const selectedAsset = assetNames[selectedIndex] ?? "";
+                if (selectedAsset) selectedAssets.add(selectedAsset);
+            }
+        }
+        decisions.push({ timeSec: event.timeSec, picks });
+        onEventProcessed?.(eventIndex);
+
+        if (eventIndex % 1000 === 0) {
+            onPhase("targets", `formed asset-switch decisions for ${eventIndex}/${totalEvents} events`, eventIndex, totalEvents);
+            await yieldLoop();
+        }
+    }
+    return { decisions, candidateComparisonEvents, selectedAssets };
 }
 
 export interface OutcomeRequestPlan {

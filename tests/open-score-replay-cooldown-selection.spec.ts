@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { aggregateHorizonResults } from "../lib/batch-backtest/open-score-replay/aggregation";
-import { buildCandidateViews, selectAfterOutcomes } from "../lib/batch-backtest/open-score-replay/candidate-selection";
+import { buildAssetSwitchDecisions, buildCandidateViews, selectAfterOutcomes } from "../lib/batch-backtest/open-score-replay/candidate-selection";
 import type { Candidate, DecisionEvent, EventView, ProfitOnlyEvent } from "../lib/batch-backtest/open-score-replay/internal-types";
 import { tieBreakDigest } from "../lib/batch-backtest/max-active-research-contract";
 
@@ -58,6 +58,64 @@ function makeDecisionEvent(
 }
 
 describe("OPEN_SCORE replay selection cooldown", () => {
+    it("matches full-view picks while building compact asset-switch decisions in one pass", async () => {
+        const assetNames = Array.from({ length: 8 }, (_, index) => `ASSET${index}`);
+        let seed = 0x51f15e;
+        const random = (): number => {
+            seed = (Math.imul(seed, 1_664_525) + 1_013_904_223) >>> 0;
+            return seed / 0x1_0000_0000;
+        };
+        const scores = (): Float64Array => Float64Array.from(
+            { length: assetNames.length },
+            () => Math.floor(random() * 15) - 7,
+        );
+        const counts = (): Float64Array => Float64Array.from(
+            { length: assetNames.length },
+            () => Math.floor(random() * 5),
+        );
+        const events: DecisionEvent[] = Array.from({ length: 120 }, (_, index) => ({
+            timeSec: 1_700_000_000 + index,
+            rawScore: scores(),
+            activePairCount: counts(),
+            rawScoreProfit: scores(),
+            activePairCountProfit: counts(),
+            rawScoreProfitNow: scores(),
+            activePairCountProfitNow: counts(),
+            rawScoreProfitNowConf: scores(),
+            activePairCountProfitNowConf: counts(),
+        }));
+        const fullViews = await buildCandidateViews({
+            events,
+            totalEvents: events.length,
+            assetNames,
+            assetCount: assetNames.length,
+            includeAllDecisionEvents: true,
+            onPhase: () => undefined,
+        });
+        const compact = await buildAssetSwitchDecisions({
+            events,
+            totalEvents: events.length,
+            assetNames,
+            assetCount: assetNames.length,
+            onPhase: () => undefined,
+        });
+
+        expect(compact.decisions).to.deep.equal(fullViews.views.map((row) => ({
+            timeSec: row.timeSec,
+            picks: row.assetSwitchPicks,
+        })));
+        expect(compact.candidateComparisonEvents).to.equal(
+            fullViews.views.filter((row) => row.positives.length >= 2).length,
+        );
+        const expectedSelected = new Set<string>();
+        for (const row of compact.decisions) {
+            for (const selectedIndex of Object.values(row.picks)) {
+                if (selectedIndex !== null) expectedSelected.add(assetNames[selectedIndex]!);
+            }
+        }
+        expect(compact.selectedAssets).to.deep.equal(expectedSelected);
+    });
+
     it("reuses deterministic ranked winners for asset-switch picks while preserving unique-only ties", async () => {
         const built = await buildCandidateViews({
             events: [

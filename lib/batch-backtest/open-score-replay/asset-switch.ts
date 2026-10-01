@@ -452,8 +452,8 @@ async function validatePendingBuyAtEnd(
 interface ArmRuntime {
     field: ReplayArmField;
     state: ArmState;
-    schedule(assetIndex: number | null, decisionTimeSec: number): Promise<void>;
-    processPendingThrough(throughSec: number): Promise<void>;
+    schedule(assetIndex: number | null, decisionTimeSec: number): void | Promise<void>;
+    processPendingThrough(throughSec: number): void | Promise<void>;
 }
 
 function createArmRuntime(args: {
@@ -477,7 +477,7 @@ function createArmRuntime(args: {
         }
         return response.point ? { timeSec: response.point.timeSec, open: response.point.open } : null;
     };
-    const schedule = async (assetIndex: number | null, decisionTimeSec: number): Promise<void> => {
+    const schedule = (assetIndex: number | null, decisionTimeSec: number): void | Promise<void> => {
         const targetAsset = assetIndex === null ? null : assetNames[assetIndex] ?? null;
         if (!targetAsset) {
             state.pendingDecisionTimeSec = null;
@@ -502,17 +502,22 @@ function createArmRuntime(args: {
         state.desiredAsset = targetAsset;
         state.pendingDecisionTimeSec = decisionTimeSec;
         if (state.position) {
-            const sale = state.pendingSell ?? await planNext(state.position.asset, decisionTimeSec, false);
-            state.pendingSell = sale;
-            state.buyOrderFromSec = sale?.timeSec ?? null;
-            state.pendingBuy = sale ? await planNext(targetAsset, sale.timeSec, true) : null;
+            const heldAsset = state.position.asset;
+            return (async () => {
+                const sale = state.pendingSell ?? await planNext(heldAsset, decisionTimeSec, false);
+                state.pendingSell = sale;
+                state.buyOrderFromSec = sale?.timeSec ?? null;
+                state.pendingBuy = sale ? await planNext(targetAsset, sale.timeSec, true) : null;
+            })();
         } else {
             state.pendingSell = null;
             state.buyOrderFromSec = decisionTimeSec;
-            state.pendingBuy = await planNext(targetAsset, decisionTimeSec, false);
+            return planNext(targetAsset, decisionTimeSec, false).then((buy) => {
+                state.pendingBuy = buy;
+            });
         }
     };
-    const processPendingThrough = async (throughSec: number): Promise<void> => {
+    const processPendingThroughAsync = async (throughSec: number): Promise<void> => {
         // At one open, complete a scheduled sale and replacement buy before
         // processing the score decision at that timestamp.
         let changed = true;
@@ -614,6 +619,17 @@ function createArmRuntime(args: {
             }
         }
     };
+    const processPendingThrough = (throughSec: number): void | Promise<void> => {
+        if (state.failed) return;
+        const saleDue = state.position !== null
+            && state.pendingSell !== null
+            && state.pendingSell.timeSec <= throughSec;
+        const buyDue = state.position === null
+            && state.desiredAsset !== null
+            && state.pendingBuy !== null
+            && state.pendingBuy.timeSec <= throughSec;
+        return saleDue || buyDue ? processPendingThroughAsync(throughSec) : undefined;
+    };
     return { field, state, schedule, processPendingThrough };
 }
 
@@ -627,6 +643,7 @@ export async function runAssetSwitchReplay(args: {
     shouldStop: () => boolean;
     pairCount: number;
     assetCount: number;
+    selectedAssets?: ReadonlySet<string>;
 }): Promise<StageOutcome<AssetSwitchReplaySummary>> {
     const { views, assetNames, options, slippageRate, commissionRate, onPhase, shouldStop, pairCount, assetCount } = args;
     if (!options.loadTargetDataset) throw new Error("Asset-switch replay requires the lazy loadTargetDataset source.");
@@ -637,14 +654,19 @@ export async function runAssetSwitchReplay(args: {
     const windowEndSec = Math.min(requestedEndSec, cutoffSec);
     const windowStartSec = Number.isFinite(options.sampleFromSec) ? options.sampleFromSec! : null;
     const lookup = new SwitchTargetLookup(options.loadTargetDataset, windowEndSec, intervalSec);
-    const selectedAssets = new Set<string>();
-    for (const view of views) {
-        for (const arm of REPLAY_ARM_FIELDS) {
-            const selectedIndex = view.picks[arm];
-            if (selectedIndex !== null) selectedAssets.add(assetNames[selectedIndex] ?? "");
+    const selectedAssets = args.selectedAssets;
+    if (!selectedAssets) {
+        const scannedAssets = new Set<string>();
+        for (const view of views) {
+            for (const arm of REPLAY_ARM_FIELDS) {
+                const selectedIndex = view.picks[arm];
+                if (selectedIndex !== null) scannedAssets.add(assetNames[selectedIndex] ?? "");
+            }
         }
+        options.prefetchTargetDatasets?.([...scannedAssets].filter(Boolean));
+    } else {
+        options.prefetchTargetDatasets?.([...selectedAssets]);
     }
-    options.prefetchTargetDatasets?.([...selectedAssets].filter(Boolean));
 
     const retainTradeRows = options.includeEventDetails === true || typeof options.onAssetSwitchTrade === "function";
     const detailsByArm = options.includeEventDetails
@@ -680,8 +702,12 @@ export async function runAssetSwitchReplay(args: {
         }
         const view = views[eventIndex]!;
         for (const runtime of runtimes) {
-            await runtime.processPendingThrough(view.timeSec);
-            if (!runtime.state.failed) await runtime.schedule(view.picks[runtime.field], view.timeSec);
+            const pendingWork = runtime.processPendingThrough(view.timeSec);
+            if (pendingWork) await pendingWork;
+            if (!runtime.state.failed) {
+                const scheduleWork = runtime.schedule(view.picks[runtime.field], view.timeSec);
+                if (scheduleWork) await scheduleWork;
+            }
         }
         if (eventIndex % 500 === 499) {
             const completed = (eventIndex + 1) * runtimes.length;
@@ -691,7 +717,10 @@ export async function runAssetSwitchReplay(args: {
     }
 
     for (const runtime of runtimes) {
-        if (!runtime.state.failed) await runtime.processPendingThrough(windowEndSec);
+        if (!runtime.state.failed) {
+            const pendingWork = runtime.processPendingThrough(windowEndSec);
+            if (pendingWork) await pendingWork;
+        }
         const { state } = runtime;
         if (!state.failed && !state.position && state.pendingDecisionTimeSec !== null && state.desiredAsset) {
             await validatePendingBuyAtEnd(

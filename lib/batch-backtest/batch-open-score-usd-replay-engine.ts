@@ -119,8 +119,8 @@ import { scanArtifacts } from "./open-score-replay/artifact-scan";
 import { evaluateTargetOutcomes } from "./open-score-replay/target-outcomes";
 import { aggregateHorizonResults } from "./open-score-replay/aggregation";
 import { sweepScoreEvents } from "./open-score-replay/event-sweep";
-import { buildCandidateViews, buildOutcomeRequests, selectAfterOutcomes } from "./open-score-replay/candidate-selection";
-import type { AssetSwitchDecision, DecisionEvent } from "./open-score-replay/internal-types";
+import { buildAssetSwitchDecisions, buildCandidateViews, buildOutcomeRequests, selectAfterOutcomes } from "./open-score-replay/candidate-selection";
+import type { DecisionEvent } from "./open-score-replay/internal-types";
 import { buildReportLines } from "./open-score-replay/report";
 import { createEmptyAssetSwitchSummary, runAssetSwitchReplay } from "./open-score-replay/asset-switch";
 import { REPLAY_ARM_FIELDS } from "./open-score-replay/arm-contract";
@@ -246,40 +246,43 @@ export async function runOpenScoreUsdReplay(
         return emptyResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | no decision events (no pair entries in window)."] });
     }
 
-    // --- Phase 3: build candidate sets; collect per-asset event requests ---
-    // Stage implementation: ./open-score-replay/candidate-selection.ts (pool
-    // construction, FNV tie-breaks, strict-past TOP_Z history, profit-only
-    // events).
-    const candidateStage = await buildCandidateViews({
-        events,
-        totalEvents,
-        assetNames,
-        assetCount,
-        selectionCooldownBars: options.selectionCooldownBars,
-        includeAllDecisionEvents: replayMode === "asset_switch",
-        onPhase,
-    });
-    const views = candidateStage.views;
-    const profitOnlyEvents = candidateStage.profitOnlyEvents;
-    const candidateComparisonEvents = views.reduce(
+    // Switch mode consumes only one compact pick row per decision. Build those
+    // directly so horizon candidate pools never coexist with the path replay.
+    const switchStage = replayMode === "asset_switch"
+        ? await buildAssetSwitchDecisions({
+            events,
+            totalEvents,
+            assetNames,
+            assetCount,
+            onPhase,
+            // The engine owns this event array; release each large typed-score
+            // snapshot once its compact decision has been emitted.
+            onEventProcessed: (eventIndex) => { events[eventIndex] = null as unknown as DecisionEvent; },
+        })
+        : null;
+    const candidateStage = replayMode === "horizon"
+        ? await buildCandidateViews({
+            events,
+            totalEvents,
+            assetNames,
+            assetCount,
+            selectionCooldownBars: options.selectionCooldownBars,
+            onPhase,
+        })
+        : null;
+    const views = candidateStage?.views ?? [];
+    const profitOnlyEvents = candidateStage?.profitOnlyEvents ?? [];
+    const candidateComparisonEvents = switchStage?.candidateComparisonEvents ?? views.reduce(
         (count, view) => count + (view.positives.length >= 2 ? 1 : 0),
         0,
     );
 
     if (replayMode === "asset_switch") {
-        // The position simulator needs only each decision time and its
-        // pre-resolved arm picks. Drop the candidate pools before replay so
-        // they are not retained alongside the path-dependent state.
-        const switchViews: AssetSwitchDecision[] = views.map((view) => {
-            if (!view.assetSwitchPicks) {
-                throw new Error("Asset-switch candidate stage omitted pre-resolved arm picks.");
-            }
-            return { timeSec: view.timeSec, picks: view.assetSwitchPicks };
-        });
-        views.length = 0;
+        if (!switchStage) throw new Error("Asset-switch candidate stage did not run.");
         events = [];
         const switchOutcome = await runAssetSwitchReplay({
-            views: switchViews,
+            views: switchStage.decisions,
+            selectedAssets: switchStage.selectedAssets,
             assetNames,
             options,
             slippageRate,

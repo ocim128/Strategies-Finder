@@ -61,6 +61,12 @@ clean data (no target gaps) reuses the pre-computed selector winners instead
 of re-ranking every view. Standalone TOP_MEAN keeps the large cache, the
 shared annual outcome cache, and full diagnostics.
 
+Asset-switch replay has a dedicated selector pass: it resolves all 15 arm
+picks in one pass over each event, retains only the event time and picks, and
+releases each score snapshot after use. Its position loop handles no-due-order
+and unchanged-pick decisions synchronously; it awaits only when a target-candle
+lookup or fill needs asynchronous work.
+
 The coordinator receives one frozen evaluation cutoff across all child runs.
 Pair backtests and annual replay windows use it. Horizon outcomes use only
 closed target candles; asset-switch fills also receive the current candle when
