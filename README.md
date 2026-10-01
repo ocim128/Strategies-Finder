@@ -6,7 +6,7 @@ It combines:
 - a browser UI assembled from HTML partials at runtime
 - a TypeScript backtest engine with optional Rust acceleration
 - a multi-source data pipeline with local caching
-- research tools such as Finder, Exit Strategy Override, Walk Forward, Monte Carlo, Scanner, Data Mining, Rank Pairs, Selection Rules, the Opportunity Explorer, and Batch Backtest
+- research tools such as Finder, Exit Strategy Override, Walk Forward, Monte Carlo, Scanner, Data Mining, Rank Pairs, the Opportunity Explorer, and Batch Backtest
 - optional Cloudflare Worker alerting and subscription execution
 
 ## What You Can Do Here
@@ -317,7 +317,7 @@ These are intentionally narrower than the repo itself:
 - `docs/batch-backtest-server-side.md`: server-side Batch Backtest, artifact retention, OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and memory budget
 - `docs/finder-server-side.md`: server-owned Finder Symbol Universe (one server job owns all strategies + OOS), heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`
 - `docs/trade-ledger.md`: archived trade-ledger formats and offline replay compatibility
-- `docs/selection-rules.md`: pair-selection rule contract, diagnostics, and detailed selection view
+- `docs/selection-rules.md`: offline pair-selection rule contract and CLI research tools
 - `docs/asset-opportunity-explorer.md`: descriptive heatmap over the Asset Opportunity holdout archive (routes, cell semantics, limits)
 - `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/alpaca-ibkr-sync.md`: Alpaca-backed IBKR Data workflow, source guards, and aggregation

@@ -102,8 +102,7 @@
 
 .research-tab .finder-actions,
 .research-tab .batch-actions,
-.research-tab .batch-coordinator-actions,
-.research-tab .selection-rules-actions {
+.research-tab .batch-coordinator-actions {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
@@ -111,8 +110,7 @@
     margin-top: 0;
 }
 
-.research-tab .finder-status,
-.research-tab .selection-rules-status {
+.research-tab .finder-status {
     display: inline-flex;
     align-items: center;
     gap: var(--space-1-5);
@@ -289,8 +287,7 @@
 
     .research-tab .finder-actions,
     .research-tab .batch-actions,
-    .research-tab .batch-coordinator-actions,
-    .research-tab .selection-rules-actions {
+    .research-tab .batch-coordinator-actions {
         align-items: stretch;
         flex-direction: column;
     }
@@ -298,8 +295,7 @@
     .research-tab .finder-actions > .btn,
     .research-tab .batch-actions > .btn,
     .research-tab .batch-action-group--primary .btn,
-    .research-tab .batch-coordinator-actions > .btn,
-    .research-tab .selection-rules-actions > .btn {
+    .research-tab .batch-coordinator-actions > .btn {
         width: 100%;
     }
 

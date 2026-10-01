@@ -20,7 +20,6 @@ const TAB_TO_FEATURE: Record<string, string> = {
     finder: "finder",
     alerts: "alerts",
     batchbacktest: "batch-backtest",
-    selectionrules: "selection-rules",
     opportunityexplorer: "asset-opportunity-explorer",
     walkforward: "walk-forward",
     montecarlo: "monte-carlo",

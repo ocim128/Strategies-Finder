@@ -43,13 +43,3 @@ export const nullableTradeRule: PairSelectionRule = {
     name: "FIXTURE_FEATURE_TRADE_NULLABLE",
     score: (candidate) => candidate[tradeId] === null ? Number.NEGATIVE_INFINITY : scoreByFeature(candidate, tradeId),
 };
-
-export const autoPreparedRule: PairSelectionRule = {
-    key: "fixture_feature_auto_prepared",
-    name: "FIXTURE_FEATURE_AUTO_PREPARED",
-    description: "Reads a v1 column prepared by the selection-rules job.",
-    defaultParams: {},
-    paramLabels: {},
-    metadata: { featureRequirements: { libraryRelease: "v1", columns: ["feat_fp_spread_zscore_b12_r1"] }, sourceFiles },
-    score: (candidate) => scoreByFeature(candidate, "feat_fp_spread_zscore_b12_r1"),
-};

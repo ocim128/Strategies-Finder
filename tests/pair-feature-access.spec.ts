@@ -15,8 +15,6 @@ import {
     writePairSelectionCheckReceipt,
 } from "../lib/pair-selection/feature-access";
 import { loadPairSelectionArchive, tallyPairSelectionRule } from "../lib/pair-selection/tally";
-import { runSelectionRulesJob } from "../lib/selection-rules/job";
-import { reference_alphabetical, reference_loudest_atr } from "../lib/pair-selection/references";
 import {
     createPairFeatureFixture,
     FIXTURE_BASE,
@@ -24,7 +22,6 @@ import {
     FIXTURE_QUOTE,
 } from "./fixtures/pair-features/fixture";
 import {
-    autoPreparedRule,
     nullableTradeRule,
     spreadId,
     spreadRule,
@@ -342,74 +339,6 @@ describe("pair feature access", () => {
         expect(result.status).to.not.equal(0);
         expect(`${result.stdout}\n${result.stderr}`).to.include("source snapshot required");
         expect(`${result.stdout}\n${result.stderr}`).to.not.include("using embedded scales only");
-    });
-
-    it("prepares once, activates each rule, and writes one successful job receipt", async () => {
-        const folder = await createLoadableFolder();
-        const events: string[] = [];
-        const controller = new AbortController();
-        await runSelectionRulesJob({
-            runId: "feature-job",
-            folderPath: folder,
-            horizonBars: 24,
-            rules: [spreadRule, tradeRule, autoPreparedRule],
-            signal: controller.signal,
-            emit: (event) => { events.push(event.type === "phase" ? event.detail : event.type); },
-            update: () => undefined,
-        });
-        expect(events.at(-1)).to.equal("done");
-        expect(events.some((event) => event.startsWith("Preparing pair features (spread:"))).to.equal(true);
-        const checks = await readdir(path.join(folder, "feature-packs", "checks"));
-        expect(checks).to.have.length(1);
-    });
-
-    it("completes a feature run that also selects both reference rules", async () => {
-        const folder = await createLoadableFolder();
-        const events: string[] = [];
-        const controller = new AbortController();
-        await runSelectionRulesJob({
-            runId: "feature-and-reference-job",
-            folderPath: folder,
-            horizonBars: 24,
-            rules: [spreadRule, reference_alphabetical, reference_loudest_atr],
-            signal: controller.signal,
-            emit: (event) => { events.push(event.type); },
-            update: () => undefined,
-        });
-        expect(events.at(-1)).to.equal("done");
-        const checks = await readdir(path.join(folder, "feature-packs", "checks"));
-        expect(checks).to.have.length(1);
-        const receipt = JSON.parse(await readFile(path.join(folder, "feature-packs", "checks", checks[0]!), "utf8")) as {
-            rules: readonly { key: string }[];
-        };
-        expect(receipt.rules.map((rule) => rule.key)).to.deep.equal([
-            spreadRule.key,
-            reference_alphabetical.key,
-            reference_loudest_atr.key,
-        ]);
-    });
-
-    it("emits one detail payload per rule/horizon without touching the streamed events", async () => {
-        const folder = await createLoadableFolder();
-        const details: Array<{ key: string; horizonBars: number; rows: number }> = [];
-        const emittedEvents: string[] = [];
-        const controller = new AbortController();
-        await runSelectionRulesJob({
-            runId: "feature-detail-job",
-            folderPath: folder,
-            horizonBars: 24,
-            rules: [spreadRule],
-            signal: controller.signal,
-            onDetail: (detail, ruleKey, horizonBars) => {
-                details.push({ key: ruleKey, horizonBars, rows: detail.history.length });
-            },
-            emit: (event) => { emittedEvents.push(event.type); },
-            update: () => undefined,
-        });
-        expect(details).to.deep.equal([{ key: spreadRule.key, horizonBars: 24, rows: 2 }]);
-        expect(emittedEvents.at(-1)).to.equal("done");
-        // Detail payloads never ride the scalar wire events.
-        expect(emittedEvents).to.not.include("rule_detail");
     });
 
     it("keeps the check receipt digest unchanged when the detail payload is produced", async () => {

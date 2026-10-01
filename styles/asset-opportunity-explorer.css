@@ -1,6 +1,6 @@
 /* Opportunity Explorer — descriptive heatmap over archived Asset Opportunity
  * holdout shortlists. All colors come from styles/variables.css tokens; no
- * hardcoded theme colors. Same [hidden] restore as selection-rules.css: the
+ * hardcoded theme colors. Restore [hidden] because the
  * shared .btn / .empty-state rules set `display`, which beats the UA
  * stylesheet's [hidden] rule. */
 #opportunityexplorerTab [hidden] {

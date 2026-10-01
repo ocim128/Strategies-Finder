@@ -49,7 +49,7 @@ const SOURCE_PAIR_READ_CONCURRENCY = 8;
 const FEATURE_PAIR_GENERATION_CONCURRENCY = 8;
 // The generation workers are worthwhile once a run has enough rows spread
 // over multiple pairs. The old 100k threshold left normal 4H ledgers such as
-// the 51k-row selection-rules folders on the serial path.
+// the 51k-row research folders on the serial path.
 const FEATURE_GENERATION_WORKER_THRESHOLD_ROWS = 50_000;
 const FEATURE_GENERATION_MAX_WORKERS = 20;
 const pairGenerationTails = new Map<string, Promise<void>>();

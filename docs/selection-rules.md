@@ -11,44 +11,10 @@ signedVotes-based rules over `archive/batch-open-score/`) lives in git
 history and is no longer maintained. The asset core in `lib/selection-rules/`
 is preserved for its CLI and parity tests only.
 
-## Performance diagnostics
-
-Run diagnostics include `featurePreparationMs` (snapshot/pack verification and
-any missing-feature generation), its `sourceValidationMs` and
-`featureGenerationMs` split, and `featureGenerationWorkers`. Per-rule
-`activationMs` measures loading the required feature columns, and per-rule
-`wallMs` includes activation. These phases were previously absent from the
-reported timings.
-
-When complete feature packs already exist, preparation uses
-`sourceValidationMode=hash-only`: it verifies the manifest, ledger, metadata,
-and every source artifact hash without reparsing every source JSONL record. If
-a requested feature is missing, it switches to `full` validation before
-generation. The already validated snapshot is reused across feature-library
-generations in that run.
-
-`consumeMs` measures ledger validation, grouping, and outcome indexing during
-loading. It is part of `readResidualMs`; `streamOverheadMs` subtracts it from
-that residual and still includes scheduling and GC, so it is not pure disk
-time. `refsMs` includes cached reference preparation and the horizon outcome
-index. `scoredCandidates` counts actual rule score calls, including rejected
-candidates, without counting cached reference picks. Heap peaks are sampled
-after loading and each rule, not continuously.
-
-Source-snapshot validation and feature-column verification read at most eight
-pairs at once. Decoded columns are retained for the prepared run and promoted
-to one global typed array per feature on first activation, so later rules reuse
-the same data without rereading or reinflating the column files. Small
-missing-feature generations use the same
-bounded in-process batches. Large cold generations use a bounded Node worker-thread pool
-(`featureGenerationWorkers` in diagnostics) so synchronous feature evaluation
-can use multiple CPU cores; small generations remain in-process. Results are
-merged in source-pair order, so manifests and feature bytes remain
-deterministic. The default pool is capped at 20 workers; set
-`PAIR_FEATURE_GENERATION_WORKERS` before starting the dev server to tune it.
-All artifact checks remain enabled, and a failed/cancelled batch drains before
-the error is returned. Rule candidates remain isolated copies; only the fixed
-read-only reference rules reuse archive candidates.
+The Selection Rules menu and its server API have been removed. This guide
+covers the standalone offline research tools; saved menu preferences and run
+results are no longer read or restored. A saved layout pointing to the removed
+tab falls back to the default available tab.
 
 ## Rule contract
 
@@ -117,8 +83,6 @@ From the repository root:
 NODE_OPTIONS=--max-old-space-size=24576 ../../../node_modules/.bin/esno scripts/pair-pick-checker.ts <folderPath> <ruleKey> [--from YYYY-MM-DD] [--to YYYY-MM-DD]
 NODE_OPTIONS=--max-old-space-size=8192 ../../../node_modules/.bin/esno scripts/pair-pick-scales.ts <folderPath>
 ```
-
-Or use the Selection Rules menu (same engine, one load for all rules).
 
 The scales CLI always prints the embedded ledger scales. If a legacy folder has
 no source snapshot (and therefore no materialized feature packs), it also prints
@@ -207,49 +171,3 @@ dominant pair (or dominant leg) is excluded is a concentration bet.
 Batch discipline lives in archive/selection-mining-plan.md and
 archive/pair-selection/idea-log.txt (append-only; one line per idea,
 failures included). Known gaps are tracked in the plan's campaign status.
-
-## Detailed selection view
-
-Each result row in the Selection Rules menu has a `Details` action backed by
-`GET /api/selection-rules/details` (local-only; requires `runId`, `ruleKey`,
-`horizonBars`; `offset`/`limit` paginate, default page 250, hard maximum
-500). The view shows the latest selection, a newest-first selection history,
-and pair+direction performance. It is a research inspection surface only:
-details never appear in report lines, Copy Report, Copy Diagnostics, stream
-events, status snapshots, or the persisted last-run JSON.
-
-Detail rows are compact scalars per event (signal UTC time, pair, legs,
-direction, score, tie count, candidate count, status, selected return,
-`othersMean`, delta). The archive keeps horizon PnL only, so there are no
-entry/exit timestamps, and rows always use the rule's default parameters
-(the job performs no parameter sweep). Statuses:
-
-- `COMPLETE` — every candidate has a finite horizon outcome. A detail-only
-  probe can still be excluded from summary aggregates when a required
-  reference pick is unavailable.
-- `SELECTED_OUTCOME_KNOWN_POOL_INCOMPLETE` — the selected candidate's
-  outcome is finite but at least one other candidate's is unavailable; the
-  selected return is shown while `othersMean` and delta are `n/a`.
-- `PENDING` — the selected candidate's outcome is unavailable.
-
-The latest selection is the most recent multi-candidate event where the rule
-returned a pick. Single-candidate events and rule-rejects-all events are
-skipped. Recent gated events are reached by a detail-only backward probe
-capped at `SELECTION_RULES_DETAIL_PENDING_PROBE_MAX_EVENTS = 64`
-multi-candidate events. Every rule pick found in that bounded tail is shown,
-so multiple ongoing selections remain visible; the probe never rescores the
-full censored history and never touches `picks`, `samples`, summary
-comparisons, report lines, `scoredCandidates`, or `unscoredEvents` (probe work
-is counted separately in the detail payload).
-
-Server retention is process-lifetime state keyed `ruleKey|horizonBars`:
-at most `SELECTION_RULES_DETAIL_HISTORY_CAP = 2000` newest rows per key
-(older rows are dropped and surfaced as `historyTruncated`), while pair
-performance aggregates are computed by the tally over ALL completed eligible
-events, so they stay exact even when history is truncated. `selectedCount`
-also includes a detail-only probe row when one is present; completed metrics
-exclude that probe. Details are
-cleared when a new run is installed; cancelled/fatal runs keep details for
-already-tallied rules, matching their retained partial summary. A Vite
-restart loses details — the endpoint returns 404 and the UI says so while
-the summary stays usable.

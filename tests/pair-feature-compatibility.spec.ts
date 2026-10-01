@@ -8,7 +8,6 @@ import {
     PAIR_HORIZON_OUTCOMES_CAPABILITY,
     resolvePairFeatureCompatibility,
 } from "../lib/pair-features/compatibility";
-import { discoverSelectionRulesCatalog } from "../lib/selection-rules/catalog";
 import { loadPairSelectionArchive, tallyPairSelectionRule } from "../lib/pair-selection/tally";
 import type { PairSelectionRule } from "../lib/pair-selection/types";
 
@@ -156,12 +155,7 @@ describe("pair feature compatibility", () => {
         expect(resolvePairFeatureCompatibility({ ledgerVersion: 3, featureVersion: 4 }).supported).to.equal(false);
     });
 
-    it("keeps catalog discovery and direct tally compatibility aligned", async () => {
-        const catalog = await discoverSelectionRulesCatalog(root);
-        expect(catalog.folders.map((entry) => entry.folderId)).to.deep.equal(["fixture"]);
-        expect(catalog.folders[0]!.capabilities).to.include(PAIR_HORIZON_OUTCOMES_CAPABILITY);
-        expect(catalog.skippedFolders).to.deep.include({ folderId: "legacy", reason: "unsupported_version" });
-
+    it("requires horizon outcomes when loading an archive for direct tallying", async () => {
         const archive = await loadPairSelectionArchive(folder);
         expect(tallyPairSelectionRule(archive, argmaxRule).picks[0]!.pair).to.equal("A+B");
 
