@@ -58,6 +58,11 @@ export type FinderRunLogAppend = (
  */
 export type FinderRunLogSink = (event: string, data: Record<string, unknown>) => void;
 
+export type BufferedFinderRunLogSink = FinderRunLogSink & {
+    /** Drain buffered and already scheduled appends; failures remain best-effort. */
+    flush(): Promise<void>;
+};
+
 export interface AppendFinderRunLogEventArgs {
     /** Project root; the dir is `<root>/archive/finder-runs` unless the env override points elsewhere. */
     root: string;
@@ -131,7 +136,7 @@ export function createBufferedFinderRunLogSink(
     root: string,
     runId: string,
     options: CreateBufferedFinderRunLogSinkOptions = {},
-): FinderRunLogSink {
+): BufferedFinderRunLogSink {
     const maxLines = Math.max(1, Math.floor(options.maxLines ?? 256));
     const flushAfterMs = Math.max(0, options.flushAfterMs ?? 250);
     const boundaryEvents = options.boundaryEvents
@@ -172,7 +177,7 @@ export function createBufferedFinderRunLogSink(
             });
     };
 
-    return (event, data) => {
+    const sink: FinderRunLogSink = (event, data) => {
         buffer.push(serializeFinderRunLogLine({ runId, event, data }));
         if (boundaryEvents.has(event) || buffer.length >= maxLines) {
             flushNow();
@@ -182,4 +187,10 @@ export function createBufferedFinderRunLogSink(
             timer = setTimeout(flushNow, flushAfterMs);
         }
     };
+    return Object.assign(sink, {
+        flush: (): Promise<void> => {
+            flushNow();
+            return flushChain;
+        },
+    });
 }

@@ -62,6 +62,45 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe("finder run-log buffered sink", () => {
+    it("awaits buffered and in-flight appends at explicit candidate durability boundaries", async () => {
+        const captures: CapturedAppend[] = [];
+        let releaseAppend!: () => void;
+        const gate = new Promise<void>((resolve) => { releaseAppend = resolve; });
+        const sink = createBufferedFinderRunLogSink(ROOT, RUN_ID, {
+            flushAfterMs: Number.POSITIVE_INFINITY,
+            boundaryEvents: new Set(["arm_candidate_complete"]),
+            append: async (dir, filename, content) => {
+                await gate;
+                captures.push({ dir, filename, content });
+            },
+        });
+        sink("arm_candidate_complete", { candidateOrdinal: 0 });
+        sink("arm_candidate_failed", { candidateOrdinal: 1 });
+        let drained = false;
+        const pending = sink.flush().then(() => { drained = true; });
+        await flushMicrotasks();
+        expect(drained).to.equal(false);
+        releaseAppend();
+        await pending;
+        expect(drained).to.equal(true);
+        expect(captures.flatMap((capture) => capture.content.trim().split("\n"))
+            .map((line) => JSON.parse(line).event)).to.deep.equal(["arm_candidate_complete", "arm_candidate_failed"]);
+        await sink.flush();
+        expect(captures).to.have.length(2, "empty flush does not append again");
+    });
+
+    it("keeps explicit diagnostic flushing best-effort after write failure", async () => {
+        let warnings = 0;
+        const sink = createBufferedFinderRunLogSink(ROOT, RUN_ID, {
+            flushAfterMs: Number.POSITIVE_INFINITY,
+            append: async () => { throw new Error("disk unavailable"); },
+            onWriteError: () => { warnings += 1; },
+        });
+        sink("arm_candidate_failed", { candidateOrdinal: 0 });
+        await sink.flush();
+        expect(warnings).to.equal(1);
+    });
+
     it("collapses a burst of asset events into one chunked append at the line cap", async () => {
         const captures: CapturedAppend[] = [];
         const capture = createCaptureAppend(captures);

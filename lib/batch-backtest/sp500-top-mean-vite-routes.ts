@@ -44,6 +44,7 @@ import {
     type TopMeanStatusResponse,
 } from "./sp500-top-mean-coordinator-engine";
 import { getRunDir, isValidRunId, loadManifest, saveManifest } from "./sp500-top-mean-artifact-store";
+import { normalizePersistedTopMeanResult } from "./sp500-top-mean-persisted-result";
 import { TOP_MEAN_RUN_MAX_BODY_BYTES, validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
 
 /**
@@ -346,11 +347,11 @@ export async function handleSp500TopMeanStatusRequest(
             // request. Mirrors the plugin's own audit comments that moved
             // artifact I/O to fs/promises for the same reason.
             // Drop `existsSync` (TOCTOU); distinguish missing via ENOENT.
-            let result: unknown = undefined;
+            let result: TopMeanResultSummary | null = null;
             const resultPath = join(getRunDir(runId, baseDir), "result.json");
             try {
                 const txt = await readFile(resultPath, "utf8");
-                try { result = JSON.parse(txt); } catch { /* malformed JSON */ }
+                try { result = normalizePersistedTopMeanResult(JSON.parse(txt), manifest); } catch { /* malformed result */ }
             } catch (err: unknown) {
                 const code = (err as { code?: string })?.code;
                 if (code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
@@ -377,15 +378,10 @@ export async function handleSp500TopMeanStatusRequest(
                 archiveDir: manifest.archiveDir,
                 archiveError: manifest.archiveError,
                 error: manifest.error,
-            // `result` is untrusted JSON read from disk; cast at the
-            // boundary rather than widening the parsed local, so the
-            // disk-read stays `unknown` and the response shape stays the
-            // typed contract. The wire-safety pass caps the per-row detail
-            // arrays (result.json on disk keeps FULL rows) so a completed
-            // 20k-pair run cannot OOM the reattach poll the same way the
-            // live done event was fixed.
+            // Raw persisted replay fields must be normalized before applying
+            // the same wire cap used by the live done event.
             result: result
-                ? toWireSafeTopMeanResultSummary(result as TopMeanResultSummary)
+                ? toWireSafeTopMeanResultSummary(result)
                 : undefined,
             };
         }

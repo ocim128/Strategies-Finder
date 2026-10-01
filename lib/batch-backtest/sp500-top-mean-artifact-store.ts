@@ -29,6 +29,18 @@ function deleteParsedShardCacheEntry(path: string): void {
     parsedShardCache.delete(path);
 }
 
+/** Release parsed artifacts after their owning run has been removed. */
+export function evictRunParsedShardCache(runId: string, baseDir?: string): number {
+    const prefix = getRunDir(runId, baseDir) + sep;
+    let removed = 0;
+    for (const path of parsedShardCache.keys()) {
+        if (!path.startsWith(prefix)) continue;
+        deleteParsedShardCacheEntry(path);
+        removed += 1;
+    }
+    return removed;
+}
+
 /**
  * Allow-list for run ids. Browser-generated ids are `batch-<ts36>-<rand>` and
  * `sp500_top_mean_<ts>_<rand>` — both pure `[A-Za-z0-9_-]`. The regex rejects
@@ -292,6 +304,33 @@ export async function readShardArtifactsAsync(
     shardIndex: number,
     baseDir?: string,
 ): Promise<CompactPairArtifact[] | null> {
+    // Path validation remains an error even for best-effort readers.
+    getShardPath(runId, shardIndex, baseDir);
+    try {
+        return await readRequiredShardArtifactsAsync(runId, shardIndex, baseDir);
+    } catch {
+        return null;
+    }
+}
+
+export class TopMeanShardReadError extends Error {
+    constructor(
+        readonly runId: string,
+        readonly shardIndex: number,
+        readonly failureKind: "missing" | "invalid_json" | "invalid_shape" | "io_error",
+        readonly cause?: unknown,
+    ) {
+        super(`TOP_MEAN run ${runId}: completed shard ${shardIndex} is unreadable (${failureKind}).`);
+        this.name = "TopMeanShardReadError";
+    }
+}
+
+/** Coordinators must never silently omit a shard already counted as completed. */
+export async function readRequiredShardArtifactsAsync(
+    runId: string,
+    shardIndex: number,
+    baseDir?: string,
+): Promise<CompactPairArtifact[]> {
     const shardPath = getShardPath(runId, shardIndex, baseDir);
     try {
         const mtimeMs = (await stat(shardPath)).mtimeMs;
@@ -302,7 +341,19 @@ export async function readShardArtifactsAsync(
             return cached.artifacts;
         }
         const content = await readFile(shardPath, "utf8");
-        const artifacts = JSON.parse(content) as CompactPairArtifact[];
+        const parsed: unknown = JSON.parse(content);
+        if (!Array.isArray(parsed) || !parsed.every((artifact: unknown) => {
+            if (!artifact || typeof artifact !== "object") return false;
+            const row = artifact as Partial<CompactPairArtifact>;
+            return row.schema === "compact_pair_artifact.v1"
+                && Number.isInteger(row.pairIndex) && row.pairIndex! >= 0
+                && ["symbol", "baseAsset", "quoteAsset", "baseSymbol", "quoteSymbol"]
+                    .every((key) => typeof (row as Record<string, unknown>)[key] === "string")
+                && Array.isArray(row.trades);
+        })) {
+            throw new TopMeanShardReadError(runId, shardIndex, "invalid_shape");
+        }
+        const artifacts = parsed as CompactPairArtifact[];
         const jsonBytes = Buffer.byteLength(content, "utf8");
         deleteParsedShardCacheEntry(shardPath);
         // Oversized shards still stream to their consumer, but are never
@@ -318,8 +369,13 @@ export async function readShardArtifactsAsync(
             deleteParsedShardCacheEntry(oldestKey);
         }
         return artifacts;
-    } catch {
-        return null;
+    } catch (error) {
+        deleteParsedShardCacheEntry(shardPath);
+        if (error instanceof TopMeanShardReadError) throw error;
+        const code = (error as NodeJS.ErrnoException).code;
+        throw new TopMeanShardReadError(runId, shardIndex,
+            code === "ENOENT" ? "missing" : error instanceof SyntaxError ? "invalid_json" : "io_error",
+            error);
     }
 }
 
@@ -329,28 +385,44 @@ export async function readShardArtifactsAsync(
  * flight while results are consumed strictly in the manifest's existing
  * completedShards order — the window overlaps filesystem latency without
  * loading the whole shard set concurrently or changing artifact order.
- * Unreadable shards (null) are skipped exactly like the serial
- * implementation, and the reader's mtime validation, parsed-cache cap, and
- * error behavior are reused unchanged. Exported only as a narrow seam for
+ * Default readers skip unreadable shards as before; coordinators select a
+ * strict reader and fail instead. Both reuse mtime validation and the parsed
+ * cache budget. Exported only as a narrow seam for
  * the read-ahead spec; production callers use the public iterators below.
  */
 export const TOP_MEAN_SHARD_READ_AHEAD = 4;
+
+export interface TopMeanArtifactReadOptions {
+    /** Fail on missing manifests or unreadable completed shards; default keeps legacy best-effort reads. */
+    strict?: boolean;
+}
 
 export async function* iterateRunShardsWithReadAhead<T>(
     runId: string,
     baseDir: string | undefined,
     adapt: (artifact: CompactPairArtifact) => T,
     readShard: (runId: string, shardIndex: number, baseDir?: string) => Promise<CompactPairArtifact[] | null> = readShardArtifactsAsync,
+    options: TopMeanArtifactReadOptions = {},
 ): AsyncGenerator<T> {
     const manifest = loadManifest(runId, baseDir);
-    if (!manifest) return;
+    if (!manifest) {
+        if (options.strict) throw new Error(`TOP_MEAN run ${runId}: manifest is missing or unreadable.`);
+        return;
+    }
     const completedShards = manifest.completedShards;
+    const shardReader = options.strict && readShard === readShardArtifactsAsync
+        ? readRequiredShardArtifactsAsync : readShard;
     let nextToStart = 0;
     const inFlight = new Map<number, Promise<CompactPairArtifact[] | null>>();
     const fillWindow = (): void => {
         while (nextToStart < completedShards.length && inFlight.size < TOP_MEAN_SHARD_READ_AHEAD) {
             const shardIndex = completedShards[nextToStart]!;
-            inFlight.set(nextToStart, readShard(runId, shardIndex, baseDir));
+            const pending = shardReader(runId, shardIndex, baseDir);
+            // A later prefetched read can fail while an earlier shard is still
+            // being consumed. Observe it immediately; the ordered await below
+            // still throws, and finally drains every outstanding read.
+            void pending.catch(() => undefined);
+            inFlight.set(nextToStart, pending);
             nextToStart += 1;
         }
     };
@@ -364,7 +436,10 @@ export async function* iterateRunShardsWithReadAhead<T>(
             const shardArtifacts = await pending;
             inFlight.delete(i);
             fillWindow();
-            if (!shardArtifacts) continue;
+            if (!shardArtifacts) {
+                if (options.strict) throw new TopMeanShardReadError(runId, completedShards[i]!, "io_error");
+                continue;
+            }
             for (const artifact of shardArtifacts) {
                 yield adapt(artifact);
             }
@@ -382,8 +457,10 @@ export async function* iterateRunShardsWithReadAhead<T>(
 export async function* iterateRunCompactArtifacts(
     runId: string,
     baseDir?: string,
+    options: TopMeanArtifactReadOptions = {},
 ): AsyncGenerator<BatchSyntheticPairArtifactAdapter> {
-    yield* iterateRunShardsWithReadAhead(runId, baseDir, toBatchSyntheticPairAdapter);
+    yield* iterateRunShardsWithReadAhead(runId, baseDir, toBatchSyntheticPairAdapter,
+        options.strict ? readRequiredShardArtifactsAsync : readShardArtifactsAsync, options);
 }
 
 /**
@@ -395,8 +472,10 @@ export async function* iterateRunCompactArtifacts(
 export async function* iterateRunRawCompactArtifacts(
     runId: string,
     baseDir?: string,
+    options: TopMeanArtifactReadOptions = {},
 ): AsyncGenerator<CompactPairArtifact> {
-    yield* iterateRunShardsWithReadAhead(runId, baseDir, (artifact) => artifact);
+    yield* iterateRunShardsWithReadAhead(runId, baseDir, (artifact) => artifact,
+        options.strict ? readRequiredShardArtifactsAsync : readShardArtifactsAsync, options);
 }
 
 export function cleanOldArtifacts(baseDir?: string, maxAgeMs = DEFAULT_RETENTION_MS): void {
@@ -413,6 +492,7 @@ export function cleanOldArtifacts(baseDir?: string, maxAgeMs = DEFAULT_RETENTION
                 const stat = statSync(entryPath);
                 if (stat.isDirectory() && now - stat.mtimeMs > maxAgeMs) {
                     rmSync(entryPath, { recursive: true, force: true });
+                    if (isValidRunId(entry)) evictRunParsedShardCache(entry, baseDir);
                 }
             } catch {
                 // Ignore per-entry cleanup errors

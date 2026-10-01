@@ -227,6 +227,8 @@ export interface WorkerPoolRunOptions {
     nowSec?: number;
     /** Test seam for deterministic worker lifecycle specs; production uses the resolved worker bundle. */
     workerPath?: string;
+    /** Test seam; resolved lazily only when this pool needs its first worker. */
+    resolveWorkerPath?: () => Promise<string>;
     /** Test seam; production uses the atomic async artifact byte writer. */
     writeShardArtifactsBytes?: (runId: string, shardIndex: number, bytes: Uint8Array, baseDir?: string) => Promise<void>;
     onProgress?: (completedPairs: number, totalPairs: number, text: string) => void;
@@ -437,6 +439,8 @@ export function buildTopMeanShardTasks(
 }
 
 export class TopMeanWorkerPool {
+    /** Pin worker code for the pool lifetime; new pools resolve current sources afresh. */
+    private workerScriptPath: string | null = null;
     private activeWorkers = new Set<Worker>();
     private terminationPromises = new Map<Worker, Promise<unknown>>();
     private isCancelled = false;
@@ -649,9 +653,7 @@ export class TopMeanWorkerPool {
         const pendingShards = shardTasks.filter((task) => !completedSet.has(task.shardIndex));
 
         let completedPairsCount = options.manifest.completedPairsCount || 0;
-        const workerBundleStartedAt = performance.now();
-        const workerScriptPath = options.workerPath ?? await resolveTopMeanWorkerPath();
-        const workerBundleMs = performance.now() - workerBundleStartedAt;
+        let workerBundleMs = 0;
 
         // ---- Persistent worker pool (F3+F7) ---------------------------------
         // The prior implementation spawned a fresh `new Worker(...)` per shard
@@ -1057,11 +1059,18 @@ export class TopMeanWorkerPool {
             await Promise.all(spawned.map((worker) => resetWorkerCaches(worker)));
         }
         let spawnedWorkerCount = 0;
-        const workerStartupStartedAt = performance.now();
+        let workerStartupStartedAt = performance.now();
         try {
-            for (let i = spawned.length; i < workerCount; i++) {
+            if (pendingShards.length > 0 && spawned.length < workerCount && !this.isCancelled && this.workerScriptPath === null) {
+                const workerBundleStartedAt = performance.now();
+                this.workerScriptPath = options.workerPath
+                    ?? await (options.resolveWorkerPath ?? resolveTopMeanWorkerPath)();
+                workerBundleMs = performance.now() - workerBundleStartedAt;
+            }
+            workerStartupStartedAt = performance.now();
+            for (let i = spawned.length; pendingShards.length > 0 && i < workerCount; i++) {
                 if (this.isCancelled) break;
-                const worker = new Worker(workerScriptPath);
+                const worker = new Worker(this.workerScriptPath!);
                 attachWorkerHandlers(worker);
                 freeWorkers.push(worker);
                 spawned.push(worker);
@@ -1080,7 +1089,7 @@ export class TopMeanWorkerPool {
 
         // If the pool couldn't spawn any workers (e.g. script resolution
         // issue), surface that explicitly rather than hanging.
-        if (spawned.length === 0 && !this.isCancelled) {
+        if (pendingShards.length > 0 && spawned.length === 0 && !this.isCancelled) {
             throw new Error("Failed to spawn any TOP_MEAN workers");
         }
 

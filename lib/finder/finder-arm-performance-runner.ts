@@ -14,6 +14,7 @@ import {
     type FinderCandidateStrategy,
 } from "./finder-candidate-plans";
 import { FinderParamSpace } from "./finder-param-space";
+import { debugLogger } from "../debug-logger";
 import { resolveFinderRiskOverrides } from "./finder-runner-core";
 import { splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import {
@@ -25,6 +26,7 @@ import {
     getArtifactsRootDir,
     getRunDir,
     isValidRunId,
+    evictRunParsedShardCache,
 } from "../batch-backtest/sp500-top-mean-artifact-store";
 import {
     TopMeanCoordinatorEngine,
@@ -38,6 +40,10 @@ import type { AssetSwitchArmSummary, ReplayArmField } from "../batch-backtest/op
 import { TopMeanWorkerPool, type TopMeanPairFailure } from "../batch-backtest/sp500-top-mean-worker-pool";
 import type { EnumerationResult } from "../batch-backtest/sp500-pair-enumerator";
 import type { CapitalSettings } from "../types/backtest";
+import {
+    buildFinderArmPerformanceCandidateDiagnostic,
+    type FinderArmPerformanceCandidateDiagnostic,
+} from "./finder-arm-performance-diagnostics";
 
 export interface FinderArmPerformanceCandidatePlan extends FinderCandidatePlan {
     strategyKey: string;
@@ -107,6 +113,8 @@ export interface FinderArmPerformanceRunnerCallbacks {
         diagnostics: { targetDataBoundary?: TopMeanResultSummary["targetDataBoundary"]; actualEngineMode: string },
     ): void;
     onPairFailures?(failures: readonly TopMeanPairFailure[]): void;
+    /** Server-only compact measurements emitted once, before child artifact cleanup. */
+    onCandidateDiagnostic?(diagnostic: FinderArmPerformanceCandidateDiagnostic): void | Promise<void>;
     setActiveCoordinator(coordinator: FinderArmPerformanceCoordinator | null, childRunId: string | null): void;
 }
 
@@ -338,6 +346,7 @@ async function removeOwnedChildArtifacts(childRunId: string, baseDir: string): P
         throw new Error(`Refusing to remove a TOP_MEAN path outside the artifact root: ${childDir}`);
     }
     await rm(childDir, { recursive: true, force: true });
+    evictRunParsedShardCache(childRunId, baseDir);
 }
 
 export async function runFinderArmPerformance(
@@ -566,6 +575,25 @@ async function runFinderArmPerformanceCandidates(
             // artifact cleanup. A TOP_MEAN Stop received in this gap must
             // still cancel the sweep before it advances to another child.
             callbacks.setActiveCoordinator(null, childRunId);
+        }
+
+        childStatus ??= coordinator.getStatus();
+        try {
+            await callbacks.onCandidateDiagnostic?.(buildFinderArmPerformanceCandidateDiagnostic({
+                candidateId,
+                childRunId,
+                candidateOrdinal: plan.candidateOrdinal,
+                strategyKey: plan.strategyKey,
+                outcome: childError
+                    ? (input.isCancelled() || input.signal.aborted ? "cancelled" : "failed")
+                    : "completed",
+                ...(childError ? { error: childError.message } : {}),
+            }, childStatus));
+        } catch (error) {
+            debugLogger.warn("finder.arm_performance.diagnostic_failed", {
+                runId: input.runId, candidateId,
+                error: error instanceof Error ? error.message : String(error),
+            });
         }
 
         try {

@@ -13,6 +13,15 @@ import {
 import type { TopMeanCoordinatorRunRequest, TopMeanResultSummary, TopMeanStatusResponse } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
 import type { TopMeanWorkerPool } from "../lib/batch-backtest/sp500-top-mean-worker-pool";
 import type { BacktestSettings } from "../lib/types/strategies";
+import type { FinderArmPerformanceCandidateDiagnostic } from "../lib/finder/finder-arm-performance-diagnostics";
+import type { TopMeanPerformanceDiagnostic } from "../lib/batch-backtest/sp500-top-mean-performance";
+import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+    evictRunParsedShardCache, getRunDir, readShardArtifactsAsync, writeShardArtifacts,
+} from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 
 function makeInput(signal = new AbortController().signal): FinderArmPerformanceRunnerInput {
     return {
@@ -195,6 +204,95 @@ function makeCoordinator(
 }
 
 describe("Finder Arm Performance runner", () => {
+    it("flushes compact success and failure diagnostics before deleting each child", async () => {
+        const order: string[] = [];
+        const diagnostics: FinderArmPerformanceCandidateDiagnostic[] = [];
+        let created = 0;
+        const performance: TopMeanPerformanceDiagnostic = {
+            schema: "sp500_top_mean_performance.v1", startedAt: "fixture",
+            totalMs: 100, pairCount: 2, completedPairs: 2, failedPairs: 0, workerCount: 1, pairsPerSecond: 20,
+            phases: { preflightMs: 1, backtestingMs: 60, snapshotMs: 0, replayMs: 39, resultWriteMs: 0 },
+            replay: {
+                scanMs: 10, eventsMs: 1, targetsMs: 1, outcomesMs: 20, aggregateMs: 7,
+                targetLoadMs: 5, targetDatasets: 2, targetCacheHits: 1, targetCacheMisses: 2, targetCachePeakEntries: 2,
+            },
+        };
+        let error: unknown;
+        try {
+            await runFinderArmPerformance(makeInput(), {
+                onProgress() {}, onCandidate() {}, setActiveCoordinator() {},
+                async onCandidateDiagnostic(diagnostic) {
+                    diagnostics.push(diagnostic);
+                    await Promise.resolve();
+                    order.push(`logged:${diagnostic.candidateOrdinal}`);
+                },
+            }, {
+                createCoordinator(request) {
+                    const ordinal = created++;
+                    return makeCoordinator(request, { performance, result: makeSummary() }, async (emit) => {
+                        if (ordinal === 0) emit({ type: "done", result: makeSummary() });
+                        else emit({ type: "fatal", error: "replay failed" });
+                    }, order);
+                },
+                async removeChildArtifacts() { order.push(`removed:${created - 1}`); },
+            });
+        } catch (caught) { error = caught; }
+        expect(error).to.be.instanceOf(FinderArmPerformanceChildError);
+        expect(diagnostics.map((item) => item.outcome)).to.deep.equal(["completed", "failed"]);
+        expect(diagnostics[1]!.error).to.equal("replay failed");
+        expect(diagnostics[0]!.performance?.phases.backtestingMs).to.equal(60);
+        expect(diagnostics[0]!.performance?.replay.targetCacheHits).to.equal(1);
+        expect(diagnostics[0]!.actualEngineMode).to.equal("typescript");
+        expect(diagnostics[0]!.requestedPairs).to.equal(2);
+        expect(diagnostics[0]).to.not.have.property("result");
+        expect(JSON.stringify(diagnostics[0]).length).to.be.lessThan(2_000);
+        performance.phases.backtestingMs = 999;
+        expect(diagnostics[0]!.performance?.phases.backtestingMs).to.equal(60);
+        for (const index of [0, 1]) expect(order.indexOf(`logged:${index}`)).to.be.lessThan(order.indexOf(`removed:${index}`));
+    });
+
+    it("keeps diagnostic failures from skipping cleanup or stopping the sweep", async () => {
+        let cleaned = 0;
+        const results = await runFinderArmPerformance(makeInput(), {
+            onProgress() {}, onCandidate() {}, setActiveCoordinator() {},
+            async onCandidateDiagnostic() { throw new Error("log unavailable"); },
+        }, {
+            createCoordinator(request) {
+                return makeCoordinator(request, {}, async (emit) => emit({ type: "done", result: makeSummary() }), []);
+            },
+            async removeChildArtifacts() { cleaned += 1; },
+        });
+        expect(results).to.have.length(2);
+        expect(cleaned).to.equal(2);
+    });
+
+    it("evicts parsed shards when the production cleanup deletes a child", async () => {
+        const root = await mkdtemp(join(tmpdir(), "finder-arm-cache-cleanup-"));
+        const input = makeInput();
+        input.baseDir = root;
+        input.plans = input.plans!.slice(0, 1);
+        let childRunId = "";
+        try {
+            await runFinderArmPerformance(input, {
+                onProgress() {}, onCandidate() {}, setActiveCoordinator() {},
+            }, {
+                createCoordinator(request) {
+                    childRunId = request.runId;
+                    return makeCoordinator(request, {}, async (emit) => {
+                        writeShardArtifacts(childRunId, 0, [{
+                            schema: "compact_pair_artifact.v1", pairIndex: 0, symbol: "AAA+BBB",
+                            baseAsset: "AAA", quoteAsset: "BBB", baseSymbol: "AAA", quoteSymbol: "BBB", trades: [],
+                        }], root);
+                        expect(await readShardArtifactsAsync(childRunId, 0, root)).to.not.equal(null);
+                        emit({ type: "done", result: makeSummary() });
+                    }, []);
+                },
+            });
+            expect(existsSync(getRunDir(childRunId, root))).to.equal(false);
+            expect(evictRunParsedShardCache(childRunId, root)).to.equal(0, "cleanup already removed cached entries");
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
     it("runs configurations sequentially, retains compact all-arm rows, then cleans each child", async () => {
         const order: string[] = [];
         const candidates: any[] = [];
@@ -431,11 +529,13 @@ describe("Finder Arm Performance runner", () => {
         const controller = new AbortController();
         const order: string[] = [];
         const candidates: any[] = [];
+        const diagnostics: FinderArmPerformanceCandidateDiagnostic[] = [];
         let caught: unknown;
         try {
             await runFinderArmPerformance(makeInput(controller.signal), {
                 onProgress: () => {},
                 onCandidate: (candidate) => candidates.push(candidate),
+                onCandidateDiagnostic: (diagnostic) => { diagnostics.push(diagnostic); },
                 setActiveCoordinator: () => {},
             }, {
                 createCoordinator(request) {
@@ -455,6 +555,7 @@ describe("Finder Arm Performance runner", () => {
         expect(caught).to.be.instanceOf(FinderArmPerformanceChildError);
         expect((caught as Error).message).to.contain("interrupted");
         expect(candidates).to.have.length(0);
+        expect(diagnostics.map((item) => item.outcome)).to.deep.equal(["cancelled"]);
         expect(order.indexOf("remove")).to.be.greaterThan(order.findIndex((item) => item.startsWith("teardown:")));
     });
 

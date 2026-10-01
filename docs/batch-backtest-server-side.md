@@ -426,6 +426,17 @@ at four; the parsed-shard LRU is capped at 32 entries **and 32 MiB of source
 JSON**, with oversized shards bypassing the cache. Parsed objects and active
 read-ahead add overhead beyond that JSON budget.
 
+Coordinator snapshot, target-discovery, and replay passes use strict artifact
+reads: a missing, malformed, or unreadable shard listed as completed fails the
+run with its run id, shard index, and failure category. The generic artifact
+iterators retain their legacy best-effort default. Retention cleanup evicts
+parsed shards belonging to each deleted run.
+
+Snapshot and final result writes await the existing asynchronous atomic
+writer, including nonblocking Windows rename retries. The snapshot is durable
+before its event is emitted; Stop during either write wins over replay or
+successful completion. JSON serialization still runs on the server thread.
+
 Replay sorts one pair's temporary deltas at a time, then retains them in
 columnar typed arrays (37 bytes per delta) rather than JS objects. Event
 bucketing also uses typed arrays and releases each source stream after copying
@@ -522,6 +533,16 @@ few MB. `result.json` on disk and the research archive keep the FULL rows; the
 OPEN_SCORE details panel shows a loud truncation notice when the in-memory
 rows were capped, and falls back to the capped "Selected Window" section when
 per-year rows are absent.
+
+`result.json` retains the full raw replay contract (`eventDetails`,
+`horizons[].bars`) and now also records run id, enumeration coverage counts,
+target-data boundaries, target-load failures, and no-trade pair count.
+`sp500-top-mean-persisted-result.ts` converts raw files, older summary-shaped
+files, and snapshot-only checkpoints to the UI contract before the status
+route applies the wire cap. Raw aliases never ride the status wire. Older
+files without enumeration counts use the manifest pair count and zero for
+unavailable coverage counters. The full-result download route still returns
+the original disk payload.
 
 ### Durable TOP_MEAN Diagnostic Log
 

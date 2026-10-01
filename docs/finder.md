@@ -256,6 +256,12 @@ Diagnostics includes runtime pair-load failures and per-candidate pair and
 replay coverage counts. If every pair fails to load for a candidate, it cannot
 be scored; the run stops with the pair failures available in Copy Diagnostics.
 
+Completed, failed, and stopped candidate timing diagnostics are also retained
+in the server's per-run JSONL log before child artifacts are deleted; see
+[Arm Performance server diagnostics](finder-server-side.md#arm-performance).
+Unreadable completed backtest shards fail the run rather than silently
+reducing replay coverage.
+
 Each configuration runs through TOP_MEAN over the same ordered pairs and
 returns compact summaries for all 15 arms. There is no arm selector before the
 run. `Re-Sort` sorts the complete retained configuration inventory locally,

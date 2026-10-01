@@ -2170,7 +2170,8 @@ describe("Finder Arm Performance request preflight", () => {
             } as any, baseDir);
             expect(switchPrepared.options.armPerformance).to.include({
                 replayMode: "asset_switch",
-                scoringBasis: "raw",
+                // Switch results retain the contributor-exclusion display basis.
+                scoringBasis: "exclude_top_contributor",
                 selectionCooldownEnabled: false,
                 selectionCooldownBars: 5,
             });

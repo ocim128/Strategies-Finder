@@ -940,6 +940,11 @@ async function testSerializeShardArtifactsTransferContract(): Promise<void> {
  * with fresh per-execution state (manifest, counters, handler bindings).
  */
 async function testPoolReuseAcrossSequentialExecutions(): Promise<void> {
+    let resolutionCount = 0;
+    const resolveWorkerPath = async (): Promise<string> => {
+        resolutionCount += 1;
+        return testWorkerPath;
+    };
     const pairs = ["FAKE_A\u2022+FAKE_B\u2022", "FAKE_C\u2022+FAKE_D\u2022"];
     const mkManifest = (runId: string): TopMeanRunManifest => ({
         schema: "top_mean_run_manifest.v1",
@@ -973,7 +978,7 @@ async function testPoolReuseAcrossSequentialExecutions(): Promise<void> {
             workerCount: 1,
             shardSize: 1,
             useRustEnginePreference: false,
-            workerPath: testWorkerPath,
+            resolveWorkerPath,
         });
         assert.equal(usage1.performance.workers, 1);
         assert.equal(usage1.performance.spawnedWorkers, 1);
@@ -991,7 +996,7 @@ async function testPoolReuseAcrossSequentialExecutions(): Promise<void> {
             workerCount: 1,
             shardSize: 1,
             useRustEnginePreference: false,
-            workerPath: testWorkerPath,
+            resolveWorkerPath,
         });
         assert.equal(
             usage2.performance.workers,
@@ -1023,10 +1028,37 @@ async function testPoolReuseAcrossSequentialExecutions(): Promise<void> {
             0,
             "a cold execution must not pay the cache-reset path",
         );
+        assert.equal(resolutionCount, 1, "a reused pool resolves/bundles its script only once");
+        assert.equal(usage2.performance.workerBundleMs, 0, "reuse reports no bundle work");
+
+        const manifest3 = mkManifest("smoke_reuse_exec_3");
+        const usage3 = await pool.execute({
+            runId: manifest3.runId, manifest: manifest3, canonicalPairs: pairs,
+            strategyKey: "__test_success__", strategyParams: {},
+            backtestSettings: { direction: "long" } as any,
+            capitalSettings: { initialCapital: 10000 } as any,
+            interval: "4h", workerCount: 2, shardSize: 1,
+            resolveWorkerPath: async () => { throw new Error("A growing pool must reuse its pinned bundle."); },
+        });
+        assert.equal(usage3.performance.spawnedWorkers, 1);
+        assert.equal(usage3.performance.workerBundleMs, 0);
+        assert.equal(manifest3.completedPairsCount, 2);
     } finally {
         await pool.dispose();
     }
     assert.equal(pool.disposed, true, "dispose() must flag final termination");
+    const freshPool = new TopMeanWorkerPool();
+    try {
+        const freshManifest = mkManifest("smoke_reuse_fresh_pool");
+        await freshPool.execute({
+            runId: freshManifest.runId, manifest: freshManifest, canonicalPairs: pairs,
+            strategyKey: "__test_success__", strategyParams: {},
+            backtestSettings: { direction: "long" } as any,
+            capitalSettings: { initialCapital: 10000 } as any,
+            interval: "4h", workerCount: 1, shardSize: 1, resolveWorkerPath,
+        });
+        assert.equal(resolutionCount, 2, "a new pool resolves current sources afresh");
+    } finally { await freshPool.dispose(); }
     console.log("PASS: sweep-scoped pool reuses workers across sequential executions");
 }
 

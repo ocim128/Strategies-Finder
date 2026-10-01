@@ -13,7 +13,7 @@ import { getTypescriptEngineRequirementReasons } from "../rust-settings-sanitize
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import type { CompactPairArtifact } from "./compact-pair-artifact";
 import {
-    atomicWriteJsonSync,
+    atomicWriteJson,
     cleanOldArtifacts,
     computeRunFingerprint,
     getRunDir,
@@ -324,7 +324,7 @@ export function toWireSafeTopMeanResultSummary(
         openScoreEventDetails: result.openScoreEventDetails
             ? capTopMeanEventDetailsForWire(result.openScoreEventDetails)
             : undefined,
-        openScoreEventDetailCount: result.openScoreEventDetails?.length ?? 0,
+        openScoreEventDetailCount: Math.max(result.openScoreEventDetailCount ?? 0, result.openScoreEventDetails?.length ?? 0),
         poolSnapshots: undefined,
         candidateOutcomes: undefined,
         annualReports: result.annualReports?.map((annual) => ({
@@ -339,7 +339,7 @@ export function toWireSafeTopMeanResultSummary(
                 }
                 : undefined,
             eventDetails: undefined,
-            eventDetailCount: annual.eventDetails?.length ?? 0,
+            eventDetailCount: Math.max(annual.eventDetailCount ?? 0, annual.eventDetails?.length ?? 0),
         })),
         assetSwitch: result.assetSwitch
             ? {
@@ -521,6 +521,8 @@ export interface TopMeanCoordinatorEngineDeps {
     archiveCompletedRun?: typeof archiveCompletedTopMeanRun;
     /** Test seam: inject a failing manifest writer to prove terminal-state delivery survives persistence failures. */
     saveManifest?: typeof saveManifest;
+    /** Test seam for result-write ordering and Stop during asynchronous persistence. */
+    writeResult?: typeof atomicWriteJson;
     /** Trusted server preflight, shared by sequential Finder sweep children. */
     enumeration?: EnumerationResult;
     /** One sweep-wide cutoff; standalone runs continue to capture their own. */
@@ -1176,7 +1178,7 @@ export class TopMeanCoordinatorEngine {
 
             // Recreate bounded shard iterators per consumer. Trade history
             // can be several GB of JSON and must never form a run-wide array.
-            const rawArtifactLoader = () => iterateRunRawCompactArtifacts(this._request.runId, this.baseDir);
+            const rawArtifactLoader = () => iterateRunRawCompactArtifacts(this._request.runId, this.baseDir, { strict: true });
             let noTradePairs = 0;
 
             const resultJsonPath = join(getRunDir(this._request.runId, this.baseDir), "result.json");
@@ -1210,7 +1212,7 @@ export class TopMeanCoordinatorEngine {
                 // The replay's later write merges its fields into the same file
                 // via `{ ...replayResult, currentSnapshot }`.
                 const snapshotWriteStartedAt = performance.now();
-                atomicWriteJsonSync(resultJsonPath, {
+                await (this.deps?.writeResult ?? atomicWriteJson)(resultJsonPath, {
                     currentSnapshot: currentSnapshotResult,
                     replayMode: this._request.replayMode ?? "horizon",
                     selectionCooldownBars: (this._request.replayMode ?? "horizon") === "asset_switch"
@@ -1218,6 +1220,10 @@ export class TopMeanCoordinatorEngine {
                         : this._request.selectionCooldownBars ?? 0,
                 });
                 this.performanceDiagnostic.phases.resultWriteMs += performance.now() - snapshotWriteStartedAt;
+                if (this.isStopped) {
+                    this.emitInterrupted(emitNdjson);
+                    return;
+                }
                 emitNdjson({
                     type: "current_snapshot",
                     currentSnapshot: currentSnapshotResult,
@@ -1448,7 +1454,7 @@ export class TopMeanCoordinatorEngine {
                         // Reset per pass so annual replay does not double-count.
                         noTradePairs = 0;
                         return (async function* (runId: string, baseDir?: string) {
-                            for await (const artifact of iterateRunCompactArtifacts(runId, baseDir)) {
+                            for await (const artifact of iterateRunCompactArtifacts(runId, baseDir, { strict: true })) {
                                 if (artifact.result.trades.length === 0) noTradePairs += 1;
                                 yield artifact;
                             }
@@ -1724,8 +1730,17 @@ export class TopMeanCoordinatorEngine {
             // query a child run id. Standalone keeps the merged write.
             if (!finderArmProfile) {
                 const finalWriteStartedAt = performance.now();
-                atomicWriteJsonSync(resultJsonPath, {
+                await (this.deps?.writeResult ?? atomicWriteJson)(resultJsonPath, {
                     ...replayResult,
+                    // Add metadata without replacing the full raw replay contract.
+                    runId: this._request.runId,
+                    counts: this.counts,
+                    replayTargetLoadFailureCount,
+                    targetDataBoundary: {
+                        earliestBarTimeSec: this.earliestTargetBarTimeSec,
+                        latestBarTimeSec: this.latestTargetBarTimeSec,
+                    },
+                    noTradePairs,
                     replayMode: this._request.replayMode ?? "horizon",
                     annualReports,
                     currentSnapshot: this.currentSnapshotResult,
@@ -1735,6 +1750,10 @@ export class TopMeanCoordinatorEngine {
                     performance: this.performanceSnapshot(),
                 });
                 this.performanceDiagnostic.phases.resultWriteMs += performance.now() - finalWriteStartedAt;
+                if (this.isStopped) {
+                    this.emitInterrupted(emitNdjson);
+                    return;
+                }
             }
 
             this.performanceDiagnostic.completedAt = new Date().toISOString();

@@ -144,7 +144,6 @@ import { captureTradeFilter } from "../finder-config-capture";
 import {
     createBufferedFinderRunLogSink,
     resolveFinderRunLogDir,
-    type FinderRunLogSink,
 } from "./finder-run-log";
 import {
     type AnyFinderStreamEvent,
@@ -3294,6 +3293,8 @@ async function handleArmPerformanceRunRequest(
 
     const startedAt = Date.now();
     const evaluationCutoffSec = Math.floor(startedAt / 1000);
+    const runLog = buildFinderRunLogSink(baseDir, prepared.runId,
+        new Set(["arm_candidate_complete", "arm_candidate_failed", "arm_candidate_cancelled"]));
     const runAbortController = new AbortController();
     abortController = runAbortController;
     const context: FinderArmPerformanceRunContext = {
@@ -3458,6 +3459,12 @@ async function handleArmPerformanceRunRequest(
                                     ...(failure.failureKind ? { failureKind: failure.failureKind } : {}),
                                 });
                             }
+                        },
+                        onCandidateDiagnostic: async (diagnostic) => {
+                            const event = diagnostic.outcome === "completed"
+                                ? "arm_candidate_complete" : `arm_candidate_${diagnostic.outcome}`;
+                            runLog(event, { ...diagnostic });
+                            await runLog.flush();
                         },
                         onCandidate: (candidate, diagnostics) => {
                             const state = runState!;
@@ -3944,8 +3951,9 @@ async function resolveExitStrategyCandidates(
  * the debug logger and never propagate, so a disk hiccup can never fail a
  * Finder run.
  */
-function buildFinderRunLogSink(root: string, runId: string): FinderRunLogSink {
+function buildFinderRunLogSink(root: string, runId: string, boundaryEvents?: ReadonlySet<string>): ReturnType<typeof createBufferedFinderRunLogSink> {
     return createBufferedFinderRunLogSink(root, runId, {
+        boundaryEvents,
         onWriteError: (error) => {
             debugLogger.warn("finder.run_log.append_failed", {
                 runId,

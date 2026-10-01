@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync, mkdirSync, existsSync } from "node:fs";
+import { rmSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
 import {
@@ -15,6 +15,10 @@ import {
     iterateRunShardsWithReadAhead,
     TOP_MEAN_SHARD_READ_AHEAD,
     reconcileInterruptedManifestsOnStartup,
+    readRequiredShardArtifactsAsync,
+    TopMeanShardReadError,
+    evictRunParsedShardCache,
+    cleanOldArtifacts,
 } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 
 const testBaseDir = resolve(process.cwd(), "temp_test_artifacts");
@@ -254,6 +258,61 @@ async function runTests(): Promise<void> {
             withHole.push(artifact.pairIndex);
         }
         assert.deepEqual(withHole, [0, 1, 2, 3, 5, 6, 7, 8, 9], "an unreadable shard is skipped without breaking order");
+
+        // Coordinators opt into strict reads; legacy readers remain best-effort.
+        for (const iterate of [iterateRunRawCompactArtifacts, iterateRunCompactArtifacts]) {
+            await assert.rejects(async () => {
+                for await (const _row of iterate(readAheadRunId, testBaseDir, { strict: true })) { /* consume */ }
+            }, (error: unknown) => error instanceof TopMeanShardReadError
+                && error.runId === readAheadRunId && error.shardIndex === 4 && error.failureKind === "missing");
+        }
+        writeFileSync(getShardPath(readAheadRunId, 4, testBaseDir), "{invalid json");
+        await assert.rejects(() => readRequiredShardArtifactsAsync(readAheadRunId, 4, testBaseDir),
+            (error: unknown) => error instanceof TopMeanShardReadError && error.failureKind === "invalid_json");
+        writeFileSync(getShardPath(readAheadRunId, 4, testBaseDir), "{}");
+        await assert.rejects(() => readRequiredShardArtifactsAsync(readAheadRunId, 4, testBaseDir),
+            (error: unknown) => error instanceof TopMeanShardReadError && error.failureKind === "invalid_shape");
+        assert.equal(await readShardArtifactsAsync(readAheadRunId, 4, testBaseDir), null);
+        writeShardArtifacts(readAheadRunId, 4, readAheadShards[4]!, testBaseDir);
+
+        // A later read-ahead rejection is observed immediately; every started
+        // read drains before the strict consumer rejects.
+        let strictStarted = 0;
+        let strictSettled = 0;
+        await assert.rejects(async () => {
+            const reader = async (_id: string, index: number) => {
+                strictStarted += 1;
+                try {
+                    if (index === 1) throw new TopMeanShardReadError(readAheadRunId, index, "io_error");
+                    await new Promise((resolveTick) => setTimeout(resolveTick, 5));
+                    return readAheadShards[index]!;
+                } finally { strictSettled += 1; }
+            };
+            for await (const _row of iterateRunShardsWithReadAhead(readAheadRunId, testBaseDir, (a) => a, reader, { strict: true })) { /* consume */ }
+        }, TopMeanShardReadError);
+        assert.equal(strictSettled, strictStarted, "strict failures drain every prefetched read");
+        await assert.rejects(async () => {
+            for await (const _row of iterateRunRawCompactArtifacts("missing_manifest", testBaseDir, { strict: true })) { /* consume */ }
+        }, /manifest is missing or unreadable/);
+
+        // Run-scoped eviction leaves a similarly prefixed run warm.
+        const cacheRun = "spec_cache_owner";
+        const neighborRun = cacheRun + "_neighbor";
+        writeShardArtifacts(cacheRun, 0, compactArtifacts, testBaseDir);
+        writeShardArtifacts(neighborRun, 0, compactArtifacts, testBaseDir);
+        const cachedOwner = await readShardArtifactsAsync(cacheRun, 0, testBaseDir);
+        const cachedNeighbor = await readShardArtifactsAsync(neighborRun, 0, testBaseDir);
+        assert.equal(evictRunParsedShardCache(cacheRun, testBaseDir), 1);
+        assert.notStrictEqual(await readShardArtifactsAsync(cacheRun, 0, testBaseDir), cachedOwner);
+        assert.strictEqual(await readShardArtifactsAsync(neighborRun, 0, testBaseDir), cachedNeighbor);
+        assert.throws(() => evictRunParsedShardCache("../escape", testBaseDir), /Invalid runId/);
+        await assert.rejects(() => readShardArtifactsAsync("../escape", 0, testBaseDir), /Invalid runId/);
+        cleanOldArtifacts(testBaseDir, -1);
+        assert.equal(evictRunParsedShardCache(cacheRun, testBaseDir), 0, "retention already evicted deleted runs");
+        assert.equal(evictRunParsedShardCache(neighborRun, testBaseDir), 0);
+        // Restore the fixture after retention for the remaining checks.
+        saveManifest(readAheadManifest, testBaseDir);
+        readAheadShards.forEach((rows, index) => writeShardArtifacts(readAheadRunId, index, rows, testBaseDir));
 
         // (e) mtime invalidation still applies through the read-ahead path:
         // replacing a shard file yields the new content on the next pass.

@@ -50,6 +50,23 @@ Batch Stop or TOP_MEAN child Stop delegates to the parent Finder run and keeps
 both reservations until teardown finishes. A mismatched run id does not stop
 or release the active sweep.
 
+The worker script is resolved and bundled lazily when a pool first needs a
+worker, then pinned for that pool's lifetime. Reused candidates and pool growth
+reuse that path; new pools resolve current sources afresh. A fully completed
+resume does not bundle or spawn workers. Per-candidate dataset-cache resets
+remain mandatory. Successful child-directory deletion also evicts that
+child's parsed shards from the coordinator's process-wide cache.
+
+Each evaluated candidate writes one compact diagnostic event to the parent's
+JSONL log under `archive/finder-runs/<runId>.jsonl` (or `FINDER_RUN_LOG_DIR`).
+`arm_candidate_complete`, `arm_candidate_failed`, and
+`arm_candidate_cancelled` include candidate/child ids, pair counts, requested
+and actual engines, phase durations, worker bundle/startup/load/backtest
+timings, and cache counters when available. The runner drains the best-effort
+log append before deleting child artifacts. Logging failures warn without
+failing the sweep. These measurements do not add candles, trades, or results
+to Finder's stream or status wire.
+
 Replay efficiency (replay-efficiency plan): the finder_arm child runs ONE
 full-window replay, so its target LRU is sized to the prefetch window (not
 the standalone 512-entry annual working set) and the cross-window shared
