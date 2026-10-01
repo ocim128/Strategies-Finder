@@ -134,17 +134,29 @@ export function createFetchTimeoutSignal(
     };
 }
 
-export async function fetchWithTimeoutAndRetry(
+export type FetchRetryOptions = {
+    timeoutMs?: number;
+    maxAttempts?: number;
+    retryStatuses?: Iterable<number>;
+    baseDelayMs?: number;
+    signal?: AbortSignal;
+};
+
+export function fetchWithTimeoutAndRetry(
     input: RequestInfo | URL,
     init: RequestInit = {},
-    options: {
-        timeoutMs?: number;
-        maxAttempts?: number;
-        retryStatuses?: Iterable<number>;
-        baseDelayMs?: number;
-        signal?: AbortSignal;
-    } = {}
+    options: FetchRetryOptions = {}
 ): Promise<Response> {
+    return fetchAndConsumeWithTimeoutAndRetry(input, init, async response => response, options);
+}
+
+/** Keep both the deadline and caller cancellation active until the body is consumed. */
+export async function fetchAndConsumeWithTimeoutAndRetry<T>(
+    input: RequestInfo | URL,
+    init: RequestInit,
+    consume: (response: Response) => Promise<T>,
+    options: FetchRetryOptions = {}
+): Promise<T> {
     const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 1));
     const retryStatuses = new Set(options.retryStatuses ?? DEFAULT_RETRY_STATUSES);
     const baseDelayMs = Math.max(0, Math.floor(options.baseDelayMs ?? 250));
@@ -159,15 +171,16 @@ export async function fetchWithTimeoutAndRetry(
                 signal: timeout.signal,
             });
             if (!retryStatuses.has(response.status) || attempt >= maxAttempts) {
-                return response;
+                return await consume(response);
             }
 
             const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+            await response.body?.cancel();
             const backoffMs = retryAfterMs ?? baseDelayMs * attempt;
             await delayWithAbort(backoffMs, sourceSignal ?? undefined);
         } catch (error) {
             lastError = error;
-            if (isAbortError(error) || attempt >= maxAttempts) {
+            if (sourceSignal?.aborted || isAbortError(error) || attempt >= maxAttempts) {
                 throw error;
             }
             await delayWithAbort(baseDelayMs * attempt, sourceSignal ?? undefined);

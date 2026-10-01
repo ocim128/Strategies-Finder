@@ -154,6 +154,10 @@ If you rename a UI id, update the partial, the feature DOM contract, and the con
 
 This ordering matters because Finder, Scanner, and repeated backtests depend on fast warm-cache reads. The local stock catalog contains IBKR data only; TOP_MEAN requires an explicit pair list.
 
+IBKR fallback loads prefer explicit imports and bundled CSVs before reading
+persisted caches. See [Price data loading and persistence](docs/price-data.md)
+for provider-specific precedence, live-candle persistence, and SQLite access.
+
 ### Server-Side Batch Backtest
 
 The Batch Backtest tab runs its workload in the Vite dev-server (Node) process, so 1000+ IBKR 4H synthetic-pair runs stop OOM-ing the browser. The browser tab holds only rendered scalars and DOM rows; Node writes per-row analysis artifacts to temporary disk storage and loads linked pairs back per target during OPEN_SCORE USD Replay.

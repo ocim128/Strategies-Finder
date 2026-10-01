@@ -4,6 +4,7 @@ import { invalidateLocalMarketData } from "../local-data-cache-invalidation";
 import { consumeNdjsonStream } from "../ndjson-stream";
 import { createIbkrDataDom, type IbkrDataDom } from "./ibkr-data-dom";
 import { providerLabelForSource, type IbkrStreamEvent, type IbkrSyncRunSnapshot } from "./ibkr-data-stream-types";
+import type { AlpacaRefreshListResponse } from "./alpaca-refresh-symbols";
 import {
     appendUniqueIbkrSymbols,
     findStaleIbkrSymbols,
@@ -15,13 +16,17 @@ import {
 // `ibkr-data-stream-types` module shared with the server plugin.
 export type { IbkrStreamEvent, IbkrSyncRunSnapshot };
 
-class IbkrDataService {
+export class IbkrDataService {
     private dom: IbkrDataDom | null = null;
     private initialized = false;
     private lastMarkedSymbols: string[] = [];
     // True while this tab is reattached to a sync that started before reload.
     // Used to unlock the UI and emit a final status when the run ends.
     private reattached = false;
+
+    constructor(dom: IbkrDataDom | null = null) {
+        this.dom = dom;
+    }
 
     init(): void {
         if (this.initialized) return;
@@ -38,6 +43,7 @@ class IbkrDataService {
         dom.ibkrDataStopBtn.addEventListener("click", () => void this.stopSync());
         dom.ibkrDataCopyBtn.addEventListener("click", () => void this.copySymbols());
         dom.ibkrDataAppendStaleBtn.addEventListener("click", () => void this.appendStaleSymbols());
+        dom.ibkrDataAlpacaRefreshBtn.addEventListener("click", () => void this.loadAlpacaRefreshSymbols());
         // Stop is intentionally left enabled at startup so it can recover a
         // stuck server-side sync lock without a server restart.
         // Reattach to any sync that was already running before page reload.
@@ -210,6 +216,7 @@ class IbkrDataService {
         dom.ibkrDataSyncBtn.disabled = busy;
         dom.ibkrDataMarketCapBtn.disabled = busy;
         dom.ibkrDataAppendStaleBtn.disabled = busy;
+        dom.ibkrDataAlpacaRefreshBtn.disabled = busy;
         // Stop is always enabled so a stuck server-side sync lock can be
         // force-reset without a server restart. (See /api/ibkr/stop.)
         dom.ibkrDataStopBtn.disabled = false;
@@ -291,6 +298,43 @@ class IbkrDataService {
             const message = error instanceof Error ? error.message : String(error);
             this.writeOutput(message);
             this.setStatus(`Stale-price check failed: ${message}`, "error");
+        } finally {
+            this.setBusy(false);
+        }
+    }
+
+    private async loadAlpacaRefreshSymbols(): Promise<void> {
+        const dom = this.getDom();
+        const interval = dom.ibkrDataInterval.value;
+        if (interval !== "30m" && interval !== "1d") {
+            this.setStatus("Choose 30m or 1d to load the Alpaca refresh list.", "error");
+            return;
+        }
+        this.setBusy(true);
+        this.setStatus(`Finding Alpaca ${interval} stocks that need a full refresh...`);
+        try {
+            const response = await fetch(`/api/ibkr/alpaca-refresh-symbols?interval=${encodeURIComponent(interval)}`, { cache: "no-store" });
+            const payload = await response.json() as AlpacaRefreshListResponse;
+            if (!response.ok || !payload.ok) throw new Error(payload.error ?? `Refresh-list request failed (${response.status}).`);
+            if (dom.ibkrDataInterval.value !== interval) {
+                this.setStatus("Timeframe changed. Load the refresh list again.", "error");
+                return;
+            }
+            this.writeOutput(payload.candidates.length === 0
+                ? `No Alpaca ${interval} stocks are flagged by their saved adjustment history.`
+                : `Alpaca ${interval} stocks needing a full refresh:\n\n${payload.candidates.map(candidate =>
+                    `${candidate.symbol}: ${candidate.reason === "missing_adjustment_history" ? "Missing adjustment history" : "Alpaca price settings changed"}`
+                ).join("\n")}\n\nClick Download CSV to refresh these symbols with Data Period max.`);
+            if (payload.candidates.length === 0) {
+                this.setStatus(`No Alpaca ${interval} stocks need a refresh based on their saved adjustment history.`, "success");
+                return;
+            }
+            dom.ibkrDataSymbols.value = payload.candidates.map(candidate => candidate.symbol).join("\n");
+            dom.ibkrDataSource.value = "alpaca";
+            dom.ibkrDataPeriod.value = "max";
+            this.setStatus(`Loaded ${payload.candidates.length} Alpaca ${interval} refresh symbol${payload.candidates.length === 1 ? "" : "s"}. Click Download CSV to refresh full history.`, "success");
+        } catch (error) {
+            this.setStatus(`Alpaca refresh-list check failed: ${error instanceof Error ? error.message : String(error)}`, "error");
         } finally {
             this.setBusy(false);
         }

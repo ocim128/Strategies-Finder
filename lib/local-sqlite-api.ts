@@ -2,7 +2,7 @@ import type { OHLCVData } from "./types/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import {
     checkLocalApiAvailable,
-    fetchLocalApi,
+    fetchLocalApiWithBody,
     markLocalApiUnavailable,
     resetLocalApiAvailability,
 } from "./local-api-transport";
@@ -103,15 +103,16 @@ async function parseJsonLoadResponse(response: Response): Promise<{ candles: OHL
 }
 
 async function loadSqliteCandlesJson(query: URLSearchParams): Promise<{ candles: OHLCVData[]; trusted: boolean } | null> {
-    const response = await fetchLocalApi(`/api/sqlite/load-ohlcv?${query.toString()}`, {
+    return fetchLocalApiWithBody(`/api/sqlite/load-ohlcv?${query.toString()}`, {
         method: 'GET',
         headers: { Accept: 'application/json' },
-    }, SQLITE_REQUEST_TIMEOUT_MS);
-    if (!response.ok) {
-        handleLoadFailureStatus(response);
-        return null;
-    }
-    return parseJsonLoadResponse(response);
+    }, SQLITE_REQUEST_TIMEOUT_MS, async response => {
+        if (!response.ok) {
+            handleLoadFailureStatus(response);
+            return null;
+        }
+        return parseJsonLoadResponse(response);
+    });
 }
 
 async function checkSqliteApiAvailable(force = false): Promise<boolean> {
@@ -142,29 +143,23 @@ export async function loadSqliteCandles(
     });
 
     try {
-        const response = await fetchLocalApi(`/api/sqlite/load-ohlcv?${query.toString()}`, {
+        const result = await fetchLocalApiWithBody(`/api/sqlite/load-ohlcv?${query.toString()}`, {
             method: 'GET',
             headers: { Accept: 'application/octet-stream' },
-        }, SQLITE_REQUEST_TIMEOUT_MS);
-        if (!response.ok) {
-            handleLoadFailureStatus(response);
-            return null;
-        }
-
-        const contentType = response.headers.get('content-type') ?? '';
-        if (contentType.includes('application/octet-stream')) {
-            const candles = decodeBinaryOhlcvRows(await response.arrayBuffer());
-            if (candles) {
-                return { candles, trusted: true };
+        }, SQLITE_REQUEST_TIMEOUT_MS, async response => {
+            if (!response.ok) {
+                handleLoadFailureStatus(response);
+                return null;
             }
-            return loadSqliteCandlesJson(query);
-        }
-
-        if (contentType.includes('application/json')) {
-            return parseJsonLoadResponse(response);
-        }
-
-        return loadSqliteCandlesJson(query);
+            const contentType = response.headers.get('content-type') ?? '';
+            if (contentType.includes('application/octet-stream')) {
+                const candles = decodeBinaryOhlcvRows(await response.arrayBuffer());
+                return candles ? { candles, trusted: true } : 'json-fallback' as const;
+            }
+            if (contentType.includes('application/json')) return parseJsonLoadResponse(response);
+            return 'json-fallback' as const;
+        });
+        return result === 'json-fallback' ? await loadSqliteCandlesJson(query) : result;
     } catch {
         markSqliteApiUnavailable();
         return null;
@@ -194,7 +189,7 @@ export async function storeSqliteCandles(
     }
 
     const postJson = async (): Promise<StoreSqliteResponse | null> => {
-        const response = await fetchLocalApi('/api/sqlite/store-ohlcv', {
+        return fetchLocalApiWithBody('/api/sqlite/store-ohlcv', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -205,13 +200,13 @@ export async function storeSqliteCandles(
                 summary: options.summary === true,
                 candles: normalizedRows,
             }),
-        }, SQLITE_INGEST_TIMEOUT_MS);
-
-        const payload = await response.json() as StoreSqliteResponse;
-        if (!response.ok || !payload?.ok) {
-            return { ok: false, error: payload?.error || `Store request failed (${response.status})` };
-        }
-        return payload;
+        }, SQLITE_INGEST_TIMEOUT_MS, async response => {
+            const payload = await response.json() as StoreSqliteResponse;
+            if (!response.ok || !payload?.ok) {
+                return { ok: false, error: payload?.error || `Store request failed (${response.status})` };
+            }
+            return payload;
+        });
     };
 
     const postBinary = async (): Promise<StoreSqliteResponse | null> => {
@@ -224,16 +219,17 @@ export async function storeSqliteCandles(
         if (options.summary === true) {
             query.set('summary', '1');
         }
-        const response = await fetchLocalApi(`/api/sqlite/store-ohlcv?${query.toString()}`, {
+        return fetchLocalApiWithBody(`/api/sqlite/store-ohlcv?${query.toString()}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/octet-stream' },
             body: encodeBinaryOhlcvRows(normalizedRows),
-        }, SQLITE_INGEST_TIMEOUT_MS);
-        const payload = await response.json().catch(() => null) as StoreSqliteResponse | null;
-        if (!response.ok || !payload?.ok) {
-            return { ok: false, error: payload?.error || `Store request failed (${response.status})` };
-        }
-        return payload;
+        }, SQLITE_INGEST_TIMEOUT_MS, async response => {
+            const payload = await response.json().catch(() => null) as StoreSqliteResponse | null;
+            if (!response.ok || !payload?.ok) {
+                return { ok: false, error: payload?.error || `Store request failed (${response.status})` };
+            }
+            return payload;
+        });
     };
 
     try {

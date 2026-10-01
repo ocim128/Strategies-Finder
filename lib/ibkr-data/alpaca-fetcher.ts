@@ -28,6 +28,7 @@ import { createRequire } from "node:module";
 import { isIP } from "node:net";
 import { debugLogger } from "../debug-logger";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
+import type { AlpacaPriceSettings } from "./alpaca-refresh-symbols";
 import { HttpStatusError } from "../vite-http-utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import type { OHLCVData } from "../types/strategies";
@@ -155,12 +156,15 @@ export type AlpacaConfig = {
     adjustment: string;
 };
 
-/**
- * Reads Alpaca credentials and server-side defaults from the environment.
- * Throws a 500-shaped error if credentials are missing — the caller surfaces
- * it in the existing UI failure path. Server-side only: never import this
- * from browser code.
- */
+/** Public price settings only; catalog checks do not require API credentials. */
+export function resolveAlpacaPriceSettings(env: NodeJS.ProcessEnv = process.env): AlpacaPriceSettings {
+    return {
+        feed: String(env.ALPACA_FEED ?? ALPACA_DEFAULT_FEED).trim() || ALPACA_DEFAULT_FEED,
+        adjustment: String(env.ALPACA_ADJUSTMENT ?? ALPACA_DEFAULT_ADJUSTMENT).trim() || ALPACA_DEFAULT_ADJUSTMENT,
+    };
+}
+
+/** Reads credentials only on the server; missing credentials prevent provider requests. */
 export function resolveAlpacaConfig(env: NodeJS.ProcessEnv = process.env): AlpacaConfig {
     const apiKey = String(env.ALPACA_API_KEY ?? "").trim();
     const apiSecret = String(env.ALPACA_API_SECRET ?? "").trim();
@@ -174,8 +178,7 @@ export function resolveAlpacaConfig(env: NodeJS.ProcessEnv = process.env): Alpac
         apiKey,
         apiSecret,
         host: String(env.ALPACA_DATA_HOST ?? ALPACA_DATA_HOST).replace(/\/+$/, ""),
-        feed: String(env.ALPACA_FEED ?? ALPACA_DEFAULT_FEED).trim() || ALPACA_DEFAULT_FEED,
-        adjustment: String(env.ALPACA_ADJUSTMENT ?? ALPACA_DEFAULT_ADJUSTMENT).trim() || ALPACA_DEFAULT_ADJUSTMENT,
+        ...resolveAlpacaPriceSettings(env),
     };
 }
 

@@ -7,6 +7,11 @@ authoritative terminal candidate slice. The browser is the control and
 rendering layer and can reattach to an in-flight or completed job after a tab
 reload. Current-chart Finder remains browser-side.
 
+Historical crypto CSV loads pass their requested bar limit to the shared
+columnar loader, materializing only the newest requested bars on cache hits.
+Detached loads retain the full series. See the
+[price-data guide](price-data.md) for shared loader and freshness contracts.
+
 ## Arm Performance
 
 Arm Performance is a server-owned Finder job registered at

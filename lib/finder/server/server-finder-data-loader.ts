@@ -109,7 +109,7 @@ async function fetchServerHistoricalData(
         return candles.length > limit ? candles.slice(-limit) : candles;
     }
     if (options?.offline === true) {
-        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal);
+        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal, undefined, limit);
         if (cryptoCandles) {
             return cryptoCandles.length > limit ? cryptoCandles.slice(-limit) : cryptoCandles;
         }

@@ -22,6 +22,9 @@ async function main(): Promise<void> {
         writeFileSync(join(csvDir, "BTCUSDT.csv"), CSV, "utf8");
 
         clearParsedCryptoCsvCache();
+        const coldTail = await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 1);
+        assert.equal(coldTail?.length, 1);
+        assert.equal(coldTail?.[0]?.open, 101);
         const first = await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir);
         assert.equal(first?.length, 2);
         assert.equal(first?.[0]?.open, 100);
@@ -32,6 +35,13 @@ async function main(): Promise<void> {
         // array (~1-2 ms) instead of re-parsing — same contract as the IBKR
         // loader spec: content equality, not object identity.
         assert.deepEqual(second, first, "unchanged crypto CSV should be served from the parsed cache");
+        const warmTail = await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 1);
+        assert.deepEqual(warmTail, first?.slice(-1));
+        assert.notStrictEqual(warmTail?.[0], first?.[1], "tail cache hits must materialize independent candles");
+        warmTail![0]!.close = -1;
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir), first);
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 0), []);
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 100), first);
 
         const filePath = join(csvDir, "BTCUSDT.csv");
         writeFileSync(filePath, CSV.replace(",100,102,99,101,1000", ",200,202,199,201,1000"), "utf8");
@@ -40,6 +50,10 @@ async function main(): Promise<void> {
         const refreshed = await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir);
         assert.notStrictEqual(refreshed, first, "rewritten crypto CSV must invalidate the parsed cache");
         assert.equal(refreshed?.[0]?.open, 200);
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 1), refreshed?.slice(-1));
+        const aborted = new AbortController();
+        aborted.abort();
+        assert.equal(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", aborted.signal, baseDir, 1), null);
 
         assert.equal(
             await loadFreshCryptoCandlesFromDisk("MISSINGUSDT", "30m", undefined, baseDir),

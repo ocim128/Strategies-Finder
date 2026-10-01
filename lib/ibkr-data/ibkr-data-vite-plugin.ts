@@ -13,11 +13,13 @@ import type { IbkrIntervalMeta, IbkrStreamEvent, IbkrSyncRunSnapshot } from "./i
 import { normalizeMarketCapSymbol } from "./marketcap-series-reader";
 import type { IbkrCatalogAsset } from "./ibkr-stale-symbols";
 import { describeLargeCandleGap } from "./candle-gap";
+import { findAlpacaRefreshSymbols, getAlpacaMetadataRefreshReason } from "./alpaca-refresh-symbols";
 import {
     ALPACA_SUPPORTED_INTERVALS,
     ALPACA_TIMEFRAME_BY_INTERVAL,
     fetchAlpacaBars,
     resolveAlpacaConfig,
+    resolveAlpacaPriceSettings,
     type AlpacaConfig,
 } from "./alpaca-fetcher";
 import {
@@ -1893,8 +1895,6 @@ export async function syncOneAlpacaSymbol(
     const adjustmentTokens = config.adjustment.toLowerCase().split(",").map((part) => part.trim());
     const splitAdjusted = adjustmentTokens.includes("split") || adjustmentTokens.includes("all");
     const splitAdjustedThrough = existingInterval?.splitAdjustedThrough;
-    const sameAlpacaPriceScale = existingInterval?.alpacaFeed === config.feed
-        && existingInterval?.alpacaAdjustment === config.adjustment;
     const existingHasAlpacaBars = existingCandles.length > 0
         && (existingSource === "alpaca" || existingSource === "mixed");
     let refreshFullHistory = fullHistoryRequested && !syncOnly && existingHasAlpacaBars;
@@ -1906,7 +1906,7 @@ export async function syncOneAlpacaSymbol(
     // incremental merging is trusted. A Download onto another provider is
     // the existing opt-in mixed-source workflow, not an Alpaca history repair.
     if (splitAdjusted && existingHasAlpacaBars && !refreshFullHistory) {
-        if (!sameAlpacaPriceScale || !splitAdjustedThrough) {
+        if (!splitAdjustedThrough || getAlpacaMetadataRefreshReason(existingInterval, config)) {
             refreshFullHistory = true;
         } else {
             try {
@@ -3076,6 +3076,30 @@ export async function handleMarketCapRequest(
 
 export function ibkrDataVitePlugin(): Plugin {
     const register = (middlewares: any) => {
+        middlewares.use("/api/ibkr/alpaca-refresh-symbols", async (req: any, res: any) => {
+            if (req.method !== "GET") {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
+                return;
+            }
+            try {
+                const url = new URL(req.url || "/", "http://localhost");
+                const interval = url.searchParams.get("interval") ?? "";
+                if (!(ALPACA_SUPPORTED_INTERVALS as readonly string[]).includes(interval)) {
+                    throw new HttpStatusError(400, "Choose 30m or 1d to load the Alpaca refresh list.");
+                }
+                sendJson(res, 200, {
+                    ok: true,
+                    interval,
+                    candidates: findAlpacaRefreshSymbols(readCatalog().entries, interval, resolveAlpacaPriceSettings()),
+                });
+            } catch (error) {
+                sendCaughtErrorJson(res, error);
+            }
+        });
         middlewares.use("/api/local-price-data/ibkr/catalog", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });

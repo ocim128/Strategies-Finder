@@ -9,8 +9,43 @@ import {
 } from "../lib/dataProviders/bybit";
 import { resetLocalApiAvailability } from "../lib/local-api-transport";
 import type { OHLCVData, Time } from "../lib/types/strategies";
+import { fetchBinanceDataWithLimit } from "../lib/dataProviders/binance";
 
 const originalFetch = globalThis.fetch;
+
+describe("Binance backward pagination", () => {
+    it("rejects repeated pages instead of counting duplicate candles as history", async () => {
+        const page = Array.from({ length: 1000 }, (_, i) => toBinanceKline(100_000 + i * 60, 100));
+        const cursors: Array<string | null> = [];
+        globalThis.fetch = async input => {
+            cursors.push(new URL(String(input)).searchParams.get("endTime"));
+            return new Response(JSON.stringify(page));
+        };
+        const progress: number[] = [];
+        const data = await fetchBinanceDataWithLimit("BTCUSDT", "1m", 3000, {
+            maxRequests: 10, onProgress: event => progress.push(event.fetched),
+        });
+        assert.equal(cursors.length, 2);
+        assert.deepEqual(cursors, [null, String(100_000 * 1000 - 1)]);
+        assert.equal(data.length, 1000);
+        assert.equal(new Set(data.map(bar => bar.time)).size, 1000);
+        assert.deepEqual(progress, [1000]);
+    });
+
+    it("continues across strictly older pages", async () => {
+        let calls = 0;
+        globalThis.fetch = async () => {
+            calls++;
+            const start = calls === 1 ? 100_000 : 40_000;
+            return new Response(JSON.stringify(Array.from({ length: 1000 }, (_, i) => toBinanceKline(start + i * 60, 100))));
+        };
+        const data = await fetchBinanceDataWithLimit("BTCUSDT", "1m", 2000);
+        assert.equal(calls, 2);
+        assert.equal(data.length, 2000);
+        assert.equal(new Set(data.map(bar => bar.time)).size, 2000);
+        assert.ok(Number(data[0]!.time) < Number(data[1999]!.time));
+    });
+});
 
 function toBinanceKline(timeSec: number, price: number) {
     return [

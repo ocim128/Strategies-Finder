@@ -46,11 +46,12 @@ function columnsFromCandles(candles: OHLCVData[]): ParsedSeedColumns {
     return columns;
 }
 
-function candlesFromColumns(columns: ParsedSeedColumns): OHLCVData[] {
+function candlesFromColumns(columns: ParsedSeedColumns, limitBars?: number): OHLCVData[] {
     const n = columns.time.length;
-    const candles: OHLCVData[] = new Array(n);
-    for (let i = 0; i < n; i += 1) {
-        candles[i] = {
+    const start = limitBars === undefined ? 0 : Math.max(0, n - limitBars);
+    const candles: OHLCVData[] = new Array(n - start);
+    for (let i = start; i < n; i += 1) {
+        candles[i - start] = {
             time: columns.time[i]! as OHLCVData["time"],
             open: columns.open[i]!,
             high: columns.high[i]!,
@@ -149,7 +150,7 @@ function parseCryptoCsvPayload(payload: string): OHLCVData[] | null {
         : candles;
 }
 
-async function getCachedCandles(filePath: string): Promise<OHLCVData[] | null> {
+async function getCachedCandles(filePath: string, limitBars?: number): Promise<OHLCVData[] | null> {
     const cached = parsedCsvCache.get(filePath);
     if (!cached) return null;
     try {
@@ -159,7 +160,7 @@ async function getCachedCandles(filePath: string): Promise<OHLCVData[] | null> {
         if (mtimeMs === cached.mtimeMs) {
             parsedCsvCache.delete(filePath);
             parsedCsvCache.set(filePath, cached);
-            return candlesFromColumns(cached.columns);
+            return candlesFromColumns(cached.columns, limitBars);
         }
     } catch {
         // The caller will retry the normal read path below.
@@ -182,19 +183,27 @@ export function clearParsedCryptoCsvCache(): void {
     parsedCsvCache.clear();
 }
 
-/** Read a synced crypto CSV directly inside the TOP_MEAN worker. */
+/**
+ * Read a synced crypto CSV directly inside the TOP_MEAN worker. An optional
+ * newest-bar limit materializes only that tail on cache hits; cached columns
+ * remain complete for subsequent full-series callers.
+ */
 export async function loadFreshCryptoCandlesFromDisk(
     symbol: string,
     interval: string,
     signal?: AbortSignal,
     baseDir = process.cwd(),
+    limitBars?: number,
 ): Promise<OHLCVData[] | null> {
     if (signal?.aborted) return null;
+    const normalizedLimit = limitBars === undefined || !Number.isFinite(limitBars)
+        ? undefined : Math.max(0, Math.floor(limitBars));
     const filePath = resolveCryptoCsvPath(symbol, interval, baseDir);
     if (!filePath) return null;
 
     try {
-        const cached = await getCachedCandles(filePath);
+        const cached = await getCachedCandles(filePath, normalizedLimit);
+        if (signal?.aborted) return null;
         if (cached) return cached;
 
         const payload = isMainThread
@@ -208,7 +217,8 @@ export async function loadFreshCryptoCandlesFromDisk(
             ? (await stat(filePath)).mtimeMs
             : statSync(filePath).mtimeMs;
         setCachedCandles(filePath, mtimeMs, candles);
-        return candles;
+        return normalizedLimit === undefined || candles.length <= normalizedLimit
+            ? candles : candles.slice(candles.length - normalizedLimit);
     } catch (error) {
         if (signal?.aborted || (error as NodeJS.ErrnoException).name === "AbortError") return null;
         if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;

@@ -58,9 +58,20 @@ export function isAbortLikeError(error: unknown): boolean {
 }
 
 export async function fetchLocalApi(input: string, init: RequestInit = {}, timeoutMs: number): Promise<Response> {
+    return fetchLocalApiWithBody(input, init, timeoutMs, async response => response);
+}
+
+/** The body consumer runs inside the timeout and caller-abort scope. */
+export async function fetchLocalApiWithBody<T>(
+    input: string,
+    init: RequestInit,
+    timeoutMs: number,
+    consume: (response: Response) => Promise<T>,
+): Promise<T> {
     const timeout = createTimeoutSignal(init.signal ?? undefined, timeoutMs);
     try {
-        return await fetch(resolveLocalApiUrl(input), { ...init, signal: timeout.signal });
+        const response = await fetch(resolveLocalApiUrl(input), { ...init, signal: timeout.signal });
+        return await consume(response);
     } finally {
         timeout.cleanup();
     }

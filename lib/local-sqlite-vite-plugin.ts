@@ -12,6 +12,7 @@ import {
     sendJson,
 } from "./vite-http-utils";
 import { decodeBinaryOhlcvRows, encodeBinaryOhlcvRows } from "./ohlcv-binary";
+import { isAllowedLocalRequest } from "./local-route-authorization";
 const SQLITE_DB_PATH = resolve(process.cwd(), 'price-data', 'market-data.sqlite');
 let sqliteDb: DatabaseSync | null = null;
 // Prepared statements are reused across requests. Keyed by the literal SQL
@@ -46,14 +47,7 @@ function parseSqliteLimit(raw: string | null): number {
     return Math.max(1, Math.min(500000, Math.floor(parsed)));
 }
 
-export function isTrustedLocalRequest(req: { headers?: Record<string, unknown> }): boolean {
-    const origin = (req.headers?.origin || '').toString();
-    const referer = (req.headers?.referer || '').toString();
-    return origin.startsWith('http://localhost')
-        || origin.startsWith('http://127.0.0.1')
-        || referer.startsWith('http://localhost')
-        || referer.startsWith('http://127.0.0.1');
-}
+export { isAllowedLocalRequest as isTrustedLocalRequest } from "./local-route-authorization";
 
 function toUnixSeconds(value: unknown): number | null {
     return parseTimeToUnixSeconds(value);
@@ -137,21 +131,10 @@ export function localSqlitePlugin(): Plugin {
             const requestUrl = new URL(req.url || '/', 'http://localhost');
             const path = requestUrl.pathname;
 
-            // Optional Bearer-token gate for tunnel exposure. When
-            // LOCAL_PROXY_TOKEN is set in the server environment, cross-origin
-            // requests (cloudflared tunnel from the Cloudflare Worker) must
-            // present a matching Authorization header. Same-origin browser
-            // calls from the dev server itself pass through without a token,
-            // so the local UI is unaffected.
-            const proxyToken = process.env.LOCAL_PROXY_TOKEN?.trim();
-            if (proxyToken) {
-                if (!isTrustedLocalRequest(req)) {
-                    const auth = (req.headers.authorization || '').toString();
-                    if (auth !== `Bearer ${proxyToken}`) {
-                        sendJson(res, 401, { ok: false, error: 'Unauthorized' });
-                        return;
-                    }
-                }
+            // Use the same socket/host/bearer policy as the other local APIs.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: 'Unauthorized' });
+                return;
             }
 
             try {

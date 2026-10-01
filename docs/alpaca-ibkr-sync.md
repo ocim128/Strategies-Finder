@@ -69,6 +69,22 @@ so pre-split bars cannot remain at a stale nominal price scale. An incomplete
 full refresh leaves the existing CSV untouched. Download onto another provider
 remains an explicit mixed-source merge within the selected period.
 
+To find existing stocks with this problem, select `30m` or `1d` and click
+**Load Alpaca Refresh List**. It scans the saved catalog for Alpaca/mixed
+intervals with missing adjustment history or price settings that differ from
+the current server configuration. It replaces the Symbols input with that
+list, selects Alpaca, and sets Data Period to `max`. Review the list, then
+click **Download CSV**; loading the list does not start a download. An empty
+list or failed scan leaves your inputs intact.
+
+The scan uses `GET /api/ibkr/alpaca-refresh-symbols?interval=30m` (or `1d`),
+with the standard local-route authorization gate. It needs no credentials
+and makes no remote price or corporate-actions requests. A later split or a
+split-lookup failure may still be detected during Download/Sync even when
+the saved metadata passes this scan. Refresh reasons appear beside each
+symbol in the output. The metadata rule is shared with the merge guard in
+`lib/ibkr-data/alpaca-refresh-symbols.ts`.
+
 The catalog records the provider as follows:
 
 - a fresh interval or an existing Alpaca interval is `source: "alpaca"`;
@@ -92,6 +108,10 @@ The aggregator accepts any finer interval that divides the target exactly,
 keeps the source CSV, skips unchanged destinations, and refuses a materially
 smaller replacement unless `--force` is supplied. Alpaca `1d` data is already
 daily and is not a source for a derived `4h` file.
+
+For browser IBKR loads without an in-memory hit, valid explicit imports and
+seed CSVs take precedence and skip SQLite/IndexedDB fallback reads. See the
+[shared price-data guide](price-data.md) for source selection and persistence.
 
 ## Data safety
 

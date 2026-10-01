@@ -20,6 +20,7 @@ import {
     takeLastCandles as trimToLastCandles,
 } from "./data-interval-utils";
 import { debugLogger } from "../debug-logger";
+import { parseTimeToUnixSeconds } from "../time-normalization";
 
 export type NonBinanceLocalSource = 'imported' | 'sqlite' | 'cache' | 'seed';
 export type NonBinanceLocalCandidate = {
@@ -71,6 +72,7 @@ export class DataPersistence {
     // Last bar time (unix seconds) successfully persisted to SQLite per cacheKey.
     // Tracked so burst updates on fast intervals don't drop intermediate candles.
     private lastStreamPersistedTimeByKey: Map<string, number> = new Map();
+    private lastSnapshotPersistedAtByKey: Map<string, number> = new Map();
     private readonly STREAM_PERSIST_DELAY_MS = 1200;
 
     normalizeExternalCandles(candles: OHLCVData[], trusted = false): OHLCVData[] {
@@ -116,8 +118,35 @@ export class DataPersistence {
 
         const normalizedLimit = Math.max(1, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(maxBars)));
         const candidates: NonBinanceLocalCandidate[] = [];
+        const normalizeCandidate = (candidate: NonBinanceLocalCandidate) => ({
+            ...candidate,
+            candles: trimToLastCandles(
+                this.normalizeProviderCandles(candidate.candles, interval, provider, candidate.trusted === true),
+                normalizedLimit
+            ),
+        });
+        const useCandidate = (candidate: NonBinanceLocalCandidate) => {
+            ctx.setCachedCandles(cacheKey, candidate.candles, candidate.source);
+            return candidate;
+        };
 
-        if (importedCandles && importedCandles.length > 0) {
+        if (signal?.aborted) return null;
+        // IBKR's explicit import/seed precedence makes fallback reads unnecessary
+        // when either authoritative source is available. Bybit still compares all sources.
+        if (provider === 'ibkr-local') {
+            if (importedCandles?.length) {
+                const imported = normalizeCandidate({ candles: importedCandles, source: 'imported' });
+                if (imported.candles.length) return useCandidate(imported);
+            }
+            const seed = await loadSeedCandlesFromPriceData(symbol, interval, signal, provider).catch(() => null);
+            if (signal?.aborted) return null;
+            if (seed?.length) {
+                const normalizedSeed = normalizeCandidate({ candles: seed, source: 'seed' });
+                if (normalizedSeed.candles.length) return useCandidate(normalizedSeed);
+            }
+        }
+
+        if (provider !== 'ibkr-local' && importedCandles && importedCandles.length > 0) {
             candidates.push({
                 candles: importedCandles,
                 source: 'imported',
@@ -127,8 +156,9 @@ export class DataPersistence {
         const [sqliteResult, cachedResult, seedResult] = await Promise.allSettled([
             loadSqliteCandles(storageSymbol, storageInterval, normalizedLimit),
             loadCachedCandles(storageSymbol, storageInterval),
-            loadSeedCandlesFromPriceData(symbol, interval, signal, provider),
+            provider === 'ibkr-local' ? Promise.resolve(null) : loadSeedCandlesFromPriceData(symbol, interval, signal, provider),
         ]);
+        if (signal?.aborted) return null;
 
         if (sqliteResult.status === 'fulfilled' && sqliteResult.value && sqliteResult.value.candles.length > 0) {
             candidates.push({
@@ -160,15 +190,7 @@ export class DataPersistence {
         const best = selectBestNonBinanceLocalCandidate(candidates, provider);
         if (!best) return null;
 
-        const normalizedBest = {
-            ...best,
-            candles: trimToLastCandles(
-                this.normalizeProviderCandles(best.candles, interval, provider, best.trusted === true),
-                normalizedLimit
-            ),
-        };
-        ctx.setCachedCandles(cacheKey, normalizedBest.candles, normalizedBest.source);
-        return normalizedBest;
+        return useCandidate(normalizeCandidate(best));
     }
 
     async persistNonBinanceData(deps: {
@@ -235,7 +257,10 @@ export class DataPersistence {
         } = args;
 
         if (cacheCandles && cacheCandles.length > 0) {
-            await saveCachedCandles(symbol, storageInterval, cacheCandles, sourceTrait, trusted);
+            const saved = await saveCachedCandles(symbol, storageInterval, cacheCandles, sourceTrait, trusted);
+            if (saved && cacheKey) {
+                this.lastSnapshotPersistedAtByKey.set(cacheKey, Date.now());
+            }
         }
 
         if (sqliteCandles && sqliteCandles.length > 0) {
@@ -290,7 +315,6 @@ export class DataPersistence {
 
         const persistence = this;
         const timer = setTimeout(() => {
-            persistence.cachePersistTimers.delete(cacheKey);
             void (async () => {
                 try {
                     const pending = persistence.cachePersistPendingByKey.get(cacheKey);
@@ -300,12 +324,15 @@ export class DataPersistence {
                     const snapshot = pending.candles.length > DATA_CHART_TOTAL_LIMIT
                         ? pending.candles.slice(-DATA_CHART_TOTAL_LIMIT)
                         : pending.candles.slice();
-                    // Compute the delta vs the last bar we successfully persisted. On the
-                    // first flush for this key (or if state was lost), store the full tail.
+                    // Replay the cursor candle because live OHLCV changes at the same
+                    // timestamp. On the first flush, persist the latest two candles.
                     const lastPersistedTime = persistence.lastStreamPersistedTimeByKey.get(cacheKey);
                     const delta = lastPersistedTime == null
                         ? snapshot.slice(-2)
-                        : snapshot.filter(c => Number(c.time) > lastPersistedTime);
+                        : snapshot.filter(c => {
+                            const time = parseTimeToUnixSeconds(c.time);
+                            return time !== null && time >= lastPersistedTime;
+                        });
                     const sqliteResult = await storeSqliteCandles(
                         pending.symbol,
                         pending.storageInterval,
@@ -313,14 +340,20 @@ export class DataPersistence {
                         providerLabel,
                         'stream'
                     );
-                    if (sqliteResult && snapshot.length > 0) {
+                    const sqliteSucceeded = sqliteResult?.ok === true;
+                    const lastTime = parseTimeToUnixSeconds(snapshot[snapshot.length - 1]?.time);
+                    if (sqliteSucceeded && lastTime !== null) {
                         persistence.lastStreamPersistedTimeByKey.set(
                             cacheKey,
-                            Number(snapshot[snapshot.length - 1].time)
+                            lastTime
                         );
                     }
-                    const lastSync = ctx.syncAtByKey.get(cacheKey) ?? 0;
-                    const shouldPersistSnapshot = !sqliteResult || (Date.now() - lastSync >= DATA_CACHE_SYNC_MIN_MS);
+                    if (sqliteResult && !sqliteSucceeded) {
+                        debugLogger.warn('data.persist.sqlite_failed', { cacheKey, error: sqliteResult.error ?? 'Write rejected' });
+                    }
+                    const lastSnapshot = persistence.lastSnapshotPersistedAtByKey.get(cacheKey);
+                    const shouldPersistSnapshot = !sqliteSucceeded || lastSnapshot === undefined
+                        || Date.now() - lastSnapshot >= DATA_CACHE_SYNC_MIN_MS;
                     await persistence.persistLocalCandles({
                         symbol: pending.symbol,
                         storageInterval: pending.storageInterval,
@@ -338,6 +371,12 @@ export class DataPersistence {
                     // failure becomes an unhandled rejection (and a silent gap in
                     // the local candle cache). Surface it so operators can see it.
                     debugLogger.warn('data.persist.stream_failed', { cacheKey, error: String(error) });
+                } finally {
+                    // Keep the timer registered while writes run so flushes for one
+                    // series cannot race their cursor or overwrite a newer snapshot.
+                    persistence.cachePersistTimers.delete(cacheKey);
+                    const pending = persistence.cachePersistPendingByKey.get(cacheKey);
+                    if (pending) persistence.queuePersistCandles({ ...deps, candles: pending.candles });
                 }
             })();
         }, this.STREAM_PERSIST_DELAY_MS);

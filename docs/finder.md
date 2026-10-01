@@ -508,6 +508,10 @@ The normal local data order is local SQLite API, IndexedDB cache, bundled
 `price-data`, then remote fetch where enabled. A Finder change must not bypass
 the cache or silently change the selected interval.
 
+IBKR fallback loads prefer valid imports and seed CSVs before persisted
+caches; server CSV loaders retain their mtime freshness checks. See
+[price-data contracts](price-data.md) for the provider-specific rules.
+
 Backtest settings are part of Finder's result meaning. If a setting is not
 supported by Rust, strip it consistently in both `lib/backtest-service.ts` and
 `lib/finder-manager.ts`. If a setting changes entry timing, fills, exits,

@@ -8,7 +8,7 @@ import { normalizeTradFiDailyCandles } from "../data/data-interval-utils";
 import { BybitTradFiKline, BybitTradFiKlineResponse, HistoricalFetchOptions } from '../types/index';
 import { getIntervalSeconds, wait } from "./utils";
 import {
-    fetchWithTimeoutAndRetry,
+    fetchAndConsumeWithTimeoutAndRetry,
     findBestDivisibleInterval,
     formatProviderError,
     isAbortError,
@@ -226,23 +226,17 @@ async function fetchBybitTradFiBatch(
         // doesn't drop the user to stale seed data. The helper owns per-attempt
         // timeouts and propagates aborts, so no separate createFetchTimeoutSignal
         // is needed here.
-        const response = await fetchWithTimeoutAndRetry(
+        const { response, data } = await fetchAndConsumeWithTimeoutAndRetry(
             `${BYBIT_TRADFI_KLINE_URL}?${params.toString()}`,
             {
                 headers: {
                     Accept: 'application/json',
                 },
             },
-            {
-                signal,
-                maxAttempts: 3,
-            },
+            async response => ({ response, data: response.ok ? await response.json() as BybitTradFiKlineResponse : null }),
+            { signal, maxAttempts: 3 },
         );
-        if (!response.ok) {
-            throw new Error(`Bybit TradFi request failed: ${response.status}`);
-        }
-
-        const data: BybitTradFiKlineResponse = await response.json();
+        if (!data) throw new Error(`Bybit TradFi request failed: ${response.status}`);
         const retCode = getBybitTradFiRetCode(data);
         const retMsg = getBybitTradFiRetMsg(data);
 

@@ -10,7 +10,7 @@ import { getIntervalSeconds, wait } from "./utils";
 import { BINANCE_INTERVALS } from "../binance-market-data-utils";
 import { resolveBinanceApiBases } from "../binance-api-bases";
 import {
-    fetchWithTimeoutAndRetry,
+    fetchAndConsumeWithTimeoutAndRetry,
     findBestDivisibleInterval,
     formatProviderError,
     isAbortError,
@@ -100,7 +100,10 @@ async function fetchKlinesBatch(
         }
 
         try {
-            const response = await fetchWithTimeoutAndRetry(url, {}, {
+            const { response, data } = await fetchAndConsumeWithTimeoutAndRetry(url, {}, async response => ({
+                response,
+                data: response.ok ? await response.json() as unknown : null,
+            }), {
                 signal: options?.signal,
                 maxAttempts: BINANCE_FETCH_MAX_ATTEMPTS,
                 baseDelayMs: BINANCE_FETCH_RETRY_DELAY_MS,
@@ -117,7 +120,6 @@ async function fetchKlinesBatch(
                 continue;
             }
 
-            const data = await response.json();
             return Array.isArray(data) ? data : [];
         } catch (error) {
             if (isAbortError(error)) throw error;
@@ -187,12 +189,19 @@ async function fetchBackwardKlinePages(args: {
             signal: args.signal,
             marketType: args.marketType,
         });
+        requestCount++;
         if (data.length === 0) break;
 
+        const nextEndTime = Number(data[0]?.[0]) - 1;
+        const lastOpenTime = Number(data[data.length - 1]?.[0]);
+        if (!Number.isFinite(nextEndTime) || !Number.isFinite(lastOpenTime)
+            || (endTime !== undefined && (nextEndTime >= endTime || lastOpenTime > endTime))) {
+            debugLogger.warn('data.fetch.pagination_stalled', { symbol: args.symbol, interval: args.sourceInterval, endTime, nextEndTime });
+            break;
+        }
         batches.push(data);
         totalDataLength += data.length;
-        endTime = data[0][0] - 1;
-        requestCount++;
+        endTime = nextEndTime;
 
         if (args.targetBars !== undefined) {
             const ratio = Math.max(1, args.ratio ?? 1);

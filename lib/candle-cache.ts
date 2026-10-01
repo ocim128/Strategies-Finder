@@ -3,7 +3,7 @@ import type { OHLCVData } from "./types/index";
 import { normalizeTradFiDailyCandles } from "./data/data-interval-utils";
 import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";
-import { fetchLocalApi } from "./local-api-transport";
+import { fetchLocalApiWithBody } from "./local-api-transport";
 import {
     LOCAL_DAILY_DATASETS,
     isIbkrSymbol,
@@ -351,15 +351,15 @@ async function loadLocalDailyDatasetCandles(
 
         const filePath = `${dataset.candlesBasePath}/${encodeURIComponent(baseInterval)}/${encodeURIComponent(candidate)}.csv`;
         try {
-            // `fetchLocalApi` resolves relative `/price-data/...` URLs against
+            // `fetchLocalApiWithBody` resolves relative `/price-data/...` URLs against
             // the dev-server origin in Node (browser fetch does this implicitly).
             // Without it, server-side batch loads of IBKR
             // seed CSVs return 0 bars and surface as "Quote bars must contain
             // at least one aligned candle" downstream.
-            const response = await fetchLocalApi(filePath, {
+            const { response, payload } = await fetchLocalApiWithBody(filePath, {
                 signal,
                 cache: 'no-store',
-            }, 30_000);
+            }, 30_000, async response => ({ response, payload: response.ok ? await response.text() : '' }));
 
             if (response.status === 404) {
                 rememberMissing(missingLocalDailyCsvFiles, cacheKey);
@@ -369,7 +369,6 @@ async function loadLocalDailyDatasetCandles(
                 continue;
             }
 
-            const payload = await response.text();
             const candles = normalizeTradFiDailyCandles(extractCandlesFromCsvPayload(payload), baseInterval);
             if (candles.length === 0) {
                 rememberMissing(missingLocalDailyCsvFiles, cacheKey);
@@ -571,28 +570,41 @@ export async function saveCachedCandles(
     candles: OHLCVData[],
     source: CandleCacheSource | string,
     trusted = false
-): Promise<void> {
-    const db = await openDb();
-    if (!db) return;
+): Promise<boolean> {
+    try {
+        const db = await openDb();
+        if (!db) return false;
 
-    const normalizedSymbol = symbol.trim().toUpperCase();
-    const normalizedInterval = interval.trim().toLowerCase();
-    const record: CandleSeriesRecord = {
-        key: toCacheKey(normalizedSymbol, normalizedInterval),
-        symbol: normalizedSymbol,
-        interval: normalizedInterval,
-        candles: trusted ? sortAndDedupeCandles(candles, true) : sanitizeCandles(candles),
-        updatedAt: Date.now(),
-        source,
-    };
+        const normalizedSymbol = symbol.trim().toUpperCase();
+        const normalizedInterval = interval.trim().toLowerCase();
+        const record: CandleSeriesRecord = {
+            key: toCacheKey(normalizedSymbol, normalizedInterval),
+            symbol: normalizedSymbol,
+            interval: normalizedInterval,
+            candles: trusted ? sortAndDedupeCandles(candles, true) : sanitizeCandles(candles),
+            updatedAt: Date.now(),
+            source,
+        };
 
-    await new Promise<void>((resolve) => {
-        const tx = db.transaction(STORE_NAME, 'readwrite');
-        const store = tx.objectStore(STORE_NAME);
-        store.put(record);
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => resolve();
-    });
+        return await new Promise<boolean>((resolve) => {
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            store.put(record);
+            tx.oncomplete = () => resolve(true);
+            const fail = () => {
+                debugLogger.warn('data.cache.write_failed', {
+                    symbol: normalizedSymbol, interval: normalizedInterval,
+                    error: tx.error?.message ?? 'Transaction failed or aborted',
+                });
+                resolve(false);
+            };
+            tx.onerror = fail;
+            tx.onabort = fail;
+        });
+    } catch (error) {
+        debugLogger.warn('data.cache.write_failed', { error: String(error) });
+        return false;
+    }
 }
 
 export async function clearCachedCandlesDatabase(): Promise<boolean> {
@@ -638,15 +650,14 @@ export async function loadSeedCandlesFromPriceData(
         try {
             // `fetchLocalApi` for Node-side origin resolution; see
             // loadLocalDailyDatasetCandles for the same fix.
-            const response = await fetchLocalApi(filePath, {
+            const { response, payload } = await fetchLocalApiWithBody(filePath, {
                 signal,
                 cache: 'no-store',
-            }, 30_000);
+            }, 30_000, async response => ({ response, payload: response.ok ? await response.json() as unknown : null }));
 
             if (response.status === 404) {
                 markMissing = true;
             } else if (response.ok) {
-                const payload = await response.json();
                 const candles = extractCandlesFromPayload(payload);
                 if (candles.length > 0) {
                     return candles;

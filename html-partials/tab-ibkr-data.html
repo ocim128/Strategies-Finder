@@ -12,6 +12,7 @@
         <button class="btn btn-secondary" id="ibkrDataStatusBtn" type="button">Test Gateway</button>
         <button class="btn btn-quiet" id="ibkrDataCopyBtn" type="button">Copy Symbols</button>
         <button class="btn btn-quiet" id="ibkrDataAppendStaleBtn" type="button" title="Append catalog symbols whose last price is behind the freshest symbol at the selected timeframe">Append Stale</button>
+        <button class="btn btn-quiet" id="ibkrDataAlpacaRefreshBtn" type="button" title="Replace Symbols with saved Alpaca stocks that need a full refresh at the selected timeframe; select Alpaca and set Data Period to max">Load Alpaca Refresh List</button>
         <button class="btn btn-quiet" id="ibkrDataMarketCapBtn" type="button" title="Download daily market cap: SEC EDGAR shares outstanding × local 1d closes, daily">Download MarketCap</button>
         <button class="btn btn-ghost" id="ibkrDataStopBtn" type="button" title="Force-stop a stuck server-side IBKR Data run. Always available so a stuck lock can be cleared without a server restart.">Stop</button>
     </div>
@@ -48,6 +49,7 @@
                 <label class="param-label" for="ibkrDataPeriod">Data Period</label>
                 <input class="param-input" id="ibkrDataPeriod" type="text" placeholder="1d default: max">
                 <div class="param-hint">Examples: max, 1w, 1m, 6m, 1y, 5y. Alpaca <code>max</code> fetches all available history for the selected interval.</div>
+                <div class="param-hint">Load Alpaca Refresh List finds stocks with missing adjustment history or changed Alpaca settings for the selected 30m or 1d timeframe.</div>
             </div>
         </div>
     </div>

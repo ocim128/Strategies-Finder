@@ -514,6 +514,11 @@ defaults to 128/32; lower-memory hosts retain the defaults. An empty Workers
 field uses every available logical core up to the tuned 24-worker cap. Enter a lower
 value only when the machine must reserve capacity for another workload.
 
+IBKR and crypto historical CSV cache hits materialize only the requested
+newest bars. Complete columnar entries remain available to full-series callers;
+mtime freshness checks and cache limits still apply. See the
+[shared price-data guide](price-data.md) for loading and persistence contracts.
+
 ### API Endpoints
 
 - `POST /api/batch-backtest/sp500-top-mean/run`

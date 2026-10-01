@@ -1,5 +1,5 @@
 import type { DataProvider } from "./types/data-providers";
-import { fetchWithTimeoutAndRetry } from "./dataProviders/fetch-helpers";
+import { fetchAndConsumeWithTimeoutAndRetry } from "./dataProviders/fetch-helpers";
 
 export type LocalDailyDatasetKey = "ibkr-stock";
 
@@ -144,14 +144,15 @@ async function loadDatasetAssets(config: LocalDailyDatasetConfig): Promise<Local
             // Local catalog assets are same-origin but a stalled dev-server
             // response would otherwise hold pendingLoadByDataset indefinitely.
             // Single attempt, 5s cap — no retry since these are local reads.
-            const response = await fetchWithTimeoutAndRetry(
+            const payload = await fetchAndConsumeWithTimeoutAndRetry(
                 config.catalogUrl,
                 { cache: "no-store" },
+                async response => response.ok ? await response.json() as LocalPriceDataCatalogResponse : null,
                 { timeoutMs: 5_000, maxAttempts: 1 },
             );
-            if (!response.ok) return [];
+            if (!payload) return [];
 
-            const assets = parseJsonCatalog(await response.json() as LocalPriceDataCatalogResponse, config);
+            const assets = parseJsonCatalog(payload, config);
             assetCacheByDataset.set(config.key, assets);
             indexedCacheByDataset.set(config.key, buildIndexedAssets(assets));
             return assets;
