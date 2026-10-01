@@ -11,17 +11,14 @@ import {
 } from "../backtest-settings-resolver";
 import { getTypescriptEngineRequirementReasons } from "../rust-settings-sanitizer";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
-import {
-    toBatchSyntheticPairAdapter,
-    type BatchSyntheticPairArtifactAdapter,
-    type CompactPairArtifact,
-} from "./compact-pair-artifact";
+import type { CompactPairArtifact } from "./compact-pair-artifact";
 import {
     atomicWriteJsonSync,
     cleanOldArtifacts,
     computeRunFingerprint,
     getRunDir,
     iterateRunRawCompactArtifacts,
+    iterateRunCompactArtifacts,
     loadManifest,
     reconcileInterruptedManifestsOnStartup,
     saveManifest,
@@ -479,7 +476,8 @@ export interface TopMeanStatusResponse {
 }
 
 async function deriveReplayTargetsFromCompletedArtifacts(
-    corpus: readonly CompactPairArtifact[],
+    corpus: AsyncIterable<CompactPairArtifact>,
+    shouldStop: () => boolean,
 ): Promise<Array<{ asset: string; symbol: string }>> {
     const symbolByAsset = new Map<string, string>();
     const addTarget = (asset: string, symbol: string): void => {
@@ -487,7 +485,8 @@ async function deriveReplayTargetsFromCompletedArtifacts(
         if (key !== "" && !symbolByAsset.has(key)) symbolByAsset.set(key, symbol);
     };
 
-    for (const artifact of corpus) {
+    for await (const artifact of corpus) {
+        if (shouldStop()) break;
         addTarget(artifact.baseAsset, artifact.baseSymbol);
         addTarget(artifact.quoteAsset, artifact.quoteSymbol);
     }
@@ -1112,7 +1111,7 @@ export class TopMeanCoordinatorEngine {
 
             // A lent pool (deps.pool, finder_arm) is reused across sequential
             // children and torn down by its owner; standalone runs construct
-            // — and in run()'s finally cancel — their own pool as before.
+            // their own pool and release it before replay.
             this.pool = this.deps?.pool ?? new TopMeanWorkerPool();
             const backtestingStartedAt = performance.now();
 
@@ -1152,6 +1151,14 @@ export class TopMeanCoordinatorEngine {
             this.updateManifestEngineTelemetry(manifest);
             saveManifest(manifest, this.baseDir);
 
+            // Standalone workers are no longer needed once their shards have
+            // landed. Release their dataset/strategy caches before replay.
+            // Finder owns its lent pool and keeps it warm across children.
+            if (!this.deps?.pool) {
+                this.pool.cancel();
+                await this.pool.waitForTeardown();
+            }
+
             if (this.isStopped) {
                 this.emitInterrupted(emitNdjson);
                 return;
@@ -1167,18 +1174,10 @@ export class TopMeanCoordinatorEngine {
             // stays null and no current_snapshot event or result.json exists).
             this.currentPhase = "replay";
 
-            // Shared artifact corpus (corpus-sharing finding): the Phase-1
-            // snapshot, the replay-target derivation, and every replay pass
-            // read the same immutable compact artifacts. Parse the shards
-            // ONCE here instead of re-traversing the corpus per consumer.
-            // The raw array lives through the replay phase; that phase
-            // already retained the same trades for its whole duration via
-            // its adapter array, so peak retention is unchanged.
-            const runArtifactCorpus: CompactPairArtifact[] = [];
-            for await (const artifact of iterateRunRawCompactArtifacts(this._request.runId, this.baseDir)) {
-                if (this.isStopped) break;
-                runArtifactCorpus.push(artifact);
-            }
+            // Recreate bounded shard iterators per consumer. Trade history
+            // can be several GB of JSON and must never form a run-wide array.
+            const rawArtifactLoader = () => iterateRunRawCompactArtifacts(this._request.runId, this.baseDir);
+            let noTradePairs = 0;
 
             const resultJsonPath = join(getRunDir(this._request.runId, this.baseDir), "result.json");
             if (!finderArmProfile) {
@@ -1187,9 +1186,7 @@ export class TopMeanCoordinatorEngine {
 
                 const snapshotStartedAt = performance.now();
                 const currentSnapshotResult = await computeCurrentTopMeanSnapshot(
-                    () => (async function* () {
-                        for (const artifact of runArtifactCorpus) yield artifact;
-                    })(),
+                    rawArtifactLoader,
                     { shouldStop: () => this.isStopped },
                 );
                 this.performanceDiagnostic.phases.snapshotMs = performance.now() - snapshotStartedAt;
@@ -1268,7 +1265,7 @@ export class TopMeanCoordinatorEngine {
             // every catalog target.
             const replayTargets = phase0bWriter !== null
                 ? enumRes.eligibleTargets
-                : await deriveReplayTargetsFromCompletedArtifacts(runArtifactCorpus);
+                : await deriveReplayTargetsFromCompletedArtifacts(rawArtifactLoader(), () => this.isStopped);
             const requestInterval = this._request.interval;
             const isAssetSwitchReplay = this._request.replayMode === "asset_switch";
 
@@ -1427,15 +1424,6 @@ export class TopMeanCoordinatorEngine {
                     : commissionPct,
             };
 
-            // Every replay pass re-reads the same on-disk compact artifacts.
-            // Read them ONCE and hand every pass the cached array: window
-            // filtering, TOP_Z history, and gap eligibility stay computed per
-            // pass INSIDE the engine, so reports are unchanged — only the
-            // duplicated disk reads go away. (Corpus-sharing finding: the
-            // adapters are built from the same parsed corpus the snapshot
-            // used — no second shard traversal or JSON re-parse.)
-            const cachedReplayArtifacts: BatchSyntheticPairArtifactAdapter[] = runArtifactCorpus.map(toBatchSyntheticPairAdapter);
-
             let replayPassIndex = 0;
             const runReplayForWindow = (
                 sampleFromSec: number | undefined,
@@ -1456,8 +1444,15 @@ export class TopMeanCoordinatorEngine {
                     phase0bWriterFailed = true;
                 };
                 return runOpenScoreUsdReplay(
-                    (async function* () {
-                        for (const artifact of cachedReplayArtifacts) yield artifact;
+                    (() => {
+                        // Reset per pass so annual replay does not double-count.
+                        noTradePairs = 0;
+                        return (async function* (runId: string, baseDir?: string) {
+                            for await (const artifact of iterateRunCompactArtifacts(runId, baseDir)) {
+                                if (artifact.result.trades.length === 0) noTradePairs += 1;
+                                yield artifact;
+                            }
+                        })(this._request.runId, this.baseDir);
                     }) as unknown as () => AsyncIterable<BatchSyntheticPairArtifact>,
                     undefined,
                     {
@@ -1805,7 +1800,7 @@ export class TopMeanCoordinatorEngine {
                     earliestBarTimeSec: this.earliestTargetBarTimeSec,
                     latestBarTimeSec: this.latestTargetBarTimeSec,
                 },
-                noTradePairs: runArtifactCorpus.reduce((count, artifact) => count + (artifact.trades.length === 0 ? 1 : 0), 0),
+                noTradePairs,
             };
 
             let archiveOutcome: TopMeanArchiveOutcome;
@@ -1921,7 +1916,7 @@ export class TopMeanCoordinatorEngine {
             });
         } finally {
             this.replayAbortController = null;
-            // Standalone: terminate the workers exactly as before. A lent
+            // Also clean up standalone workers on early exit or failure. A lent
             // (finder_arm sweep) pool stays alive for the next candidate —
             // its owner, the Finder runner's finally, calls dispose().
             if (!this.deps?.pool) {

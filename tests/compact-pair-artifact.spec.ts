@@ -8,6 +8,8 @@ import {
     loadManifest,
     writeShardArtifacts,
     readShardArtifacts,
+    readShardArtifactsAsync,
+    TOP_MEAN_PARSED_SHARD_CACHE_MAX_JSON_BYTES,
     iterateRunCompactArtifacts,
     iterateRunRawCompactArtifacts,
     iterateRunShardsWithReadAhead,
@@ -283,6 +285,29 @@ async function runTests(): Promise<void> {
         assert.equal(empty.length, 0);
 
         console.log("PASS: read-ahead shard iterator: order, window bound, early exit, holes, mtime, empty");
+
+        // Large trade histories must evict by bytes before the 32-entry cap.
+        const largeRow = {
+            ...readAheadShards[0]![0]!,
+            symbol: "X".repeat(Math.ceil(TOP_MEAN_PARSED_SHARD_CACHE_MAX_JSON_BYTES / 3)),
+        };
+        const largeRunId = "spec_cache_byte_budget";
+        const retained: CompactPairArtifact[][] = [];
+        for (let i = 0; i < 3; i += 1) {
+            writeShardArtifacts(largeRunId, i, [largeRow], testBaseDir);
+            const parsed = await readShardArtifactsAsync(largeRunId, i, testBaseDir);
+            assert.ok(parsed);
+            retained.push(parsed);
+        }
+        assert.strictEqual(await readShardArtifactsAsync(largeRunId, 2, testBaseDir), retained[2], "newest shard remains cached");
+        assert.notStrictEqual(await readShardArtifactsAsync(largeRunId, 0, testBaseDir), retained[0], "byte pressure evicts the oldest shard even with only three entries");
+        writeShardArtifacts(largeRunId, 3, [{
+            ...largeRow, symbol: "X".repeat(TOP_MEAN_PARSED_SHARD_CACHE_MAX_JSON_BYTES + 1),
+        }], testBaseDir);
+        const oversized = await readShardArtifactsAsync(largeRunId, 3, testBaseDir);
+        assert.ok(oversized);
+        assert.notStrictEqual(await readShardArtifactsAsync(largeRunId, 3, testBaseDir), oversized, "oversized shards are readable but never cached");
+        console.log("PASS: parsed shard cache byte budget and oversized bypass");
     } finally {
         cleanup();
     }

@@ -15,6 +15,7 @@ import type {
     StageOutcome,
 } from "./internal-types";
 import { yieldLoop } from "./runtime";
+import { ScoreDeltaBuffer } from "./score-delta-buffer";
 
 /** Comparator for ScoreDelta: (time, assetIndex, isEntry DESC). Entries before
  * exits at the same (time, asset) so the post-execution score reflects the new
@@ -36,7 +37,7 @@ export interface ArtifactScanResult {
      */
     retainedDegree: Map<string, number>;
     /** Per-pair compact delta streams, sorted per pair. */
-    streams: ScoreDelta[][];
+    streams: ScoreDeltaBuffer[];
     /** Index i describes streams[i]: pair's full backtest netProfit > 0. */
     profitableStreams: boolean[];
     /** Index i describes streams[i]: false when ANY trade lacks finite pnl. */
@@ -76,7 +77,7 @@ export async function scanArtifacts(args: {
     const retainedDegree = new Map<string, number>();
     /** @deprecated alias for {@link retainedDegree}; use that name in new code. */
     const staticDegree = retainedDegree;
-    const streams: ScoreDelta[][] = [];
+    const streams: ScoreDeltaBuffer[] = [];
     // Index i describes streams[i]: true when that pair's full backtest
     // netProfit was strictly positive (drives the Profit-gated arms only).
     const profitableStreams: boolean[] = [];
@@ -292,7 +293,9 @@ export async function scanArtifacts(args: {
         // 1000+ pairs' worth of deltas would block the event loop and keep
         // Stop / progress from firing during the long sort.
         stream.sort(compareDeltas);
-        streams.push(stream);
+        // Only this pair's temporary rows survive the sort. Retaining objects
+        // for four deltas per trade exhausts even a 16 GiB coordinator heap.
+        streams.push(ScoreDeltaBuffer.from(stream));
         // Profit-gated arms: a pair feeds the filtered accumulators only when its
         // full backtest netted strictly positive. Kept in lockstep with
         // `streams` (index i describes streams[i]).

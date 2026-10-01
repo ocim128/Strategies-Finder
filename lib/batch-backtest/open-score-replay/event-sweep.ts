@@ -6,7 +6,8 @@
  * snapshotting them on entry events. Consumes the scan's per-pair streams and
  * clears them (the flat bucketed arrays become the only delta indexing).
  */
-import type { DecisionEvent, ReplayPhaseCallback, ScoreDelta, StageOutcome } from "./internal-types";
+import type { DecisionEvent, ReplayPhaseCallback, StageOutcome } from "./internal-types";
+import { ScoreDeltaBuffer } from "./score-delta-buffer";
 import { yieldLoop } from "./runtime";
 
 const SWEEP_CHUNK_SIZE = 2_000;
@@ -17,7 +18,7 @@ export interface EventSweepResult {
 }
 
 export async function sweepScoreEvents(args: {
-    streams: ScoreDelta[][];
+    streams: ScoreDeltaBuffer[];
     profitableStreams: readonly boolean[];
     sampleFromSec: number | undefined;
     sampleToSec: number | undefined;
@@ -65,11 +66,11 @@ export async function sweepScoreEvents(args: {
     for (let s = 0; s < streams.length; s += 1) {
         const stream = streams[s]!;
         for (let i = 0; i < stream.length; i += 1) {
-            const t = stream[i]!.timeSec;
+            const t = stream.timeSecs[i]!;
             indexedDeltas += 1;
             if (indexedDeltas % SWEEP_CHUNK_SIZE === 0
                 && await yieldAtBoundary("indexed decision times", indexedDeltas)) return cancelled();
-            if (i === 0 || stream[i - 1]!.timeSec !== t) {
+            if (i === 0 || stream.timeSecs[i - 1] !== t) {
                 if (!timeIndex.has(t)) timeIndex.set(t, timeIndex.size);
             }
         }
@@ -99,9 +100,9 @@ export async function sweepScoreEvents(args: {
         const stream = streams[s]!;
         let i = 0;
         while (i < stream.length) {
-            const t = stream[i]!.timeSec;
+            const t = stream.timeSecs[i]!;
             let j = i;
-            while (j < stream.length && stream[j]!.timeSec === t) {
+            while (j < stream.length && stream.timeSecs[j] === t) {
                 j += 1;
                 countedDeltas += 1;
                 if (countedDeltas % SWEEP_CHUNK_SIZE === 0
@@ -117,23 +118,25 @@ export async function sweepScoreEvents(args: {
     }
     // 3. Place deltas into the flat, time-ordered array. Iterating streams in
     // stream-index order makes within-bucket order deterministic.
-    const flatDeltas = new Array<ScoreDelta>(totalDeltas);
+    const flatDeltas = new ScoreDeltaBuffer(totalDeltas);
     const flatStreamIdx = new Uint32Array(totalDeltas);
     const placementCursor = bucketStart.slice();
     let placedDeltas = 0;
     for (let s = 0; s < streams.length; s += 1) {
         const stream = streams[s]!;
         for (let i = 0; i < stream.length; i += 1) {
-            const d = stream[i]!;
-            const bucketIdx = timeIndex.get(d.timeSec)!;
+            const bucketIdx = timeIndex.get(stream.timeSecs[i]!)!;
             const slot = placementCursor[bucketIdx]!;
-            flatDeltas[slot] = d;
+            flatDeltas.copyFrom(slot, stream, i);
             flatStreamIdx[slot] = s;
             placementCursor[bucketIdx] = slot + 1;
             placedDeltas += 1;
             if (placedDeltas % SWEEP_CHUNK_SIZE === 0
                 && await yieldAtBoundary("placed event deltas", placedDeltas)) return cancelled();
         }
+        // Release each source as it is copied, rather than retaining both
+        // complete columnar representations until placement finishes.
+        streams[s] = null as unknown as ScoreDeltaBuffer;
     }
     // The bucketed arrays now own every delta; drop the per-stream arrays so
     // the sweep does not retain a second indexing of the delta set.
@@ -196,26 +199,28 @@ export async function sweepScoreEvents(args: {
         const bucketEnd = bucketStart[b + 1]!;
         for (let i = bucketStart[b]!; i < bucketEnd; i += 1) {
             if (shouldStop()) return cancelled();
-            const d = flatDeltas[i]!;
+            const assetIndex = flatDeltas.assetIndices[i]!;
+            const delta = flatDeltas.deltas[i]!;
+            const isEntry = flatDeltas.flags[i]! & 1;
             const streamIdx = flatStreamIdx[i]!;
-            rawScore[d.assetIndex]! += d.delta;
+            rawScore[assetIndex]! += delta;
             // activePairCount tracks currently-open pairs on this asset: an
             // entry adds a vote, an exit removes it (clamped at 0). Using
             // abs(delta) here was wrong because it incremented on BOTH entry
             // and exit, inflating the adjusted-score denominator after every
             // round-trip and corrupting TOP_ADJUSTED selection.
-            const countDelta = d.isEntry === 1 ? 1 : -1;
-            const next = activePairCount[d.assetIndex]! + countDelta;
-            activePairCount[d.assetIndex] = next > 0 ? next : 0;
-            if (d.isEntry === 0) realizedPnlByStream[streamIdx] += d.pnlShare;
+            const countDelta = isEntry === 1 ? 1 : -1;
+            const next = activePairCount[assetIndex]! + countDelta;
+            activePairCount[assetIndex] = next > 0 ? next : 0;
+            if (isEntry === 0) realizedPnlByStream[streamIdx] += flatDeltas.pnlShares[i]!;
             // Profit-gated mirror: only deltas from pairs whose FULL backtest
             // netted positive (static mask).
             if (profitableStreams[streamIdx]!) {
-                profitRawScore[d.assetIndex]! += d.delta;
-                const nextPnl = profitPairCount[d.assetIndex]! + countDelta;
-                profitPairCount[d.assetIndex] = nextPnl > 0 ? nextPnl : 0;
+                profitRawScore[assetIndex]! += delta;
+                const nextPnl = profitPairCount[assetIndex]! + countDelta;
+                profitPairCount[assetIndex] = nextPnl > 0 ? nextPnl : 0;
             }
-            if (d.isEntry === 1) hasEntry = true;
+            if (isEntry === 1) hasEntry = true;
             popped += 1;
             // A single timestamp can contain many pair deltas. Check and yield
             // inside the timestamp group so Stop remains observable even before
@@ -242,7 +247,7 @@ export async function sweepScoreEvents(args: {
         // re-entry accounts both legs of the round trip exactly.
         //
         // Event-sweep plan phase 3: replay the SAME bucket range over the
-        // original ScoreDelta objects instead of the per-delta copies this
+        // columnar deltas instead of the per-delta copies this
         // loop used to consume — the deltas are not mutated between passes,
         // and the second pass reads only fields the first pass never touches
         // (voteApplied/delta/isEntry/profitNowConfidenceWeight), so operation
@@ -250,16 +255,18 @@ export async function sweepScoreEvents(args: {
         // per-delta object allocation.
         const bucketStartIndex = bucketStart[b]!;
         for (let i = bucketStartIndex; i < bucketEnd; i += 1) {
-            const d = flatDeltas[i]!;
-            if (!d.voteApplied) continue;
-            profitNowRawScore[d.assetIndex]! += d.delta;
-            const countDeltaNow = d.isEntry === 1 ? 1 : -1;
-            const nextNow = profitNowPairCount[d.assetIndex]! + countDeltaNow;
-            profitNowPairCount[d.assetIndex] = nextNow > 0 ? nextNow : 0;
-            if (d.profitNowConfidenceWeight > 0) {
-                profitNowConfidenceScore[d.assetIndex]! += d.delta * d.profitNowConfidenceWeight;
-                const nextConfidence = profitNowConfidencePairCount[d.assetIndex]! + countDeltaNow;
-                profitNowConfidencePairCount[d.assetIndex] = nextConfidence > 0 ? nextConfidence : 0;
+            if (!(flatDeltas.flags[i]! & 2)) continue;
+            const assetIndex = flatDeltas.assetIndices[i]!;
+            const delta = flatDeltas.deltas[i]!;
+            const confidenceWeight = flatDeltas.confidenceWeights[i]!;
+            profitNowRawScore[assetIndex]! += delta;
+            const countDeltaNow = (flatDeltas.flags[i]! & 1) === 1 ? 1 : -1;
+            const nextNow = profitNowPairCount[assetIndex]! + countDeltaNow;
+            profitNowPairCount[assetIndex] = nextNow > 0 ? nextNow : 0;
+            if (confidenceWeight > 0) {
+                profitNowConfidenceScore[assetIndex]! += delta * confidenceWeight;
+                const nextConfidence = profitNowConfidencePairCount[assetIndex]! + countDeltaNow;
+                profitNowConfidencePairCount[assetIndex] = nextConfidence > 0 ? nextConfidence : 0;
             }
         }
         // Exit-only score changes do not create a decision event.

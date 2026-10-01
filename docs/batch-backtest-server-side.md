@@ -417,6 +417,33 @@ horizon values are retained. The switch replay does not use cooldown.
 
 ### Performance Diagnostics
 
+The coordinator streams compact artifacts from disk for the current snapshot,
+target discovery, and each replay window. The snapshot reopens the iterator
+for its endpoint, latest-event, and vote passes; neither it nor the coordinator
+retains a run-wide trade array. This trades repeated sequential reads for a
+bounded heap even when artifact JSON totals several GB. Shard read-ahead stays
+at four; the parsed-shard LRU is capped at 32 entries **and 32 MiB of source
+JSON**, with oversized shards bypassing the cache. Parsed objects and active
+read-ahead add overhead beyond that JSON budget.
+
+Replay sorts one pair's temporary deltas at a time, then retains them in
+columnar typed arrays (37 bytes per delta) rather than JS objects. Event
+bucketing also uses typed arrays and releases each source stream after copying
+it. Timestamp, score, P&L, and confidence columns remain Float64 so numeric
+precision and selector semantics are preserved. Total RAM still scales with
+trade deltas and event snapshots; these changes remove the full-corpus and
+per-delta JS-object heap growth. Standalone runs terminate workers after shard
+persistence and before the snapshot/replay; Finder sweeps retain their owned
+pool for reuse across candidates.
+
+`npm run test -- open-score-replay-memory.spec.ts` covers the snapshot and
+delta scan/sweep with 600,000 trades in a separate 128 MiB-heap process.
+An offline check of the 2026-10-01 failed run's 49,007 saved pairs (3.67 GB
+of artifact JSON) completed the snapshot and scan/sweep of 135,325,636 deltas
+under a 1 GiB heap limit: sampled peak heap 503 MiB, peak process RAM 10,288
+MiB. This checks artifact reconstruction and event formation; it does not
+include target loading or the final selector simulation.
+
 Completed runs include `performance` (`sp500_top_mean_performance.v1`) in the
 TOP_MEAN summary. The Batch panel renders the same compact lines included by
 Copy Result and Copy Diagnostic:

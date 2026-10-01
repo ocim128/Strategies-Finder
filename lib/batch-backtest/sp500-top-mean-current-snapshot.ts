@@ -642,74 +642,14 @@ export async function reduceCurrentTopMeanSnapshot(
  * result (winners empty, asOf null) rather than mixing states from different
  * dates. The endpoint-pass counters are still surfaced in `stats`.
  *
- * F1 (artifact re-read elimination): the prior implementation called
- * `artifactIterableFactory()` three times — once each for the endpoint,
- * latest-event, and vote passes — re-reading + re-parsing every completed
- * shard from disk on each pass. On a 400-shard run that was ~1,200 multi-MB
- * reads of identical, immutable-between-passes data. The factory is now
- * consumed ONCE into an in-memory array (bounded by the run's total artifact
- * size, ~1KB/artifact → fits the documented `--max-old-space-size` budget by
- * orders of magnitude), and the three downstream passes share the same
- * materialized array via a thin async-iterable wrapper. Memory profile per
- * shard is unchanged (each shard is already fully loaded by
- * `readShardArtifacts`); only the redundant re-reads are eliminated.
+ * Each pass reopens the bounded shard iterator. Retaining the entire corpus
+ * here duplicates several GB of trade history alongside replay state.
  */
 export async function computeCurrentTopMeanSnapshot(
     artifactIterableFactory: () => AsyncIterable<CompactPairArtifact>,
     options: { shouldStop?: () => boolean } = {},
 ): Promise<CurrentTopMeanResult> {
-    // Materialize once. The factory wraps `iterateRunRawCompactArtifacts`, which
-    // re-reads shards on each invocation — so a single materialization cuts the
-    // disk + JSON parse cost by ~3x for the snapshot phase.
-    const materialized: CompactPairArtifact[] = [];
-    let stoppedDuringLoad = false;
-    // Track missing/malformed during load so the stop-path short-circuit below
-    // preserves the same stats fidelity the prior endpoint-pass-as-load pass
-    // surfaced (the original resolveCommonEndpoint counted these even when
-    // shouldStop fired mid-pass and returned endpoint=null).
-    let missingDuringLoad = 0;
-    let malformedDuringLoad = 0;
-    for await (const artifact of artifactIterableFactory()) {
-        if (options.shouldStop?.()) {
-            stoppedDuringLoad = true;
-            break;
-        }
-        // Mirror resolveCommonEndpoint's classifier: a usable endpoint is a
-        // finite number. Undefined/null → missing; non-finite → malformed.
-        // We do NOT compute the mode here — that happens in the endpoint pass
-        // over the materialized array — we just keep the counters in lockstep
-        // so a Stop mid-load still reports the partial counts.
-        const ep = artifact?.dataEndTime;
-        if (ep === undefined || ep === null) {
-            missingDuringLoad += 1;
-        } else if (typeof ep !== "number" || !Number.isFinite(ep)) {
-            malformedDuringLoad += 1;
-        }
-        materialized.push(artifact);
-    }
-    // Preserve the prior contract: a Stop during the (formerly endpoint) load
-    // pass is treated as "stopped before any conclusion" → empty snapshot, asOf
-    // null. The original returned `noConsensus: false` from resolveCommonEndpoint
-    // in this case, which the caller mapped to "empty"; we short-circuit here
-    // and surface the same partial missing/malformed counts the prior code did.
-    if (stoppedDuringLoad) {
-        return emptyResult("empty", {
-            artifactsProcessed: materialized.length,
-            missingEndpoints: missingDuringLoad,
-            malformedArtifacts: malformedDuringLoad,
-            durationMs: 0,
-        });
-    }
-    const reusableFactory = (): AsyncIterable<CompactPairArtifact> => {
-        return (async function* () {
-            for (const artifact of materialized) {
-                if (options.shouldStop?.()) return;
-                yield artifact;
-            }
-        })();
-    };
-
-    const endpointPass = await resolveCommonEndpoint(reusableFactory(), options.shouldStop);
+    const endpointPass = await resolveCommonEndpoint(artifactIterableFactory(), options.shouldStop);
     const endpoint = endpointPass.endpoint;
 
     if (endpoint === null) {
@@ -730,11 +670,11 @@ export async function computeCurrentTopMeanSnapshot(
     }
 
     const latestDecision = await resolveLatestDecisionEvent(
-        reusableFactory(),
+        artifactIterableFactory(),
         endpoint,
         options.shouldStop,
     );
-    const votePass = await reduceCurrentTopMeanSnapshot(reusableFactory(), {
+    const votePass = await reduceCurrentTopMeanSnapshot(artifactIterableFactory(), {
         commonEndpoint: endpoint,
         latestDecisionTime: latestDecision.decisionTime,
         latestDecisionEntryPairs: latestDecision.entryPairs,

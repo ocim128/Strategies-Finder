@@ -1185,7 +1185,7 @@ export class TopMeanWorkerPool {
         // finder_arm sweep reuse: execute() leaves the workers ALIVE on
         // success so the next sequential candidate reuses the warm workers.
         // Teardown ownership moved to the pool's consumers — standalone
-        // coordinators cancel in their run() finally (as before), and the
+        // coordinators cancel after execution (before replay), and the
         // Finder runner's finally calls dispose(). Cancellation still
         // terminates immediately through cancel() on every failure path.
         return {

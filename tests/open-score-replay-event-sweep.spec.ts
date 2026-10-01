@@ -2,6 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { sweepScoreEvents } from "../lib/batch-backtest/open-score-replay/event-sweep";
 import type { ScoreDelta } from "../lib/batch-backtest/open-score-replay/internal-types";
+import { ScoreDeltaBuffer } from "../lib/batch-backtest/open-score-replay/score-delta-buffer";
 
 describe("OPEN_SCORE event sweep cancellation", () => {
     it("honors Stop during each bounded bucket-building pass", async () => {
@@ -20,7 +21,7 @@ describe("OPEN_SCORE event sweep cancellation", () => {
             let stopRequested = false;
             const reports: string[] = [];
             const outcome = await sweepScoreEvents({
-                streams: [deltas.slice()],
+                streams: [ScoreDeltaBuffer.from(deltas)],
                 profitableStreams: [false],
                 sampleFromSec: undefined,
                 sampleToSec: undefined,

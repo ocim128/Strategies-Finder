@@ -7,16 +7,27 @@ import { toBatchSyntheticPairAdapter } from "./compact-pair-artifact";
 
 const DEFAULT_RETENTION_MS = 24 * 60 * 60 * 1000; // 24 hours
 const PARSED_SHARD_CACHE_MAX_ENTRIES = 32;
+// A shard can contain tens of MB of trade JSON, so entry count alone does
+// not bound this process-wide cache. Parsed object overhead is additional.
+export const TOP_MEAN_PARSED_SHARD_CACHE_MAX_JSON_BYTES = 32 * 1024 * 1024;
 
 interface ParsedShardCacheEntry {
     mtimeMs: number;
     artifacts: CompactPairArtifact[];
+    jsonBytes: number;
 }
 
 // Annual TOP_MEAN replay passes revisit the same completed shards. Keep the
 // parsed working set bounded while using the file mtime to self-invalidate
 // after a resumed run replaces a shard.
 const parsedShardCache = new Map<string, ParsedShardCacheEntry>();
+let parsedShardCacheJsonBytes = 0;
+
+function deleteParsedShardCacheEntry(path: string): void {
+    const entry = parsedShardCache.get(path);
+    if (entry) parsedShardCacheJsonBytes -= entry.jsonBytes;
+    parsedShardCache.delete(path);
+}
 
 /**
  * Allow-list for run ids. Browser-generated ids are `batch-<ts36>-<rand>` and
@@ -292,12 +303,19 @@ export async function readShardArtifactsAsync(
         }
         const content = await readFile(shardPath, "utf8");
         const artifacts = JSON.parse(content) as CompactPairArtifact[];
-        parsedShardCache.delete(shardPath);
-        parsedShardCache.set(shardPath, { mtimeMs, artifacts });
-        while (parsedShardCache.size > PARSED_SHARD_CACHE_MAX_ENTRIES) {
+        const jsonBytes = Buffer.byteLength(content, "utf8");
+        deleteParsedShardCacheEntry(shardPath);
+        // Oversized shards still stream to their consumer, but are never
+        // retained in the process-wide parsed cache.
+        if (jsonBytes <= TOP_MEAN_PARSED_SHARD_CACHE_MAX_JSON_BYTES) {
+            parsedShardCache.set(shardPath, { mtimeMs, artifacts, jsonBytes });
+            parsedShardCacheJsonBytes += jsonBytes;
+        }
+        while (parsedShardCache.size > PARSED_SHARD_CACHE_MAX_ENTRIES
+            || parsedShardCacheJsonBytes > TOP_MEAN_PARSED_SHARD_CACHE_MAX_JSON_BYTES) {
             const oldestKey = parsedShardCache.keys().next().value;
             if (oldestKey === undefined) break;
-            parsedShardCache.delete(oldestKey);
+            deleteParsedShardCacheEntry(oldestKey);
         }
         return artifacts;
     } catch {
