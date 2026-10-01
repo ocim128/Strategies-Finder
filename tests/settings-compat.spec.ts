@@ -24,6 +24,7 @@ import {
     normalizeStoredBacktestSettings,
     normalizeStoredStrategyConfig,
     sortStrategyConfigsNewestFirst,
+    settingsManager,
 } from '../lib/settings-manager';
 import { readBoolean, readNumber, toBooleanLike, toFiniteNumber } from '../lib/settings-parse-utils';
 import {
@@ -36,6 +37,21 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
 import { builtInStrategyKeys } from '../lib/strategies/manifest-keys';
 
 describe('Backtest settings compatibility', () => {
+    it('falls back when browser policy denies access to saved settings and configurations', () => {
+        const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+        Object.defineProperty(globalThis, 'localStorage', {
+            configurable: true,
+            get() { throw new DOMException('Storage access denied', 'SecurityError'); },
+        });
+        try {
+            expect(settingsManager.loadSettings()).to.equal(null);
+            expect(settingsManager.loadAllStrategyConfigs()).to.deep.equal([]);
+        } finally {
+            if (originalDescriptor) Object.defineProperty(globalThis, 'localStorage', originalDescriptor);
+            else delete (globalThis as { localStorage?: Storage }).localStorage;
+        }
+    });
+
     it('ignores retired secondary-symbol settings in saved configurations', () => {
         const legacy = { crossSymbolSecondary: 'ETHUSDT', slippageBps: 12 };
         const stored = normalizeStoredBacktestSettings(legacy);

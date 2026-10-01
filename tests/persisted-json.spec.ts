@@ -31,7 +31,7 @@ class MemoryStorage implements Storage {
 }
 
 describe("persisted-json", () => {
-    const originalStorage = globalThis.localStorage;
+    const originalStorageDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
     let storage: MemoryStorage;
 
     beforeEach(() => {
@@ -44,16 +44,87 @@ describe("persisted-json", () => {
     });
 
     afterEach(() => {
-        if (originalStorage === undefined) {
+        if (originalStorageDescriptor === undefined) {
             delete (globalThis as { localStorage?: Storage }).localStorage;
             return;
         }
 
+        Object.defineProperty(globalThis, "localStorage", originalStorageDescriptor);
+    });
+
+    it("returns the read fallback and reports a denied storage accessor", () => {
+        const failure = new DOMException("Storage access denied", "SecurityError");
+        let accesses = 0;
         Object.defineProperty(globalThis, "localStorage", {
-            value: originalStorage,
             configurable: true,
-            writable: true,
+            get() { accesses += 1; throw failure; },
         });
+        const fallback = { enabled: false };
+        const errors: unknown[] = [];
+        let migrated = false;
+        const result = readPersistedJson({
+            key: "denied",
+            schema: "example",
+            version: 1,
+            fallback,
+            migrate: () => { migrated = true; return { enabled: true }; },
+            onError: (error) => errors.push(error),
+        });
+        expect(result).to.equal(fallback);
+        expect(errors).to.deep.equal([failure]);
+        expect(migrated).to.equal(false);
+        expect(accesses).to.equal(1);
+    });
+
+    it("returns false and reports a denied storage accessor before serializing a write", () => {
+        const failure = new DOMException("Storage access denied", "SecurityError");
+        Object.defineProperty(globalThis, "localStorage", {
+            configurable: true,
+            get() { throw failure; },
+        });
+        const errors: unknown[] = [];
+        let serialized = false;
+        const saved = writePersistedJson({
+            key: "denied",
+            schema: "example",
+            version: 1,
+            data: { toJSON() { serialized = true; return { enabled: true }; } },
+            onError: (error) => errors.push(error),
+        });
+        expect(saved).to.equal(false);
+        expect(errors).to.deep.equal([failure]);
+        expect(serialized).to.equal(false);
+    });
+
+    it("uses fallback results without reporting errors when storage is absent", () => {
+        delete (globalThis as { localStorage?: Storage }).localStorage;
+        const errors: unknown[] = [];
+        expect(readPersistedJson({
+            key: "absent", schema: "example", version: 1, fallback: 7,
+            migrate: () => 99, onError: (error) => errors.push(error),
+        })).to.equal(7);
+        expect(writePersistedJson({
+            key: "absent", schema: "example", version: 1, data: 99,
+            onError: (error) => errors.push(error),
+        })).to.equal(false);
+        expect(errors).to.deep.equal([]);
+    });
+
+    it("reports storage method failures through the same fallback contract", () => {
+        const readFailure = new DOMException("Storage read denied", "SecurityError");
+        const writeFailure = new DOMException("Storage full", "QuotaExceededError");
+        storage.getItem = () => { throw readFailure; };
+        storage.setItem = () => { throw writeFailure; };
+        const errors: unknown[] = [];
+        expect(readPersistedJson({
+            key: "failed", schema: "example", version: 1, fallback: 7,
+            migrate: () => 99, onError: (error) => errors.push(error),
+        })).to.equal(7);
+        expect(writePersistedJson({
+            key: "failed", schema: "example", version: 1, data: 99,
+            onError: (error) => errors.push(error),
+        })).to.equal(false);
+        expect(errors).to.deep.equal([readFailure, writeFailure]);
     });
 
     it("reads legacy raw payloads through migrate", () => {

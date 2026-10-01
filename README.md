@@ -191,6 +191,9 @@ If you add or rename a built-in strategy, run `npm run strategies:sync-manifest`
 
 ### Settings compatibility is real
 - persisted JSON blobs now route through `lib/persisted-json.ts`, which supports schema/version envelopes while still reading legacy raw JSON payloads
+- The JSON persistence helpers tolerate unavailable or policy-blocked browser
+  storage: reads return their caller's fallback and writes return `false`.
+  Storage access errors reach the optional `onError` callback.
 - removed trade-filter settings may still appear in old saved payloads; ignore them instead of restoring behavior
 - any new setting unsupported by Rust must be stripped in both:
   - `lib/backtest-service.ts`

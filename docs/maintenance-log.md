@@ -4,6 +4,27 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Keep JSON persistence usable when storage access is denied
+
+- **Evidence:** Both JSON helpers checked `typeof localStorage` outside their
+  `try` blocks. A throwing storage accessor escaped before the caller's fallback
+  or error callback could run. New read/write regressions reproduced both
+  failures. Settings restoration and named-configuration loading call these
+  helpers without another error boundary.
+- **Change:** Acquire storage once inside each helper's error boundary. Denied
+  access returns the read fallback or `false` for writes and reports the error
+  through `onError`; unavailable storage skips writes before serialization.
+  Added accessor-denial, absent-storage, method/quota-failure, and settings-manager
+  coverage. Documented the fallback contract in README; saved schemas are unchanged.
+- **Checks:** `persisted-json.spec.ts`, `settings-compat.spec.ts`,
+  `finder-settings-persistence.spec.ts`, and `batch-backtest-snapshot.spec.ts`
+  pass, along with `npm run typecheck`, `npm run typecheck:tests`, and
+  `git diff --check`. The full suite passed all 250 specs before this patch;
+  the previously logged four failures were resolved by the recent fixture commits.
+- **Follow-up:** Direct storage-removal helpers still merit caller-level review
+  for the same accessor issue, including `clearPersistedLatestResults` in
+  `lib/batch-backtest/browser/batch-browser-store.ts`.
+
 ## 2026-10-01 - Preserve final streamed results at clean EOF
 
 - **Evidence:** The shared browser NDJSON reader only dispatched newline-ended

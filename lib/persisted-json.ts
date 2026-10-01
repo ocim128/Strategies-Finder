@@ -73,12 +73,12 @@ export function readPersistedJson<T>(options: ReadPersistedJsonOptions<T>): T {
         onError,
     } = options;
 
-    if (typeof localStorage === "undefined") {
-        return fallback;
-    }
-
     try {
-        const raw = localStorage.getItem(key);
+        // Acquiring localStorage can itself throw when browser policy denies
+        // access. Keep it inside the same fallback boundary as storage reads.
+        const storage = globalThis.localStorage;
+        if (storage === undefined) return fallback;
+        const raw = storage.getItem(key);
         if (raw === null) {
             return fallback;
         }
@@ -104,11 +104,9 @@ export function writePersistedJson<T>(options: WritePersistedJsonOptions<T>): bo
         onError,
     } = options;
 
-    if (typeof localStorage === "undefined") {
-        return false;
-    }
-
     try {
+        const storage = globalThis.localStorage;
+        if (storage === undefined) return false;
         const payload: PersistedJsonEnvelope = {
             schema,
             version,
@@ -120,7 +118,7 @@ export function writePersistedJson<T>(options: WritePersistedJsonOptions<T>): bo
         const startedAt = performance.now();
         const serialized = serializeJsonPreservingNonFinite(payload);
         const serializedAt = performance.now();
-        localStorage.setItem(key, serialized);
+        storage.setItem(key, serialized);
         const writeMs = performance.now() - serializedAt;
         const stringifyMs = serializedAt - startedAt;
         const bytes = serialized.length * 2;
