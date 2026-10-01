@@ -1,4 +1,6 @@
+import type { UTCTimestamp } from "lightweight-charts";
 import { expect } from "chai";
+import { withLocalIbkrFixture } from "./helpers/local-ibkr-fixture";
 import { describe, it } from "node:test";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -31,12 +33,19 @@ function readSource(filePath: string): string {
  */
 describe("finder server loader parity", () => {
     it("routes a mixed IBKR synthetic pair locally before Binance normalization", async () => {
-        clearServerFinderDatasetCaches();
-        const marked = await loadServerFinderDataset("AAL\u2022+AMAT\u2022", "30m");
-        const mixed = await loadServerFinderDataset("AAL\u2022+AMAT", "30m");
-
-        expect(marked.length).to.be.greaterThan(0);
-        expect(mixed.length).to.equal(marked.length);
+        const bars = Array.from({ length: 80 }, (_, index) => ({
+            time: (1_700_006_400 + index * 1_800) as UTCTimestamp,
+            open: 100 + index, high: 102 + index, low: 99 + index,
+            close: 101 + index, volume: 1_000,
+        }));
+        await withLocalIbkrFixture("30m", { AAL: bars, AMAT: bars }, async () => {
+            const marked = await loadServerFinderDataset("AAL\u2022+AMAT\u2022", "30m");
+            // Clear the pair cache so the mixed-marker path must resolve both legs itself.
+            clearServerFinderDatasetCaches();
+            const mixed = await loadServerFinderDataset("AAL\u2022+AMAT", "30m");
+            expect(marked.length).to.equal(bars.length);
+            expect(mixed).to.deep.equal(marked);
+        });
     });
 
     it("both server loaders (finder + batch) wrap the shared core", () => {

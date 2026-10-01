@@ -21,7 +21,8 @@ const EXPECTED_SHA256 = "d0976087a804e515d42c6618d63648efbec9c9e6c43f2cbe3ca8041
 
 describe("trade-ledger independent golden parity", () => {
     it("matches the committed checker output in both sweep engine modes", async () => {
-        const expected = await readFile(EXPECTED_FILE, "utf8");
+        // Git may check text fixtures out with CRLF; preserve the canonical LF hash.
+        const expected = (await readFile(EXPECTED_FILE, "utf8")).replace(/\r\n/g, "\n");
         expect(createHash("sha256").update(expected).digest("hex")).to.equal(EXPECTED_SHA256);
         const expectedReport = expected.endsWith("\n") ? expected.slice(0, -1) : expected;
         const loadedRule = await import(`${pathToFileURL(RULE_FILE).href}?golden-parity`);

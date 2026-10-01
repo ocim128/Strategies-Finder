@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { expect } from "chai";
 import { spawnSync } from "node:child_process";
 import { describe, it, afterEach } from "node:test";
@@ -292,7 +293,7 @@ describe("pair feature access", () => {
         const active = await activatePairFeatures(prepared, spreadRule);
         const archive = await loadPairSelectionArchive(folder);
         const result = tallyPairSelectionRule(archive, spreadRule, undefined, 24, active!);
-        const slowSource = "tests/fixtures/pair-features/receipt-hash-race.tmp";
+        const slowSource = `tests/fixtures/pair-features/receipt-hash-race-${process.pid}.tmp`;
         await writeFile(path.resolve(process.cwd(), slowSource), Buffer.alloc(32 * 1024 * 1024, 7));
         const controller = new AbortController();
         const slowRule = {
@@ -323,7 +324,7 @@ describe("pair feature access", () => {
         const folder = await createLoadableFolder();
         await rm(path.join(folder, "source-snapshot"), { recursive: true, force: true });
         await rm(path.join(folder, "feature-packs"), { recursive: true, force: true });
-        const esno = path.resolve(process.cwd(), "../../../node_modules/esno/esno.js");
+        const esno = createRequire(import.meta.url).resolve("esno/esno.js");
         const script = path.resolve(process.cwd(), "scripts/pair-pick-scales.ts");
         const result = spawnSync(process.execPath, [esno, script, folder], { encoding: "utf8" });
         expect(result.status, result.stderr).to.equal(0);
@@ -335,7 +336,7 @@ describe("pair feature access", () => {
         const folder = await createLoadableFolder();
         await rm(path.join(folder, "feature-packs"), { recursive: true, force: true });
         await writeFile(path.join(folder, "source-snapshot", "manifest.json"), "{}", "utf8");
-        const esno = path.resolve(process.cwd(), "../../../node_modules/esno/esno.js");
+        const esno = createRequire(import.meta.url).resolve("esno/esno.js");
         const script = path.resolve(process.cwd(), "scripts/pair-pick-scales.ts");
         const result = spawnSync(process.execPath, [esno, script, folder], { encoding: "utf8" });
         expect(result.status).to.not.equal(0);

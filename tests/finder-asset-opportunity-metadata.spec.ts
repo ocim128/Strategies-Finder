@@ -145,6 +145,7 @@ describe("Asset Opportunity metadata payload serializer", () => {
                     { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
                 ],
             },
+            activePositionContinuationMetrics: null,
             oosNextExitMetrics: null,
             exitStrategy: {
                 key: "trailing_exit",
@@ -172,6 +173,7 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(payload.metadata).to.equal(null);
         expect(payload.oos).to.equal(null);
         expect(payload.oosHorizonMetrics).to.equal(null);
+        expect(payload.activePositionContinuationMetrics).to.equal(null);
         expect(payload.exitStrategy).to.equal(null);
     });
 

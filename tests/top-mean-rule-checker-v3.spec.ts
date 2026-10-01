@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
@@ -276,7 +277,7 @@ describe("top-mean rule checker v3 feature join", () => {
             writeFileSync(featurePath, tamperedFeatureBytes);
             assert.throws(() => loadNormalizedTopMeanArchiveFromDirectory(runDir), /meta\.files\.candidate-features\.jsonl\.sha256/);
             writeFileSync(featurePath, originalFeatureBytes);
-            const esno = join(process.cwd(), "../../../node_modules/esno/esno.js");
+            const esno = createRequire(import.meta.url).resolve("esno/esno.js");
             const checker = join(process.cwd(), "scripts/top-mean-rule-checker.ts");
             const ruleFile = join(root, "v2-rule.ts");
             writeFileSync(ruleFile, "export default (cand) => cand.priorCoverageSlope5 ?? cand.score;\n", "utf8");

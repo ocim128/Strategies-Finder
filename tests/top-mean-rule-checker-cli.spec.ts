@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
@@ -215,7 +216,7 @@ function ledgerHashes(ledgerDir: string): string {
 }
 
 function runChecker(args: readonly string[]): { status: number | null; stdout: string; stderr: string } {
-    const esno = path.resolve(process.cwd(), "../../../node_modules/esno/esno.js");
+    const esno = createRequire(import.meta.url).resolve("esno/esno.js");
     const script = path.resolve(process.cwd(), "scripts/top-mean-rule-checker.ts");
     const result = spawnSync(process.execPath, [esno, script, ...args], {
         cwd: process.cwd(),
