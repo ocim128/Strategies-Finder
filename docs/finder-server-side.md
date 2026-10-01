@@ -303,8 +303,11 @@ reserve out of the 75%-RAM budget before dividing by 10 MB per symbol. This
 keeps the dataset LRU and signal cache within the worker estimate, so each
 symbol loads and prepares its closed-candle view ONCE per worker (or once for
 a whole sequential sweep) instead of once per holdout iteration. Synthetic
-pairs are excluded from the plain-dataset LRU (their
-`pairCache` already retains them), and failed or empty loads are never cached
+pairs are excluded from the plain-dataset LRU (their `pairCache` retains them).
+The worker-local `pairCache` and pair-metadata LRU use the same reserve-aware
+limit through `resolveAssetOpportunityPairCacheCapacity`; if a partition
+exceeds that limit, earlier pairs may be reloaded on later holdout iterations.
+Failed or empty loads are never cached
 — they stay retryable. Iteration diagnostics report prepared-candle cache
 hits/misses and isolate `closedCandlePreparation` time inside
 `dataPreparation`.

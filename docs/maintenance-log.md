@@ -4,6 +4,25 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Align Finder cache capacity checks with signal reserve
+
+- **Evidence:** The full run failed the pair-cache capacity spec: it expected
+  679 entries at 8 GiB and 341 at 4 GiB. The current sizing policy reserves
+  64 MiB for the worker signal cache before dividing the remaining 75%-RAM
+  budget by 10 MiB per symbol, yielding 608 and 300. The implementation and
+  guide were updated for that reserve, but the older assertions were not.
+- **Change:** Updated the capacity regression expectations and clarified that
+  worker-local synthetic pair caches share the reserve-aware limit; partitions
+  larger than the limit can incur reloads across holdout iterations.
+- **Checks:** `npm run test -- finder-asset-opportunity-cache-capacity.spec.ts`,
+  `npm run typecheck`, `npm run typecheck:tests`, and `git diff --check` pass.
+  The preceding full run had 240 passes and 6 failures, including this stale
+  capacity assertion.
+- **Follow-up:** The other full-run failures were Finder Asset Opportunity
+  metadata, Finder export diagnostics, Finder server plugin, Trade Ledger
+  checker, and Trade Ledger parity golden. Rerun the suite to confirm their
+  current status.
+
 ## 2026-10-01 - Make pair-list integrity checks line-ending portable
 
 - **Evidence:** The broad suite failed `pairlist-pool-registry.spec.ts` because
@@ -19,8 +38,8 @@ repeating the same investigation.
   run had 242 passes and 7 failures, including this portability failure.
 - **Follow-up:** The other failures were Finder Asset Opportunity cache
   capacity, metadata, export diagnostics, and server-plugin specs, plus the
-  trade-ledger checker and parity golden specs. Rerun the full suite to verify
-  their current status.
+  trade-ledger checker and parity golden specs. Cache capacity is corrected in
+  the newer entry; rerun the full suite to verify the remaining status.
 
 ## 2026-10-01 - Sync the missing built-in strategy manifests
 

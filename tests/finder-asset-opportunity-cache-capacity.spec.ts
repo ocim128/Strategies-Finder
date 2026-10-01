@@ -8,12 +8,14 @@ import {
 const GIB = 1024 * 1024 * 1024;
 
 describe("Finder Asset Opportunity pair-cache capacity", () => {
-    it("retains a 679-pair worker partition when the existing memory budget allows it", () => {
-        expect(resolveAssetOpportunityPairCacheCapacity(679, 8 * GIB)).to.equal(679);
+    it("reserves the signal-cache budget before sizing a large worker partition", () => {
+        // floor((75% of 8 GiB - 64 MiB) / 10 MiB per symbol)
+        expect(resolveAssetOpportunityPairCacheCapacity(679, 8 * GIB)).to.equal(608);
     });
 
-    it("keeps the pair cache bounded by the existing memory budget", () => {
-        expect(resolveAssetOpportunityPairCacheCapacity(679, 4 * GIB)).to.equal(341);
+    it("keeps the pair cache within the same reserve-aware budget on smaller hosts", () => {
+        // floor((75% of 4 GiB - 64 MiB) / 10 MiB per symbol)
+        expect(resolveAssetOpportunityPairCacheCapacity(679, 4 * GIB)).to.equal(300);
     });
 
     it("normalizes an empty worker partition to one cache entry", () => {
