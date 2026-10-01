@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, link, mkdir, rename, unlink, writeFile } from "node:fs/promises";
+import { lstat, link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { Buffer } from "node:buffer";
 import { join, resolve } from "node:path";
 import { gunzipSync, gzip, gzipSync } from "node:zlib";
@@ -275,6 +275,17 @@ export async function hashFile(filePath: string): Promise<FileHash> {
         stream.destroy();
     }
     return { sha256: digest.digest("hex"), bytes };
+}
+
+/** Normalize source checkout line endings before hashing a pinned implementation. */
+export function hashSourceText(source: Buffer): string {
+    const normalized = Buffer.from(source.toString("utf8").replace(/\r\n?/g, "\n"), "utf8");
+    return hashBytes(normalized);
+}
+
+/** Hash a UTF-8 implementation file independently of its checkout line endings. */
+export async function hashSourceFile(filePath: string): Promise<string> {
+    return hashSourceText(await readFile(filePath));
 }
 
 /** Hash an already encoded artifact buffer. */

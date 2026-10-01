@@ -9,6 +9,8 @@
 import type { DecisionEvent, ReplayPhaseCallback, ScoreDelta, StageOutcome } from "./internal-types";
 import { yieldLoop } from "./runtime";
 
+const SWEEP_CHUNK_SIZE = 2_000;
+
 export interface EventSweepResult {
     /** Decision events in ascending timeSec order (entry buckets only). */
     events: DecisionEvent[];
@@ -38,32 +40,73 @@ export async function sweepScoreEvents(args: {
     // with the exact same per-group semantics as the heap version. Cross-group
     // order is strict by timeSec, as before; within-group order is stream-index
     // order, which is deterministic run-to-run regardless of artifact arrival
-    // order. Yields still fire after bounded pops so progress and Stop reach
-    // the server mid-merge on a huge pair list.
+    // order. Each linear indexing/counting/placement pass yields at bounded
+    // delta intervals so progress and Stop reach the server before the final
+    // accumulator sweep on a huge pair list.
+    const cancelled = (): StageOutcome<EventSweepResult> => ({
+        ok: false,
+        earlyExit: { reportLine: "OPEN_SCORE USD | cancelled during event sweep.", pairs: pairCount, assets: assetCount },
+    });
+    const yieldAtBoundary = async (
+        detail: string,
+        completed: number,
+        total = totalDeltas,
+    ): Promise<boolean> => {
+        onPhase("events", `${detail} ${completed}/${total}`, completed, total);
+        await yieldLoop();
+        return shouldStop();
+    };
     onPhase("events", "merging score deltas", 0, totalDeltas);
+    if (shouldStop()) return cancelled();
     // 1. Distinct decision times. Each stream is already sorted by timeSec, so
     // walking its equal-time runs visits each of its distinct times once.
     const timeIndex = new Map<number, number>();
+    let indexedDeltas = 0;
     for (let s = 0; s < streams.length; s += 1) {
         const stream = streams[s]!;
         for (let i = 0; i < stream.length; i += 1) {
             const t = stream[i]!.timeSec;
-            if (i > 0 && stream[i - 1]!.timeSec === t) continue;
-            if (!timeIndex.has(t)) timeIndex.set(t, timeIndex.size);
+            indexedDeltas += 1;
+            if (indexedDeltas % SWEEP_CHUNK_SIZE === 0
+                && await yieldAtBoundary("indexed decision times", indexedDeltas)) return cancelled();
+            if (i === 0 || stream[i - 1]!.timeSec !== t) {
+                if (!timeIndex.has(t)) timeIndex.set(t, timeIndex.size);
+            }
         }
-        if (s % 25_000 === 24_999) await yieldLoop();
     }
-    const bucketTimes = Float64Array.from([...timeIndex.keys()].sort((a, b) => a - b));
-    for (let b = 0; b < bucketTimes.length; b += 1) timeIndex.set(bucketTimes[b]!, b);
+    onPhase("events", "sorting decision times", 0, timeIndex.size);
+    await yieldLoop();
+    if (shouldStop()) return cancelled();
+    const sortedTimes = [...timeIndex.keys()].sort((a, b) => a - b);
+    // Native sorting is synchronous. Yield on both sides so a Stop received
+    // before it is honored immediately and one received during it is handled
+    // before any of the following bucket work starts.
+    await yieldLoop();
+    if (shouldStop()) return cancelled();
+    const bucketTimes = new Float64Array(sortedTimes.length);
+    for (let b = 0; b < sortedTimes.length; b += 1) {
+        const time = sortedTimes[b]!;
+        bucketTimes[b] = time;
+        timeIndex.set(time, b);
+        if ((b + 1) % SWEEP_CHUNK_SIZE === 0
+            && await yieldAtBoundary("indexed decision buckets", b + 1, sortedTimes.length)) return cancelled();
+    }
+    sortedTimes.length = 0;
     // 2. Count deltas per bucket (run-walking again, one Map lookup per run).
     const runCounts = new Uint32Array(bucketTimes.length);
+    let countedDeltas = 0;
     for (let s = 0; s < streams.length; s += 1) {
         const stream = streams[s]!;
         let i = 0;
         while (i < stream.length) {
             const t = stream[i]!.timeSec;
-            let j = i + 1;
-            while (j < stream.length && stream[j]!.timeSec === t) j += 1;
+            let j = i;
+            while (j < stream.length && stream[j]!.timeSec === t) {
+                j += 1;
+                countedDeltas += 1;
+                if (countedDeltas % SWEEP_CHUNK_SIZE === 0
+                    && await yieldAtBoundary("counted event deltas", countedDeltas)) return cancelled();
+            }
             runCounts[timeIndex.get(t)!] += j - i;
             i = j;
         }
@@ -77,6 +120,7 @@ export async function sweepScoreEvents(args: {
     const flatDeltas = new Array<ScoreDelta>(totalDeltas);
     const flatStreamIdx = new Uint32Array(totalDeltas);
     const placementCursor = bucketStart.slice();
+    let placedDeltas = 0;
     for (let s = 0; s < streams.length; s += 1) {
         const stream = streams[s]!;
         for (let i = 0; i < stream.length; i += 1) {
@@ -86,6 +130,9 @@ export async function sweepScoreEvents(args: {
             flatDeltas[slot] = d;
             flatStreamIdx[slot] = s;
             placementCursor[bucketIdx] = slot + 1;
+            placedDeltas += 1;
+            if (placedDeltas % SWEEP_CHUNK_SIZE === 0
+                && await yieldAtBoundary("placed event deltas", placedDeltas)) return cancelled();
         }
     }
     // The bucketed arrays now own every delta; drop the per-stream arrays so
@@ -141,14 +188,14 @@ export async function sweepScoreEvents(args: {
 
     let popped = 0;
     for (let b = 0; b < bucketTimes.length; b += 1) {
-        if (shouldStop()) return { ok: false, earlyExit: { reportLine: "OPEN_SCORE USD | cancelled during event sweep.", pairs: pairCount, assets: assetCount } };
+        if (shouldStop()) return cancelled();
         const t = bucketTimes[b]!;
         if (sampleTo !== undefined && t > sampleTo) break;
         let hasEntry = false;
         // Apply ALL deltas at this timestamp before forming candidates.
         const bucketEnd = bucketStart[b + 1]!;
         for (let i = bucketStart[b]!; i < bucketEnd; i += 1) {
-            if (shouldStop()) return { ok: false, earlyExit: { reportLine: "OPEN_SCORE USD | cancelled during event sweep.", pairs: pairCount, assets: assetCount } };
+            if (shouldStop()) return cancelled();
             const d = flatDeltas[i]!;
             const streamIdx = flatStreamIdx[i]!;
             rawScore[d.assetIndex]! += d.delta;

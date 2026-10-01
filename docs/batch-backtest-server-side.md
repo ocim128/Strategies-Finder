@@ -34,7 +34,7 @@ engine. Stage implementations live in `open-score-replay/`:
 | `pnl.ts` | `computeSelectorPnl`, `simulateTopMeanPortfolio` | `batch-open-score-usd-selector-pnl.spec.ts` |
 | `report.ts` | `buildReportLines` (opaque `reportLines` text is frozen) | replay specs |
 | `artifact-scan.ts` | Phase 1 artifact streaming, per-pair delta reconstruction, causal vote flags, cap-tilt coverage | replay specs |
-| `event-sweep.ts` | Phase 2 time-bucketed merge, ordinary/profit/causal accumulators, event snapshots | `batch-open-score-usd-max-active.spec.ts`, replay specs |
+| `event-sweep.ts` | Phase 2 time-bucketed merge, ordinary/profit/causal accumulators, event snapshots | `batch-open-score-usd-max-active.spec.ts`, `open-score-replay-event-sweep.spec.ts`, replay specs |
 | `candidate-selection.ts` | Candidate pools + FNV tie-breaks, strict-past TOP_Z history, outcome request grouping, gap-filtered reranking, BOT_* picks, latest selections | replay specs |
 | `target-outcomes.ts` | Lazy dataset resolution + caller-owned shared cache, per-horizon outcomes, gap/censoring/no-data accounting, Phase 0b diagnostics | replay specs, `sp500-top-mean-research-archive-writers.spec.ts`, `sp500-top-mean-causal-features.spec.ts` |
 | `aggregation.ts` | Per-horizon series/controls/breakdowns/exclusions, ONGOING picks, P&L experiments | replay specs |
@@ -117,6 +117,12 @@ OPEN_SCORE USD checks Stop while forming candidate selections in both replay
 modes. The candidate stage checks at event boundaries, yields about every
 1,000 events, and exits before loading target datasets when cancellation is
 requested; partial candidate results are discarded.
+
+The event sweep also checks Stop and yields every 2,000 deltas while indexing
+decision times, counting bucket sizes, placing deltas, and applying the final
+time-ordered merge. Its distinct-bucket indexing pass yields every 2,000 bucket
+times. Sorting the timestamps uses the native synchronous array sort, so Stop
+is checked immediately before and after that sort.
 
 ## Stop vs Cancel vs Reload
 

@@ -19,6 +19,7 @@ import {
     encodeUint8,
     hashBytes,
     hashFile,
+    hashSourceFile,
     prepareArtifactDirectory,
     publishArtifactIfMissing,
     safeArtifactPath,
@@ -671,8 +672,8 @@ export async function validatePairFeatureLibraryRelease(libraryRelease: string):
         if (!catalogEntry) throw new Error(`No evaluator exists for ${definition.id}.`);
         for (const implementation of definition.implementationFiles) {
             const implementationPath = await safeArtifactPath(process.cwd(), implementation.path);
-            const actual = await hashFile(implementationPath);
-            if (actual.sha256 !== implementation.sha256) throw new Error(`Implementation digest mismatch for ${implementation.path}.`);
+            const actual = await hashSourceFile(implementationPath);
+            if (actual !== implementation.sha256) throw new Error(`Implementation digest mismatch for ${implementation.path}.`);
         }
         for (const dependency of definition.dependencies) {
             const dependencyDefinition = release.definitions.find((candidate) => candidate.id === dependency.id);

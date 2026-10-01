@@ -1,7 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { readFile } from "node:fs/promises";
-import { hashBytes, hashFile, canonicalJson } from "../lib/pair-features/artifact-io";
+import { hashBytes, hashSourceFile, hashSourceText, canonicalJson } from "../lib/pair-features/artifact-io";
 import { V1_FEATURE_CATALOG, V1_RELEASE } from "../lib/pair-features/catalog";
 import type { PairFeatureEvaluationContext, PairFeatureSnapshotTrade } from "../lib/pair-features/types";
 
@@ -19,6 +19,13 @@ const grandfathered = new Map([
 ]);
 
 describe("pair feature catalog v1", () => {
+    it("normalizes source line endings while keeping artifact hashes byte-exact", () => {
+        const lfSource = Buffer.from("export const value = 1;\nexport const next = 2;\n", "utf8");
+        const crlfSource = Buffer.from(lfSource.toString("utf8").replace(/\n/g, "\r\n"), "utf8");
+        expect(hashSourceText(crlfSource)).to.equal(hashSourceText(lfSource));
+        expect(hashBytes(crlfSource)).to.not.equal(hashBytes(lfSource));
+    });
+
     it("publishes a sorted, fully pinned four-family tranche", async () => {
         expect(V1_RELEASE.releaseId).to.equal("v1");
         expect(V1_RELEASE.definitions.length).to.equal(V1_FEATURE_CATALOG.length);
@@ -39,8 +46,8 @@ describe("pair feature catalog v1", () => {
             expect(definition.expectedValueFixtures?.length ?? 0).to.be.greaterThan(0);
             expect(definition.implementationFiles.length).to.be.greaterThan(0);
             for (const implementation of definition.implementationFiles) {
-                const file = await hashFile(implementation.path);
-                expect(file.sha256).to.equal(implementation.sha256);
+                const digest = await hashSourceFile(implementation.path);
+                expect(digest).to.equal(implementation.sha256);
             }
             const withoutDigest = Object.fromEntries(Object.entries(definition).filter(([key]) => key !== "definitionDigest"));
             expect(hashBytes(Buffer.from(canonicalJson(withoutDigest), "utf8"))).to.equal(definition.definitionDigest);
