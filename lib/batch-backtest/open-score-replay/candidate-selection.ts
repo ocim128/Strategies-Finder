@@ -23,7 +23,7 @@
  */
 import { tieBreakDigest } from "../max-active-research-contract";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
-import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback } from "./internal-types";
+import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { REPLAY_ARM_FIELDS } from "./arm-contract";
 import type { ReplayArmField } from "./arm-contract";
 import { yieldLoop } from "./runtime";
@@ -49,8 +49,9 @@ export async function buildCandidateViews(args: {
     selectionCooldownBars?: number;
     /** Legacy full-view fixtures can retain empty/singleton switch events. */
     includeAllDecisionEvents?: boolean;
+    shouldStop?: () => boolean;
     onPhase: ReplayPhaseCallback;
-}): Promise<CandidateStageResult> {
+}): Promise<StageOutcome<CandidateStageResult>> {
     const { events, totalEvents, assetNames, assetCount, onPhase } = args;
     const retainSingletonEvents = Math.max(0, Math.floor(args.selectionCooldownBars ?? 0)) > 0
         || args.includeAllDecisionEvents === true;
@@ -93,6 +94,13 @@ export async function buildCandidateViews(args: {
         zWelfordCount[a] = n + 1;
     };
     for (let e = 0; e < events.length; e += 1) {
+        if (args.shouldStop?.()) {
+            return { ok: false, earlyExit: {
+                reportLine: "OPEN_SCORE USD | cancelled during candidate selection.",
+                assets: assetCount,
+                totalEvents,
+            } };
+        }
         const ev = events[e]!;
         const positives: Candidate[] = [];
         const profitPositives: Candidate[] = [];
@@ -359,9 +367,16 @@ export async function buildCandidateViews(args: {
         if (e % 1000 === 0) {
             onPhase("targets", `formed candidates for ${e}/${totalEvents} events`, e, totalEvents);
             await yieldLoop();
+            if (args.shouldStop?.()) {
+                return { ok: false, earlyExit: {
+                    reportLine: "OPEN_SCORE USD | cancelled during candidate selection.",
+                    assets: assetCount,
+                    totalEvents,
+                } };
+            }
         }
     }
-    return { views, profitOnlyEvents };
+    return { ok: true, result: { views, profitOnlyEvents } };
 }
 
 class SwitchRankedMaximum {
@@ -470,9 +485,10 @@ export async function buildAssetSwitchDecisions(args: {
     totalEvents: number;
     assetNames: readonly string[];
     assetCount: number;
+    shouldStop?: () => boolean;
     onPhase: ReplayPhaseCallback;
     onEventProcessed?: (eventIndex: number) => void;
-}): Promise<AssetSwitchCandidateStageResult> {
+}): Promise<StageOutcome<AssetSwitchCandidateStageResult>> {
     const { events, totalEvents, assetNames, assetCount, onPhase, onEventProcessed } = args;
     onPhase("targets", "forming asset-switch decisions", 0, totalEvents);
     const decisions: AssetSwitchDecision[] = [];
@@ -500,6 +516,13 @@ export async function buildAssetSwitchDecisions(args: {
     };
 
     for (let eventIndex = 0; eventIndex < events.length; eventIndex += 1) {
+        if (args.shouldStop?.()) {
+            return { ok: false, earlyExit: {
+                reportLine: "OPEN_SCORE USD | cancelled during candidate selection.",
+                assets: assetCount,
+                totalEvents,
+            } };
+        }
         const event = events[eventIndex]!;
         let digestCache: Map<number, string> | null = null;
         const digestFor = (assetIndex: number): string => {
@@ -602,9 +625,16 @@ export async function buildAssetSwitchDecisions(args: {
         if (eventIndex % 1000 === 0) {
             onPhase("targets", `formed asset-switch decisions for ${eventIndex}/${totalEvents} events`, eventIndex, totalEvents);
             await yieldLoop();
+            if (args.shouldStop?.()) {
+                return { ok: false, earlyExit: {
+                    reportLine: "OPEN_SCORE USD | cancelled during candidate selection.",
+                    assets: assetCount,
+                    totalEvents,
+                } };
+            }
         }
     }
-    return { decisions, candidateComparisonEvents, selectedAssets };
+    return { ok: true, result: { decisions, candidateComparisonEvents, selectedAssets } };
 }
 
 export interface OutcomeRequestPlan {

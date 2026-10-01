@@ -113,6 +113,11 @@ The heap requirement scales with pair count. For 200–400 pair runs,
 The browser streams scalar results from the server and never retains per-row
 OHLCV, signals, or trades. Use Stop to cancel an in-flight run.
 
+OPEN_SCORE USD checks Stop while forming candidate selections in both replay
+modes. The candidate stage checks at event boundaries, yields about every
+1,000 events, and exits before loading target datasets when cancellation is
+requested; partial candidate results are discarded.
+
 ## Stop vs Cancel vs Reload
 
 - **Stop button**: cancels the in-flight server-side run. The owner-lock is

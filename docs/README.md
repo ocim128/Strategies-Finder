@@ -34,6 +34,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Records and Audits
 
+- [maintenance-log.md](maintenance-log.md) - concise log of completed repository maintenance improvements, evidence, checks, and follow-ups.
 - [top-mean-event-sweep-plan.md](top-mean-event-sweep-plan.md) - planned bounded replay sweeps, removal of temporary delta copies, and guarded linear exit-signal merging.
 
 - [top-mean-shard-overhead-plan.md](top-mean-shard-overhead-plan.md) - planned fixes for sparse shard fragmentation, per-shard diagnostic sampling, and sequential artifact loading in TOP_MEAN.

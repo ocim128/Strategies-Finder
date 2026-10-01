@@ -1359,6 +1359,30 @@ describe("batch-open-score-usd-replay-engine", () => {
         expect(result.reportLines.join("\n")).to.match(/cancelled/i);
     });
 
+    it("cancels candidate construction before loading target data in both replay modes", async () => {
+        const pairs = [makePair("AAA", "BBB", [makeTrade("long", T0 + 1000, null)])];
+        for (const mode of ["horizon", "asset_switch"] as const) {
+            let stopRequested = false;
+            let targetLoads = 0;
+            const result = await runOpenScoreUsdReplay(
+                () => fromArray(pairs),
+                async function* () {
+                    targetLoads += 1;
+                },
+                {
+                    mode,
+                    horizons: mode === "horizon" ? [2] : [],
+                    shouldStop: () => stopRequested,
+                    onPhase: (phase, detail) => {
+                        if (phase === "targets" && detail.startsWith("forming ")) stopRequested = true;
+                    },
+                },
+            );
+            expect(result.reportLines.join("\n"), mode).to.match(/cancelled during candidate selection/i);
+            expect(targetLoads, mode).to.equal(0);
+        }
+    });
+
     it("decrements activePairCount on exit deltas so TOP_ADJUSTED is not corrupted by round-trips", async () => {
         // Audit F1 regression: activePairCount must track CURRENTLY-OPEN pairs
         // (entries +1, exits -1). The previous implementation added abs(delta)

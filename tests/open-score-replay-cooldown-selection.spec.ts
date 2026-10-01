@@ -2,10 +2,15 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import { aggregateHorizonResults } from "../lib/batch-backtest/open-score-replay/aggregation";
 import { buildAssetSwitchDecisions, buildCandidateViews, selectAfterOutcomes } from "../lib/batch-backtest/open-score-replay/candidate-selection";
-import type { Candidate, DecisionEvent, EventView, ProfitOnlyEvent } from "../lib/batch-backtest/open-score-replay/internal-types";
+import type { Candidate, DecisionEvent, EventView, ProfitOnlyEvent, StageOutcome } from "../lib/batch-backtest/open-score-replay/internal-types";
 import { tieBreakDigest } from "../lib/batch-backtest/max-active-research-contract";
 
 const ASSETS = ["AAA", "BBB", "CCC"];
+
+function stageResult<T>(outcome: StageOutcome<T>): T {
+    if (!outcome.ok) throw new Error(outcome.earlyExit.reportLine);
+    return outcome.result;
+}
 
 function makeCandidate(assetIndex: number, raw = 1): Candidate {
     return { assetIndex, raw, adjusted: raw, mean: raw, activePairs: 1, z: raw };
@@ -58,6 +63,41 @@ function makeDecisionEvent(
 }
 
 describe("OPEN_SCORE replay selection cooldown", () => {
+    it("honors Stop while candidate stages yield in both replay modes", async () => {
+        const events = Array.from({ length: 3 }, (_, index) => makeDecisionEvent(100 + index, [3, 2, 1]));
+        const stopAfterFirstYield = () => {
+            let checks = 0;
+            return () => ++checks >= 2;
+        };
+
+        const horizonOutcome = await buildCandidateViews({
+            events,
+            totalEvents: events.length,
+            assetNames: ASSETS,
+            assetCount: ASSETS.length,
+            shouldStop: stopAfterFirstYield(),
+            onPhase: () => undefined,
+        });
+        expect(horizonOutcome.ok).to.equal(false);
+        if (horizonOutcome.ok) throw new Error("Expected horizon candidate construction to stop.");
+        expect(horizonOutcome.earlyExit.reportLine).to.match(/cancelled during candidate selection/i);
+
+        let processedSwitchEvents = 0;
+        const switchOutcome = await buildAssetSwitchDecisions({
+            events,
+            totalEvents: events.length,
+            assetNames: ASSETS,
+            assetCount: ASSETS.length,
+            shouldStop: stopAfterFirstYield(),
+            onEventProcessed: () => { processedSwitchEvents += 1; },
+            onPhase: () => undefined,
+        });
+        expect(switchOutcome.ok).to.equal(false);
+        if (switchOutcome.ok) throw new Error("Expected asset-switch candidate construction to stop.");
+        expect(switchOutcome.earlyExit.reportLine).to.match(/cancelled during candidate selection/i);
+        expect(processedSwitchEvents).to.equal(1);
+    });
+
     it("matches full-view picks while building compact asset-switch decisions in one pass", async () => {
         const assetNames = Array.from({ length: 8 }, (_, index) => `ASSET${index}`);
         let seed = 0x51f15e;
@@ -84,21 +124,21 @@ describe("OPEN_SCORE replay selection cooldown", () => {
             rawScoreProfitNowConf: scores(),
             activePairCountProfitNowConf: counts(),
         }));
-        const fullViews = await buildCandidateViews({
+        const fullViews = stageResult(await buildCandidateViews({
             events,
             totalEvents: events.length,
             assetNames,
             assetCount: assetNames.length,
             includeAllDecisionEvents: true,
             onPhase: () => undefined,
-        });
-        const compact = await buildAssetSwitchDecisions({
+        }));
+        const compact = stageResult(await buildAssetSwitchDecisions({
             events,
             totalEvents: events.length,
             assetNames,
             assetCount: assetNames.length,
             onPhase: () => undefined,
-        });
+        }));
 
         expect(compact.decisions).to.deep.equal(fullViews.views.map((row) => ({
             timeSec: row.timeSec,
@@ -117,7 +157,7 @@ describe("OPEN_SCORE replay selection cooldown", () => {
     });
 
     it("reuses deterministic ranked winners for asset-switch picks while preserving unique-only ties", async () => {
-        const built = await buildCandidateViews({
+        const built = stageResult(await buildCandidateViews({
             events: [
                 makeDecisionEvent(100, [9, 6, 3], [1, 5, 4]),
                 makeDecisionEvent(101, [9, 9, 3], [5, 5, 1]),
@@ -127,7 +167,7 @@ describe("OPEN_SCORE replay selection cooldown", () => {
             assetCount: ASSETS.length,
             includeAllDecisionEvents: true,
             onPhase: () => undefined,
-        });
+        }));
         const first = built.views[0]!.assetSwitchPicks!;
         expect(first.topRaw).to.equal(built.views[0]!.topRaw);
         expect(first.topMean).to.equal(built.views[0]!.topMean);
@@ -156,14 +196,14 @@ describe("OPEN_SCORE replay selection cooldown", () => {
     });
 
     it("retains ordinary singleton events so their selected asset starts cooldown", async () => {
-        const built = await buildCandidateViews({
+        const built = stageResult(await buildCandidateViews({
             events: [makeDecisionEvent(100, [3, 0, 0]), makeDecisionEvent(101, [5, 4, 3])],
             totalEvents: 2,
             assetNames: ASSETS,
             assetCount: ASSETS.length,
             selectionCooldownBars: 1,
             onPhase: () => undefined,
-        });
+        }));
         expect(built.views).to.have.length(2);
         expect(built.views[0]!.positives).to.have.length(1);
         const selected = await selectAfterOutcomes({
@@ -180,7 +220,7 @@ describe("OPEN_SCORE replay selection cooldown", () => {
     });
 
     it("retains singleton profit-only events for cooldown without adding ordinary views", async () => {
-        const built = await buildCandidateViews({
+        const built = stageResult(await buildCandidateViews({
             events: [
                 makeDecisionEvent(100, [0, 0, 0], [3, 0, 0]),
                 makeDecisionEvent(101, [5, 4, 3], [5, 4, 3]),
@@ -190,7 +230,7 @@ describe("OPEN_SCORE replay selection cooldown", () => {
             assetCount: ASSETS.length,
             selectionCooldownBars: 1,
             onPhase: () => undefined,
-        });
+        }));
         expect(built.profitOnlyEvents).to.have.length(1);
         expect(built.profitOnlyEvents[0]!.profitNowPositives).to.have.length(1);
         const selected = await selectAfterOutcomes({

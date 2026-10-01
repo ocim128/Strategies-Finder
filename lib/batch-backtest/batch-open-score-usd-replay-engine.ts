@@ -120,6 +120,7 @@ import { evaluateTargetOutcomes } from "./open-score-replay/target-outcomes";
 import { aggregateHorizonResults } from "./open-score-replay/aggregation";
 import { sweepScoreEvents } from "./open-score-replay/event-sweep";
 import { buildAssetSwitchDecisions, buildCandidateViews, buildOutcomeRequests, selectAfterOutcomes } from "./open-score-replay/candidate-selection";
+import type { AssetSwitchCandidateStageResult, CandidateStageResult } from "./open-score-replay/candidate-selection";
 import type { DecisionEvent } from "./open-score-replay/internal-types";
 import { buildReportLines } from "./open-score-replay/report";
 import { createEmptyAssetSwitchSummary, runAssetSwitchReplay } from "./open-score-replay/asset-switch";
@@ -248,28 +249,53 @@ export async function runOpenScoreUsdReplay(
 
     // Switch mode consumes only one compact pick row per decision. Build those
     // directly so horizon candidate pools never coexist with the path replay.
-    const switchStage = replayMode === "asset_switch"
-        ? await buildAssetSwitchDecisions({
+    let switchStage: AssetSwitchCandidateStageResult | null = null;
+    let candidateStage: CandidateStageResult | null = null;
+    if (replayMode === "asset_switch") {
+        const outcome = await buildAssetSwitchDecisions({
             events,
             totalEvents,
             assetNames,
             assetCount,
+            shouldStop,
             onPhase,
             // The engine owns this event array; release each large typed-score
             // snapshot once its compact decision has been emitted.
             onEventProcessed: (eventIndex) => { events[eventIndex] = null as unknown as DecisionEvent; },
-        })
-        : null;
-    const candidateStage = replayMode === "horizon"
-        ? await buildCandidateViews({
+        });
+        if (!outcome.ok) {
+            events = [];
+            const earlyExit = outcome.earlyExit;
+            return emptyResult({
+                pairs: earlyExit.pairs ?? pairCount,
+                assets: earlyExit.assets ?? assetCount,
+                totalEvents: earlyExit.totalEvents ?? totalEvents,
+                reportLines: [earlyExit.reportLine],
+            });
+        }
+        switchStage = outcome.result;
+    } else {
+        const outcome = await buildCandidateViews({
             events,
             totalEvents,
             assetNames,
             assetCount,
             selectionCooldownBars: options.selectionCooldownBars,
+            shouldStop,
             onPhase,
-        })
-        : null;
+        });
+        if (!outcome.ok) {
+            events = [];
+            const earlyExit = outcome.earlyExit;
+            return emptyResult({
+                pairs: earlyExit.pairs ?? pairCount,
+                assets: earlyExit.assets ?? assetCount,
+                totalEvents: earlyExit.totalEvents ?? totalEvents,
+                reportLines: [earlyExit.reportLine],
+            });
+        }
+        candidateStage = outcome.result;
+    }
     const views = candidateStage?.views ?? [];
     const profitOnlyEvents = candidateStage?.profitOnlyEvents ?? [];
     const candidateComparisonEvents = switchStage?.candidateComparisonEvents ?? views.reduce(
