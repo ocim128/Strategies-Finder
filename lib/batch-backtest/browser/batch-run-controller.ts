@@ -51,7 +51,6 @@ import type { StrategyParams, BacktestSettings } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import type { BatchResultsView } from "./batch-results-view";
-import { buildBatchRunLedgerBodyField } from "../trade-ledger-wire";
 import { buildBatchRunTradeGateBodyField } from "../trade-gate-wire";
 import {
     clearPersistedActiveServerRun,
@@ -62,7 +61,6 @@ import {
     saveLatestResultsSnapshot,
     type BatchPersistedActiveServerRun,
     type BatchTradeGateOptions,
-    type BatchTradeLedgerOptions,
 } from "./batch-browser-store";
 
 type BatchStatusRowsPage = {
@@ -81,7 +79,6 @@ export class BatchRunController {
         balancedLock: () => { blocked: boolean; hasResult: boolean };
         /** Facade trade-gate validation (may await a catalog refresh). */
         resolveTradeGate: (dom: BatchBacktestDom) => Promise<BatchTradeGateOptions | null>;
-        readTradeLedgerOptions: (dom: BatchBacktestDom) => BatchTradeLedgerOptions;
         getPairListProvenance: () => PairListProvenanceV1 | null;
         /** Shared pending-Stop sequencing (facade-owned; never coalesced). */
         requestServerStop: () => Promise<void>;
@@ -149,7 +146,6 @@ export class BatchRunController {
         isUiBusy: () => boolean;
         balancedLock: () => { blocked: boolean; hasResult: boolean };
         resolveTradeGate: (dom: BatchBacktestDom) => Promise<BatchTradeGateOptions | null>;
-        readTradeLedgerOptions: (dom: BatchBacktestDom) => BatchTradeLedgerOptions;
         getPairListProvenance: () => PairListProvenanceV1 | null;
         requestServerStop: () => Promise<void>;
     }) {
@@ -510,16 +506,6 @@ export class BatchRunController {
         tradeGateOptions: BatchTradeGateOptions,
         onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
     ): Promise<void> {
-        // The saved-ledger date fields define the signal-time window for this
-        // run. OPEN_SCORE USD has its own independent date fields below.
-        const tradeLedgerBaseOptions = this.deps.readTradeLedgerOptions(dom);
-        const tradeLedgerOptions = tradeLedgerBaseOptions.enabled
-            ? {
-                ...tradeLedgerBaseOptions,
-                fromSec: parseBatchDateInputSec(dom.batchBacktestTradeLedgerFrom.value, false, "Ledger From"),
-                toSec: parseBatchDateInputSec(dom.batchBacktestTradeLedgerTo.value, true, "Ledger To"),
-            }
-            : tradeLedgerBaseOptions;
         // Audit Finding 5: generate a per-run id and send it on the /run body
         // so the server can scope Stop to THIS run. Adopted on the controller
         // so Stop and reattach reconciliation send the same value.
@@ -529,10 +515,6 @@ export class BatchRunController {
             this.serverRunActive = true;
             this.persistActiveServerRun(runId);
         }
-        // Trade-ledger export (server-side only). Omitted entirely when the
-        // toggle is off so default requests stay unchanged. The wire shape
-        // lives in the leaf exporter (buildBatchRunLedgerBodyField) so the
-        // ON/OFF contract is unit-testable without importing this controller.
         const response = await fetch("/api/batch-backtest/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -545,7 +527,6 @@ export class BatchRunController {
                 capitalSettings,
                 useRustEnginePreference: shouldUseRustEngine(),
                 runId,
-                ...buildBatchRunLedgerBodyField(tradeLedgerOptions),
                 ...buildBatchRunTradeGateBodyField(tradeGateOptions),
                 // Phase 3 MAX_ACTIVE: attach the active pair-list provenance
                 // (and null registration — Phase 4 commits it server-side).
@@ -1540,12 +1521,4 @@ export class BatchRunController {
         this.stopReattachPoll();
         this.cancelLiveRenderRaf();
     }
-}
-
-function parseBatchDateInputSec(raw: string, endOfDay: boolean, label: string): number | null {
-    const trimmed = raw.trim();
-    if (!trimmed) return null;
-    const milliseconds = Date.parse(trimmed);
-    if (!Number.isFinite(milliseconds)) throw new Error(`Invalid ${label} date: "${trimmed}".`);
-    return Math.floor(milliseconds / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
 }

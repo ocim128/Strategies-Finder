@@ -2,7 +2,7 @@
  * Pure trade-ledger replay and report core.
  *
  * This module deliberately has no filesystem, Vite, or browser imports. The
- * checker CLI and the server sweep worker are adapters around these exact
+ * checker CLI and its control workers are adapters around these exact
  * replay semantics.
  */
 
@@ -340,7 +340,7 @@ interface RandomControlAccumulator {
 /**
  * Replay a random filter over candidate-only rows without constructing rule
  * proxies or ReplayPairResult objects. The branch for one open slot is the
- * normal ledger-sweep setting; the general branch preserves the same slot
+ * normal one-slot setting; the general branch preserves the same slot
  * ordering for larger limits.
  */
 function replayRandomControlRows(
@@ -492,7 +492,7 @@ export interface CheckerReportInput {
     incomplete?: { failedWrites: number; failedPairs: string[] };
 }
 
-export interface LedgerSweepRuleResultInput {
+export interface TradeLedgerRuleResultInput {
     candidates: number;
     kept: number;
     keptPct: number | null;
@@ -525,12 +525,12 @@ export interface LedgerRuleEvaluation {
     readonly controlReplayMs: number;
     readonly calibrationReplays: number;
     readonly controlCandidateVisits: number;
-    readonly resultInput: LedgerSweepRuleResultInput;
+    readonly resultInput: TradeLedgerRuleResultInput;
 }
 
 export interface LedgerRuleEvaluationWithReport {
     evaluation: LedgerRuleEvaluation;
-    resultInput: LedgerSweepRuleResultInput;
+    resultInput: TradeLedgerRuleResultInput;
     reportLines: string[];
 }
 
@@ -654,7 +654,7 @@ function buildLedgerRuleEvaluation(
 
     const totalCandidates = base.pairResults.reduce((sum, result) => sum + result.candidates, 0);
     const totalAdmitted = base.pairResults.reduce((sum, result) => sum + result.admitted, 0);
-    const resultInput: LedgerSweepRuleResultInput = {
+    const resultInput: TradeLedgerRuleResultInput = {
         candidates: totalCandidates,
         kept: totalAdmitted,
         keptPct: totalCandidates > 0 ? totalAdmitted / totalCandidates * 100 : 0,

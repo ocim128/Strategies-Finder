@@ -15,12 +15,8 @@ import { state } from "../state";
 import { strategyRegistry } from "../../strategyRegistry";
 import { setVisible } from "../dom-utils";
 import { ensureLazyStylesheet } from "../lazy-styles";
-import { debugLogger } from "../debug-logger";
-import { writePersistedJson } from "../persisted-json";
-import { TRADE_LEDGER_DEFAULT_HORIZONS } from "./trade-ledger-schema";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
-import { parseTradeLedgerHorizons } from "./trade-ledger-wire";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 // The template blob lives in the lazy-loaded batch feature chunk (via ?raw),
 // so it never lands in the cold-start bundle.
@@ -28,12 +24,8 @@ import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-sym
 import { isBatchResultSortKey } from "./batch-results-sort";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import {
-    BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
-    BATCH_TRADE_LEDGER_STORAGE,
-    readPersistedTradeLedgerOptions,
     type BatchPersistedActiveServerRun,
     type BatchTradeGateOptions,
-    type BatchTradeLedgerOptions,
 } from "./browser/batch-browser-store";
 import { TopMeanController } from "./browser/top-mean-controller";
 import { BatchRunController } from "./browser/batch-run-controller";
@@ -131,7 +123,6 @@ export class BatchBacktestService {
         isUiBusy: () => this.isBatchUiBusy(),
         balancedLock: () => this.balancedGeneratorLockState(),
         resolveTradeGate: (dom) => this.resolveTradeGateForRun(dom),
-        readTradeLedgerOptions: (dom) => this.readTradeLedgerOptions(dom),
         getPairListProvenance: () => this.balanced.getActiveProvenance(),
         requestServerStop: () => this.requestServerStop(),
     });
@@ -192,7 +183,6 @@ export class BatchBacktestService {
         const dom = this.getDom();
         this.bindEvents(dom);
         this.batchRun.refreshSortHeader(dom);
-        this.restoreTradeLedgerOptions(dom);
         this.restoreTradeGateOptions(dom);
         this.resetProgress(dom);
         this.loadPersistedLatestResults(dom);
@@ -362,15 +352,6 @@ export class BatchBacktestService {
         dom.batchBacktestBalancedCopyBtn.addEventListener("click", () => {
             void this.copyBalancedPairList();
         });
-        dom.batchBacktestTradeLedgerToggle.addEventListener("change", () => {
-            this.persistTradeLedgerOptions(dom);
-        });
-        dom.batchBacktestTradeLedgerFolder.addEventListener("change", () => {
-            this.persistTradeLedgerOptions(dom);
-        });
-        dom.batchBacktestTradeLedgerHorizons.addEventListener("change", () => {
-            this.persistTradeLedgerOptions(dom);
-        });
         dom.batchBacktestTradeGateToggle.addEventListener("change", () => {
             this.persistTradeGateOptions(dom);
             this.clearStaleResults(dom);
@@ -387,44 +368,6 @@ export class BatchBacktestService {
             this.clearStaleResults(dom);
             this.renderTradeGateSelection(dom);
         });
-    }
-
-    /** Restore the persisted trade-ledger toggle + folder into the DOM. */
-    private restoreTradeLedgerOptions(dom: BatchBacktestDom): void {
-        const options = readPersistedTradeLedgerOptions();
-        dom.batchBacktestTradeLedgerToggle.checked = options.enabled;
-        if (options.folder) {
-            dom.batchBacktestTradeLedgerFolder.value = options.folder;
-        }
-        dom.batchBacktestTradeLedgerHorizons.value = options.ledgerHorizons.join(",");
-    }
-
-    /** Read the trade-ledger options from the DOM (defaults applied). */
-    private readTradeLedgerOptions(dom: BatchBacktestDom): BatchTradeLedgerOptions {
-        const enabled = dom.batchBacktestTradeLedgerToggle.checked;
-        return {
-            enabled,
-            folder: dom.batchBacktestTradeLedgerFolder.value.trim() || BATCH_TRADE_LEDGER_DEFAULT_FOLDER,
-            ledgerHorizons: enabled
-                ? parseTradeLedgerHorizons(dom.batchBacktestTradeLedgerHorizons.value)
-                : [...TRADE_LEDGER_DEFAULT_HORIZONS],
-        };
-    }
-
-    private persistTradeLedgerOptions(dom: BatchBacktestDom): void {
-        try {
-            writePersistedJson({
-                ...BATCH_TRADE_LEDGER_STORAGE,
-                data: this.readTradeLedgerOptions(dom),
-                onError: (error) => debugLogger.warn("batch_backtest.trade_ledger_save_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                }),
-            });
-        } catch (error) {
-            debugLogger.warn("batch_backtest.trade_ledger_save_failed", {
-                error: error instanceof Error ? error.message : String(error),
-            });
-        }
     }
 
     private restoreTradeGateOptions(dom: BatchBacktestDom): void {

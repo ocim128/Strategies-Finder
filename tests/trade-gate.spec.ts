@@ -9,14 +9,14 @@ import {
     toTradeGateFeatureRow,
     type TradeGateFeatureRow,
 } from "../lib/batch-backtest/trade-ledger-features";
-import { buildTradeLedgerRowsForPair } from "../lib/batch-backtest/trade-ledger-exporter";
+import { buildTradeLedgerRowsForPair } from "../lib/batch-backtest/trade-ledger-row-builder";
 import {
     evaluateTradeGate,
     TradeGateEvaluationError,
     type TradeGate,
 } from "../lib/batch-backtest/trade-gate";
 import { buildBatchRunTradeGateBodyField } from "../lib/batch-backtest/trade-gate-wire";
-import { discoverLedgerSweepCatalog } from "../lib/batch-backtest/trade-ledger-sweep-catalog";
+import { discoverTradeGateCatalog } from "../lib/batch-backtest/trade-gate-catalog";
 import { __testInternals } from "../lib/batch-backtest/batch-backtest-vite-plugin";
 import { processRunBatch } from "../lib/batch-backtest/batch-backtest-vite-plugin";
 import type { BatchStreamEvent } from "../lib/batch-backtest/batch-backtest-stream-types";
@@ -81,9 +81,9 @@ function makeGate(
     return {
         enabled: true,
         provenance: {
-            schema: "batch.trade_gate.v1",
+            schema: "batch.trade_gate.v2",
             folderId: "fixture",
-            sweepId: "sweep",
+            certificationId: "certification",
             rules: [{ ruleId: "q1", ruleName: "q1.ts", sourceHash: "hash" }],
         },
         rules: [{ ruleId: "q1", ruleName: "q1.ts", sourceHash: "hash", evaluate }],
@@ -288,19 +288,19 @@ describe("Trade Gate", () => {
         });
     });
 
-    it("exposes only EDGE rules from a folder's latest completed sweep", async () => {
+    it("exposes only EDGE rules from a folder's latest completed certification", async () => {
         const root = await mkdtemp(path.join(os.tmpdir(), "trade-gate-catalog-"));
         try {
             const folder = path.join(root, "archive", "mining-ledger", "fixture");
             const rules = path.join(root, "archive", "mining-ledger", "rules");
             const oldSweep = path.join(folder, "sweeps", "old");
             const newSweep = path.join(folder, "sweeps", "new");
-            const latestEdgeSweep = path.join(folder, "sweeps", "latest-edge");
+            const latestCertification = path.join(folder, "sweeps", "latest-edge");
             await Promise.all([
                 mkdir(path.join(folder, "sweeps"), { recursive: true }),
                 mkdir(oldSweep, { recursive: true }),
                 mkdir(newSweep, { recursive: true }),
-                mkdir(latestEdgeSweep, { recursive: true }),
+                mkdir(latestCertification, { recursive: true }),
                 mkdir(rules, { recursive: true }),
             ]);
             const ruleSource = "export default (row: any) => row.signalBarIndex === 2 && row.feat_candidatesAtTime === 1;\n";
@@ -349,16 +349,16 @@ describe("Trade Gate", () => {
             ]);
             await utimes(path.join(oldSweep, "summary.json"), new Date(1_700_000_000_000), new Date(1_700_000_000_000));
             await utimes(path.join(newSweep, "summary.json"), new Date(1_700_000_001_000), new Date(1_700_000_001_000));
-            const catalog = await discoverLedgerSweepCatalog(root);
-            assert.equal(catalog.folders[0]?.latestSweep?.sweepId, "new");
-            assert.deepEqual(catalog.folders[0]?.latestSweep?.edgeRules, []);
+            const catalog = await discoverTradeGateCatalog(root);
+            assert.equal(catalog.folders[0]?.latestCertification?.certificationId, "new");
+            assert.deepEqual(catalog.folders[0]?.latestCertification?.edgeRules, []);
             assert.equal(__testInternals.parseTradeGateOptionsForTests({ enabled: false }), null);
 
             const rankRuleSource = "export default (row: any) => row.feat_rank === 1;\n";
             const rankRuleHash = createHash("sha256").update(rankRuleSource).digest("hex");
             await Promise.all([
                 writeFile(path.join(rules, "q2.ts"), rankRuleSource),
-                writeFile(path.join(latestEdgeSweep, "summary.json"), JSON.stringify({
+                writeFile(path.join(latestCertification, "summary.json"), JSON.stringify({
                     complete: true,
                     results: [
                         {
@@ -386,13 +386,13 @@ describe("Trade Gate", () => {
                     ],
                 })),
             ]);
-            await utimes(path.join(latestEdgeSweep, "summary.json"), new Date(1_700_000_002_000), new Date(1_700_000_002_000));
+            await utimes(path.join(latestCertification, "summary.json"), new Date(1_700_000_002_000), new Date(1_700_000_002_000));
             const resolved = await __testInternals.resolveTradeGateForTests(root, {
                 enabled: true,
                 folderId: "fixture",
                 ruleIds: ["q1"],
             });
-            assert.equal(resolved.provenance.sweepId, "latest-edge");
+            assert.equal(resolved.provenance.certificationId, "latest-edge");
             assert.deepEqual(resolved.provenance.rules, [{ ruleId: "q1", ruleName: "q1.ts", sourceHash }]);
             await assert.rejects(
                 __testInternals.resolveTradeGateForTests(root, { enabled: true, folderId: "fixture", ruleIds: ["q2"] }),
@@ -421,7 +421,7 @@ describe("Trade Gate", () => {
             };
             const events: BatchStreamEvent[] = [];
             const owner = 9401;
-            __testInternals.setLedgerRootDirForTests(root);
+            __testInternals.setTradeGateArchiveRootForTests(root);
             __testInternals.setRunOwnerForTests(owner);
             try {
                 await processRunBatch(
@@ -444,7 +444,7 @@ describe("Trade Gate", () => {
             } finally {
                 __testInternals.setRunOwnerForTests(0);
                 await __testInternals.releaseLastResults("trade_gate_fixture_cleanup");
-                __testInternals.setLedgerRootDirForTests(null);
+                __testInternals.setTradeGateArchiveRootForTests(null);
             }
             const symbolEvent = events.find((event): event is Extract<BatchStreamEvent, { type: "symbol" }> => event.type === "symbol");
             assert.deepEqual(symbolEvent?.row.result?.tradeGateStats, {

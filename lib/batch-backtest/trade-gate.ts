@@ -13,9 +13,9 @@ export interface TradeGatePairContext {
 }
 
 export interface TradeGateProvenance {
-    schema: "batch.trade_gate.v1";
+    schema: "batch.trade_gate.v2";
     folderId: string;
-    sweepId: string;
+    certificationId: string;
     rules: Array<{ ruleId: string; ruleName: string; sourceHash: string }>;
 }
 

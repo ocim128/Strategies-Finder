@@ -7,7 +7,6 @@ import { ibkrDataVitePlugin } from './lib/ibkr-data/ibkr-data-vite-plugin';
 import { cryptoDataVitePlugin } from './lib/crypto-data/crypto-data-vite-plugin';
 import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { batchBacktestVitePlugin, createBatchOwnerLocksAdapter } from './lib/batch-backtest/batch-backtest-vite-plugin';
-import { tradeLedgerSweepVitePlugin } from './lib/batch-backtest/trade-ledger-sweep-vite-plugin';
 import { selectionRulesVitePlugin } from './lib/selection-rules/server-vite-plugin';
 import { assetOpportunityExplorerVitePlugin } from './lib/asset-opportunity-explorer/server-vite-plugin';
 import { finderVitePlugin } from './lib/finder/server/finder-vite-plugin';
@@ -274,7 +273,6 @@ export default defineConfig({
         strategyLibraryAdminPlugin(),
         backtestEndpointPlugin(),
         batchBacktestVitePlugin(),
-        tradeLedgerSweepVitePlugin(),
         selectionRulesVitePlugin(),
         assetOpportunityExplorerVitePlugin(),
         finderVitePlugin({ batchOwnerLocks: createBatchOwnerLocksAdapter() }),

@@ -29,16 +29,6 @@ export interface BatchBacktestPerformance {
     executeMs: number;
     resultProjectionMs: number;
     completionCallbackMs: number;
-    artifactPersistenceMs?: number;
-    ledgerFeatureMs?: number;
-    ledgerAsIfMs?: number;
-    ledgerRowsMs?: number;
-    ledgerAppendMs?: number;
-    ledgerFinalizeMs?: number;
-    ledgerRowEncodeMs?: number;
-    ledgerFileWriteMs?: number;
-    ledgerBookkeepingMs?: number;
-    ledgerSnapshotEnqueueMs?: number;
 }
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import type { BatchRunPairListProvenanceMeta, BatchUniverseCounts } from "./batch-run-contract";

@@ -154,7 +154,7 @@ function buildSharedDataset(prepared: PreparedTradeLedgerReplay): SharedTradeLed
 }
 
 function requestedWorkerCount(candidateCount: number): number {
-    const configured = Number(process.env.TRADE_LEDGER_SWEEP_CONTROL_WORKERS);
+    const configured = Number(process.env.TRADE_LEDGER_CONTROL_WORKERS);
     if (Number.isFinite(configured) && configured >= 1) return Math.floor(configured);
     if (candidateCount >= LARGE_DATASET_THRESHOLD) return LARGE_DATASET_WORKER_COUNT;
     return Math.min(SMALL_DATASET_WORKER_COUNT, MAX_WORKER_COUNT);

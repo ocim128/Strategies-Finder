@@ -9,7 +9,6 @@
 import { readPersistedJson, writePersistedJson } from "../../persisted-json";
 import { debugLogger } from "../../debug-logger";
 import { REPLAY_ARM_FIELDS } from "../open-score-replay/arm-contract";
-import { TRADE_LEDGER_DEFAULT_HORIZONS } from "../trade-ledger-schema";
 import type { TradeGateRunOptions } from "../trade-gate-wire";
 import {
     compactBatchBacktestResultsSnapshot,
@@ -32,25 +31,6 @@ export const BATCH_ACTIVE_SERVER_RUN_STORAGE = {
     schema: "batch_backtest.active_server_run",
     version: 1,
 } as const;
-
-/**
- * Trade-ledger export controls (Batch menu). Toggle, folder, and horizons are
- * persisted across reloads and threaded into the `/api/batch-backtest/run`
- * body so the server-side plugin writes the per-run ledger folder. These are BATCH-RUN
- * options, not backtest settings — deliberately NOT registered in
- * BACKTEST_SETTINGS_DOM_CONTRACTS (the settings-manager round-trips that
- * contract through engine settings, and its "string" parser uppercases
- * values, which would corrupt the folder path).
- */
-export const BATCH_TRADE_LEDGER_STORAGE = {
-    key: "playground_batch_backtest_trade_ledger",
-    schema: "batch_backtest.trade_ledger",
-    version: 1,
-} as const;
-
-export const BATCH_TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
-
-export type BatchTradeLedgerOptions = { enabled: boolean; folder: string; ledgerHorizons: number[] };
 
 export const BATCH_TRADE_GATE_STORAGE = {
     key: "playground_batch_backtest_trade_gate",
@@ -77,29 +57,6 @@ export function readPersistedTradeGateOptions(): BatchTradeGateOptions {
                 enabled: source.enabled === true,
                 folderId: typeof source.folderId === "string" ? source.folderId : "",
                 ruleIds,
-            };
-        },
-    });
-}
-
-export function readPersistedTradeLedgerOptions(): BatchTradeLedgerOptions {
-    return readPersistedJson<BatchTradeLedgerOptions>({
-        ...BATCH_TRADE_LEDGER_STORAGE,
-        fallback: { enabled: false, folder: BATCH_TRADE_LEDGER_DEFAULT_FOLDER, ledgerHorizons: [...TRADE_LEDGER_DEFAULT_HORIZONS] },
-        migrate: (ctx) => {
-            const data = ctx.data;
-            if (!data || typeof data !== "object" || Array.isArray(data)) return null;
-            const source = data as Partial<BatchTradeLedgerOptions>;
-            const folder = typeof source.folder === "string" && source.folder.trim()
-                ? source.folder.trim()
-                : BATCH_TRADE_LEDGER_DEFAULT_FOLDER;
-            const ledgerHorizons = Array.isArray(source.ledgerHorizons)
-                ? [...new Set(source.ledgerHorizons.filter((value): value is number => typeof value === "number" && Number.isInteger(value) && value > 0))].sort((left, right) => left - right)
-                : [];
-            return {
-                enabled: source.enabled === true,
-                folder,
-                ledgerHorizons: ledgerHorizons.length > 0 ? ledgerHorizons : [...TRADE_LEDGER_DEFAULT_HORIZONS],
             };
         },
     });

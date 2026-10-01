@@ -174,29 +174,6 @@ export function buildBatchBenchmarkBottlenecks(
             notes.push(`run phase ${run.totalMs.toFixed(0)} ms`);
         }
 
-        // Keep the aggregate callback timing above for continuity, then add
-        // the largest ledger subphase when SAVE TRADE LEDGER was enabled.
-        const ledgerParts = [
-            ["artifact persistence", run.artifactPersistenceMs],
-            ["ledger feature preparation", run.ledgerFeatureMs],
-            ["ledger as-if calculation", run.ledgerAsIfMs],
-            ["ledger row construction", run.ledgerRowsMs],
-            ["ledger append", run.ledgerAppendMs],
-            ["ledger finalization", run.ledgerFinalizeMs],
-            ["ledger row encoding", run.ledgerRowEncodeMs],
-            ["ledger file write", run.ledgerFileWriteMs],
-            ["ledger bookkeeping", run.ledgerBookkeepingMs],
-            ["ledger snapshot queue", run.ledgerSnapshotEnqueueMs],
-        ] as const;
-        let dominantLedger: { label: string; ms: number } | null = null;
-        for (const [label, ms] of ledgerParts) {
-            if (typeof ms === "number" && ms > 0 && (!dominantLedger || ms > dominantLedger.ms)) {
-                dominantLedger = { label, ms };
-            }
-        }
-        if (dominantLedger && dominantLedger.ms / run.totalMs >= 0.2) {
-            notes.push(`${dominantLedger.label} accounts for ${dominantLedger.ms.toFixed(0)} ms (${(dominantLedger.ms / run.totalMs * 100).toFixed(1)}%)`);
-        }
     }
 
     if (notes.length === 0) {

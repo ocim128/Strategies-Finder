@@ -1,7 +1,7 @@
 /* The shared .btn / .empty-state rules set `display`, which beats the UA
  * stylesheet's [hidden] rule. Restore the expected semantics for every
  * element in this tab so `hidden` toggling actually hides (same pattern as
- * trade-ledger-sweep.css). */
+ * shared tab stylesheet). */
 #selectionrulesTab [hidden] {
     display: none !important;
 }
@@ -102,8 +102,8 @@
     margin-top: var(--space-3);
 }
 
-/* Status dot mirrors the Ledger Sweep status: the service already annotates
- * data-tone, this makes the state readable at a glance. */
+/* Status dot mirrors the Finder status treatment; the service already
+ * annotates data-tone, this makes the state readable at a glance. */
 #selectionrulesTab .selection-rules-status {
     display: inline-flex;
     align-items: center;

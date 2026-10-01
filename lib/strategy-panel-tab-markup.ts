@@ -8,7 +8,6 @@ const LAZY_STRATEGY_PANEL_TAB_LOADERS = {
     ibkrdata: () => import('../html-partials/tab-ibkr-data.html?raw'),
     cryptodata: () => import('../html-partials/tab-crypto-data.html?raw'),
     batchbacktest: () => import('../html-partials/tab-batch-backtest.html?raw'),
-    ledgersweep: () => import('../html-partials/tab-ledger-sweep.html?raw'),
     selectionrules: () => import('../html-partials/tab-selection-rules.html?raw'),
     opportunityexplorer: () => import('../html-partials/tab-asset-opportunity-explorer.html?raw'),
     walkforward: () => import('../html-partials/tab-walkforward.html?raw'),

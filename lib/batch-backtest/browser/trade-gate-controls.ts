@@ -1,11 +1,11 @@
 /**
  * Trade Gate form controls (Batch menu): persisted gate options, the server
- * sweep catalog fetch, selection rendering/validation, and the estimate
+ * archive catalog fetch, selection rendering/validation, and the estimate
  * status line. Owns the catalog + persisted-options state; the run preflight
  * (facade/`BatchRunController`) consumes the validated options.
  */
 import { debugLogger } from "../../debug-logger";
-import type { LedgerSweepCatalogResponse } from "../trade-ledger-sweep-stream-types";
+import type { TradeGateCatalogResponse } from "../trade-gate-catalog";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import {
     BATCH_TRADE_GATE_STORAGE,
@@ -23,15 +23,15 @@ function formatGateBytes(bytes: number): string {
     return `${Math.max(0, Math.round(bytes / 1024))} KB`;
 }
 
-function formatGateSweepDate(modifiedAt: number): string {
+function formatGateCertificationDate(modifiedAt: number): string {
     return Number.isFinite(modifiedAt) ? new Date(modifiedAt).toISOString().slice(0, 10) : "unknown date";
 }
 
 export class TradeGateControls {
-    private catalog: LedgerSweepCatalogResponse | null = null;
+    private catalog: TradeGateCatalogResponse | null = null;
     private persistedOptions = readPersistedTradeGateOptions();
 
-    getCatalog(): LedgerSweepCatalogResponse | null {
+    getCatalog(): TradeGateCatalogResponse | null {
         return this.catalog;
     }
 
@@ -65,16 +65,16 @@ export class TradeGateControls {
     async refreshCatalog(getDom: () => BatchBacktestDom): Promise<boolean> {
         const dom = getDom();
         try {
-            const response = await fetch("/api/trade-ledger-sweep/catalog");
+            const response = await fetch("/api/trade-gate/catalog");
             if (!response.ok) throw new Error(`catalog request failed (${response.status})`);
-            const payload = await response.json() as LedgerSweepCatalogResponse;
+            const payload = await response.json() as TradeGateCatalogResponse;
             if (payload.ok !== true) throw new Error("catalog response was not successful");
             this.catalog = payload;
-            const eligibleFolders = payload.folders.filter((folder) => folder.runnable && folder.latestSweep !== null);
+            const eligibleFolders = payload.folders.filter((folder) => folder.runnable && folder.latestCertification !== null);
             dom.batchBacktestTradeGateFolder.replaceChildren(...eligibleFolders.map((folder) => {
                 const option = document.createElement("option");
                 option.value = folder.folderId;
-                option.textContent = `${folder.name} · ${formatGateBytes(folder.ledgerBytes)} · sweep ${formatGateSweepDate(folder.latestSweep?.modifiedAt ?? Number.NaN)} · ${folder.latestSweep?.edgeRules.length ?? 0} EDGE rules`;
+                option.textContent = `${folder.name} · ${formatGateBytes(folder.ledgerBytes)} · certified ${formatGateCertificationDate(folder.latestCertification?.modifiedAt ?? Number.NaN)} · ${folder.latestCertification?.edgeRules.length ?? 0} EDGE rules`;
                 return option;
             }));
             if (eligibleFolders.some((folder) => folder.folderId === this.persistedOptions.folderId)) {
@@ -86,7 +86,7 @@ export class TradeGateControls {
             return true;
         } catch (error) {
             this.catalog = null;
-            dom.batchBacktestTradeGateWarning.textContent = "Trade Gate is server-side only; the local sweep catalog is unavailable.";
+            dom.batchBacktestTradeGateWarning.textContent = "Trade Gate is server-side only; the local rule archive is unavailable.";
             debugLogger.warn("batch_backtest.trade_gate_catalog_failed", {
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -96,7 +96,7 @@ export class TradeGateControls {
 
     renderSelection(dom: BatchBacktestDom): void {
         const folder = this.catalog?.folders.find((entry) => entry.folderId === dom.batchBacktestTradeGateFolder.value) ?? null;
-        const edgeRules = [...(folder?.latestSweep?.edgeRules ?? [])].sort((a, b) =>
+        const edgeRules = [...(folder?.latestCertification?.edgeRules ?? [])].sort((a, b) =>
             (b.holdoutMeanPnlDeltaPp ?? Number.NEGATIVE_INFINITY) - (a.holdoutMeanPnlDeltaPp ?? Number.NEGATIVE_INFINITY)
             || a.ruleId.localeCompare(b.ruleId));
         const selectedRuleIds = new Set(this.persistedOptions.ruleIds);
@@ -114,14 +114,14 @@ export class TradeGateControls {
             return;
         }
         if (!folder || edgeRules.length === 0) {
-            dom.batchBacktestTradeGateEstimate.textContent = "No completed sweep with EDGE-CANDIDATE rules is available.";
-            dom.batchBacktestTradeGateWarning.textContent = "Enable the gate only after selecting a current local sweep folder and rule.";
+            dom.batchBacktestTradeGateEstimate.textContent = "No archived EDGE-CANDIDATE rules are available.";
+            dom.batchBacktestTradeGateWarning.textContent = "Enable the gate only after selecting a rule archive and candidate rule.";
             return;
         }
         const selectedRules = edgeRules.filter((rule) => selected.some((option) => option.value === rule.ruleId));
         if (selectedRules.length === 0) {
             dom.batchBacktestTradeGateEstimate.textContent = "Select at least one EDGE-CANDIDATE rule.";
-            dom.batchBacktestTradeGateWarning.textContent = "The estimate is based on sweep kept rates and is not a measured admission rate.";
+            dom.batchBacktestTradeGateWarning.textContent = "The estimate is based on prior certification kept rates and is not a measured admission rate.";
             return;
         }
         const estimatedAdmission = 100 * (1 - selectedRules.reduce(
@@ -129,7 +129,7 @@ export class TradeGateControls {
             1,
         ));
         const estimatedRejection = Math.max(0, 100 - estimatedAdmission);
-        dom.batchBacktestTradeGateEstimate.textContent = `Rule rejects ~${estimatedRejection.toFixed(1)}% of signals (from sweep) · ${selectedRules.length} rule${selectedRules.length === 1 ? "" : "s"} selected.`;
+        dom.batchBacktestTradeGateEstimate.textContent = `Rule rejects ~${estimatedRejection.toFixed(1)}% of signals (from prior certification) · ${selectedRules.length} rule${selectedRules.length === 1 ? "" : "s"} selected.`;
         dom.batchBacktestTradeGateWarning.textContent = selectedRules.length > 1
             ? "OR semantics: a signal is admitted if any selected rule passes. Overlapping rules can stack admissions; this is not diversification."
             : "Server-side only. The run performs a causal feature pre-pass and records gate counters.";
@@ -143,9 +143,9 @@ export class TradeGateControls {
         const options = this.readOptions(dom);
         if (!options.enabled) return options;
         const folder = this.catalog?.folders.find((entry) => entry.folderId === options.folderId);
-        const edgeRuleIds = new Set(folder?.latestSweep?.edgeRules.map((rule) => rule.ruleId) ?? []);
+        const edgeRuleIds = new Set(folder?.latestCertification?.edgeRules.map((rule) => rule.ruleId) ?? []);
         if (!folder || options.ruleIds.length === 0 || options.ruleIds.some((ruleId) => !edgeRuleIds.has(ruleId))) {
-            dom.batchBacktestStatus.textContent = "Trade Gate is server-side only; select a current sweep folder and at least one EDGE-CANDIDATE rule.";
+            dom.batchBacktestStatus.textContent = "Trade Gate is server-side only; select a rule archive and at least one EDGE-CANDIDATE rule.";
             return null;
         }
         return options;

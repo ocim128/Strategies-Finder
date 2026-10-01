@@ -6,14 +6,8 @@ import {
     TRADE_LEDGER_SUPPORTED_VERSIONS,
     type TradeLedgerProvenance,
 } from "./trade-ledger-schema";
-import {
-    resolveLedgerSweepPreflight,
-    type LedgerSweepPreflightDecision,
-} from "./trade-ledger-sweep-preflight";
-import type { LedgerSweepRuleResult } from "./trade-ledger-sweep-stream-types";
-import { isCompletedTradeLedgerSweepSummary } from "./trade-ledger-sweep-contract";
 
-export interface LedgerSweepFolderCatalogEntry {
+export interface TradeGateFolderCatalogEntry {
     folderId: string;
     name: string;
     startedAt: string | null;
@@ -30,12 +24,11 @@ export interface LedgerSweepFolderCatalogEntry {
     replayEligible: boolean;
     runnable: boolean;
     refusalReason: string | null;
-    preflight: LedgerSweepPreflightDecision | null;
-    /** Most recent completed sweep; only its EDGE-CANDIDATE rules are exposed. */
-    latestSweep: LedgerSweepLatestSweep | null;
+    /** Most recent archived certification; only its EDGE-CANDIDATE rules are exposed. */
+    latestCertification: TradeGateCertification | null;
 }
 
-export interface LedgerSweepRuleCatalogEntry {
+export interface TradeGateRuleCatalogEntry {
     ruleId: string;
     ruleName: string;
     bytes: number;
@@ -43,28 +36,33 @@ export interface LedgerSweepRuleCatalogEntry {
     sourceHash: string;
 }
 
-export type LedgerSweepEdgeRuleCatalogEntry = Pick<
-    LedgerSweepRuleResult,
-    | "ruleId"
-    | "ruleName"
-    | "sourceHash"
-    | "keptPct"
-    | "isMeanPnlDeltaPp"
-    | "holdoutMeanPnlDeltaPp"
-    | "isMedianPnlDeltaPp"
-    | "holdoutMedianPnlDeltaPp"
-> & { verdict: "EDGE-CANDIDATE" };
-
-export interface LedgerSweepLatestSweep {
-    sweepId: string;
-    modifiedAt: number;
-    edgeRules: LedgerSweepEdgeRuleCatalogEntry[];
+export interface TradeGateCertifiedRule {
+    ruleId: string;
+    ruleName: string;
+    sourceHash: string;
+    verdict: "EDGE-CANDIDATE";
+    keptPct: number | null;
+    isMeanPnlDeltaPp: number | null;
+    holdoutMeanPnlDeltaPp: number | null;
+    isMedianPnlDeltaPp: number | null;
+    holdoutMedianPnlDeltaPp: number | null;
 }
 
-export interface LedgerSweepCatalog {
+export interface TradeGateCertification {
+    certificationId: string;
+    modifiedAt: number;
+    edgeRules: TradeGateCertifiedRule[];
+}
+
+export interface TradeGateCatalog {
     catalogRoot: string;
-    folders: LedgerSweepFolderCatalogEntry[];
-    rules: LedgerSweepRuleCatalogEntry[];
+    folders: TradeGateFolderCatalogEntry[];
+    rules: TradeGateRuleCatalogEntry[];
+}
+
+export interface TradeGateCatalogResponse extends TradeGateCatalog {
+    ok: true;
+    generatedAt: number;
 }
 
 function isStrictChild(parent: string, child: string): boolean {
@@ -102,14 +100,14 @@ async function fileBytes(filePath: string): Promise<{ bytes: number; modifiedAt:
     }
 }
 
-async function discoverLatestSweep(folderPath: string): Promise<LedgerSweepLatestSweep | null> {
+async function discoverLatestCertification(folderPath: string): Promise<TradeGateCertification | null> {
     let entries: import("node:fs").Dirent[];
     try {
         entries = await readdir(path.join(folderPath, "sweeps"), { withFileTypes: true });
     } catch {
         return null;
     }
-    const candidates: Array<{ sweepId: string; summaryPath: string; modifiedAt: number }> = [];
+    const candidates: Array<{ archiveRecordId: string; summaryPath: string; modifiedAt: number }> = [];
     let nextEntry = 0;
     const inspectEntry = async (): Promise<void> => {
         while (nextEntry < entries.length) {
@@ -117,20 +115,25 @@ async function discoverLatestSweep(folderPath: string): Promise<LedgerSweepLates
             if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
             const summaryPath = path.join(folderPath, "sweeps", entry.name, "summary.json");
             const summaryInfo = await fileBytes(summaryPath);
-            if (summaryInfo) candidates.push({ sweepId: entry.name, summaryPath, modifiedAt: summaryInfo.modifiedAt });
+            if (summaryInfo) candidates.push({ archiveRecordId: entry.name, summaryPath, modifiedAt: summaryInfo.modifiedAt });
         }
     };
     await Promise.all(Array.from({ length: Math.min(16, entries.length) }, () => inspectEntry()));
-    candidates.sort((a, b) => b.modifiedAt - a.modifiedAt || (a.sweepId < b.sweepId ? -1 : 1));
+    candidates.sort((a, b) => b.modifiedAt - a.modifiedAt || (a.archiveRecordId < b.archiveRecordId ? -1 : 1));
 
     // The newest completed summary is the only one needed. Stat all small
-    // metadata files first, then parse newest-first so historical sweeps do not
+    // metadata files first, then parse newest-first so legacy records do not
     // all incur JSON reads on every catalog refresh.
     for (const candidate of candidates) {
         const summary = await readJson<Record<string, unknown>>(candidate.summaryPath);
-        if (!summary || !isCompletedTradeLedgerSweepSummary(summary) || !Array.isArray(summary.results)) continue;
+        if (!summary) continue;
+        const terminalPhase = summary?.terminalPhase;
+        const isCompleted = terminalPhase !== undefined
+            ? terminalPhase === "done" && (summary.complete === undefined || summary.complete === true)
+            : summary.complete === true;
+        if (!isCompleted || !Array.isArray(summary.results)) continue;
         const edgeRules = summary.results
-            .filter((value): value is LedgerSweepRuleResult => Boolean(
+            .filter((value): value is TradeGateCertifiedRule => Boolean(
                 value
                 && typeof value === "object"
                 && (value as { verdict?: unknown }).verdict === "EDGE-CANDIDATE"
@@ -149,7 +152,7 @@ async function discoverLatestSweep(folderPath: string): Promise<LedgerSweepLates
                 isMedianPnlDeltaPp: value.isMedianPnlDeltaPp,
                 holdoutMedianPnlDeltaPp: value.holdoutMedianPnlDeltaPp,
             }));
-        return { sweepId: candidate.sweepId, modifiedAt: candidate.modifiedAt, edgeRules };
+        return { certificationId: candidate.archiveRecordId, modifiedAt: candidate.modifiedAt, edgeRules };
     }
     return null;
 }
@@ -179,8 +182,7 @@ function refusalReason(args: {
 
 async function discoverFolders(
     catalogRoot: string,
-    freeSystemMemoryBytes?: number,
-): Promise<LedgerSweepFolderCatalogEntry[]> {
+): Promise<TradeGateFolderCatalogEntry[]> {
     let entries: import("node:fs").Dirent[];
     try {
         entries = await readdir(catalogRoot, { withFileTypes: true });
@@ -193,7 +195,7 @@ async function discoverFolders(
     } catch {
         return [];
     }
-    const folders: LedgerSweepFolderCatalogEntry[] = [];
+    const folders: TradeGateFolderCatalogEntry[] = [];
     for (const entry of entries) {
         if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
         const folderId = entry.name;
@@ -211,7 +213,7 @@ async function discoverFolders(
         const ledgerVersion = certifiedNumber(provenance?.ledgerVersion ?? summary?.ledgerVersion);
         const featureVersion = certifiedNumber(provenance?.featureVersion ?? summary?.featureVersion);
         const refusal = refusalReason({ provenance, summary, ledgerVersion, featureVersion });
-        const latestSweep = await discoverLatestSweep(containedFolder);
+        const latestCertification = await discoverLatestCertification(containedFolder);
         const rows = certifiedNumber(totals?.signals);
         const pairs = certifiedNumber(totals?.pairs);
         const modifiedAt = ledger.modifiedAt;
@@ -232,10 +234,7 @@ async function discoverFolders(
             replayEligible: provenance?.replay?.replayEligible === true,
             runnable: refusal === null,
             refusalReason: refusal,
-            preflight: refusal === null && rows !== null
-                ? resolveLedgerSweepPreflight(rows, freeSystemMemoryBytes)
-                : null,
-            latestSweep,
+            latestCertification,
         });
     }
     folders.sort((a, b) => {
@@ -249,7 +248,7 @@ async function discoverFolders(
     return folders;
 }
 
-async function discoverRules(rulesRoot: string): Promise<LedgerSweepRuleCatalogEntry[]> {
+async function discoverRules(rulesRoot: string): Promise<TradeGateRuleCatalogEntry[]> {
     let entries: import("node:fs").Dirent[];
     try {
         entries = await readdir(rulesRoot, { withFileTypes: true });
@@ -262,7 +261,7 @@ async function discoverRules(rulesRoot: string): Promise<LedgerSweepRuleCatalogE
     } catch {
         return [];
     }
-    const rules: LedgerSweepRuleCatalogEntry[] = [];
+    const rules: TradeGateRuleCatalogEntry[] = [];
     const seen = new Set<string>();
     for (const entry of entries) {
         if (!entry.isFile() || entry.isSymbolicLink() || !entry.name.endsWith(".ts")) continue;
@@ -287,15 +286,12 @@ async function discoverRules(rulesRoot: string): Promise<LedgerSweepRuleCatalogE
     return rules;
 }
 
-/** Discover only safe immediate ledger folders and regular trusted rules. */
-export async function discoverLedgerSweepCatalog(
-    serverRoot: string,
-    options: { freeSystemMemoryBytes?: number } = {},
-): Promise<LedgerSweepCatalog> {
+/** Discover safe ledger archives and trusted rules for Batch Trade Gate. */
+export async function discoverTradeGateCatalog(serverRoot: string): Promise<TradeGateCatalog> {
     const catalogRoot = path.resolve(serverRoot, "archive", "mining-ledger");
     const rulesRoot = path.join(catalogRoot, "rules");
     const [folders, rules] = await Promise.all([
-        discoverFolders(catalogRoot, options.freeSystemMemoryBytes),
+        discoverFolders(catalogRoot),
         discoverRules(rulesRoot),
     ]);
     return {
@@ -306,34 +302,34 @@ export async function discoverLedgerSweepCatalog(
 }
 
 /** Resolve an opaque folder id through fresh safe discovery at Run time. */
-export async function resolveLedgerSweepFolder(
+export async function resolveTradeGateFolder(
     serverRoot: string,
     folderId: string,
-    catalogOverride?: LedgerSweepCatalog,
-): Promise<{ entry: LedgerSweepFolderCatalogEntry; absolutePath: string } | null> {
+    catalogOverride?: TradeGateCatalog,
+): Promise<{ entry: TradeGateFolderCatalogEntry; absolutePath: string } | null> {
     if (!folderId || folderId.includes("/") || folderId.includes("\\") || folderId === "." || folderId === "..") return null;
     const catalogRoot = path.resolve(serverRoot, "archive", "mining-ledger");
     const candidate = path.join(catalogRoot, folderId);
     const contained = await canonicalContained(catalogRoot, candidate);
     if (!contained || path.basename(contained) !== folderId) return null;
-    const catalog = catalogOverride ?? await discoverLedgerSweepCatalog(serverRoot);
+    const catalog = catalogOverride ?? await discoverTradeGateCatalog(serverRoot);
     const entry = catalog.folders.find((folder) => folder.folderId === folderId);
     return entry ? { entry, absolutePath: contained } : null;
 }
 
 /** Resolve one frozen rule id from a fresh safe catalog. */
-export async function resolveLedgerSweepRule(
+export async function resolveTradeGateRule(
     serverRoot: string,
     ruleId: string,
-    catalogOverride?: LedgerSweepCatalog,
-): Promise<{ entry: LedgerSweepRuleCatalogEntry; absolutePath: string } | null> {
+    catalogOverride?: TradeGateCatalog,
+): Promise<{ entry: TradeGateRuleCatalogEntry; absolutePath: string } | null> {
     if (!ruleId || ruleId.includes("/") || ruleId.includes("\\") || ruleId === "." || ruleId === "..") return null;
     const catalogRoot = path.resolve(serverRoot, "archive", "mining-ledger");
     const rulesRoot = path.join(catalogRoot, "rules");
     const filePath = path.join(rulesRoot, `${ruleId}.ts`);
     const contained = await canonicalContained(rulesRoot, filePath);
     if (!contained || path.basename(contained) !== `${ruleId}.ts`) return null;
-    const catalog = catalogOverride ?? await discoverLedgerSweepCatalog(serverRoot);
+    const catalog = catalogOverride ?? await discoverTradeGateCatalog(serverRoot);
     const entry = catalog.rules.find((rule) => rule.ruleId === ruleId);
     return entry ? { entry, absolutePath: contained } : null;
 }

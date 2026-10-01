@@ -35,29 +35,16 @@ import { FINDER_BATCH_MAX_BODY_BYTES } from "../server-request-limits";
 import { runBatchBacktest, type BatchBacktestRunInput, type BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { clearServerBatchDatasetCaches, getServerBatchDatasetCacheStats, loadServerBatchDataset, loadServerBatchDatasetWithMetadata } from "./server-batch-data-loader";
 import {
-    TRADE_LEDGER_DEFAULT_FOLDER,
-    TRADE_LEDGER_FEATURE_VERSION,
-    TRADE_LEDGER_VERSION,
-    TRADE_LEDGER_DEFAULT_HORIZONS,
     buildTradeLedgerRowsForPair,
-    sanitizeTradeLedgerFolder,
-    TradeLedgerWriter,
-    type TradeLedgerFinalizeResult,
-    type TradeLedgerProvenance,
     type TradeLedgerRow,
     type TradeLedgerRowContext,
-    type TradeLedgerRunOptions,
-    type TradeLedgerWindow,
-} from "./trade-ledger-exporter";
-import { discoverLedgerSweepCatalog, resolveLedgerSweepFolder, resolveLedgerSweepRule } from "./trade-ledger-sweep-catalog";
-import { buildTradeLedgerFeatureSeries, toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
+} from "./trade-ledger-row-builder";
+import { discoverTradeGateCatalog, resolveTradeGateFolder, resolveTradeGateRule } from "./trade-gate-catalog";
+import { toTradeGateFeatureRow, tradeGateSignalKey, type TradeGateFeatureRow } from "./trade-ledger-features";
 import { createTradeGateStats, addTradeGateStats, type TradeGate, type TradeGatePairContext, type TradeGateProvenance, type TradeGateStats } from "./trade-gate";
 import { createTradeGateRuleLoaderRun, type TradeGateRuleLoaderRun } from "./trade-gate-rule-loader";
 import type { TradeGateRunOptions } from "./trade-gate-wire";
-import {
-    buildAsIfPairModel,
-    evaluateReplayEligibility,
-} from "./trade-ledger-asif";
+import { evaluateReplayEligibility } from "./trade-ledger-asif";
 import { resolveExecutorBacktestSettings } from "../backtest-executor";
 import type {
     BatchSyntheticPairArtifact,
@@ -86,7 +73,6 @@ import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-me
 import { getActiveTopMeanCoordinatorEngine } from "./sp500-top-mean-coordinator-engine";
 import { isValidRunId, reconcileInterruptedManifestsOnStartup } from "./sp500-top-mean-artifact-store";
 import { getV8HeapLimitMb, resolveServerHeapWarning } from "../server-heap-guard";
-import { releaseIfOwner as releaseResearchWorkloadIfOwner, tryAcquire as tryAcquireResearchWorkload } from "../server-research-job-coordinator";
 
 /**
  * Phase 3 MAX_ACTIVE: compute canonical universe counts from the submitted
@@ -596,14 +582,8 @@ let abortController: AbortController | null = null;
 // running after the user clicks Stop.
 let analysisAbortController: AbortController | null = null;
 let artifactReleaseTimer: ReturnType<typeof setTimeout> | null = null;
-/**
- * Root directory for trade-ledger export folders (Batch "Save trade ledger").
- * Set from `server.config.root` at plugin registration so launching Vite from
- * another working directory cannot write the ledger into the wrong archive;
- * falls back to the process working directory for direct `processRunBatch`
- * test invocations.
- */
-let ledgerRootDir: string | null = null;
+/** Vite's app root for locating existing Trade Gate archives. */
+let tradeGateArchiveRoot: string | null = null;
 
 /**
  * Stop-before-ownership race closer (audit Finding 5). When Stop arrives BEFORE
@@ -717,7 +697,7 @@ export type BatchRunSnapshot = {
      * "manual/unverified".
      */
     researchRegistrationMeta?: { registration: MaxActiveResearchRegistrationV1 | null; status: "verified" | "manual/unverified"; reason?: string } | null;
-    /** Gate folder/sweep/rule hashes used by the server-side run. */
+    /** Gate archive/rule hashes used by the server-side run. */
     tradeGateProvenance?: TradeGateProvenance | null;
     /** Aggregate gate counters across completed pair results. */
     tradeGateStats?: TradeGateStats | null;
@@ -989,14 +969,8 @@ export function resolveServerBatchHeapWarning(symbolCount: number, heapLimitMb =
 }
 
 // ---------------------------------------------------------------------------
-// Trade ledger (Batch "Save trade ledger" toggle — pure side artifact)
+// Trade Gate
 // ---------------------------------------------------------------------------
-
-/**
- * Parse the optional `tradeLedger` body field. Null when absent/disabled. A
- * PRESENT enabled toggle with an unsafe folder is a client error (400) rather
- * than a silent fallback so a typo'd path is visible.
- */
 const MAX_TRADE_GATE_RULES = 16;
 
 function parseTradeGateOptions(raw: unknown): TradeGateRunOptions | null {
@@ -1005,7 +979,7 @@ function parseTradeGateOptions(raw: unknown): TradeGateRunOptions | null {
     const folderId = (raw as { folderId?: unknown }).folderId;
     const ruleIds = (raw as { ruleIds?: unknown }).ruleIds;
     if (typeof folderId !== "string" || !folderId.trim() || folderId.includes("/") || folderId.includes("\\")) {
-        throw new HttpStatusError(400, "Trade Gate requires a safe ledger folder id.");
+        throw new HttpStatusError(400, "Trade Gate requires a safe archive folder id.");
     }
     if (!Array.isArray(ruleIds) || ruleIds.length < 1 || ruleIds.length > MAX_TRADE_GATE_RULES) {
         throw new HttpStatusError(400, `Trade Gate requires 1-${MAX_TRADE_GATE_RULES} rule ids.`);
@@ -1034,24 +1008,24 @@ async function resolveTradeGate(
         // Resolve the folder and all rules against one fresh catalog snapshot.
         // A Gate run can select up to 16 rules; resolving each rule without the
         // snapshot would rescan and rehash the entire ledger catalog per rule.
-        const catalog = await discoverLedgerSweepCatalog(serverRoot);
-        const folder = await resolveLedgerSweepFolder(serverRoot, options.folderId, catalog);
-        if (!folder) throw new Error(`Trade Gate ledger folder not found: ${options.folderId}.`);
+        const catalog = await discoverTradeGateCatalog(serverRoot);
+        const folder = await resolveTradeGateFolder(serverRoot, options.folderId, catalog);
+        if (!folder) throw new Error(`Trade Gate archive folder not found: ${options.folderId}.`);
         if (!folder.entry.runnable) {
-            throw new Error(`Trade Gate ledger folder is not runnable: ${folder.entry.refusalReason ?? "unknown reason"}.`);
+            throw new Error(`Trade Gate archive folder is not runnable: ${folder.entry.refusalReason ?? "unknown reason"}.`);
         }
-        const latestSweep = folder.entry.latestSweep;
-        if (!latestSweep) throw new Error(`Trade Gate folder has no completed sweep: ${options.folderId}.`);
-        const edgeRules = new Map(latestSweep.edgeRules.map((rule) => [rule.ruleId, rule]));
+        const certification = folder.entry.latestCertification;
+        if (!certification) throw new Error(`Trade Gate folder has no archived certified rules: ${options.folderId}.`);
+        const edgeRules = new Map(certification.edgeRules.map((rule) => [rule.ruleId, rule]));
         const rules: Array<TradeGate["rules"][number]> = [];
         for (const ruleId of options.ruleIds) {
             const edgeRule = edgeRules.get(ruleId);
             if (!edgeRule) {
-                throw new Error(`Trade Gate rule ${ruleId} is not an EDGE-CANDIDATE in the latest sweep ${latestSweep.sweepId}.`);
+                throw new Error(`Trade Gate rule ${ruleId} is not an EDGE-CANDIDATE in the latest archive certification ${certification.certificationId}.`);
             }
-            const resolved = await resolveLedgerSweepRule(serverRoot, ruleId, catalog);
+            const resolved = await resolveTradeGateRule(serverRoot, ruleId, catalog);
             if (!resolved || resolved.entry.sourceHash !== edgeRule.sourceHash) {
-                throw new Error(`Trade Gate rule ${ruleId} changed after sweep ${latestSweep.sweepId}; rerun the sweep.`);
+                throw new Error(`Trade Gate rule ${ruleId} changed after certification ${certification.certificationId}; refresh its archive.`);
             }
             const source = await readFile(resolved.absolutePath, "utf8");
             if (/\bfeat_rank\b/.test(source)) {
@@ -1071,9 +1045,9 @@ async function resolveTradeGate(
             });
         }
         const provenance: TradeGateProvenance = {
-            schema: "batch.trade_gate.v1",
+            schema: "batch.trade_gate.v2",
             folderId: options.folderId,
-            sweepId: latestSweep.sweepId,
+            certificationId: certification.certificationId,
             rules: rules.map(({ ruleId, ruleName, sourceHash }) => ({ ruleId, ruleName, sourceHash })),
         };
         return { gate: { enabled: true, provenance, rules, pairs: new Map() }, loaderRun };
@@ -1083,132 +1057,23 @@ async function resolveTradeGate(
     }
 }
 
-function parseTradeLedgerOptions(raw: unknown): TradeLedgerRunOptions | null {
-    if (!raw || typeof raw !== "object") return null;
-    const enabled = (raw as { enabled?: unknown }).enabled === true;
-    if (!enabled) return null;
-    const folderRaw = (raw as { folder?: unknown }).folder;
-    const folder = typeof folderRaw === "string" && folderRaw.trim()
-        ? sanitizeTradeLedgerFolder(folderRaw)
-        : TRADE_LEDGER_DEFAULT_FOLDER;
-    if (!folder) {
-        throw new HttpStatusError(400, `Invalid tradeLedger folder: ${String(folderRaw)}.`);
-    }
-    const parseBound = (key: "fromSec" | "toSec"): number | undefined => {
-        const value = (raw as { fromSec?: unknown; toSec?: unknown })[key];
-        if (value === undefined || value === null) return undefined;
-        if (typeof value !== "number" || !Number.isFinite(value)) {
-            throw new HttpStatusError(400, `tradeLedger.${key} must be a finite number.`);
-        }
-        return value;
-    };
-    const fromSec = parseBound("fromSec");
-    const toSec = parseBound("toSec");
-    const horizonsRaw = (raw as { ledgerHorizons?: unknown }).ledgerHorizons;
-    let ledgerHorizons: number[] = [...TRADE_LEDGER_DEFAULT_HORIZONS];
-    if (horizonsRaw !== undefined) {
-        if (!Array.isArray(horizonsRaw) || horizonsRaw.length === 0 || horizonsRaw.some((value) => typeof value !== "number" || !Number.isInteger(value) || value <= 0)) {
-            throw new HttpStatusError(400, "tradeLedger.ledgerHorizons must be a non-empty array of positive integers.");
-        }
-        ledgerHorizons = [...new Set(horizonsRaw as number[])];
-    }
-    return {
-        enabled: true,
-        folder,
-        ledgerHorizons,
-        ...(fromSec !== undefined ? { fromSec } : {}),
-        ...(toSec !== undefined ? { toSec } : {}),
-    };
-}
-
-/**
- * Per-run trade-ledger context: the executor-resolved settings plus the replay
- * eligibility guard (adaptive TP / path exits / partials / win-streak stops /
- * dynamic sizing / regime filters / both-direction reversals block replay;
- * cooldown + maxOpenTrades are position-state and stay replayable).
- */
-interface TradeLedgerRunContext {
-    resolvedSettings: BacktestSettings;
-    eligibility: ReturnType<typeof evaluateReplayEligibility>;
-    rowContext: TradeLedgerRowContext;
-    ledgerWindow: TradeLedgerWindow;
-}
-
-function resolveTradeLedgerRunContext(input: {
+function resolveTradeGateRowContext(input: {
     backtestSettings: BacktestSettings;
     capitalSettings: CapitalSettings;
     interval: string;
-    ledgerHorizons?: readonly number[];
-    ledgerWindow?: TradeLedgerWindow;
-}): TradeLedgerRunContext {
+}): TradeLedgerRowContext {
     const resolved = resolveExecutorBacktestSettings(
         { ...input.backtestSettings, interval: input.interval } as BacktestSettings,
         input.interval,
     );
     const eligibility = evaluateReplayEligibility(resolved, input.capitalSettings);
     return {
-        resolvedSettings: resolved,
-        eligibility,
-        ledgerWindow: {
-            fromSec: input.ledgerWindow?.fromSec ?? null,
-            toSec: input.ledgerWindow?.toSec ?? null,
-        },
-        rowContext: {
-            tradeDirection: eligibility.params.tradeDirection,
-            executionModel: eligibility.params.executionModel,
-            maxOpenTrades: eligibility.params.maxOpenTrades,
-            cooldownBars: eligibility.params.cooldownBars,
-            slippageRate: eligibility.params.slippageRate,
-            ledgerHorizons: [...(input.ledgerHorizons ?? TRADE_LEDGER_DEFAULT_HORIZONS)],
-        },
-    };
-}
-
-function buildTradeLedgerProvenance(
-    input: BatchBacktestRunInput,
-    runId: string,
-    startedAtMs: number,
-    context: TradeLedgerRunContext,
-): TradeLedgerProvenance {
-    // References only (no copies of OHLCV/config objects beyond what the run
-    // already holds); serializeJson runs once at write time.
-    const params = context.eligibility.params;
-    return {
-        ledgerVersion: TRADE_LEDGER_VERSION,
-        featureVersion: TRADE_LEDGER_FEATURE_VERSION,
-        runId,
-        startedAt: new Date(startedAtMs).toISOString(),
-        interval: input.interval,
-        strategyKey: input.strategyKey,
-        strategyParams: input.strategyParams as Record<string, unknown>,
-        backtestSettings: input.backtestSettings as Record<string, unknown>,
-        capitalSettings: input.capitalSettings as unknown as Record<string, unknown>,
-        engineMode: input.useRustEnginePreference ? "rust_preferred" : "typescript",
-        executionModel: params.executionModel,
-        tradeDirection: params.tradeDirection,
-        riskMode: String((input.backtestSettings as Record<string, unknown>).riskMode ?? ""),
-        fees: {
-            commissionPercent: Number(input.capitalSettings?.commission ?? 0),
-            slippageBps: Number((input.backtestSettings as Record<string, unknown>).slippageBps ?? 0),
-        },
-        ledgerHorizons: context.rowContext.ledgerHorizons ?? [...TRADE_LEDGER_DEFAULT_HORIZONS],
-        ledgerWindow: context.ledgerWindow,
-        pairCount: input.symbols.length,
-        symbols: input.symbols,
-        // Replay contract for the offline checker. The checker refuses replay
-        // when replayEligible is false (see evaluateReplayEligibility).
-        replay: {
-            replayEligible: context.eligibility.eligible,
-            replayBlockers: context.eligibility.reasons,
-            maxOpenTrades: Number.isFinite(params.maxOpenTrades) ? params.maxOpenTrades : "unlimited",
-            cooldownBars: params.cooldownBars,
-            executionModel: params.executionModel,
-            tradeDirection: params.tradeDirection,
-            allowSameBarExit: params.allowSameBarExit,
-            disableSignalExits: params.disableSignalExits,
-            slippageRate: params.slippageRate,
-            commissionRate: params.commissionRate,
-        },
+        tradeDirection: eligibility.params.tradeDirection,
+        executionModel: eligibility.params.executionModel,
+        maxOpenTrades: eligibility.params.maxOpenTrades,
+        cooldownBars: eligibility.params.cooldownBars,
+        slippageRate: eligibility.params.slippageRate,
+        ledgerHorizons: [],
     };
 }
 
@@ -1310,15 +1175,12 @@ function buildTradeGatePairContexts(
 }
 
 async function prepareTradeGateFeatureContexts(
-    input: BatchBacktestRunInput & { tradeLedger?: TradeLedgerRunOptions | null },
+    input: BatchBacktestRunInput,
     gate: TradeGate,
     isCancelled: () => boolean,
     writer: StreamWriter,
 ): Promise<TradeGate> {
-    const ledgerContext = resolveTradeLedgerRunContext({
-        ...input,
-        ledgerHorizons: input.tradeLedger?.ledgerHorizons,
-    });
+    const rowContext = resolveTradeGateRowContext(input);
     const rowsByPair = new Map<string, TradeLedgerRow[]>();
     const timing = createBatchPairTimingLogger("pre-pass");
     writer({ type: "progress", percent: 0, text: "Trade Gate: building causal feature pre-pass...", status: "Trade Gate: building causal feature pre-pass..." });
@@ -1345,7 +1207,7 @@ async function prepareTradeGateFeatureContexts(
                         data: result.data,
                         signals: completionContext.signals,
                         trades: result.result.trades,
-                        context: ledgerContext.rowContext,
+                        context: rowContext,
                         baseSymbol: completionContext.baseSymbol,
                         quoteSymbol: completionContext.quoteSymbol,
                         baseCloses: completionContext.baseCloses,
@@ -1390,7 +1252,6 @@ function summarizeTradeGateStats(results: readonly BatchBacktestSymbolResult[]):
  */
 export async function processRunBatch(
     input: BatchBacktestRunInput & {
-        tradeLedger?: TradeLedgerRunOptions | null;
         tradeGateOptions?: TradeGateRunOptions | null;
     },
     writer: StreamWriter,
@@ -1427,38 +1288,6 @@ export async function processRunBatch(
     // contaminating the new generation's globals.
     const store = new ArtifactStore();
     currentArtifactStore = store;
-    // Trade-ledger export (Batch "Save trade ledger" toggle). Pure side
-    // artifact: created per run, written inside the awaited onSymbolComplete
-    // path (audit F2 shape), and never allowed to fail the run.
-    const tradeLedgerRequested = input.tradeLedger?.enabled === true;
-    const ledgerTimings = {
-        artifactPersistenceMs: 0,
-        ledgerFeatureMs: 0,
-        ledgerAsIfMs: 0,
-        ledgerRowsMs: 0,
-        ledgerAppendMs: 0,
-        ledgerFinalizeMs: 0,
-    };
-    const ledgerRunContext = tradeLedgerRequested
-        ? resolveTradeLedgerRunContext({
-            ...input,
-            ledgerHorizons: input.tradeLedger?.ledgerHorizons,
-            ledgerWindow: {
-                fromSec: input.tradeLedger?.fromSec ?? null,
-                toSec: input.tradeLedger?.toSec ?? null,
-            },
-        })
-        : null;
-    const ledger = tradeLedgerRequested
-        ? await TradeLedgerWriter.create({
-            rootDir: ledgerRootDir ?? process.cwd(),
-            folder: input.tradeLedger?.folder ?? TRADE_LEDGER_DEFAULT_FOLDER,
-            runId,
-            startedAtMs: snapshot.startedAt,
-            provenance: buildTradeLedgerProvenance(input, runId, snapshot.startedAt, ledgerRunContext!),
-            ledgerWindow: ledgerRunContext!.ledgerWindow,
-        })
-        : null;
     // Phase 3 MAX_ACTIVE: verify pair-list provenance against the canonical
     // submitted symbols. The fingerprint includes the verified provenance so
     // a manual textarea edit (which clears the provenance client-side) also
@@ -1510,7 +1339,7 @@ export async function processRunBatch(
     // setProgress already carries the status; do not emit it twice per symbol.
     try {
         resolvedTradeGate = input.tradeGateOptions?.enabled
-            ? await resolveTradeGate(ledgerRootDir ?? process.cwd(), input.tradeGateOptions)
+            ? await resolveTradeGate(tradeGateArchiveRoot ?? process.cwd(), input.tradeGateOptions)
             : null;
         const executionInput = resolvedTradeGate
             ? await prepareTradeGateFeatureContexts(input, resolvedTradeGate.gate, lostOwnership, writer)
@@ -1546,7 +1375,7 @@ export async function processRunBatch(
                     snapshot.currentSymbol = symbol;
                 }
             },
-            onSymbolComplete: async (index, result, completionContext) => {
+            onSymbolComplete: async (index, result) => {
                 try {
                 if (lostOwnership()) return;
                 const scalarRow = toScalarRow(result);
@@ -1559,58 +1388,8 @@ export async function processRunBatch(
                 // that each retain a full multi-MB row. R-F1: pass THIS run's
                 // captured store so a stale writer can't contaminate a newer
                 // generation after Stop + new Run detached it.
-                const artifactStartedAt = performance.now();
                 await storeMineArtifact(index, result, store);
-                ledgerTimings.artifactPersistenceMs += performance.now() - artifactStartedAt;
                 if (store.isDetached()) return;
-                // Trade-ledger appends ride the same awaited completion path
-                // (incremental, one write per pair) and only read the row.
-                // The as-if model is per-pair streaming data — built here and
-                // dropped when the callback returns, never accumulated.
-                if (ledger && completionContext?.signals && result.data && ledgerRunContext) {
-                    const featureStartedAt = performance.now();
-                    const featureSeries = buildTradeLedgerFeatureSeries(
-                        result.data,
-                        completionContext.baseCloses,
-                        completionContext.quoteCloses,
-                    );
-                    ledgerTimings.ledgerFeatureMs += performance.now() - featureStartedAt;
-                    const asIfStartedAt = performance.now();
-                    const asIfModel = ledgerRunContext.eligibility.eligible
-                        ? await buildAsIfPairModel({
-                            data: result.data,
-                            primarySignals: completionContext.signals,
-                            resolvedSettings: ledgerRunContext.resolvedSettings,
-                            eligibility: ledgerRunContext.eligibility,
-                            featureSeries,
-                        })
-                        : null;
-                    ledgerTimings.ledgerAsIfMs += performance.now() - asIfStartedAt;
-                    const rowsStartedAt = performance.now();
-                    const pairRows = buildTradeLedgerRowsForPair({
-                        pair: result.symbol,
-                        data: result.data,
-                        signals: completionContext.signals,
-                        trades: result.result?.trades,
-                        context: ledgerRunContext.rowContext,
-                        baseSymbol: completionContext.baseSymbol,
-                        quoteSymbol: completionContext.quoteSymbol,
-                        baseCloses: completionContext.baseCloses,
-                        quoteCloses: completionContext.quoteCloses,
-                        asIfModel,
-                        featureSeries,
-                    });
-                    ledgerTimings.ledgerRowsMs += performance.now() - rowsStartedAt;
-                    const appendStartedAt = performance.now();
-                    await ledger.appendPairRows(pairRows, {
-                        pair: result.symbol,
-                        data: result.data,
-                        trades: result.result?.trades ?? [],
-                        baseSymbol: completionContext.baseSymbol,
-                        quoteSymbol: completionContext.quoteSymbol,
-                    }, { awaitSnapshotCapture: false });
-                    ledgerTimings.ledgerAppendMs += performance.now() - appendStartedAt;
-                }
                 writer({ type: "symbol", index, total, row: scalarRow });
                 await new Promise<void>((resolve) => setImmediate(resolve));
                 } finally {
@@ -1667,29 +1446,6 @@ export async function processRunBatch(
         if (store.isDetached() || currentArtifactStore !== store) return;
         await store.flush();
         if (store.isDetached() || currentArtifactStore !== store) return;
-        // Finalize the trade ledger (ranks + summary) BEFORE the done event so
-        // the folder is complete when the browser learns the run finished.
-        // Skipped for a detached generation — a stale run must not write.
-        let ledgerResult: TradeLedgerFinalizeResult | null = null;
-        let ledgerRunDir: string | null = null;
-        if (ledger) {
-            ledgerRunDir = ledger.runDir;
-            // W4 pair accounting: provenance.pairCount stays "submitted";
-            // summary.json carries the full submitted/loaded/row-bearing split.
-            const finalizeStartedAt = performance.now();
-            try {
-                ledgerResult = await ledger.finalize({
-                    cancelled,
-                    finishedAtMs: Date.now(),
-                    accounting: {
-                        submittedPairs: input.symbols.length,
-                        loadedPairs: output.loadedSymbols,
-                    },
-                });
-            } finally {
-                ledgerTimings.ledgerFinalizeMs += performance.now() - finalizeStartedAt;
-            }
-        }
         const artifactsAvailable = store.hasStored();
         const artifactStats = store.artifactStats();
         const parsedCacheStats = store.parsedCacheStats();
@@ -1719,15 +1475,6 @@ export async function processRunBatch(
         // (true iff `stored > 0`) so the Mine button stays enabled.
         if (artifactStats.failed > 0) {
             terminalSummary += ` — artifacts ${artifactStats.stored}/${artifactStats.eligible}; Mine will omit ${artifactStats.failed} failed write${artifactStats.failed === 1 ? "" : "s"}.`;
-        }
-        // Fail loud: a ledger that was requested but incomplete (setup failed
-        // or any write failed) is visible in the run's terminal summary. A
-        // healthy ledger leaves the summary unchanged.
-        if (tradeLedgerRequested && (ledger === null || ledgerResult === null || !ledgerResult.ledgerComplete)) {
-            terminalSummary += ` — trade ledger incomplete (${ledgerResult?.failedWrites ?? 0} failed write${(ledgerResult?.failedWrites ?? 0) === 1 ? "" : "s"}).`;
-        }
-        if (tradeLedgerRequested && ledgerResult?.snapshotError) {
-            terminalSummary += ` - source snapshot failed (${ledgerResult.snapshotError}).`;
         }
         // Audit Finding 6: stamp the terminal snapshot fields BEFORE releasing
         // ownership so /status can recover a terminal failure even if the run
@@ -1768,13 +1515,7 @@ export async function processRunBatch(
             serverHasArtifacts: artifactsAvailable,
             fingerprint,
             cacheStats,
-            performance: tradeLedgerRequested
-                ? {
-                    ...output.timings,
-                    ...ledgerTimings,
-                    ...(ledger ? ledger.getAppendTimings() : {}),
-                }
-                : output.timings,
+            performance: output.timings,
             runId,
             artifactStats,
             parsedCacheStats,
@@ -1812,13 +1553,6 @@ export async function processRunBatch(
             // the heap-bound + partial-write behavior is observable in logs.
             artifactStats,
             parsedCacheStats,
-            // Trade-ledger outcome (present only when the toggle was on).
-            tradeLedger: ledgerResult
-                ? {
-                    runDir: ledgerRunDir,
-                    ...ledgerResult,
-                }
-                : undefined,
         });
     } catch (error) {
         mainTiming.finish();
@@ -1834,18 +1568,6 @@ export async function processRunBatch(
             snapshot.error = message;
         }
         writer({ type: "fatal", error: message, runId });
-        // Best-effort ledger finalize on the fatal path too: the partial
-        // ledger stays on disk with ledgerComplete=false. Never mask the fatal.
-        if (ledger) {
-            try {
-                const ledgerResult = await ledger.finalize({ cancelled: true, finishedAtMs: Date.now() });
-                if (runState === snapshot && ledgerResult.snapshotError) {
-                    snapshot.summary = `${snapshot.summary}; source snapshot failed (${ledgerResult.snapshotError}).`;
-                }
-            } catch {
-                /* best-effort */
-            }
-        }
         if (currentArtifactStore === store) {
             await releaseLastResults("run_fatal");
         }
@@ -1938,11 +1660,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     // (synchronously, after the cheap input validation) makes the gate
     // authoritative; the `try/finally` releases ownership if a later step
     // throws before `processRunBatch` takes over.
-    const nextOwner = runOwnerGen + 1;
-    const coordinatorToken = tryAcquireResearchWorkload("batch", runId || `batch-${nextOwner}`);
-    if (!coordinatorToken) {
-        throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting Batch.");
-    }
     const owner = ++runOwnerGen;
     runOwner = owner;
     runOwnerRunId = runId;
@@ -1966,9 +1683,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     const backtestSettings = (body.backtestSettings ?? {}) as BacktestSettings;
     const capitalSettings = (body.capitalSettings ?? {}) as CapitalSettings;
     const useRustEnginePreference = body.useRustEnginePreference === true;
-    // Trade-ledger export options (optional; null when the toggle is off or
-    // the field is absent).
-    const tradeLedger = parseTradeLedgerOptions(body.tradeLedger);
     const tradeGateOptions = parseTradeGateOptions(body.tradeGate);
     await releaseLastResults("new_run");
         if (runOwner !== owner) {
@@ -1998,7 +1712,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     capitalSettings,
                     symbols,
                     useRustEnginePreference,
-                    tradeLedger,
                     tradeGateOptions,
                     // Phase 3 MAX_ACTIVE: carry the verified pair-list provenance
                     // and the research registration into the run so the snapshot
@@ -2007,7 +1720,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     pairListProvenance,
                     maxActiveResearchRegistration,
                     loadDataset: (sym, intv, signal) => loadServerBatchDataset(sym, intv, signal),
-                    ...(tradeLedger || tradeGateOptions
+                    ...(tradeGateOptions
                         ? { loadDatasetWithContext: (sym: string, intv: string, signal?: AbortSignal) => loadServerBatchDatasetWithMetadata(sym, intv, signal) }
                         : {}),
                 },
@@ -2041,7 +1754,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
             runOwnerKind = null;
         }
         if (abortController === runAbort) abortController = null;
-        releaseResearchWorkloadIfOwner(coordinatorToken);
     }
 }
 
@@ -2474,11 +2186,6 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
     if (!hasStoredMineArtifacts()) {
         throw new HttpStatusError(400, "Run Batch before OPEN_SCORE USD; no artifacts on server.");
     }
-    const nextOwner = analysisOwnerGen + 1;
-    const coordinatorToken = tryAcquireResearchWorkload("batch", `batch-analysis-${nextOwner}`);
-    if (!coordinatorToken) {
-        throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting analysis.");
-    }
     const owner = ++analysisOwnerGen;
     analysisOwner = owner;
     analysisAbortController = new AbortController();
@@ -2511,7 +2218,6 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
             analysisOwner = RUN_OWNER_NONE;
         }
         analysisAbortController = null;
-        releaseResearchWorkloadIfOwner(coordinatorToken);
     }
 }
 
@@ -2660,7 +2366,7 @@ export function batchBacktestVitePlugin(): Plugin {
     return {
         name: "batch-backtest",
         configureServer(server) {
-            ledgerRootDir = server.config.root ?? process.cwd();
+            tradeGateArchiveRoot = server.config.root ?? process.cwd();
             // Best-effort: sweep orphaned dirs from a prior crash without
             // blocking dev-server registration (audit Finding 4).
             void sweepOrphanedMineArtifactDirs();
@@ -2671,13 +2377,13 @@ export function batchBacktestVitePlugin(): Plugin {
             // manifest forever. Best-effort + async-safe: it is synchronous
             // and small (one manifest per run dir), and failures are swallowed
             // inside.
-            reconcileInterruptedManifestsOnStartup(ledgerRootDir);
+            reconcileInterruptedManifestsOnStartup(tradeGateArchiveRoot);
             registerBatchRoutes(server.middlewares);
         },
         configurePreviewServer(server) {
-            ledgerRootDir = server.config.root ?? process.cwd();
+            tradeGateArchiveRoot = server.config.root ?? process.cwd();
             void sweepOrphanedMineArtifactDirs();
-            reconcileInterruptedManifestsOnStartup(ledgerRootDir);
+            reconcileInterruptedManifestsOnStartup(tradeGateArchiveRoot);
             registerBatchRoutes(server.middlewares);
         },
     };
@@ -2688,25 +2394,17 @@ export function createBatchOwnerLocksAdapter(): BatchOwnerLocks {
     return {
         isBusy: () => runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE,
         acquire(runId) {
-            const researchToken = tryAcquireResearchWorkload("batch", runId || `batch-analysis-${runOwnerGen + 1}`);
-            if (!researchToken) {
-                throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting TOP_MEAN.");
-            }
             const ownerGen = ++runOwnerGen;
             const analysisGen = ++analysisOwnerGen;
             runOwner = ownerGen;
             runOwnerRunId = runId;
             runOwnerKind = "batch";
             analysisOwner = analysisGen;
-            return { runOwner: ownerGen, analysisOwner: analysisGen, researchToken, ownerKind: "batch" };
+            return { runOwner: ownerGen, analysisOwner: analysisGen, ownerKind: "batch" };
         },
         acquireFinderSweep(runId, onStop) {
             if (runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE || getActiveTopMeanCoordinatorEngine() !== null) {
                 throw new HttpStatusError(409, "A batch, analysis, or TOP_MEAN operation is already running.");
-            }
-            const researchToken = tryAcquireResearchWorkload("finder", runId);
-            if (!researchToken) {
-                throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting Finder Arm Performance.");
             }
             const ownerGen = ++runOwnerGen;
             const analysisGen = ++analysisOwnerGen;
@@ -2716,7 +2414,7 @@ export function createBatchOwnerLocksAdapter(): BatchOwnerLocks {
             analysisOwner = analysisGen;
             finderSweepStopCallback = onStop;
             finderSweepChildRunId = null;
-            return { runOwner: ownerGen, analysisOwner: analysisGen, researchToken, ownerKind: "finder_sweep" };
+            return { runOwner: ownerGen, analysisOwner: analysisGen, ownerKind: "finder_sweep" };
         },
         setFinderSweepChild(token, childRunId) {
             if (token.ownerKind === "finder_sweep" && runOwner === token.runOwner) {
@@ -2736,13 +2434,27 @@ export function createBatchOwnerLocksAdapter(): BatchOwnerLocks {
                 finderSweepChildRunId = null;
             }
             if (analysisOwner === token.analysisOwner) analysisOwner = RUN_OWNER_NONE;
-            if (token.researchToken) releaseResearchWorkloadIfOwner(token.researchToken);
         },
     };
 }
 
 /** Install all Batch routes; exposed through test internals for route tests. */
 function registerBatchRoutes(middlewares: any): void {
+        registerLocalJsonRoute(middlewares, "/api/trade-gate/catalog", {
+            methods: ["GET"],
+            unauthorizedMessage: "Unauthorized: Trade Gate catalog is local-only.",
+            onAuthorized: async ({ res }) => {
+                const catalog = await discoverTradeGateCatalog(tradeGateArchiveRoot ?? process.cwd());
+                sendJson(res, 200, {
+                    ok: true,
+                    catalogRoot: catalog.catalogRoot,
+                    generatedAt: Date.now(),
+                    folders: catalog.folders,
+                    rules: catalog.rules,
+                });
+            },
+        });
+
         // Audit Finding 2 (and the F1 Finder auth gate): every Batch route
         // gates on the same loopback/bearer policy as IBKR and strategy-admin,
         // so a Vite server exposed via --host / tunnel / reverse proxy can't
@@ -2812,7 +2524,7 @@ function registerBatchRoutes(middlewares: any): void {
         // owner-lock counters so a TOP_MEAN run and a Batch run cannot execute
         // simultaneously; that coupling is expressed through the BatchOwnerLocks
         // adapter below instead of reaching across module scope.
-        const batchOwnerLocks = createBatchOwnerLocksAdapter();
+    const batchOwnerLocks = createBatchOwnerLocksAdapter();
         registerSp500TopMeanRoutes(middlewares, {
             maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
             rememberLocalApiOriginFromRequest: (req) => rememberLocalApiOriginFromRequest(req),
@@ -2952,19 +2664,10 @@ export const __testInternals = {
     ensureMineArtifactDirForTests(): string {
         return ensureCurrentArtifactStoreDir();
     },
-    // --- Trade-ledger test seams ---
-    /** Point the ledger root at a temp dir for the duration of a test. */
-    setLedgerRootDirForTests(dir: string | null): void {
-        ledgerRootDir = dir;
-    },
-    getLedgerRootDirForTests(): string | null {
-        return ledgerRootDir;
-    },
     parseTradeGateOptionsForTests: parseTradeGateOptions,
     async resolveTradeGateForTests(serverRoot: string, options: TradeGateRunOptions): Promise<TradeGate> {
         const resolved = await resolveTradeGate(serverRoot, options);
         await resolved.loaderRun.dispose();
         return resolved.gate;
     },
-    parseTradeLedgerOptionsForTests: parseTradeLedgerOptions,
 };

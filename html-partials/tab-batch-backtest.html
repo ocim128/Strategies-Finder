@@ -63,32 +63,10 @@
         </div>
         </details>
 
-        <div class="batch-balanced-generator" aria-label="Trade ledger export">
+        <div class="batch-balanced-generator" aria-label="Trade Gate">
             <div class="batch-balanced-generator-heading">
-                <span class="batch-balanced-generator-label">Save Trade Ledger</span>
-                <span class="batch-balanced-generator-note">Server-side mode only: while the batch runs, write one folder per run (provenance, one row per entry signal, cross-signal ranks, summary) under the app root for offline rule mining. Batch results are unchanged.</span>
-            </div>
-            <div class="batch-balanced-generator-controls batch-form-grid">
-                <div class="batch-field batch-field--inline batch-field--check" title="Write the trade ledger for this run. Toggle default off.">
-                    <input id="batchBacktestTradeLedgerToggle" type="checkbox">
-                    <label class="batch-field-label" for="batchBacktestTradeLedgerToggle">Save trade ledger</label>
-                </div>
-                <div class="batch-field batch-field--inline batch-field--wide" title="Output folder, relative to the app root. One timestamped subfolder is created per run.">
-                    <label class="batch-field-label" for="batchBacktestTradeLedgerFolder">Folder</label>
-                    <input class="batch-field-input" id="batchBacktestTradeLedgerFolder" type="text" value="archive/mining-ledger" spellcheck="false">
-                </div>
-                <div class="batch-field batch-field--inline" title="Fixed outcome horizons to capture in the ledger. Enter positive integers separated by commas; 24 is the default.">
-                    <label class="batch-field-label" for="batchBacktestTradeLedgerHorizons">Horizon bars</label>
-                    <input class="batch-field-input" id="batchBacktestTradeLedgerHorizons" type="text" value="24" inputmode="numeric" spellcheck="false">
-                </div>
-                <div class="batch-field batch-field--inline" title="Restrict saved ledger signal rows to this date onward (YYYY-MM-DD). Leave blank for full history.">
-                    <label class="batch-field-label" for="batchBacktestTradeLedgerFrom">From</label>
-                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestTradeLedgerFrom" type="date">
-                </div>
-                <div class="batch-field batch-field--inline" title="Restrict saved ledger signal rows through this date (YYYY-MM-DD). Leave blank for full history.">
-                    <label class="batch-field-label" for="batchBacktestTradeLedgerTo">To</label>
-                    <input class="batch-field-input batch-field-input--auto" id="batchBacktestTradeLedgerTo" type="date">
-                </div>
+                <span class="batch-balanced-generator-label">Trade Gate</span>
+                <span class="batch-balanced-generator-note">Apply previously certified local rules to new entry signals during this server-side Batch run.</span>
             </div>
             <div class="batch-balanced-generator-controls batch-form-grid">
                 <div class="batch-field batch-field--inline batch-field--check" title="Apply trusted EDGE-CANDIDATE rules as an OR gate before new entries. Server-side only.">
@@ -96,7 +74,7 @@
                     <label class="batch-field-label" for="batchBacktestTradeGateToggle">Apply Trade Gate</label>
                 </div>
                 <div class="batch-field batch-field--inline batch-field--wide">
-                    <label class="batch-field-label" for="batchBacktestTradeGateFolder">Sweep folder</label>
+                    <label class="batch-field-label" for="batchBacktestTradeGateFolder">Rule archive</label>
                     <select class="param-input" id="batchBacktestTradeGateFolder"></select>
                 </div>
                 <div class="batch-field batch-field--full">

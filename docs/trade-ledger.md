@@ -1,72 +1,8 @@
-# Trade Ledger (Batch rule-mining export, v3)
+# Trade Ledger Archive Format
 
-The Batch "Save trade ledger" toggle exports a point-in-time trade ledger while a
-server-side Batch run executes. The research workflow it serves: a winning strategy is
-FIXED (found via a prior Batch run), and the next phase mines a rule for WHICH entry
-signals to take. To test hundreds of candidate rules without ever re-running a
-backtest, the run writes one ledger row per ENTRY SIGNAL — each with an **as-if
-outcome** (the trade that WOULD have resulted if entered, computed with the engine's
-own math) — and `scripts/trade-ledger-checker.ts` REPLAYS admission rules offline in
-seconds.
-
-One row per entry signal (not per completed trade) matters because a signal suppressed
-by an open position becomes eligible once a filter removes the earlier trade. Scoring
-rules only on the original run's executed rows would judge rules on survivors, not
-candidates — the replay checker replaced that approach entirely.
-
-## Batch menu control
-
-- **Save trade ledger** (`batchBacktestTradeLedgerToggle`, default OFF), **Folder**
-  (`batchBacktestTradeLedgerFolder`, default `archive/mining-ledger`), and **Horizon bars**
-  (`batchBacktestTradeLedgerHorizons`) live in the Batch tab, under the Balanced
-  Generator. The control requires **server-side mode** (the Vite dev/preview server),
-  which is Batch's only execution path. The folder is resolved relative to the app root
-  (`server.config.root`).
-- The toggle, folder, and horizons persist across reloads via `lib/persisted-json.ts`
-  (`playground_batch_backtest_trade_ledger`, schema `batch_backtest.trade_ledger`, v1).
-- **Ledger From** (`batchBacktestTradeLedgerFrom`) and **Ledger To**
-  (`batchBacktestTradeLedgerTo`) are optional inclusive signal-time filters for the
-  saved ledger. Enter dates as `YYYY-MM-DD`; blank means open-ended. They apply to the
-  new ledger run only and are intentionally not persisted. The resolved window is
-  recorded as `ledgerWindow` in `provenance.json` and `summary.json`.
-- The request-body field is built by `buildBatchRunLedgerBodyField`
-  (`lib/batch-backtest/trade-ledger-wire.ts`, dependency-free so the lazy browser chunk
-  does not import the engine graph): `{}` when OFF, `{ tradeLedger: { enabled: true,
-  folder, ledgerHorizons, and optional fromSec/toSec }` when ON — locked by an HTTP-level
-  route test plus a wire unit test.
-- These are BATCH-RUN options, deliberately **not** registered in
-  `BACKTEST_SETTINGS_DOM_CONTRACTS`: that contract is round-tripped wholesale by
-  `lib/settings-manager.ts` into engine settings / `AppSettings.backtestSettings`, and
-  its `"string"` parser uppercases values, which would corrupt the folder path. The ids
-  live in the batch feature-local DOM contract
-  (`BATCH_BACKTEST_REQUIRED_IDS` in `lib/batch-backtest/batch-backtest-dom.ts`), which
-  `tests/feature-dom-contracts.spec.ts` enforces against the partial like every other
-  Batch id.
-- The separate OPEN_SCORE USD From / To fields scope only the later OPEN_SCORE USD
-  replay. Saved-ledger dates do not alter that analysis window, and OPEN_SCORE dates do
-  not alter the saved ledger window. Blank bounds remain open-ended for both controls.
-
-## Ledger Rule Sweep
-
-After a rule is classified `EDGE-CANDIDATE`, use the Batch Trade Gate for the
-one-time real-engine certification pass documented in
-[`docs/trade-gate.md`](trade-gate.md). The gate shares the exporter feature
-leaf, runs a cross-pair causal pre-pass for `feat_candidatesAtTime`, and records
-its rule source hashes and engine-actual counters. It is server-only in v1 and
-does not support `feat_rank`.
-
-The top-level **Ledger Sweep** tab provides a server-owned Ledger Rule Sweep. Select a
-completed, replay-eligible ledger folder to replay every trusted rule in
-`archive/mining-ledger/rules/` without sending ledger rows, reports, or rule source
-to the browser. The UI exposes only scalar verdicts and bounded diagnostics; the
-full reports and durable diagnostics remain under the selected folder's
-`sweeps/<timestamp>_<runId>/` directory.
-
-The sweep's routes, load-once versus isolated-per-rule memory decision, artifact
-schemas, run ownership, and operational limits are documented in
-[`docs/trade-ledger-sweep.md`](trade-ledger-sweep.md). The existing checker and
-[`archive/mining-ledger/test-all-rules.bat`](../archive/mining-ledger/test-all-rules.bat)
-remain the CLI fallback and regression oracle.
+This guide records the format of existing trade-ledger archives. The current Batch
+application does not create new archives. Existing folders remain readable by the
+offline replay checker, Pair Selection, and Trade Gate compatibility catalog.
 
 ## Run folder layout
 
@@ -78,23 +14,9 @@ remain the CLI fallback and regression oracle.
     summary.json         # totals, per-pair suppression rates, completeness (run end)
 ```
 
-**The ledger is a pure side artifact.** Rows, trades, metrics, and stream events are
-**identical minus wall-clock fields** (timings, cache statistics) with the toggle ON vs
-OFF (locked at `processRunBatch` level by `tests/trade-ledger-exporter.spec.ts`, and at
-HTTP level by a `POST /api/batch-backtest/run` route test asserting identical stream
-payloads and the body-field neutrality). A ledger write failure never fails the batch
-run: it is recorded in `summary.json` (`ledgerComplete: false`, `failedWrites`,
-`failedPairs` — the pair identities whose rows were dropped), appended to the run's
-terminal status line ("trade ledger incomplete …"), and logged via `debugLogger`
-(`batch.server.ledger_*` events). Ledger appends carry a bounded retry: on
-`EBUSY`/`EPERM`/`ESTALE` only, up to 3 total attempts with a 50ms/200ms backoff; after
-the final failure the run continues with the loud non-fatal recording above. Writes
-ride the existing awaited `onSymbolComplete` path — one incremental append per pair;
-the per-pair as-if model is streaming state that dies with the callback, never a
-global accumulation (audit F2 shape). No new HTTP routes are added (audit F1). The
-plugin (`vite.config.ts` bundle) only imports leaf modules
-(`trade-ledger-exporter.ts`, `trade-ledger-asif.ts`), which reach nothing
-browser-bound.
+These are historical artifacts. The row builder remains shared with Trade Gate, and
+the offline checker and Pair Selection continue to read compatible archived folders.
+The current Batch run route does not write ledger files.
 
 ### provenance.json
 
@@ -130,19 +52,19 @@ run's executor-resolved settings. Admission rules change WHICH trades exist, so
 per-candidate outcomes must not depend on prior accepted-trade history. The guard
 records `replayEligible: false` (with reasons) for:
 
-- **Adaptive take-profit** — any `takeProfitMode` other than `fixed`
+- **Adaptive take-profit** â€” any `takeProfitMode` other than `fixed`
   (`adaptive_take_profit:<mode>`).
-- **Path exits** — `pathExitEnabled` with a mode other than `off` (`path_exit:<mode>`).
-- **Partial take-profit** — `partialTakeProfitAtR > 0` (an as-if trade can have only
+- **Path exits** â€” `pathExitEnabled` with a mode other than `off` (`path_exit:<mode>`).
+- **Partial take-profit** â€” `partialTakeProfitAtR > 0` (an as-if trade can have only
   one exit).
-- **Win-streak stop-loss** — `riskWinStreakStopLossEnabled` (depends on prior accepted
+- **Win-streak stop-loss** â€” `riskWinStreakStopLossEnabled` (depends on prior accepted
   trades by definition).
-- **Dynamic sizing** — `capitalSettings.sizingMode` other than `percent`/`fixed`
+- **Dynamic sizing** â€” `capitalSettings.sizingMode` other than `percent`/`fixed`
   (allocation failures change which entries the engine takes).
-- **Regime entry filters** — `marketMode`, `trendEmaPeriod`, `atrPercentMin/Max`,
+- **Regime entry filters** â€” `marketMode`, `trendEmaPeriod`, `atrPercentMin/Max`,
   `adxMin/Max`: the engine drops entries inside `prepareSignals`, so the ledger's
   candidate set would differ from the engine's.
-- **Both-direction reversals** — both-like `tradeDirection` with
+- **Both-direction reversals** â€” both-like `tradeDirection` with
   `disableSignalExits` off (opposite signals flip positions).
 
 **Not blockers** (position-state rules the replay state machine handles itself):
@@ -150,12 +72,12 @@ records `replayEligible: false` (with reasons) for:
 `maxOpenTrades` (open-slot cap; the engine's unlimited overlap resolves to
 `Infinity`, preserved as `"unlimited"` in provenance). Fixed price levels (TP/SL),
 ATR/trailing stops, break-even, bar-count holds (`riskMaxHoldBars`, `timeStopBars`),
-and minimum-hold are MODELED, not blocked — the as-if walk reuses the engine's own
+and minimum-hold are MODELED, not blocked â€” the as-if walk reuses the engine's own
 exported per-bar handlers, so they stay eligible.
 
 The checker REFUSES replay with a clear message on ineligible folders.
 
-### ledger.jsonl — one JSON object per line, per ENTRY SIGNAL
+### ledger.jsonl â€” one JSON object per line, per ENTRY SIGNAL
 
 | Group   | Fields |
 |---------|--------|
@@ -164,11 +86,11 @@ The checker REFUSES replay with a clear message on ineligible folders.
 | Features  | `feat_entryRangePosition`, `feat_atrPct`, `feat_return20`, `feat_gapPct`, `feat_dow`, `feat_hour`, `feat_pairWinRatePrior`, `feat_pairTradesPrior`, `feat_barsSincePairLastFire`, `feat_pairSpreadVolatility20`, `feat_legVolatilityRatio20`, `feat_rank`, `feat_candidatesAtTime` |
 | Horizon   | `horizons[H]: { entryTimeSec, entryPrice, exitTimeSec, exitPrice, pnlPercent, status }` for each configured H; `status` is `"ok"` or `"right_censored"` |
 | As-if     | `asIf: { fillTime, fillPrice, exitTime, exitPrice, pnlPercent, barsHeld, exitReason } \| null`, `asIfReason` (`"right_censored"` \| `"replay_ineligible"` \| `null`) |
-| Outcome   | `exitTime`, `exitPrice`, `pnlPercent`, `fees`, `exitReason` — **executed rows ONLY** (the keys are absent otherwise) |
+| Outcome   | `exitTime`, `exitPrice`, `pnlPercent`, `fees`, `exitReason` â€” **executed rows ONLY** (the keys are absent otherwise) |
 
 - Signals are sorted by DECISION time before rows are built (trailing per-pair
   statistics follow decision order), and duplicate same-direction signals on one
-  decision bar collapse deterministically — first wins, counted in
+  decision bar collapse deterministically â€” first wins, counted in
   `summary.duplicateSignalsCollapsed` (signal identity: `(pair, signalBarIndex,
   direction)`).
 - Entry semantics mirror the engine: entry candidates = `allowsSignalAsEntry` under
@@ -178,9 +100,9 @@ The checker REFUSES replay with a clear message on ineligible folders.
 - Signals are matched to executed trades by direction + fill time + entry price
   within the run's slippage tolerance. `notExecutedReason` categories (all counted,
   never silent drops): `position_open`, `cooldown` (post-exit entry cooldown blocks
-  the fill bar), `match_missing` (flat + unblocked but no trade matched — a matching
+  the fill bar), `match_missing` (flat + unblocked but no trade matched â€” a matching
   failure), `no_fill_bar`, `engine_skip`.
-- `asIf` is null ONLY when right-censored (no fill bar near the data end — the engine
+- `asIf` is null ONLY when right-censored (no fill bar near the data end â€” the engine
   drops those entries too) or when the run is replay-ineligible
   (`asIfReason: "replay_ineligible"`). Never zero-filled, never a substituted exit.
 
@@ -209,18 +131,18 @@ The as-if walk (`resolveAsIfOutcome` in `trade-ledger-asif.ts`) reuses the engin
 own code at every step:
 
 - Entry levels (`stopLossPrice`, `takeProfitPrice`, `riskPerShare`,
-  `partialTargetPrice`) come from `resolveInitialExitLevels` — the arming math
+  `partialTargetPrice`) come from `resolveInitialExitLevels` â€” the arming math
   extracted from `position-builder.ts` (`buildPositionFromSignal` calls the SAME
   helper; there is one source for entry-level semantics).
-- The exit walk calls the engine's exported per-bar handlers —
+- The exit walk calls the engine's exported per-bar handlers â€”
   `processPositionExits` (stop/TP/partial/path/min-hold/max-hold/time-stop fills) and
-  `updatePositionState` (trailing stop, break-even, extreme price) — in the engine's
-  per-bar order: open-only exits → signal exits → full exits → state update, with the
+  `updatePositionState` (trailing stop, break-even, extreme price) â€” in the engine's
+  per-bar order: open-only exits â†’ signal exits â†’ full exits â†’ state update, with the
   same same-bar entry gate (`allowSameBarExit`).
 - Signal exits come from the REAL merged exit path: `resolveExitStrategyOverrideSignals`
   (exported from `backtest-executor.ts` for exactly this purpose) + `mergeExitStrategySignals`
   + `prepareSignals`. There is no parallel exit resolution anywhere.
-- pnl uses `calculateTradeExitDetails` — the engine's trade-close math, so as-if
+- pnl uses `calculateTradeExitDetails` â€” the engine's trade-close math, so as-if
   `pnlPercent` is identical to what a real trade at that entry would book
   (slippage on both sides + commission).
 - End-of-data exits at the last bar's raw close, matching the engine's
@@ -231,34 +153,34 @@ an admitted trade's exit bar is treated as blocked (the engine can sometimes re-
 on the exit bar itself); entries whose sizing bar precedes the ATR window arm no
 levels (ATR is null there for the engine as well).
 
-### Feature definitions (all causal — bars at or before the signal bar only)
+### Feature definitions (all causal â€” bars at or before the signal bar only)
 
 Bump `TRADE_LEDGER_FEATURE_VERSION` whenever the feature set changes (v3 = 3; the
-checker and Ledger Sweep remain able to read v2 folders).
+checker and Trade Gate remain able to read v2 folders).
 
-- `feat_entryRangePosition` — signal bar's close located within the PRIOR bar's
+- `feat_entryRangePosition` â€” signal bar's close located within the PRIOR bar's
   `[low, high]` range, percent; null when the prior range is zero or `i < 1`.
-- `feat_atrPct` — Wilder ATR with FIXED period 14 at the signal bar, divided by the
-  signal bar close × 100. Independent of the user's backtest ATR settings.
-- `feat_return20` — `(close[i] − close[i−20]) / close[i−20] × 100`; null before bar 20.
-- `feat_gapPct` — `(open[i] − close[i−1]) / close[i−1] × 100`; null at `i < 1`.
-- `feat_dow` / `feat_hour` — UTC day-of-week (0 = Sunday) and hour of the signal bar.
-- `feat_pairWinRatePrior` — trailing win rate (`pnlPercent > 0`) of THIS pair's
-  strictly earlier executed trades within this run; null until ≥ 5 priors.
-  `feat_pairTradesPrior` — the count of those trades.
-- `feat_barsSincePairLastFire` — `signalBarIndex` minus the signal bar index of
+- `feat_atrPct` â€” Wilder ATR with FIXED period 14 at the signal bar, divided by the
+  signal bar close Ã— 100. Independent of the user's backtest ATR settings.
+- `feat_return20` â€” `(close[i] âˆ’ close[iâˆ’20]) / close[iâˆ’20] Ã— 100`; null before bar 20.
+- `feat_gapPct` â€” `(open[i] âˆ’ close[iâˆ’1]) / close[iâˆ’1] Ã— 100`; null at `i < 1`.
+- `feat_dow` / `feat_hour` â€” UTC day-of-week (0 = Sunday) and hour of the signal bar.
+- `feat_pairWinRatePrior` â€” trailing win rate (`pnlPercent > 0`) of THIS pair's
+  strictly earlier executed trades within this run; null until â‰¥ 5 priors.
+  `feat_pairTradesPrior` â€” the count of those trades.
+- `feat_barsSincePairLastFire` â€” `signalBarIndex` minus the signal bar index of
   this same pair's previous signal in the run; null on the pair's first signal.
-- `feat_pairSpreadVolatility20` — population standard deviation (divide by `N`)
+- `feat_pairSpreadVolatility20` â€” population standard deviation (divide by `N`)
   of the twenty one-bar percent changes
-  `(close[k] − close[k−1]) / close[k−1] × 100` for `k = i−20 .. i−1`, where `i`
+  `(close[k] âˆ’ close[kâˆ’1]) / close[kâˆ’1] Ã— 100` for `k = iâˆ’20 .. iâˆ’1`, where `i`
   is the signal bar index. All changes end strictly before the signal bar; null
   during warm-up (`i < 20` or when a required close is unavailable/non-positive).
-- `feat_legVolatilityRatio20` — the same twenty-change population standard
+- `feat_legVolatilityRatio20` â€” the same twenty-change population standard
   deviation on BASE closes divided by the same value on QUOTE closes, aligned
   to the pair bar timestamps. Null when aligned leg series are unavailable,
   fewer than twenty aligned observations exist, a required close is
   non-positive, or QUOTE volatility is zero.
-- `feat_rank` / `feat_candidatesAtTime` — null in the ledger; filled by the checker
+- `feat_rank` / `feat_candidatesAtTime` â€” null in the ledger; filled by the checker
   from `signal-ranks.jsonl`.
 
 The v3 `baseSymbol` and `quoteSymbol` columns are the canonical BASE and QUOTE
@@ -269,10 +191,10 @@ is dropped rather than approximated.
 
 ### signal-ranks.jsonl (cross-sectional rank pass)
 
-Bounded `(signalTime → distinct pairs)` tuples — interned pair strings in a per-time
+Bounded `(signalTime â†’ distinct pairs)` tuples â€” interned pair strings in a per-time
 `Set` (no repeated membership scans inside large same-timestamp buckets), no candle
 data. One line per distinct `(signalTime, pair)`:
-`{ signalTime, pair, rank, candidatesAtTime }` — `rank` is the pair's 1-based
+`{ signalTime, pair, rank, candidatesAtTime }` â€” `rank` is the pair's 1-based
 position among the distinct pairs signaling at that timestamp, ordered ascending by
 pair symbol (deterministic; there is no score at signal time). The checker joins on
 `(signalTime, pair)`.
@@ -287,14 +209,14 @@ suppression rate), `cancelled`, and `ledgerComplete` / `failedWrites` / `lastErr
 **Pair accounting (W4).** `provenance.pairCount` stays "submitted"; `summary.json`
 carries the explicit split so a mismatch is never ambiguous:
 
-- `submittedPairs` — pairs in the request (= `provenance.pairCount`).
-- `loadedPairs` — pairs whose dataset loaded and ran; `submittedPairs − loadedPairs`
+- `submittedPairs` â€” pairs in the request (= `provenance.pairCount`).
+- `loadedPairs` â€” pairs whose dataset loaded and ran; `submittedPairs âˆ’ loadedPairs`
   = pairs that failed to load/run (their names ride the run's `done` event totals and
   logs).
-- `rowBearingPairs` — pairs with at least one ledger row (= `totals.pairs`).
-- `emptyPairs` — loaded pairs with zero entry signals (`loadedPairs −
+- `rowBearingPairs` â€” pairs with at least one ledger row (= `totals.pairs`).
+- `emptyPairs` â€” loaded pairs with zero entry signals (`loadedPairs âˆ’
   rowBearingPairs`).
-- `failedPairs` — pair identities whose rows were DROPPED by a failed append (W2);
+- `failedPairs` â€” pair identities whose rows were DROPPED by a failed append (W2);
   empty on a clean run.
 
 The source snapshot retains full loaded bars and full engine trade records for every
@@ -318,22 +240,18 @@ controls remain available.
   `summary.json`.
 - `<ruleFile.ts>` default-exports `(row) => boolean` and may read ONLY identity/entry
   fields and `feat_*` fields.
-- **Refusals (fail loud, never fake):** v1 folders → "ledger v1 — re-run the batch to
-  regenerate"; `replayEligible: false` → the blocker reasons; missing
-  `provenance.json`/`ledger.jsonl` → explicit errors; and — audit W1 — **incomplete
-  ledgers**: a missing `summary.json`, an unsupported `ledgerVersion`,
-  `ledgerComplete: false`, or `failedWrites > 0` is refused with the dropped
-  `failedPairs` listed. `--allow-incomplete` overrides that ONE refusal, and the
-  resulting report carries a loud `!! INCOMPLETE LEDGER …` banner so an overridden run
-  can never be mistaken for a clean one later.
-- **Streaming loader:** JSONL files are read via a chunked read stream + readline
+- **Refusals (fail loud, never fake):** unsupported ledger versions require a compatible
+  archived run; `replayEligible: false` reports the blocker reasons; missing
+  `provenance.json`/`ledger.jsonl` produces explicit errors; and incomplete ledgers
+  report the dropped `failedPairs`. `--allow-incomplete` overrides only the
+  incomplete-ledger refusal, and the report keeps a loud warning banner.- **Streaming loader:** JSONL files are read via a chunked read stream + readline
   (CRLF, empty lines, missing trailing newline, UTF-8 bullet pair names all handled);
   a 2M-row ledger is never materialized as one Buffer. Parsed rows are still retained
   in memory (replay needs them); true row-streaming replay is out of scope. Practical
   boundary, measured with `scripts/bench-trade-ledger-scale.ts` on a synthetic
-  2,000,000-row / 500-pair folder (regenerate + measure any time): ~10s load +
+  2,000,000-row / 500-pair folder (measured during earlier validation): ~10s load +
   ~19s replay/report (28.9s total) at a ~1.35 GB `heapUsed` peak (~3.25 GB RSS) under
-  an 8 GB heap — i.e. roughly **5s load + 10s replay and ~0.7 GB heap per million
+  an 8 GB heap â€” i.e. roughly **5s load + 10s replay and ~0.7 GB heap per million
   rows**.
 
 **Anti-leakage contract.** The rule receives the row wrapped in a Proxy whose
@@ -341,12 +259,12 @@ controls remain available.
 reads and `in` probes of forbidden fields throw, and field enumeration
 (`Object.keys`, `Object.entries`, spread `{...row}`, `JSON.stringify`) throws
 unconditionally. Sealed fields: `exitTime`, `exitPrice`, `pnlPercent`, `fees`,
-`exitReason`, `asIf`, `asIfReason`, plus `executed`/`notExecutedReason` — conditioning
+`exitReason`, `asIf`, `asIfReason`, plus `executed`/`notExecutedReason` â€” conditioning
 on the ORIGINAL run's survivorship is lookahead for a rule meant to run live.
 The v3 `horizons` field is sealed from legacy gate rules as well; pair-selection
 reads it through its separate outcome harness.
 
-**Replay semantics.** Per pair (pairs are independent in the engine — there is
+**Replay semantics.** Per pair (pairs are independent in the engine â€” there is
 deliberately NO global cross-pair capital replay): sort candidates by decision time;
 the rule is applied BEFORE ordering; a candidate is admitted when an open slot is
 free (`maxOpenTrades`), the post-exit cooldown has elapsed, and the rule passes; an
@@ -379,33 +297,19 @@ Rejected candidates occupy nothing. Right-censored candidates are counted as blo
 1. **Invent rules on IS only.** The IS slice exists to generate and refine candidate
    rules. Look at the HOLDOUT numbers during mining and you have burned the holdout.
 2. **Holdout is sealed for finalists.** Only rules that already survived IS scrutiny
-   get a single holdout read, and every holdout read consumes trust — keep the count
+   get a single holdout read, and every holdout read consumes trust â€” keep the count
    small and honest.
 3. **Certify once, from raw data.** The finally-chosen strategy + rule must be
-   re-run ONCE through the real engine from raw data — the rule applied live (its
-   admissions change the trade sequence), not by re-scoring the ledger — as
+   re-run ONCE through the real engine from raw data â€” the rule applied live (its
+   admissions change the trade sequence), not by re-scoring the ledger â€” as
    independent certification before any capital is exposed.
 4. Replay assumes exits are history-independent; only mine on
    `replayEligible: true` folders.
 
 ## Tests
 
-- `tests/trade-ledger-exporter.spec.ts` — v3 row schema + fixed-horizon and as-if
-  outcomes (engine exit series, stop-out, end-of-data, same-bar gate, right-censoring), executed/notExecuted
-  categories incl. cooldown + match_missing, duplicate collapse, slippage tolerance
-  boundaries, unlimited `maxOpenTrades`, causal immunity (mutating bar i+1), fixed
-  ATR(14), replay-eligibility guard list, writer files/ranks/summary + pair
-  accounting, write-failure → `ledgerComplete: false` + `failedPairs`, bounded
-  EBUSY/EPERM/ESTALE retry (fail-twice-then-succeed lands the row; always-fail
-  records), toggle-off produces no folder, ON/OFF identical-minus-wall-clock
-  results, setup failure visible in the run summary, request-body wire contract, W5
-  completion-context forwarding + a child-process `--expose-gc` WeakRef collection
-  check, and the HTTP-level `POST /run` route contract.
-- `tests/trade-ledger-checker.spec.ts` — W1 proxy traps (get/has/ownKeys/descriptor,
-  `Object.keys`, spread, `JSON.stringify`), replay semantics (accept-all, rule
-  rejection frees the slot, busy/cooldown blocks, right-censored counting),
-  IS/holdout split, deterministic calibrated random control, ranks join, v1 +
-  ineligible refusals, incomplete-ledger refusals (missing summary /
-  `ledgerComplete:false` / `failedWrites>0`), the `--allow-incomplete` banner,
-  streaming JSONL edge cases (CRLF, empty lines, no trailing newline, UTF-8 bullet
-  pairs), deterministic report values, and end-to-end anti-leakage enforcement.
+- `tests/trade-ledger-row-builder.spec.ts` covers causal rows, replay outcomes,
+  execution classification, and completion-context forwarding.
+- `tests/trade-ledger-checker.spec.ts` covers archived-format replay, rule safety,
+  controls, ranks, incomplete archives, and report values.
+- `tests/trade-gate.spec.ts` covers archive catalog compatibility and live gating.

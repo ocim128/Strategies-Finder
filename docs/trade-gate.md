@@ -8,41 +8,45 @@ position slot. A signal is admitted when **any** selected rule returns `true`
 (OR semantics). Selecting overlapping rules can increase admissions; it is not
 diversification.
 
-## Certification workflow
+## Existing certified archives
 
-1. Run a replay-eligible Batch export with **Save trade ledger** enabled.
-2. Run Ledger Sweep over that folder. Treat only `EDGE-CANDIDATE` results from
-   the folder's latest completed sweep as selectable rules.
-3. In the Batch tab, enable **Apply Trade Gate**, select the folder first, then
-   select one or more EDGE rules. The UI shows the rule's kept percentage and
-   IS/holdout deltas, plus an approximate rejection percentage from the sweep.
-4. Run the Batch certification from the server. Compare the engine-actual
-   trade count, expectancy, P&L, and gate counters with the checker replay.
-5. Keep the holdout sealed after this read; use a shadow-forward run before
-   exposing capital.
+The current application no longer creates trade-ledger or replay-evaluation archives.
+Trade Gate can use archives that already exist under `archive/mining-ledger`: a runnable
+ledger folder, trusted rule source under `rules/`, and a completed legacy certification
+record under that folder's legacy `sweeps/` subdirectory. The catalog exposes only
+`EDGE-CANDIDATE` rules from the newest completed record and the server verifies each
+rule's source hash before a Batch certification. Current Batch provenance records the
+archive's `certificationId`.
+
+1. In the Batch tab, enable **Apply Trade Gate**, select an existing archive, then
+   select one or more EDGE rules. The UI shows the recorded kept percentage and
+   IS/holdout deltas, plus an approximate rejection percentage.
+2. Run the Batch certification from the server. Compare engine-actual trade count,
+   expectancy, P&L, and gate counters with the archived replay.
+3. Keep holdout data sealed after this read; use a shadow-forward run before exposing
+   capital.
 
 ### Certification surface identity
 
-The EDGE lists belong to separate sweep surfaces and must not be merged:
+The historical EDGE lists belong to separate research surfaces and must not be merged:
 
-| Surface | Sweep | EDGE list recorded for the comparison |
+| Surface | Archive ID | EDGE list recorded for the comparison |
 | --- | --- | --- |
 | F3 | `2026-08-30_0940` | `q20`, `q94`, `q98`, `q114`, `q130`, `q178`, `q188` |
 | F2 | `2026-08-29_1936` | `q77`, `q108`, `q107`, `q156`, `q90`, `q8`, `q126`, `q109` |
 
 `q8` is EDGE on both surfaces. That cross-surface replication is why q8 was
-the certification rule; it is not a mismatch between the F2 and F3 lists.
+selected for certification; it is not a mismatch between the F2 and F3 lists.
 
 The selected rule source is loaded only from
-`archive/mining-ledger/rules/<ruleId>.ts`. The server re-discovers the folder
-and latest sweep at run time, verifies the source SHA-256 against the sweep,
-rejects source containing `feat_rank`, and records folder, sweep, rule names,
-and hashes in the terminal run provenance. Rule exceptions are fatal.
-
+`archive/mining-ledger/rules/<ruleId>.ts`. The server re-discovers the folder and its
+latest archived certification at run time, verifies the source SHA-256 against that
+record, rejects source containing `feat_rank`, and records folder, certification ID,
+rule names, and hashes in the terminal run provenance. Rule exceptions are fatal.
 ## Feature parity
 
 `lib/batch-backtest/trade-ledger-features.ts` is the single feature leaf used
-by both `trade-ledger-exporter.ts` and the server gate. It computes the causal
+by both the trade-ledger row builder and the server gate. It computes the causal
 bar-local fields (range position, ATR14 percentage, return20, gap percentage,
 UTC day/hour), per-pair prior-trade fields, and the cross-pair
 `feat_candidatesAtTime` count. The gate's server pre-pass runs the strategy
@@ -50,7 +54,7 @@ without a gate to collect the same entry rows and same-timestamp universe
 before the real gated pass. Gate rows contain no outcome fields and do not
 support `feat_rank`.
 
-The exporter golden fixture remains the parity oracle. The gate regression
+The row-builder golden fixture remains the parity oracle. The gate regression
 spec also checks that the shared values are unchanged and that
 `candidatesAtTime` is available to a predicate.
 
@@ -103,21 +107,21 @@ bar-level checkpoint is reached.
 
 The gated F3 run was re-run through the production resolver and runner against
 `2026-08-30_0940_batch-mtf7c0sj-armf8vch`, selecting
-`q114-orderly_decline_no_gap` from the latest completed sweep. It completed
+`q114-orderly_decline_no_gap` from the latest archived certification. It completed
 2,000/2,000 pairs with 0 failures and 0 cancellations. The q114 source
 SHA-256 was `486153522481eb6b88537123f8dfbbaa28b581e34a0802c01f98a9dc287d7a77`.
 
 | Measure | Value |
 | --- | ---: |
-| Sweep kept | 111,891 (`2.0672595135%`) |
-| Sweep IS mean / median P&L delta | `+1.7605661017 pp` / `+0.1693454525 pp` |
-| Sweep holdout mean / median P&L delta | `+0.1393694737 pp` / `+0.1103947727 pp` |
+| Archived replay kept | 111,891 (`2.0672595135%`) |
+| Archived IS mean / median P&L delta | `+1.7605661017 pp` / `+0.1693454525 pp` |
+| Archived holdout mean / median P&L delta | `+0.1393694737 pp` / `+0.1103947727 pp` |
 | Engine gate evaluated / admitted / blocked | 5,414,069 / 339,205 / 227,190 |
 | Engine actual opened trades | 112,015 |
 | Engine aggregate net profit | `$715,924.9315733875` |
 | Engine aggregate expectancy | `$6.39133090723017` per trade |
 
-The sweep's kept count is its replay statistic; the engine-actual opened count
+The archived replay's kept count is its replay statistic; the engine-actual opened count
 is `admitted - blocked`, so the two counts are reported separately. The
 completed-run pair timing was pre-pass **35,653 ms** total (**17.8265 ms/pair**,
 maximum **75 ms**) and main pass **48,927 ms** total (**24.4635 ms/pair**,

@@ -191,14 +191,14 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
     const provenance = JSON.parse(readFileSync(provenancePath, "utf8")) as TradeLedgerProvenance;
     if (!(TRADE_LEDGER_SUPPORTED_VERSIONS as readonly number[]).includes(provenance.ledgerVersion)) {
         throw new Error(
-            `ledger v${provenance.ledgerVersion} — re-run the batch to regenerate (supported ledger versions: ${TRADE_LEDGER_SUPPORTED_VERSIONS.join(", ")}).`
+            `ledger v${provenance.ledgerVersion} is unsupported (supported ledger versions: ${TRADE_LEDGER_SUPPORTED_VERSIONS.join(", ")}); select a compatible archived run.`
         );
     }
     const replay = provenance.replay;
     if (!replay || replay.replayEligible !== true) {
         throw new Error(
             `Replay is not eligible for this run config. Blockers: ${replay?.replayBlockers?.join("; ") ?? "unknown"}. `
-            + "Re-run the batch with a replay-eligible configuration (see docs/trade-ledger.md)."
+            + "Select an archived run captured with a replay-eligible configuration (see docs/trade-ledger.md)."
         );
     }
     // The summary certifies that failed pair appends did not make the replay
@@ -207,7 +207,7 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
     if (!existsSync(summaryPath)) {
         throw new Error(
             `${SUMMARY_FILE} not found in "${folder}" — ledger completeness cannot be verified. `
-            + "Re-run the batch or point at the correct per-run folder."
+            + "Select a complete archived run or point at the correct per-run folder."
         );
     }
     const summary = JSON.parse(readFileSync(summaryPath, "utf8")) as {
@@ -218,7 +218,7 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
     };
     if (summary.ledgerVersion !== provenance.ledgerVersion) {
         throw new Error(
-            `summary.json ledgerVersion ${String(summary.ledgerVersion)} is unsupported or does not match provenance ledgerVersion ${String(provenance.ledgerVersion)}. Re-run the batch.`
+            `summary.json ledgerVersion ${String(summary.ledgerVersion)} is unsupported or does not match provenance ledgerVersion ${String(provenance.ledgerVersion)}. Select a compatible archived run.`
         );
     }
     const failedPairs = Array.isArray(summary.failedPairs) ? summary.failedPairs : [];
@@ -228,7 +228,7 @@ export async function loadLedgerForReplay(folder: string, options: LoadLedgerOpt
             ? `ledgerComplete=false, failedWrites=${String(summary.failedWrites ?? 0)}`
             : `failedWrites=${String(summary.failedWrites ?? 0)}`;
         const message = `Refusing incomplete ledger: ${reason}. Dropped pair rows (${failedPairs.length}): ${formatFailedPairList(failedPairs) || "(none recorded — pre-W2 summary)"}. `
-            + "Re-run the batch, or pass --allow-incomplete to proceed with a loud warning banner in the report.";
+            + "Select a complete archived run, or pass --allow-incomplete to proceed with a loud warning banner in the report.";
         if (options.allowIncomplete !== true) throw new Error(message);
         incomplete = { failedWrites: summary.failedWrites ?? 0, failedPairs };
     }

@@ -301,7 +301,6 @@ function registerLazyFeatures(): void {
     registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
     registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());
-    registerLazyFeature("ledger-sweep", async () => (await import("./batch-backtest/trade-ledger-sweep-service")).tradeLedgerSweepService.init());
     registerLazyFeature("selection-rules", async () => (await import("./selection-rules/service")).selectionRulesService.init());
     registerLazyFeature("asset-opportunity-explorer", async () => (await import("./asset-opportunity-explorer/service")).assetOpportunityExplorerService.init());
     registerLazyFeature("rank-pairs", async () => (await import("./rank-pairs/rank-pairs-service")).rankPairsService.init());

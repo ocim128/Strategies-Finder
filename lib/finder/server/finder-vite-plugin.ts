@@ -98,11 +98,6 @@ import {
     type FinderStreamEvent,
 } from "./finder-stream-types";
 import { resolveFinderUniverseHeapWarning } from "./finder-server-heap-guard";
-import {
-    releaseIfOwner as releaseResearchWorkloadIfOwner,
-    tryAcquire as tryAcquireResearchWorkload,
-    type ResearchWorkloadToken,
-} from "../../server-research-job-coordinator";
 import { rememberLoopbackOriginFromRequest } from "../../local-api-transport";
 import {
     clampFinderOptions,
@@ -2757,7 +2752,7 @@ async function handleAssetOpportunityRunRequest(
 ): Promise<void> {
     const prepared = await prepareAssetOpportunityRunPayload(body);
 
-    const reservation = acquireFinderRunOwnership(prepared.runId);
+    const reservation = acquireFinderRunOwnership();
     const owner = reservation.owner;
     try {
     const runAbortController = new AbortController();
@@ -2845,7 +2840,6 @@ async function handleAssetOpportunityRunRequest(
         ),
     });
     } finally {
-        releaseResearchWorkloadIfOwner(reservation.researchToken);
     }
 }
 
@@ -2872,7 +2866,7 @@ async function handleAssetOpportunityBatchRunRequest(
     const batchRange = prepared.batchRange!;
     const archiveSort = ASSET_OPPORTUNITY_ALL_SORTS;
 
-    const reservation = acquireFinderRunOwnership(prepared.runId);
+    const reservation = acquireFinderRunOwnership();
     const owner = reservation.owner;
     try {
     const runAbortController = new AbortController();
@@ -2932,7 +2926,6 @@ async function handleAssetOpportunityBatchRunRequest(
         ),
     });
     } finally {
-        releaseResearchWorkloadIfOwner(reservation.researchToken);
     }
 }
 
@@ -2971,20 +2964,11 @@ function resolveAssetOpportunityArchiveSorts(): Array<FinderAssetOpportunityReso
     return [null, ...getAssetOpportunityResortMetrics()];
 }
 
-function acquireFinderRunOwnership(runId: string): { owner: number; researchToken: ResearchWorkloadToken } {
+function acquireFinderRunOwnership(): { owner: number } {
     if (runOwner !== RUN_OWNER_NONE) {
         throw new HttpStatusError(409, "A Finder run is already running. Use Stop first.");
     }
-    const researchToken = tryAcquireResearchWorkload("finder", runId);
-    if (!researchToken) {
-        throw new HttpStatusError(409, "A Ledger Sweep is running. Stop it before starting Finder.");
-    }
-    try {
-        return { owner: acquireRunOwnership(), researchToken };
-    } catch (error) {
-        releaseResearchWorkloadIfOwner(researchToken);
-        throw error;
-    }
+    return { owner: acquireRunOwnership() };
 }
 
 /**
@@ -3298,14 +3282,13 @@ async function handleArmPerformanceRunRequest(
 
     // Both reservations are synchronous and happen without an intervening
     // await. A partial acquisition releases Finder's lock and research token.
-    const finderReservation = acquireFinderRunOwnership(prepared.runId);
+    const finderReservation = acquireFinderRunOwnership();
     const owner = finderReservation.owner;
     let batchReservation: BatchOwnerToken | null = null;
     try {
         batchReservation = ownerLocks.acquireFinderSweep(prepared.runId, stopArmPerformanceParent);
     } catch (error) {
         if (runOwner === owner) runOwner = RUN_OWNER_NONE;
-        releaseResearchWorkloadIfOwner(finderReservation.researchToken);
         throw error;
     }
 
@@ -3566,7 +3549,6 @@ async function handleArmPerformanceRunRequest(
     } finally {
         activeArmPerformanceCoordinator = null;
         if (batchReservation) ownerLocks.releaseIfStillOwner(batchReservation);
-        releaseResearchWorkloadIfOwner(finderReservation.researchToken);
         if (abortController === runAbortController) abortController = null;
     }
 }
@@ -3615,7 +3597,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
         throw new HttpStatusError(409, "Finder run was stopped before it started.");
     }
 
-    const reservation = acquireFinderRunOwnership(runId);
+    const reservation = acquireFinderRunOwnership();
     const owner = reservation.owner;
     try {
     const runAbortController = new AbortController();
@@ -3669,7 +3651,6 @@ async function handleRunRequest(res: ViteHttpResponse, body: FinderUniverseReque
         ),
     });
     } finally {
-        releaseResearchWorkloadIfOwner(reservation.researchToken);
     }
 }
 

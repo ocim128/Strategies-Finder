@@ -2,17 +2,10 @@
  * Data-only trade-ledger v3 schema and fixed feature constants.
  *
  * Keep this leaf free of filesystem, browser, and writer imports so replay
- * consumers can share the schema without pulling in the exporter.
+ * consumers can share the schema without pulling in the row builder.
  */
 
-import type { AsIfPairModel } from "./trade-ledger-asif";
-import type {
-    ExecutionModel,
-    OHLCVData,
-    Signal,
-    Trade,
-    TradeDirection,
-} from "../types/strategies";
+import type { ExecutionModel, Trade, TradeDirection } from "../types/strategies";
 
 // ============================================================================
 // Constants (bump versions whenever the schema or the feature set changes)
@@ -22,9 +15,8 @@ export const TRADE_LEDGER_VERSION = 3;
 export const TRADE_LEDGER_FEATURE_VERSION = 3;
 /** Ledger versions retained for legacy as-if replay consumers. */
 export const TRADE_LEDGER_SUPPORTED_VERSIONS = [2, 3] as const;
-/** Feature versions that the legacy checker/sweep may still read. */
+/** Feature versions accepted by the legacy checker and Trade Gate. */
 export const TRADE_LEDGER_SUPPORTED_FEATURE_VERSIONS = [2, 3] as const;
-export const TRADE_LEDGER_DEFAULT_FOLDER = "archive/mining-ledger";
 export const TRADE_LEDGER_DEFAULT_HORIZONS = [24] as const;
 
 /** Fixed feature ATR period — independent of the user's backtest ATR settings. */
@@ -269,42 +261,4 @@ export interface TradeLedgerRowContext {
     slippageRate: number;
     /** Fixed forward horizons, in whole bars. Defaults to [24]. */
     ledgerHorizons?: number[];
-}
-
-export interface TradeLedgerFinalizeResult {
-    ledgerComplete: boolean;
-    failedWrites: number;
-    lastError: string | null;
-    totals: { pairs: number; signals: number; executed: number; notExecuted: number };
-    snapshotComplete: boolean;
-    snapshotError: string | null;
-    sourceSnapshotSha256: string | null;
-}
-
-/** Writer-side arguments retained here so the exporter can re-export its old API. */
-export interface BuildTradeLedgerRowsArgs {
-    pair: string;
-    data: OHLCVData[];
-    signals: readonly Signal[] | undefined;
-    trades: readonly Trade[] | undefined;
-    context: TradeLedgerRowContext;
-    /** Canonical leg identity supplied by the run/loader; never inferred here. */
-    baseSymbol?: string | null;
-    quoteSymbol?: string | null;
-    /** Leg closes aligned to `data`'s pair-bar timestamps. */
-    baseCloses?: readonly (number | null)[];
-    quoteCloses?: readonly (number | null)[];
-    /** Per-pair as-if model; null/undefined when the run is replay-ineligible. */
-    asIfModel?: AsIfPairModel | null;
-}
-
-export interface TradeLedgerPairRows {
-    rows: TradeLedgerRow[];
-    /** Same-direction signals collapsed onto an already-seen decision bar. */
-    duplicatesCollapsed: number;
-    rightCensored: number;
-    /** Signal times for duplicate candidates, used to window suppression totals. */
-    duplicateSignalTimes?: number[];
-    /** Signal times for right-censored rows, used to window suppression totals. */
-    rightCensoredSignalTimes?: number[];
 }

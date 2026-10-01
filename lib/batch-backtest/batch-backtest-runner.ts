@@ -99,7 +99,7 @@ export interface BatchBacktestSymbolResult {
 /**
  * Per-symbol context handed to `onSymbolComplete` alongside the row. The row's
  * `signals` field is dropped for non-synthetic pairs (memory contract), but the
- * trade-ledger exporter needs the pair's engine-consumed signals for every
+ * Trade Gate row building needs the pair's engine-consumed signals for every
  * pair, so the runner passes them here without retaining them on the row.
  * The reference dies as soon as the completion callback returns.
  */
