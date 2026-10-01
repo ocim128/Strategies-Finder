@@ -341,11 +341,13 @@ describe("backtest executor", () => {
 
     it("requires confirmation strategies to agree with both entry and exit signals", async () => {
         const candles: OHLCVData[] = [
-            { time: 1 as Time, open: 10, high: 11, low: 9, close: 10, volume: 1000 },
-            { time: 2 as Time, open: 10, high: 12, low: 10, close: 11.8, volume: 1000 },
-            { time: 3 as Time, open: 11.8, high: 13, low: 11, close: 12.5, volume: 1000 },
-            { time: 4 as Time, open: 12.5, high: 13, low: 8, close: 8.5, volume: 1000 },
-            { time: 5 as Time, open: 8.5, high: 9, low: 7, close: 8, volume: 1000 },
+            { time: 60 as Time, open: 10, high: 11, low: 9, close: 10, volume: 1000 },
+            { time: 120 as Time, open: 10, high: 12, low: 10, close: 11.8, volume: 1000 },
+            { time: 180 as Time, open: 11.8, high: 13, low: 11, close: 12.5, volume: 1000 },
+            { time: 240 as Time, open: 12.5, high: 13, low: 8, close: 8.5, volume: 1000 },
+            // The final primary sell must fail confirmation: its close is
+            // above the two-bar lookback close, producing a buy confirmation.
+            { time: 300 as Time, open: 8.5, high: 14, low: 7, close: 13, volume: 1000 },
         ];
         const primaryStrategy: Strategy = {
             name: "Confirmation Executor Test",
@@ -383,7 +385,9 @@ describe("backtest executor", () => {
             },
             capitalSettings: defaultCapital,
             context: {
-                nowSec: 10,
+                // Keep every 1m candle closed; this case tests confirmation
+                // behavior rather than the executor's open-candle filter.
+                nowSec: 600,
                 blockRange: null,
                 engineMode: "typescript",
             },
@@ -392,8 +396,8 @@ describe("backtest executor", () => {
         assert.deepStrictEqual(
             result.signals.map((signal) => [signal.time, signal.type]),
             [
-                [3 as Time, "buy"],
-                [4 as Time, "sell"],
+                [180 as Time, "buy"],
+                [240 as Time, "sell"],
             ]
         );
     });

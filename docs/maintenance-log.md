@@ -4,6 +4,27 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-01 - Repair endpoint parity confirmation fixture
+
+- **Evidence:** The confirmation agreement test used 1m candle timestamps at
+  seconds 1-5 with `nowSec: 10`. The executor filtered those still-open candles,
+  leaving the strategy without the data its second-bar check reads. After
+  fixing the timestamps, the final primary sell also passed confirmation, so
+  the old expected signals did not describe the fixture.
+- **Change:** Moved the fixture candles to 60-second boundaries, advanced the
+  cutoff to keep all candles closed, and adjusted the final close so the final
+  primary sell fails the intended confirmation check. The spec now exercises
+  signal agreement instead of failing in setup.
+- **Checks:** `npm run test -- backtest-endpoint-parity.spec.ts`,
+  `npm run typecheck`, and `git diff --check` pass. `npm run typecheck:tests`
+  still fails on the unrelated missing `__testInternals.setTradeGateArchiveRootForTests`
+  member in `tests/trade-gate.spec.ts`. The full suite reports 240 passed and
+  9 failed out of 249 selected specs.
+- **Follow-up:** Triage the remaining full-suite failures in Finder asset
+  opportunity cache/metadata, Finder export diagnostics, Finder server plugin,
+  pair-list pool registry, strategy manifest sync, Trade Gate, and trade-ledger
+  checker/parity specs.
+
 ## 2026-10-01 - Keep pair-feature source pins portable across Windows
 
 - **Evidence:** The full suite reported implementation digest mismatches for
@@ -17,9 +38,8 @@ repeating the same investigation.
 - **Checks:** All 9 `pair-feature` specs, `npm run typecheck`,
   `npm run typecheck:tests`, and `git diff --check` pass. The full suite improved
   from 239/254 passing to 246/254; 8 non-pair-feature specs still fail.
-- **Follow-up:** Triage the remaining full-suite failures in endpoint parity,
-  Finder opportunity, pair-list pool, strategy manifest, and trade-ledger parity
-  specs at the next maintenance run.
+- **Follow-up:** Endpoint parity's stale fixture is corrected in the newer
+  entry; other suite failures are listed there for continued triage.
 
 ## 2026-10-01 - Make replay event bucketing responsive to Stop
 
