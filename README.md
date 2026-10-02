@@ -297,6 +297,15 @@ npm run test:e2e
 `npm run test` uses a compact wrapper that discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec, and writes full per-spec logs to `artifacts/test-logs/latest`. `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
 `npm run verify` runs typecheck, staged test typecheck, and the compact test suite.
 
+GitHub Actions checks out this app at the repository root and installs from this
+directory's `package-lock.json` with `npm ci`. Its jobs run `npm run verify`,
+the Rust format/test/clippy checks under `rust-engine/`, and `npm run test:e2e`.
+Puppeteer installs the browser used by the smoke test, which uses a desktop
+viewport and the app's built-in mock symbols to check data loading, symbol and
+interval switching, configuration saving, and layout without live exchange
+access. When working inside the larger `debug/playground/` workspace, also
+update the workspace lockfile when changing dependencies.
+
 Useful variants:
 ```bash
 npm run test:verbose

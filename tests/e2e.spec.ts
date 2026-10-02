@@ -54,6 +54,7 @@ const waitForCondition = async (page: Page, fn: () => boolean, timeoutMs: number
     try {
         await page.waitForFunction(fn, { timeout: timeoutMs });
     } catch (error) {
+        await logDebugSnapshot(page, label);
         throw new Error(`Timeout waiting for ${label}`);
     }
 };
@@ -227,6 +228,17 @@ async function runTest() {
             });
 
             const page = await browser.newPage();
+            await page.setViewport({ width: 1440, height: 1000 });
+
+            // Use the app's generated data so the smoke test can run without
+            // exchange connectivity, credentials, or a local price-data cache.
+            await page.evaluateOnNewDocument(() => {
+                localStorage.setItem('playground_app_settings', JSON.stringify({
+                    schema: 'settings.app',
+                    version: 1,
+                    data: { currentSymbol: 'MOCK_STOCK', currentInterval: '1d' },
+                }));
+            });
 
             const errors: string[] = [];
 
@@ -317,19 +329,20 @@ async function runTest() {
                 'initial OHLCV data'
             );
 
-            console.log('Switching symbol to BTCUSDT...');
+            console.log('Switching symbol to MOCK_CRYPTO...');
             await page.click('#symbolSelector');
             await page.waitForSelector('#symbolDropdown.active', { timeout: 5000 });
-            await page.click('#symbolDropdown [data-symbol="BTCUSDT"]');
+            await page.waitForSelector('#symbolDropdown [data-symbol="MOCK_CRYPTO"]', { visible: true, timeout: 5000 });
+            await page.click('#symbolDropdown [data-symbol="MOCK_CRYPTO"]');
 
             await waitForCondition(
                 page,
                 () => {
                     const state = (window as any).__state;
-                    return state && state.currentSymbol === 'BTCUSDT';
+                    return state && state.currentSymbol === 'MOCK_CRYPTO';
                 },
                 15000,
-                'symbol switch to BTCUSDT'
+                'symbol switch to MOCK_CRYPTO'
             );
 
             await waitForCondition(
@@ -340,11 +353,11 @@ async function runTest() {
                     return debug.getEntries().some((entry: any) =>
                         entry.message === 'data.apply' &&
                         entry.data &&
-                        entry.data.symbol === 'BTCUSDT'
+                        entry.data.symbol === 'MOCK_CRYPTO'
                     );
                 },
                 15000,
-                'BTCUSDT data load'
+                'MOCK_CRYPTO data load'
             );
 
             console.log('Switching interval to 4h...');
@@ -368,7 +381,7 @@ async function runTest() {
                     return debug.getEntries().some((entry: any) =>
                         entry.message === 'data.apply' &&
                         entry.data &&
-                        entry.data.symbol === 'BTCUSDT' &&
+                        entry.data.symbol === 'MOCK_CRYPTO' &&
                         entry.data.interval === '4h'
                     );
                 },
