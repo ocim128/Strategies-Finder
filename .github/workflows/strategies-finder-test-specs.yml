@@ -10,17 +10,35 @@ permissions:
 jobs:
   unit:
     name: Typecheck and test specs
-    runs-on: ubuntu-latest
+    # Feature-pack releases record the exact runtime used for generation.
+    # Keep this aligned with lib/pair-features/releases/v*.json.
+    runs-on: windows-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.16.0
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run verify
+      - name: Show failed spec logs
+        if: failure()
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const summaryPath = 'artifacts/test-logs/latest/summary.json';
+          if (fs.existsSync(summaryPath)) {
+            const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
+            for (const result of summary.results.filter(result => result.status === 'FAIL')) {
+              console.log(`::group::${result.file}`);
+              console.log(fs.readFileSync(result.logFile, 'utf8'));
+              console.log('::endgroup::');
+            }
+          }
+          NODE
 
   rust:
     name: Rust engine format and tests

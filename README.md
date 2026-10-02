@@ -300,6 +300,9 @@ npm run test:e2e
 GitHub Actions checks out this app at the repository root and installs from this
 directory's `package-lock.json` with `npm ci`. Its jobs run `npm run verify`,
 the Rust format/test/clippy checks under `rust-engine/`, and `npm run test:e2e`.
+The full spec suite runs on Windows x64 with Node 22.16.0 to match the immutable
+runtime fingerprints in `lib/pair-features/releases/v*.json`; feature generation
+rejects other runtimes by design. Rust and browser checks run on Linux.
 Puppeteer installs the browser used by the smoke test, which uses a desktop
 viewport and the app's built-in mock symbols to check data loading, symbol and
 interval switching, configuration saving, and layout without live exchange

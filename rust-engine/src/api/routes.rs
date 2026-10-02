@@ -268,7 +268,7 @@ fn decode_packed_ohlcv(values: Vec<f64>) -> Result<Vec<OHLCV>, String> {
         return Err("Packed OHLCV data length must be divisible by 6".to_string());
     }
     let mut data = Vec::with_capacity(values.len() / 6);
-    for row in values.chunks_exact(6) {
+    for row in values.as_chunks::<6>().0 {
         if !row.iter().all(|value| value.is_finite()) {
             return Err("Packed OHLCV data contains a non-finite value".to_string());
         }

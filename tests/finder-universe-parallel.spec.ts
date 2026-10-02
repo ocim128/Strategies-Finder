@@ -30,6 +30,7 @@
 
 import { expect } from "chai";
 import { describe, it, before, after, afterEach } from "node:test";
+import { availableParallelism } from "node:os";
 import { strategyRegistry } from "../strategyRegistry";
 import { processFinderUniverseRun, __testInternals } from "../lib/finder/server/finder-vite-plugin";
 import {
@@ -468,6 +469,7 @@ describe("finder universe parallel strategy sweep", () => {
     });
 
     it("resolves the worker count from env override, strategy count, cores, and the memory ceiling", () => {
+        const cpuCeiling = Math.max(1, availableParallelism() - 2);
         // Env override wins outright, bypasses the memory ceiling (operator
         // judgment call), and clamps at the hard cap.
         expect(resolveUniverseStrategyWorkerCount(3, 10, { [FINDER_UNIVERSE_WORKERS_ENV]: "2" }, 16 * GIB)).to.equal(2);
@@ -482,7 +484,7 @@ describe("finder universe parallel strategy sweep", () => {
         // symbols on a 64 GB host -> 4
         // workers, but only 1 on a 16 GB host (the documented heap-guidance
         // host must not auto-OOM).
-        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB)).to.equal(4);
+        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB)).to.equal(Math.min(4, cpuCeiling));
         expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 16 * GIB)).to.equal(1);
         // The Rust HTTP server serializes: the AUTO pool is capped (never the
         // env override).
@@ -497,11 +499,11 @@ describe("finder universe parallel strategy sweep", () => {
         const worstCase = resolveUniverseStrategyWorkerCount(45, 3092, {}, 64 * GIB);
         expect(worstCase).to.equal(1);
         const bounded = resolveUniverseStrategyWorkerCount(45, 3092, {}, 64 * GIB, { maxBarsPerSymbol: 13152 });
-        expect(bounded).to.be.at.least(2);
+        expect(bounded).to.be.at.least(Math.min(2, cpuCeiling));
         expect(bounded).to.be.at.most(13);
         // A hint at the full bar cap must not move the ceiling: 45 strategies,
         // 1000 symbols on 64 GB stays at the worst-case answer of 4.
-        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB, { maxBarsPerSymbol: 100_000 })).to.equal(4);
+        expect(resolveUniverseStrategyWorkerCount(45, 1000, {}, 64 * GIB, { maxBarsPerSymbol: 100_000 })).to.equal(Math.min(4, cpuCeiling));
         // The env override still wins over any hint (and over the Rust cap).
         expect(resolveUniverseStrategyWorkerCount(45, 3092, { [FINDER_UNIVERSE_WORKERS_ENV]: "3" }, 16 * GIB, { rustEngine: true, maxBarsPerSymbol: 13152 })).to.equal(3);
     });

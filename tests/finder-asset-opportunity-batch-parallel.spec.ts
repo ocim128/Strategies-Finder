@@ -252,33 +252,41 @@ async function runAssetBatch(
     const appended: string[] = [];
     const contents: string[] = [];
     setRunOwnerForTests(args.owner);
-    await processFinderAssetOpportunityBatchRun(
-        {
-            runId: args.runId,
-            interval: "5m",
-            symbols,
-            options: makeBatchOptions(symbols, args.optionsOverrides),
-            settings,
-            capitalSettings,
-            selectedStrategies: [{ key: STRATEGY_KEY, name: batchStrategy.name, strategy: batchStrategy }],
-            useRustEnginePreference: false,
-            loadDataset: args.loadDataset ?? (async (symbol) => datasets.get(symbol) ?? []),
-            abortSignal: new AbortController().signal,
-            candidatePoolSize: 2,
-            minFreshSupport: 1,
-            archiveSort: null,
-            runLog: args.runLog ?? null,
-            batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
-            ...(args.factory ? { batchTaskRunnerFactory: args.factory } : {}),
-        },
-        (event) => events.push(event),
-        args.owner,
-        `/virtual/archive-root-${args.owner}`,
-        async (_dir, filename, content) => {
-            appended.push(filename);
-            contents.push(content);
-        },
-    );
+    const previousWorkerCount = process.env[FINDER_ASSET_BATCH_WORKERS_ENV];
+    // These fake-runner cases must exercise the pool even on a two-core host.
+    if (args.factory) process.env[FINDER_ASSET_BATCH_WORKERS_ENV] = "3";
+    try {
+        await processFinderAssetOpportunityBatchRun(
+            {
+                runId: args.runId,
+                interval: "5m",
+                symbols,
+                options: makeBatchOptions(symbols, args.optionsOverrides),
+                settings,
+                capitalSettings,
+                selectedStrategies: [{ key: STRATEGY_KEY, name: batchStrategy.name, strategy: batchStrategy }],
+                useRustEnginePreference: false,
+                loadDataset: args.loadDataset ?? (async (symbol) => datasets.get(symbol) ?? []),
+                abortSignal: new AbortController().signal,
+                candidatePoolSize: 2,
+                minFreshSupport: 1,
+                archiveSort: null,
+                runLog: args.runLog ?? null,
+                batch: { startHoldoutBars: args.start, endHoldoutBars: args.end },
+                ...(args.factory ? { batchTaskRunnerFactory: args.factory } : {}),
+            },
+            (event) => events.push(event),
+            args.owner,
+            `/virtual/archive-root-${args.owner}`,
+            async (_dir, filename, content) => {
+                appended.push(filename);
+                contents.push(content);
+            },
+        );
+    } finally {
+        if (previousWorkerCount === undefined) delete process.env[FINDER_ASSET_BATCH_WORKERS_ENV];
+        else process.env[FINDER_ASSET_BATCH_WORKERS_ENV] = previousWorkerCount;
+    }
     return { events, appended, contents };
 }
 
@@ -334,6 +342,7 @@ describe("finder Asset Opportunity batch parallel execution", () => {
     });
 
     it("resolves the worker count from env override, holdout count, cores, and the system-memory ceiling", () => {
+        const cpuCeiling = Math.max(1, availableParallelism() - 2);
         // Env override wins outright, bypasses the memory ceiling (operator
         // judgment call), and clamps at the hard cap.
         expect(resolveAssetOpportunityBatchWorkerCount(3, 10, { [FINDER_ASSET_BATCH_WORKERS_ENV]: "2" }, 16 * GIB)).to.equal(2);
@@ -349,12 +358,12 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         // symbols on a 64 GB host -> 4
         // workers, but only 1 on a 16 GB host (the documented heap-guidance
         // host must not auto-OOM).
-        expect(resolveAssetOpportunityBatchWorkerCount(41, 1000, {}, 64 * GIB)).to.equal(4);
+        expect(resolveAssetOpportunityBatchWorkerCount(41, 1000, {}, 64 * GIB)).to.equal(Math.min(4, cpuCeiling));
         expect(resolveAssetOpportunityBatchWorkerCount(41, 1000, {}, 16 * GIB)).to.equal(1);
         // Few symbols: the memory ceiling stops binding; cores/holdouts clamp.
         expect(resolveAssetOpportunityBatchWorkerCount(2, 10, {}, 16 * GIB)).to.be.at.most(2);
         // Chunked batches size the same policy from the expanded task count.
-        expect(resolveAssetOpportunityBatchWorkerCount(2, 1000, {}, 64 * GIB, { taskCount: 8 })).to.equal(4);
+        expect(resolveAssetOpportunityBatchWorkerCount(2, 1000, {}, 64 * GIB, { taskCount: 8 })).to.equal(Math.min(4, cpuCeiling));
     });
 
     it("reserves each worker's signal-cache budget in the automatic memory ceiling", () => {
@@ -434,7 +443,9 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(chunkCount).to.be.greaterThan(1);
         expect(started).to.have.length(chunkCount * 2);
         for (const holdout of [2, 3]) {
-            const holdoutTasks = started.filter(({ task }) => task.holdoutBars === holdout).map(({ task }) => task);
+            const holdoutTasks = started.filter(({ task }) => task.holdoutBars === holdout)
+                .map(({ task }) => task)
+                .sort((left, right) => left.assetChunkIndex! - right.assetChunkIndex!);
             expect(holdoutTasks).to.have.length(chunkCount);
             expect(holdoutTasks.flatMap((task) => task.symbols)).to.deep.equal([...datasets.keys()]);
         }
