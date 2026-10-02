@@ -47,6 +47,7 @@ import {
 import type { BatchDatasetCacheStats } from "../batch-dataset-loader-core";
 import type { BatchBacktestPerformance, BatchStatusResponse, BatchStreamEvent } from "../batch-backtest-stream-types";
 import { ReattachBackoffController } from "../reattach-backoff";
+import { requestBatchControl } from "./batch-control-request";
 import type { StrategyParams, BacktestSettings } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
@@ -81,6 +82,8 @@ export class BatchRunController {
     };
 
     private cancelled = false;
+    private readonly controlAbort = new AbortController();
+    private reattachAbort: AbortController | null = null;
     private lastResults: BatchBacktestSymbolResult[] = [];
     private batchResultSort: BatchResultSortState | null = null;
     private lastRunFingerprint: string | null = null;
@@ -695,18 +698,17 @@ export class BatchRunController {
             previousCursor = cursor;
 
             const scopeQuery = scopeRunId ? `&runId=${encodeURIComponent(scopeRunId)}` : "";
-            const response = await fetch(
+            const payload = await requestBatchControl(
                 `/api/batch-backtest/status?after=${cursor}&limit=${limit}${scopeQuery}`,
                 { cache: "no-store" },
-            );
-            if (!response.ok) return;
-            if (options.stopWhenPollingStopped && this.reattachPollingStopped) return;
-
-            const payload = parseJsonPreservingNonFinite(await response.text()) as {
+                async (response) => response.ok ? parseJsonPreservingNonFinite(await response.text()) : null,
+                { signal: options.stopWhenPollingStopped ? this.reattachAbort?.signal : this.controlAbort.signal },
+            ) as {
                 runMismatch?: boolean;
                 run?: BatchStatusRowsPage | null;
                 lastRun?: BatchStatusRowsPage | null;
-            };
+            } | null;
+            if (!payload) return;
             if (options.stopWhenPollingStopped && this.reattachPollingStopped) return;
             if (payload.runMismatch) return;
             const page = pageKey === "run" ? payload.run : payload.lastRun;
@@ -735,14 +737,14 @@ export class BatchRunController {
             // is not adopted by mistake. The helper returns `runMismatch` when
             // the server's retained run is no longer the one this tab started.
             const scopeRunId = this.activeServerRunId ?? undefined;
-            const firstResponse = await fetch(
+            const firstPayload = await requestBatchControl(
                 scopeRunId
                     ? `/api/batch-backtest/status?runId=${encodeURIComponent(scopeRunId)}`
                     : "/api/batch-backtest/status",
                 { cache: "no-store" },
-            );
-            if (!firstResponse.ok) return null;
-            const firstPayload = await firstResponse.json() as {
+                async (response) => response.ok ? response.json() : null,
+                { signal: this.controlAbort.signal },
+            ) as {
                 running?: boolean;
                 runMismatch?: boolean;
                 lastRun?: {
@@ -757,7 +759,8 @@ export class BatchRunController {
                     nextOffset?: number | null;
                     runId?: string;
                 } | null;
-            };
+            } | null;
+            if (!firstPayload) return null;
             // Audit runId-scoping finding: the server confirmed the retained
             // run is no longer ours. Treat as not-adoptable so the caller
             // surfaces the original stream error instead of partial recovery.
@@ -1041,13 +1044,15 @@ export class BatchRunController {
             // Stop to THIS run. A stale tab's mismatched id is rejected
             // without mutating the active run's ownership.
             const runId = this.activeServerRunId;
-            const response = await fetch("/api/batch-backtest/stop", {
+            const { ok, payload } = await requestBatchControl("/api/batch-backtest/stop", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(runId ? { runId } : {}),
-            });
-            const payload = await response.json().catch(() => null) as { ok?: boolean } | null;
-            if (response.ok && payload?.ok && runId) this.clearActiveServerRun(runId);
+            }, async (response) => ({
+                ok: response.ok,
+                payload: await response.json().catch(() => null) as { ok?: boolean } | null,
+            }), { signal: this.controlAbort.signal });
+            if (ok && payload?.ok && runId) this.clearActiveServerRun(runId);
         } catch (error) {
             debugLogger.warn("batch.server.stop_failed", {
                 error: error instanceof Error ? error.message : String(error),
@@ -1062,6 +1067,8 @@ export class BatchRunController {
 
     private stopReattachPoll(): void {
         this.reattachPollingStopped = true;
+        this.reattachAbort?.abort();
+        this.reattachAbort = null;
         if (this.reattachTimer) {
             clearTimeout(this.reattachTimer);
             this.reattachTimer = null;
@@ -1214,6 +1221,7 @@ export class BatchRunController {
         // Audit Finding 1: the consecutive-failure backoff + give-up threshold
         // live in the shared ReattachBackoffController (reattach-backoff.ts).
         this.reattachPollingStopped = false;
+        this.reattachAbort = new AbortController();
         this.reattachBackoff.reset();
         // A persisted run id means this tab already owns a reattach window;
         // scope the initial busy UI to that case. With no id, the first poll is
@@ -1250,15 +1258,204 @@ export class BatchRunController {
                     const initialRunId = this.activeServerRunId
                         ? `&runId=${encodeURIComponent(this.activeServerRunId)}`
                         : "";
-                    const response = await fetch(`/api/batch-backtest/status?after=${this.lastResults.length}${initialRunId}`, { cache: "no-store" });
-                    // Audit Finding 4: a non-2xx status is a transient failure,
-                    // not a parseable payload — treat it the same as a thrown
-                    // fetch so the backoff path engages instead of crashing on
-                    // `await response.json()` of an error body.
-                    if (!response.ok) {
-                        throw new Error(`status ${response.status}`);
+                    payload = await requestBatchControl(
+                        `/api/batch-backtest/status?after=${this.lastResults.length}${initialRunId}`,
+                        { cache: "no-store" },
+                        async (response) => {
+                            if (!response.ok) throw new Error(`status ${response.status}`);
+                            return parseJsonPreservingNonFinite(await response.text()) as BatchStatusResponse;
+                        },
+                        { signal: this.reattachAbort.signal },
+                    );
+                    // Audit runId-scoping finding: server confirmed the retained
+                    // run is no longer ours. Stop polling without adopting another
+                    // tab's snapshot. Keep the already-rendered rows in place.
+                    if (payload.runMismatch) {
+                        if (!this.reattachPollingStopped) {
+                            const dom = this.deps.getDom();
+                            dom.batchBacktestRunBtn.disabled = false;
+                            setVisible(dom.batchBacktestStopBtn, false);
+                            this.setRunBusy(dom, false);
+                            this.updateSummary(dom);
+                            dom.batchBacktestStatus.textContent = "Batch run was replaced by a newer run — click Run to start over.";
+                        }
+                        // A mismatch is authoritative server-side loss/replacement;
+                        // clear this tab's persisted ownership after restoring the
+                        // controls so a reload does not retry a dead run id.
+                        const staleRunId = this.activeServerRunId;
+                        if (staleRunId) this.clearActiveServerRun(staleRunId);
+                        // setRunBusy(false) above rendered the buttons while
+                        // serverRunActive was still true; clearActiveServerRun
+                        // then dropped the flag without a re-render.
+                        if (!this.reattachPollingStopped) {
+                            this.updateBalancedGeneratorButtons(this.deps.getDom());
+                        }
+                        return;
                     }
-                    payload = parseJsonPreservingNonFinite(await response.text()) as typeof payload;
+                    if (!payload.running || !payload.run) {
+                        const terminalRunId = payload.lastRun?.runId;
+                        if (
+                            this.activeServerRunId
+                            && terminalRunId
+                            && terminalRunId !== this.activeServerRunId
+                        ) {
+                            // This tab owns a different run. Do not adopt or render
+                            // another tab's terminal snapshot.
+                            return;
+                        }
+                        if (terminalRunId && !this.activeServerRunId) {
+                            this.activeServerRunId = terminalRunId;
+                        }
+                        // Adopt any leftover server-side artifacts (OPEN_SCORE USD
+                        // can still run against the prior run if it hasn't TTL'd).
+                        if (
+                            payload.lastRun
+                            && payload.lastRun.hasArtifacts
+                            && payload.lastRun.fingerprint
+                            && (this.lastRunFingerprint === null || this.lastRunFingerprint === payload.lastRun.fingerprint)
+                        ) {
+                            this.serverHasArtifacts = true;
+                            this.lastRunFingerprint = payload.lastRun.fingerprint;
+                            this.lastRunInterval = payload.lastRun.interval ?? null;
+                            // Adopt the governing strategy so Mine provenance survives
+                            // a tab reload (audit finding 5). The server already
+                            // emits `lastRun.strategyKey`; previously it was dropped
+                            // here, so Mine fell back to the current UI strategy.
+                            if (typeof payload.lastRun.strategyKey === "string" && payload.lastRun.strategyKey) {
+                                this.lastRunStrategyKey = payload.lastRun.strategyKey;
+                            }
+                            // Adopt the server-side cache counters so a tab-reload
+                            // reattach still produces a useful benchmark snapshot
+                            // (mirrors `recoverCompletedServerRun`'s handling).
+                            this.pendingServerRunCacheStats = payload.lastRun.cacheStats
+                                ? buildCacheStatsFromLoader(payload.lastRun.cacheStats)
+                                : null;
+                            // Audit status-row-recovery finding: drain the terminal
+                            // snapshot's rows via the shared helper. Previously a
+                            // tab that reloaded AFTER the run completed would see
+                            // `hasArtifacts` but no rows and no Copy output. The
+                            // helper dedupes by absolute index so a partial earlier
+                            // render is preserved and only the gap is filled.
+                            const dom = this.deps.getDom();
+                            await this.drainStatusRows(
+                                dom,
+                                payload.lastRun,
+                                terminalRunId,
+                                "lastRun",
+                                {
+                                    limit: 250,
+                                    maxRows: Math.min(10_000, payload.lastRun.rowCount ?? payload.lastRun.rows?.length ?? 0),
+                                    stopWhenPollingStopped: true,
+                                },
+                            );
+                            if (this.lastResults.length > 0) {
+                                this.saveLatestResultsSnapshot();
+                            }
+                            // The browser does not have the per-row scalars for the
+                            // prior run (the tab reloaded), but OPEN_SCORE USD can
+                            // still consume retained artifacts before their TTL
+                            // expires.
+                            this.updateArtifactActionButtons(dom);
+                        } else {
+                            if (this.lastResults.length > 0) {
+                                this.saveLatestResultsSnapshot();
+                            }
+                        }
+                        if (payload.lastRun?.phase === "fatal") {
+                            this.deps.getDom().batchBacktestStatus.textContent =
+                                `Server Batch failed: ${payload.lastRun.error ?? payload.lastRun.summary ?? "Unknown error"}`;
+                        } else if (payload.lastRun?.summary) {
+                            this.deps.getDom().batchBacktestStatus.textContent = payload.lastRun.summary;
+                        }
+                        this.serverRunActive = false;
+                        if (terminalRunId) this.clearActiveServerRun(terminalRunId, false);
+                        // Only restore Run/Stop/busy if reattach is still the active
+                        // task. A user clicking Run while this fetch was in-flight
+                        // calls stopReattachPoll(); in that case the user's Run owns
+                        // the button/busy state now and we must not clobber it. The
+                        // loop-top check does not cover the await above, so guard
+                        // the DOM writes explicitly.
+                        if (!this.reattachPollingStopped) {
+                            const dom = this.deps.getDom();
+                            dom.batchBacktestRunBtn.disabled = false;
+                            setVisible(dom.batchBacktestStopBtn, false);
+                            this.setRunBusy(dom, false);
+                            this.updateSummary(dom);
+                        }
+                        return;
+                    }
+                    const run = payload.run;
+                    if (
+                        this.activeServerRunId
+                        && run.runId
+                        && run.runId !== this.activeServerRunId
+                    ) {
+                        // A persisted id from this tab does not own the server's
+                        // current run; leave the other run untouched.
+                        return;
+                    }
+                    if (run.runId && !this.activeServerRunId) {
+                        this.activeServerRunId = run.runId;
+                        this.persistActiveServerRun(run.runId);
+                    }
+                    this.serverRunActive = true;
+                    this.serverHasArtifacts = false; // still running; Mine not yet available.
+                    // Adopt the in-progress run's governing strategy so Mine
+                    // provenance is correct even on the very first reattach tick
+                    // (audit finding 5). `run.strategyKey` is always present while
+                    // a run is active.
+                    if (typeof run.strategyKey === "string" && run.strategyKey) {
+                        this.lastRunStrategyKey = run.strategyKey;
+                    }
+                    const dom = this.deps.getDom();
+                    dom.batchBacktestRunBtn.disabled = true;
+                    setVisible(dom.batchBacktestStopBtn, true);
+                    this.setRunBusy(dom, true);
+                    const rowOffset = Math.max(0, Math.floor(Number(run.rowOffset ?? 0)));
+                    if (rowOffset === 0 && this.lastResults.length === 0 && run.rows.length > 0) {
+                        dom.batchBacktestResults.replaceChildren();
+                    }
+                    // Audit status-row-recovery finding: drain pages via the shared
+                    // `reconcileStatusRows` helper (the same one recovery and
+                    // terminal reattach use). The helper dedupes by absolute index
+                    // and is the single place that pushes to `lastResults` + DOM,
+                    // so any page boundary is safe. Paged responses are scoped to
+                    // the active run id so a newer run started mid-drain cannot
+                    // contaminate this tab's row list.
+                    await this.drainStatusRows(
+                        dom,
+                        run,
+                        this.activeServerRunId ?? undefined,
+                        "run",
+                        {
+                            limit: 250,
+                            maxRows: run.rowCount,
+                            stopWhenPollingStopped: true,
+                        },
+                    );
+                    // `run.completed` already counts every attempted (non-skipped)
+                    // row, including failures — adding `run.failed` double-counts
+                    // them and lets progress exceed the total (e.g. 11/10). The
+                    // server sets `snapshot.completed = attemptedSymbols`, where
+                    // attemptedSymbols = successes + failures (audit Finding 4).
+                    if (this.reattachPollingStopped) return;
+                    this.reattachBackoff.recordSuccess();
+                    const seen = run.completed;
+                    const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
+                    const label = `Server run ${seen}/${run.total}${current}`;
+                    dom.batchBacktestStatus.textContent = label;
+                    // Capture for the transient-failure branch so the
+                    // "connection interrupted" message can keep the last known
+                    // progress visible.
+                    lastRunLabel = label;
+                    this.setProgress(dom, run.total > 0 ? (seen / run.total) * 100 : 0, `${seen}/${run.total}`);
+                    const delay = poll < FAST_POLL_COUNT ? POLL_INTERVAL_MS : LONG_POLL_INTERVAL_MS;
+                    await new Promise<void>((resolve) => {
+                        this.reattachTimerResolve = resolve;
+                        this.reattachTimer = setTimeout(resolve, delay);
+                    });
+                    this.reattachTimer = null;
+                    this.reattachTimerResolve = null;
                 } catch (error) {
                     if (this.reattachPollingStopped) return;
                     const outcome = this.reattachBackoff.recordFailure();
@@ -1308,195 +1505,6 @@ export class BatchRunController {
                     poll -= 1;
                     continue;
                 }
-                // Successful poll: reset the transient-failure counter.
-                this.reattachBackoff.recordSuccess();
-                // Audit runId-scoping finding: server confirmed the retained
-                // run is no longer ours. Stop polling without adopting another
-                // tab's snapshot. Keep the already-rendered rows in place.
-                if (payload.runMismatch) {
-                    if (!this.reattachPollingStopped) {
-                        const dom = this.deps.getDom();
-                        dom.batchBacktestRunBtn.disabled = false;
-                        setVisible(dom.batchBacktestStopBtn, false);
-                        this.setRunBusy(dom, false);
-                        this.updateSummary(dom);
-                        dom.batchBacktestStatus.textContent = "Batch run was replaced by a newer run — click Run to start over.";
-                    }
-                    // A mismatch is authoritative server-side loss/replacement;
-                    // clear this tab's persisted ownership after restoring the
-                    // controls so a reload does not retry a dead run id.
-                    const staleRunId = this.activeServerRunId;
-                    if (staleRunId) this.clearActiveServerRun(staleRunId);
-                    // setRunBusy(false) above rendered the buttons while
-                    // serverRunActive was still true; clearActiveServerRun
-                    // then dropped the flag without a re-render.
-                    if (!this.reattachPollingStopped) {
-                        this.updateBalancedGeneratorButtons(this.deps.getDom());
-                    }
-                    return;
-                }
-                if (!payload.running || !payload.run) {
-                    const terminalRunId = payload.lastRun?.runId;
-                    if (
-                        this.activeServerRunId
-                        && terminalRunId
-                        && terminalRunId !== this.activeServerRunId
-                    ) {
-                        // This tab owns a different run. Do not adopt or render
-                        // another tab's terminal snapshot.
-                        return;
-                    }
-                    if (terminalRunId && !this.activeServerRunId) {
-                        this.activeServerRunId = terminalRunId;
-                    }
-                    // Adopt any leftover server-side artifacts (OPEN_SCORE USD
-                    // can still run against the prior run if it hasn't TTL'd).
-                    if (
-                        payload.lastRun
-                        && payload.lastRun.hasArtifacts
-                        && payload.lastRun.fingerprint
-                        && (this.lastRunFingerprint === null || this.lastRunFingerprint === payload.lastRun.fingerprint)
-                    ) {
-                        this.serverHasArtifacts = true;
-                        this.lastRunFingerprint = payload.lastRun.fingerprint;
-                        this.lastRunInterval = payload.lastRun.interval ?? null;
-                        // Adopt the governing strategy so Mine provenance survives
-                        // a tab reload (audit finding 5). The server already
-                        // emits `lastRun.strategyKey`; previously it was dropped
-                        // here, so Mine fell back to the current UI strategy.
-                        if (typeof payload.lastRun.strategyKey === "string" && payload.lastRun.strategyKey) {
-                            this.lastRunStrategyKey = payload.lastRun.strategyKey;
-                        }
-                        // Adopt the server-side cache counters so a tab-reload
-                        // reattach still produces a useful benchmark snapshot
-                        // (mirrors `recoverCompletedServerRun`'s handling).
-                        this.pendingServerRunCacheStats = payload.lastRun.cacheStats
-                            ? buildCacheStatsFromLoader(payload.lastRun.cacheStats)
-                            : null;
-                        // Audit status-row-recovery finding: drain the terminal
-                        // snapshot's rows via the shared helper. Previously a
-                        // tab that reloaded AFTER the run completed would see
-                        // `hasArtifacts` but no rows and no Copy output. The
-                        // helper dedupes by absolute index so a partial earlier
-                        // render is preserved and only the gap is filled.
-                        const dom = this.deps.getDom();
-                        await this.drainStatusRows(
-                            dom,
-                            payload.lastRun,
-                            terminalRunId,
-                            "lastRun",
-                            {
-                                limit: 250,
-                                maxRows: Math.min(10_000, payload.lastRun.rowCount ?? payload.lastRun.rows?.length ?? 0),
-                                stopWhenPollingStopped: true,
-                            },
-                        );
-                        if (this.lastResults.length > 0) {
-                            this.saveLatestResultsSnapshot();
-                        }
-                        // The browser does not have the per-row scalars for the
-                        // prior run (the tab reloaded), but OPEN_SCORE USD can
-                        // still consume retained artifacts before their TTL
-                        // expires.
-                        this.updateArtifactActionButtons(dom);
-                    } else {
-                        if (this.lastResults.length > 0) {
-                            this.saveLatestResultsSnapshot();
-                        }
-                    }
-                    if (payload.lastRun?.phase === "fatal") {
-                        this.deps.getDom().batchBacktestStatus.textContent =
-                            `Server Batch failed: ${payload.lastRun.error ?? payload.lastRun.summary ?? "Unknown error"}`;
-                    } else if (payload.lastRun?.summary) {
-                        this.deps.getDom().batchBacktestStatus.textContent = payload.lastRun.summary;
-                    }
-                    this.serverRunActive = false;
-                    if (terminalRunId) this.clearActiveServerRun(terminalRunId, false);
-                    // Only restore Run/Stop/busy if reattach is still the active
-                    // task. A user clicking Run while this fetch was in-flight
-                    // calls stopReattachPoll(); in that case the user's Run owns
-                    // the button/busy state now and we must not clobber it. The
-                    // loop-top check does not cover the await above, so guard
-                    // the DOM writes explicitly.
-                    if (!this.reattachPollingStopped) {
-                        const dom = this.deps.getDom();
-                        dom.batchBacktestRunBtn.disabled = false;
-                        setVisible(dom.batchBacktestStopBtn, false);
-                        this.setRunBusy(dom, false);
-                        this.updateSummary(dom);
-                    }
-                    return;
-                }
-                const run = payload.run;
-                if (
-                    this.activeServerRunId
-                    && run.runId
-                    && run.runId !== this.activeServerRunId
-                ) {
-                    // A persisted id from this tab does not own the server's
-                    // current run; leave the other run untouched.
-                    return;
-                }
-                if (run.runId && !this.activeServerRunId) {
-                    this.activeServerRunId = run.runId;
-                    this.persistActiveServerRun(run.runId);
-                }
-                this.serverRunActive = true;
-                this.serverHasArtifacts = false; // still running; Mine not yet available.
-                // Adopt the in-progress run's governing strategy so Mine
-                // provenance is correct even on the very first reattach tick
-                // (audit finding 5). `run.strategyKey` is always present while
-                // a run is active.
-                if (typeof run.strategyKey === "string" && run.strategyKey) {
-                    this.lastRunStrategyKey = run.strategyKey;
-                }
-                const dom = this.deps.getDom();
-                dom.batchBacktestRunBtn.disabled = true;
-                setVisible(dom.batchBacktestStopBtn, true);
-                this.setRunBusy(dom, true);
-                const rowOffset = Math.max(0, Math.floor(Number(run.rowOffset ?? 0)));
-                if (rowOffset === 0 && this.lastResults.length === 0 && run.rows.length > 0) {
-                    dom.batchBacktestResults.replaceChildren();
-                }
-                // Audit status-row-recovery finding: drain pages via the shared
-                // `reconcileStatusRows` helper (the same one recovery and
-                // terminal reattach use). The helper dedupes by absolute index
-                // and is the single place that pushes to `lastResults` + DOM,
-                // so any page boundary is safe. Paged responses are scoped to
-                // the active run id so a newer run started mid-drain cannot
-                // contaminate this tab's row list.
-                await this.drainStatusRows(
-                    dom,
-                    run,
-                    this.activeServerRunId ?? undefined,
-                    "run",
-                    {
-                        limit: 250,
-                        maxRows: run.rowCount,
-                        stopWhenPollingStopped: true,
-                    },
-                );
-                // `run.completed` already counts every attempted (non-skipped)
-                // row, including failures — adding `run.failed` double-counts
-                // them and lets progress exceed the total (e.g. 11/10). The
-                // server sets `snapshot.completed = attemptedSymbols`, where
-                // attemptedSymbols = successes + failures (audit Finding 4).
-                const seen = run.completed;
-                const current = run.currentSymbol ? ` — ${run.currentSymbol}` : "";
-                const label = `Server run ${seen}/${run.total}${current}`;
-                dom.batchBacktestStatus.textContent = label;
-                // Capture for the transient-failure branch so the
-                // "connection interrupted" message can keep the last known
-                // progress visible.
-                lastRunLabel = label;
-                this.setProgress(dom, run.total > 0 ? (seen / run.total) * 100 : 0, `${seen}/${run.total}`);
-                const delay = poll < FAST_POLL_COUNT ? POLL_INTERVAL_MS : LONG_POLL_INTERVAL_MS;
-                await new Promise<void>((resolve) => {
-                    this.reattachTimerResolve = resolve;
-                    this.reattachTimer = setTimeout(resolve, delay);
-                });
-                this.reattachTimer = null;
-                this.reattachTimerResolve = null;
             }
         } catch (error) {
             debugLogger.warn("batch.server.reattach_failed", {
@@ -1508,6 +1516,7 @@ export class BatchRunController {
     }
 
     public dispose(): void {
+        this.controlAbort.abort();
         this.stopReattachPoll();
         this.cancelLiveRenderRaf();
     }

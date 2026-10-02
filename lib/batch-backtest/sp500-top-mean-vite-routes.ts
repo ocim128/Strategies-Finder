@@ -45,6 +45,8 @@ import {
 } from "./sp500-top-mean-coordinator-engine";
 import { getRunDir, isValidRunId, loadManifest, saveManifest } from "./sp500-top-mean-artifact-store";
 import { normalizePersistedTopMeanResult } from "./sp500-top-mean-persisted-result";
+import { parseOptionalReplayDateWindow } from "./top-mean-date-window";
+import { debugLogger } from "../debug-logger";
 import { TOP_MEAN_RUN_MAX_BODY_BYTES, validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
 
 /**
@@ -227,27 +229,20 @@ async function handleSp500TopMeanRunRequest(
     req.selectionCooldownBars = limitCheck.value.selectionCooldownBars;
 
     // Optional decision-event date window for the phase-3 OPEN_SCORE USD
-    // replay. Mirrors handleOpenScoreUsdRequest's parseBodyDateSec: YYYY-MM-DD
+    // replay. Shares strict UTC validation with OPEN_SCORE USD: YYYY-MM-DD
     // parses as UTC midnight; sampleTo adds 24h-1s so the whole end day is
     // inclusive. Audit (date-window finding): blank still means "no filter"
     // (full history), but a NON-blank malformed date is a 400 — it used to
     // become "no filter" and silently trigger a full-history replay — and a
     // reversed From/To window is a 400 instead of an empty "successful"
     // report. Validated before the owner lock is acquired.
-    const parseBodyDateSec = (key: "sampleFrom" | "sampleTo", endOfDay = false): number | undefined => {
-        const raw = (body as Record<string, unknown>)[key];
-        if (typeof raw !== "string" || raw.trim() === "") return undefined;
-        const ms = Date.parse(raw);
-        if (!Number.isFinite(ms)) {
-            throw new HttpStatusError(400, `Invalid ${key} date: "${raw}".`);
-        }
-        return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
-    };
-    const sampleFromSec = parseBodyDateSec("sampleFrom", false);
-    const sampleToSec = parseBodyDateSec("sampleTo", true);
-    if (sampleFromSec !== undefined && sampleToSec !== undefined && sampleFromSec > sampleToSec) {
-        throw new HttpStatusError(400, "TOP_MEAN date window is reversed; sampleFrom must not be after sampleTo.");
+    let dateWindow: ReturnType<typeof parseOptionalReplayDateWindow>;
+    try {
+        dateWindow = parseOptionalReplayDateWindow(body as Record<string, unknown>);
+    } catch (error) {
+        throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
     }
+    const { sampleFromSec, sampleToSec } = dateWindow;
 
     const strategy = strategies[req.strategyKey];
     if (!strategy) {
@@ -309,6 +304,7 @@ export async function handleSp500TopMeanStopRequest(runId?: unknown, ownerLocks?
 export async function handleSp500TopMeanStatusRequest(
     runId?: string,
     baseDir?: string,
+    readResultFile: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
 ): Promise<TopMeanStatusResponse | { ok: false; error: string }> {
     const activeEngine = getActiveTopMeanCoordinatorEngine();
     if (activeEngine && (!runId || activeEngine.request.runId === runId)) {
@@ -348,13 +344,30 @@ export async function handleSp500TopMeanStatusRequest(
             // artifact I/O to fs/promises for the same reason.
             // Drop `existsSync` (TOCTOU); distinguish missing via ENOENT.
             let result: TopMeanResultSummary | null = null;
+            let resultError: string | undefined;
+            let failureKind: "io_error" | "invalid_json" | "invalid_shape" | "missing" = "io_error";
             const resultPath = join(getRunDir(runId, baseDir), "result.json");
             try {
-                const txt = await readFile(resultPath, "utf8");
-                try { result = normalizePersistedTopMeanResult(JSON.parse(txt), manifest); } catch { /* malformed result */ }
+                const txt = await readResultFile(resultPath);
+                failureKind = "invalid_json";
+                const parsed: unknown = JSON.parse(txt);
+                failureKind = "invalid_shape";
+                result = normalizePersistedTopMeanResult(parsed, manifest);
+                if (!result) throw new Error("Stored result has an invalid shape.");
             } catch (err: unknown) {
                 const code = (err as { code?: string })?.code;
-                if (code !== "ENOENT") { /* unexpected I/O — surface elsewhere */ }
+                if (code !== "ENOENT" || manifest.status === "completed") {
+                    if (code === "ENOENT") failureKind = "missing";
+                    resultError = failureKind === "missing"
+                        ? "Stored result is missing."
+                        : failureKind === "io_error"
+                            ? "Stored result could not be read."
+                            : "Stored result is invalid.";
+                    debugLogger.warn("sp500_top_mean.result_load_failed", {
+                        runId, filePath: resultPath, failureKind, code,
+                        error: err instanceof Error ? err.message : String(err),
+                    });
+                }
             }
             return {
                 runId: manifest.runId,
@@ -378,11 +391,9 @@ export async function handleSp500TopMeanStatusRequest(
                 archiveDir: manifest.archiveDir,
                 archiveError: manifest.archiveError,
                 error: manifest.error,
-            // Raw persisted replay fields must be normalized before applying
-            // the same wire cap used by the live done event.
-            result: result
-                ? toWireSafeTopMeanResultSummary(result)
-                : undefined,
+                resultError,
+                // Normalize persisted replay fields before applying the live wire cap.
+                result: result ? toWireSafeTopMeanResultSummary(result) : undefined,
             };
         }
     }

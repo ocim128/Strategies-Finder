@@ -1067,10 +1067,30 @@ describe("batch-backtest server plugin per-run ArtifactStore (audit follow-up R-
 
     it("store() before detach records the artifact normally", async () => {
         const store = new ArtifactStore();
-        await store.store(0, makeSyntheticRow());
-        expect(store.collectMetas().length).to.equal(1);
-        expect(store.dir).to.not.equal(null);
-        await store.flush();
+        const row = makeSyntheticRow();
+        row.result!.equityCurve = [{ time: row.data![0]!.time, value: 100 }];
+        try {
+            await store.store(0, row);
+            await store.flush();
+            expect(store.collectMetas().length).to.equal(1);
+            const artifact = await store.loadStored(store.collectMetas()[0]!);
+            expect(artifact.data).to.deep.equal([]);
+            expect(artifact.signals).to.deep.equal([]);
+            expect(artifact.result.equityCurve).to.deep.equal([]);
+            expect(artifact.result.trades).to.deep.equal(row.result!.trades);
+            expect(artifact.result.netProfit).to.equal(row.result!.netProfit);
+            expect(artifact.baseAsset).to.equal("BTC");
+            expect(artifact.quoteAsset).to.equal("ETH");
+            expect(row.data).to.have.length(5);
+            expect(row.signals).to.have.length(1);
+            expect(row.result!.equityCurve).to.have.length(1, "source result remains intact");
+        } finally {
+            const detached = store.detach();
+            if (detached.dir) {
+                assert.ok(detached.dir.startsWith(path.join(tmpdir(), MINE_ARTIFACT_DIR_PREFIX_FOR_TESTS)));
+                rmSync(detached.dir, { recursive: true, force: true });
+            }
+        }
     });
 
     it("does not advertise an artifact when its disk write fails", async () => {
@@ -1724,6 +1744,25 @@ describe("batch-backtest server plugin open-score-usd route-level authorization"
         const parsed = JSON.parse(res.body);
         expect(parsed.ok).to.equal(false);
         expect(String(parsed.error)).to.include("sampleFrom");
+    });
+
+    it("rejects impossible, wrongly typed, and reversed replay dates before ownership", async () => {
+        const handler = captureBatchRoutes().get("/api/batch-backtest/open-score-usd")!;
+        for (const dates of [
+            { sampleFrom: "2024-02-30" }, { sampleTo: "2024-02-30" },
+            { sampleFrom: 123 }, { sampleTo: {} }, { sampleFrom: [] },
+            { sampleFrom: "2024-03-01", sampleTo: "2024-02-29" },
+        ]) {
+            const req = Readable.from([JSON.stringify({ ...dates, horizons: [12] })]) as any;
+            req.method = "POST";
+            req.url = "/api/batch-backtest/open-score-usd";
+            req.headers = { "content-type": "application/json", host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" };
+            req.socket = { remoteAddress: "127.0.0.1" };
+            const res = makeRouteResponse();
+            await handler(req, res);
+            expect(res.statusCode).to.equal(400);
+            expect(JSON.parse(res.body).error).to.match(/date|reversed/);
+        }
     });
 
     it("rejects an unknown capTiltWeight with 400 before any run starts", async () => {

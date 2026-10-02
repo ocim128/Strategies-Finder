@@ -57,6 +57,7 @@ import {
 } from "../ibkr-data/marketcap-preflight";
 import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight } from "./cap-tilt-contract";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
+import { parseOptionalReplayDateWindow } from "./top-mean-date-window";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
 import { getActiveTopMeanCoordinatorEngine } from "./sp500-top-mean-coordinator-engine";
 import { isValidRunId, reconcileInterruptedManifestsOnStartup } from "./sp500-top-mean-artifact-store";
@@ -345,9 +346,12 @@ export class ArtifactStore {
             quoteAsset: parsed.quoteAsset,
             baseSymbol: parsed.baseSymbol,
             quoteSymbol: parsed.quoteSymbol,
-            data: row.data,
-            signals: row.signals,
-            result: row.result,
+            // OPEN_SCORE reconstructs votes from trades and net profit.
+            // Keep the interface and complete trades, without serializing
+            // candle/signal/equity arrays that have no remaining route consumer.
+            data: [],
+            signals: [],
+            result: { ...row.result, equityCurve: [] },
         };
         this.metas[index] = {
             symbol: row.symbol,
@@ -1843,24 +1847,14 @@ async function handleOpenScoreUsdRequest(res: ViteHttpResponse, body: Record<str
     // Validate client input first — a malformed date or oversized horizons
     // array is a 400 regardless of server state, and surfacing it before the
     // artifacts/owner guards keeps the error actionable (audit Finding 6).
-    const parseBodyDateSec = (key: string, endOfDay = false): number | null => {
-        const raw = body[key];
-        if (typeof raw !== "string" || raw.trim() === "") return null;
-        // YYYY-MM-DD parses as UTC midnight. For "sampleFrom" that's fine; for
-        // "sampleTo" we add 24h-1s so the entire selected day is included
-        // (otherwise most of the chosen day's events were excluded).
-        const ms = Date.parse(raw);
-        // Distinguish absent (no filter) from malformed. A typo'd non-empty
-        // date previously became `null` (= "no filter") and silently triggered
-        // a full-window replay, producing a misleading report. Reject it as a
-        // 400 so the caller sees an actionable error instead (audit Finding 6).
-        if (!Number.isFinite(ms)) {
-            throw new HttpStatusError(400, `Invalid ${key} date: "${raw}".`);
-        }
-        return Math.floor(ms / 1000) + (endOfDay ? 24 * 3600 - 1 : 0);
-    };
-    const sampleFromSec = parseBodyDateSec("sampleFrom", false);
-    const sampleToSec = parseBodyDateSec("sampleTo", true);
+    let dateWindow: ReturnType<typeof parseOptionalReplayDateWindow>;
+    try {
+        dateWindow = parseOptionalReplayDateWindow(body);
+    } catch (error) {
+        throw new HttpStatusError(400, error instanceof Error ? error.message : String(error));
+    }
+    const sampleFromSec = dateWindow.sampleFromSec ?? null;
+    const sampleToSec = dateWindow.sampleToSec ?? null;
 
     // OPEN_SCORE horizons input validation. The route is reachable on the
     // documented Cloudflare-tunnel / LOCAL_PROXY_TOKEN path and accepts no

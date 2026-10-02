@@ -14,8 +14,9 @@ import type { BacktestResult, OHLCVData, Signal } from "../types/strategies";
 /**
  * One synthetic pair's full per-run artifact: the OHLCV legs aggregated into
  * the pair ratio series, the strategy signals emitted on it, and the resulting
- * backtest. The heavy arrays (`data`, `signals`, `result.trades`) are kept
- * server-side and loaded one-at-a-time by analysis features.
+ * backtest. General callers can supply full arrays. Temporary Batch replay
+ * artifacts keep complete trades and scalars, with empty candle, signal,
+ * and equity-curve arrays because OPEN_SCORE does not read those fields.
  */
 export interface BatchSyntheticPairArtifact {
     symbol: string;

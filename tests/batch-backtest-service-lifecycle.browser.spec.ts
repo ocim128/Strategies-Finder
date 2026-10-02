@@ -174,6 +174,140 @@ async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>)
 // ---------------------------------------------------------------------------
 
 describe("BatchBacktestService analysis lifecycle", () => {
+    it("shows unreadable completed TOP_MEAN results and disables stale result actions", async () => {
+        const dom = setupForAnalysis();
+        const runId = "completed-with-missing-result";
+        persistTopMeanRunForTest(runId);
+        persistLatestTopMeanResult(topMeanResultFixture());
+        svc().latestTopMeanResult = topMeanResultFixture();
+        await withMockFetch(() => ({
+            ok: true, status: 200,
+            text: JSON.stringify({
+                runId, status: "completed", phase: "completed", progressText: "Completed",
+                resultError: "Stored result is missing.",
+            }),
+        }), async () => { await svc().reattachToInProgressTopMeanRun(); });
+        expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("Completed, but results could not be loaded");
+        expect(dom.batchBacktestSp500TopMeanCopyBtn.disabled).to.equal(true);
+        expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled).to.equal(true);
+        expect(dom.batchBacktestSp500TopMeanDownloadBtn.disabled).to.equal(true);
+        expect(dom.batchBacktestSp500TopMeanDetailsBtn.disabled).to.equal(true);
+        expect(svc().latestTopMeanResult).to.equal(null);
+        expect(readLatestTopMeanResult()).to.equal(null);
+        expect(readTopMeanActiveRun()).to.equal(null);
+    });
+
+    for (const workflow of ["batch", "topMean"] as const) {
+        it(`disposal aborts an in-flight ${workflow} status body without clearing persisted ownership`, async () => {
+            setupForAnalysis();
+            if (workflow === "batch") {
+                svc().activeServerRunId = "batch-dispose";
+                svc().batchRun.persistActiveServerRun("batch-dispose");
+            } else {
+                persistTopMeanRunForTest("top-mean-dispose");
+            }
+            const prevFetch = globalThis.fetch;
+            let consuming!: () => void;
+            const started = new Promise<void>((resolve) => { consuming = resolve; });
+            let signal: AbortSignal | undefined;
+            globalThis.fetch = async (_url, init) => {
+                signal = init?.signal ?? undefined;
+                const body = () => { consuming(); return new Promise<string>(() => {}); };
+                return { ok: true, status: 200, text: body, json: body } as unknown as Response;
+            };
+            try {
+                const polling = workflow === "batch"
+                    ? svc().reattachToInProgressServerRun()
+                    : svc().reattachToInProgressTopMeanRun();
+                await started;
+                currentService.dispose();
+                await polling;
+                expect(signal?.aborted).to.equal(true);
+                expect(workflow === "batch" ? svc().loadPersistedActiveServerRun()?.runId : readTopMeanActiveRun()?.runId)
+                    .to.equal(workflow === "batch" ? "batch-dispose" : "top-mean-dispose");
+            } finally {
+                globalThis.fetch = prevFetch;
+            }
+        });
+    }
+
+    it("a stalled Batch Stop settles its pending gate while preserving the run marker", async () => {
+        setupForAnalysis();
+        svc().activeServerRunId = "batch-stop-timeout";
+        svc().batchRun.persistActiveServerRun("batch-stop-timeout");
+        const prevTimeout = globalThis.setTimeout;
+        globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) =>
+            prevTimeout(fn, ms === 60_000 ? 1 : ms, ...args)) as typeof setTimeout;
+        try {
+            await withMockFetch(() => new Promise<FetchResponse>(() => {}), async () => {
+                await svc().requestServerStop();
+            });
+            expect(svc().pendingStopPromise).to.equal(null);
+            expect(svc().activeServerRunId).to.equal("batch-stop-timeout");
+            expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-stop-timeout");
+        } finally {
+            globalThis.setTimeout = prevTimeout;
+        }
+    });
+
+    it("a stalled TOP_MEAN Stop preserves ownership and remains retryable", async () => {
+        const dom = setupForAnalysis();
+        svc().topMean.setActiveTopMeanRunId("top-mean-stop-timeout");
+        persistTopMeanRunForTest("top-mean-stop-timeout");
+        const prevTimeout = globalThis.setTimeout;
+        globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) =>
+            prevTimeout(fn, ms === 60_000 ? 1 : ms, ...args)) as typeof setTimeout;
+        try {
+            await withMockFetch(() => new Promise<FetchResponse>(() => {}), async () => {
+                await svc().stopSp500TopMeanCoordinator();
+            });
+            expect(readTopMeanActiveRun()?.runId).to.equal("top-mean-stop-timeout");
+            expect(svc().topMean.getActiveTopMeanRunId()).to.equal("top-mean-stop-timeout");
+            expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("retry Stop");
+        } finally {
+            globalThis.setTimeout = prevTimeout;
+        }
+    });
+
+    it("reattach retries a timed-out continuation page and recovers the missing rows", async () => {
+        const dom = setupForAnalysis();
+        svc().activeServerRunId = "batch-page-timeout";
+        svc().batchRun.persistActiveServerRun("batch-page-timeout");
+        const first = { symbol: "FIRST", status: "no_trades", barCount: 200 };
+        const second = { symbol: "SECOND", status: "no_trades", barCount: 200 };
+        let polls = 0;
+        const prevTimeout = globalThis.setTimeout;
+        globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) =>
+            prevTimeout(fn, ms === 60_000 || ms === 2_000 ? 1 : ms, ...args)) as typeof setTimeout;
+        try {
+            await withMockFetch((url) => {
+                if (url.includes("&limit=")) return new Promise<FetchResponse>(() => {});
+                polls += 1;
+                expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-page-timeout");
+                return {
+                    ok: true, status: 200,
+                    text: JSON.stringify(polls === 1 ? {
+                        running: true, run: {
+                            runId: "batch-page-timeout", strategyKey: "test", total: 2,
+                            completed: 2, failed: 0, rows: [first], rowOffset: 0, rowCount: 2, nextOffset: 1,
+                        },
+                    } : {
+                        running: false, lastRun: {
+                            runId: "batch-page-timeout", rowCount: 2, rows: [second],
+                            rowOffset: 1, nextOffset: null, phase: "done", summary: "Done",
+                            hasArtifacts: true, fingerprint: "fp-test", interval: "4h", strategyKey: "test",
+                        },
+                    }),
+                };
+            }, async () => { await svc().reattachToInProgressServerRun(); });
+            expect(polls).to.equal(2);
+            expect(svc().lastResults.map((row: { symbol: string }) => row.symbol)).to.deep.equal(["FIRST", "SECOND"]);
+            expect(dom.batchBacktestStatus.textContent).to.equal("Done");
+        } finally {
+            globalThis.setTimeout = prevTimeout;
+        }
+    });
+
     it("initializes the service successfully against the current Batch DOM contract", () => {
         // Intent: fakeDom must include every current BatchBacktestDom field so
         // service.bindEvents no longer fails during suite setup when TOP_MEAN

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { debugLogger } from "../lib/debug-logger";
 import { TOP_MEAN_RUN_MAX_BODY_BYTES } from "../lib/batch-backtest/sp500-top-mean-request-limits";
 import { Readable } from "node:stream";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -967,6 +968,11 @@ async function testTopMeanRouteRejectsInvalidRunIdsAndDates(): Promise<void> {
     });
     assert.equal(malformedDate.statusCode, 400);
     assert.match(String(malformedDate.payload.error), /Invalid sampleFrom date/);
+    for (const sampleFrom of ["2024-02-30", "2024-2-01", 123, {}, []]) {
+        const rejected = await postTopMeanRunBody({ ...baseRequest, runId: "spec_date_guard_run", sampleFrom });
+        assert.equal(rejected.statusCode, 400);
+        assert.match(String(rejected.payload.error), /sampleFrom/);
+    }
 
     const reversed = await postTopMeanRunBody({
         ...baseRequest,
@@ -1549,7 +1555,48 @@ async function testManifestBackedStatusCapsWireResult(): Promise<void> {
     console.log("PASS: manifest-backed status caps the wire result like the done event");
 }
 
+async function testStatusSurfacesUnreadableResults(): Promise<void> {
+    const baseDir = mkdtempSync(join(tmpdir(), "top-mean-result-errors-"));
+    const runId = "spec_result_errors";
+    try {
+        const manifest: TopMeanRunManifest = {
+            schema: "top_mean_run_manifest.v1", runId, status: "completed",
+            fingerprint: "result-errors", strategyKey: "test", interval: "4h",
+            pairCount: 1, shardSize: 1, totalShards: 1,
+            completedShards: [0], failedShards: [],
+            completedPairsCount: 1, failedPairsCount: 0,
+            createdAt: Date.now(), updatedAt: Date.now(),
+        };
+        saveManifest(manifest, baseDir);
+        const cases: Array<{ kind: string; read: (path: string) => Promise<string> }> = [
+            { kind: "missing", read: async () => { throw Object.assign(new Error("gone"), { code: "ENOENT" }); } },
+            { kind: "invalid_json", read: async () => "{" },
+            { kind: "invalid_shape", read: async () => '{"horizons":"bad"}' },
+            { kind: "io_error", read: async () => { throw Object.assign(new Error("denied"), { code: "EACCES" }); } },
+        ];
+        for (const scenario of cases) {
+            const status = await handleSp500TopMeanStatusRequest(runId, baseDir, scenario.read);
+            assert.ok(!("ok" in status));
+            assert.equal(status.status, "completed");
+            assert.equal(status.result, undefined);
+            assert.ok(status.resultError);
+            const entry = debugLogger.getEntries().filter((item) => item.message === "sp500_top_mean.result_load_failed").at(-1);
+            assert.equal((entry?.data as { failureKind: string }).failureKind, scenario.kind);
+            assert.equal((entry?.data as { runId: string }).runId, runId);
+        }
+        manifest.status = "interrupted";
+        saveManifest(manifest, baseDir);
+        const status = await handleSp500TopMeanStatusRequest(runId, baseDir, cases[0]!.read);
+        assert.ok(!("ok" in status));
+        assert.equal(status.resultError, undefined, "missing incomplete result is expected");
+    } finally {
+        assert.ok(baseDir.startsWith(join(tmpdir(), "top-mean-result-errors-")));
+        rmSync(baseDir, { recursive: true, force: true });
+    }
+}
+
 async function main(): Promise<void> {
+    await testStatusSurfacesUnreadableResults();
     testAnnualReplayWindowsFollowSelectedRange();
     testReplayTargetOrderAvoidsLruThrash();
     await testReplayTargetCacheDeduplicatesLoads();

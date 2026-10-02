@@ -73,12 +73,12 @@ export function createBatchResultsView(deps: {
     isRunTokenCurrent: (token: number) => boolean;
 }): BatchResultsView {
     const liveRenderQueue: BatchBacktestSymbolResult[] = [];
-    let pendingLiveRender: { dom: BatchBacktestDom; token: number } | null = null;
+    let pendingLiveRender: { dom: BatchBacktestDom; token: number; sortedRender?: () => void } | null = null;
     const liveRenderFrame = coalesceAnimationFrame(() => {
         const pending = pendingLiveRender;
         pendingLiveRender = null;
         if (pending) {
-            flushLiveRenderNow(pending.dom, pending.token);
+            flushLiveRenderNow(pending.dom, pending.token, pending.sortedRender);
         }
     });
 
@@ -93,7 +93,7 @@ export function createBatchResultsView(deps: {
             flushLiveRenderNow(dom, token, sortedRender);
             return;
         }
-        pendingLiveRender = { dom, token };
+        pendingLiveRender = { dom, token, sortedRender };
         liveRenderFrame.schedule();
     }
 

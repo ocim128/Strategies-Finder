@@ -1,11 +1,12 @@
 # Server-Side Batch Backtest
 
 The Batch Backtest tab runs its heavy per-symbol workload in the Vite
-dev-server (Node) process. This single path exists because 1000+ IBKR 4H
-synthetic-pair runs hold
-~5–10 GB of per-row artifacts (`data` + `signals` + `result.trades`) for the
-OPEN_SCORE USD Replay step, which OOMs a browser tab. Node can use main RAM
-directly; the browser tab keeps only rendered scalars and DOM rows.
+dev-server (Node) process. The browser keeps scalar results and DOM rows.
+Historically, retaining full candle/signal/trade artifacts for 1000+ synthetic
+pairs consumed several GB and could exhaust a browser tab. The server now
+stores temporary replay artifacts with pair metadata, complete trades, and
+backtest scalars; their candle, signal, and equity-curve arrays are empty.
+Execution datasets and caches still require server heap headroom.
 
 ## Module map and ownership
 
@@ -88,8 +89,9 @@ contract is covered by `ndjson-stream.spec.ts` and `batch-ndjson-post.spec.ts`.
 
 ## Starting the dev server with extra heap
 
-A 1000-pair run plus retained analysis artifacts holds several GB of OHLCV /
-signals / trades arrays on the dev server. The default V8 heap is too small.
+Large runs still allocate OHLCV datasets, engine working arrays, and bounded
+caches on the dev server. Compact replay artifacts reduce retention and disk
+I/O, but the existing heap admission limits remain in place.
 Start the dev server with:
 
 ```bash
@@ -145,20 +147,48 @@ is checked immediately before and after that sort.
   the same reattach poll. There is no stream-tap from a second connection —
   multi-subscriber writers are over-engineering for a single-user dev server.
 
+## Control request deadlines and result recovery
+
+Browser status, continuation-page, recovery, and Stop requests have a
+60-second deadline covering response headers and body consumption. The
+`browser/batch-control-request.ts` helper accepts an optional `timeoutMs` and
+owner `signal`; controller disposal aborts pending control requests. Long Run
+and replay NDJSON streams keep their existing lifetime semantics.
+
+A status timeout enters the existing polling backoff, including a stalled
+continuation page. Transient failures preserve active-run markers. A timed-out
+Batch Stop settles its pending UI gate; a failed TOP_MEAN Stop preserves
+ownership so Stop can be retried. Only an authoritative server response clears
+TOP_MEAN ownership.
+
+Manifest-backed TOP_MEAN status preserves the terminal run state and adds
+`resultError` when a completed result is missing, unreadable, or invalid.
+Failures are logged as `sp500_top_mean.result_load_failed` with run id, file
+path, and failure category. Missing incomplete results are expected. The UI
+shows the result-load error, clears stale result snapshots, and disables
+copy, download, and details actions instead of presenting a successful result.
+
+Both replay routes share strict UTC `YYYY-MM-DD` validation from
+`top-mean-date-window.ts`. Blank boundaries remain unbounded; To includes the
+whole UTC day. Impossible dates, wrong types, and reversed windows return 400
+before acquiring ownership. Live Batch frame flushes preserve the selected
+sort and continue to reject stale run tokens.
+
 ## OPEN_SCORE USD Replay on the server
 
-In server-side mode, the per-row artifacts (`data` / `signals` /
-`result.trades`) are written to a temporary server-side artifact directory.
-The OPEN_SCORE USD button is enabled when the run's `done` event reports
-`serverHasArtifacts: true` (i.e. at least one completed synthetic-pair row was
-stored).
+Temporary per-row artifacts retain pair metadata and the full trade ledger,
+including per-trade P&L and total net profit. Candle, signal, and equity-curve
+arrays are stripped at the artifact-store boundary without mutating the
+source result. The existing eligibility gate, four-write concurrency,
+submission backpressure, and 32-entry parsed-artifact LRU remain unchanged.
+The OPEN_SCORE USD button is enabled when the run's done event reports
+`serverHasArtifacts: true` (at least one eligible artifact was stored).
 
-OPEN_SCORE USD Replay does not load all stored pairs into memory at once. It
-derives the target assets from artifact metadata, then for each target loads
-only the synthetic pairs linked to that target, computes that target's selector
-deltas, and releases the linked artifact objects before moving to the next
-target. This keeps large-pair runs bounded by the largest single target's
-linked pair set rather than the full pair universe.
+Replay scans those artifacts once into compact trade-derived score deltas,
+then resolves target asset datasets with bounded prefetch. TOP_MEAN already
+uses a compact trade-artifact adapter for the same replay engine. The shared
+artifact interface remains compatible with other callers that supply candles;
+the temporary Batch route does not need those arrays.
 
 Clicking OPEN_SCORE USD streams the replay report back via
 `POST /api/batch-backtest/open-score-usd`.
@@ -227,8 +257,8 @@ until one of:
 3. Explicit Stop / fatal handling.
 
 The TTL is the defense-in-depth that the browser path got for free via tab
-reload. Without it, a user who runs 1000 pairs and walks away would leave
-~5 GB pinned on the dev server indefinitely.
+reload. It bounds temporary disk retention and clears the parsed-artifact
+and dataset caches when an idle run expires.
 
 The TTL value is `DEFAULT_ARTIFACT_RETENTION_MS = 10 * 60 * 1000` in
 `lib/batch-backtest/batch-backtest-vite-plugin.ts`.

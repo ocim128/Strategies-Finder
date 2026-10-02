@@ -473,6 +473,8 @@ export interface TopMeanStatusResponse {
     performance?: TopMeanPerformanceDiagnostic;
     error?: string;
     result?: TopMeanResultSummary;
+    /** The run is terminal, but its persisted result could not be recovered. */
+    resultError?: string;
 }
 
 async function deriveReplayTargetsFromCompletedArtifacts(

@@ -38,6 +38,7 @@ import { ReattachBackoffController } from "../reattach-backoff";
 import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "../sp500-top-mean-stream-types";
 import type { CoverageCounts } from "../sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "../sp500-top-mean-coordinator-engine";
+import { requestBatchControl } from "./batch-control-request";
 import type { ReplayMode } from "../open-score-replay/types";
 import type {
     OpenScoreUsdEventDetailSelector,
@@ -78,6 +79,7 @@ import {
 } from "./top-mean-event-details-view";
 
 export class TopMeanController {
+    private readonly controlAbort = new AbortController();
     private readonly getDom: () => BatchBacktestDom;
     /** DOM read that must not force-create the tab DOM (pre-init reads). */
     private readonly peekDom: () => BatchBacktestDom | null;
@@ -472,12 +474,13 @@ export class TopMeanController {
         this.stopTopMeanReattachPoll();
         this.recordTopMeanDiagnostic("stop.request", { runId });
         try {
-            const response = await fetch("/api/batch-backtest/sp500-top-mean/stop", {
+            const { response, body } = await requestBatchControl("/api/batch-backtest/sp500-top-mean/stop", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ runId }),
-            });
-            const body = await response.text().catch(() => "");
+            }, async (response) => ({ response, body: await response.text() }),
+            { signal: this.controlAbort.signal });
+            if (this.activeTopMeanRunId !== runId) return;
             this.recordTopMeanDiagnostic("stop.response", {
                 runId,
                 status: response.status,
@@ -491,22 +494,26 @@ export class TopMeanController {
             } catch {
                 // A non-JSON response is treated as a failed stop response.
             }
-            if (!response.ok || stopped !== true) {
+            if (!response.ok && response.status !== 404) {
+                throw new Error(`Stop request failed (status ${response.status}).`);
+            }
+            if (response.ok && stopped === null) throw new Error("Invalid Stop response.");
+            if (response.status === 404 || stopped === false) {
                 this.clearTopMeanRunAfterServerLoss(
                     this.getDom(),
                     "TOP_MEAN run is no longer active; local run state cleared.",
                 );
             }
         } catch (err) {
+            if (this.activeTopMeanRunId !== runId) return;
             this.recordTopMeanDiagnostic("stop.error", {
                 runId,
                 name: err instanceof Error ? err.name : typeof err,
                 message: err instanceof Error ? err.message : String(err),
             });
-            this.clearTopMeanRunAfterServerLoss(
-                this.getDom(),
-                "TOP_MEAN server is unavailable; local run state cleared.",
-            );
+            // A failed request does not prove the server stopped the run.
+            this.getDom().batchBacktestSp500TopMeanProgressText.textContent =
+                "Stop could not reach the server; retry Stop. Server status will continue to recover.";
         }
     }
 
@@ -911,9 +918,14 @@ export class TopMeanController {
         try {
             while (this.activeTopMeanRunId === runId) {
                 try {
-                    const res = await fetch(
+                    const { res, status } = await requestBatchControl(
                         `/api/batch-backtest/sp500-top-mean/status?runId=${encodeURIComponent(runId)}`,
                         { cache: "no-store" },
+                        async (res) => ({
+                            res,
+                            status: res.ok ? await res.json() as TopMeanStatusResponse : null,
+                        }),
+                        { signal: this.controlAbort.signal },
                     );
                     if (this.activeTopMeanRunId !== runId) return;
                     this.recordTopMeanDiagnostic("reattach.response", {
@@ -936,7 +948,7 @@ export class TopMeanController {
                     if (!res.ok) {
                         throw new Error(`status ${res.status}`);
                     }
-                    const status = await res.json() as TopMeanStatusResponse;
+                    if (!status) throw new Error("Server returned no TOP_MEAN status.");
                     if (this.activeTopMeanRunId !== runId) return;
                     this.recordTopMeanDiagnostic("reattach.status", status);
                     dom.batchBacktestSp500TopMeanProgressText.textContent =
@@ -948,7 +960,17 @@ export class TopMeanController {
                     if (terminal) {
                         setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
                         setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-                        if (status.result) {
+                        if (status.resultError) {
+                            this.latestTopMeanResult = null;
+                            clearPersistedLatestTopMeanResult();
+                            dom.batchBacktestSp500TopMeanResults.replaceChildren();
+                            resetTopMeanOpenScoreDetails(dom);
+                            dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
+                            dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
+                            dom.batchBacktestSp500TopMeanProgressText.textContent =
+                                `${status.status === "completed" ? "Completed" : status.status}, but results could not be loaded: ${status.resultError}`;
+                        } else if (status.result) {
                             const result = mergeTopMeanArchiveStatus(status.result, status);
                             this.latestTopMeanResult = result;
                             this.persistLatestTopMeanResult(result);
@@ -958,7 +980,7 @@ export class TopMeanController {
                                 !Array.isArray(result.reportLines) || result.reportLines.length === 0;
                             dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
                         }
-                        if (status.status === "completed") {
+                        if (status.status === "completed" && !status.resultError) {
                             dom.batchBacktestSp500TopMeanProgressText.textContent =
                                 formatTopMeanCompletionMessage(status.result
                                     ? mergeTopMeanArchiveStatus(status.result, status)
@@ -1041,6 +1063,7 @@ export class TopMeanController {
      */
     public dispose(): void {
         this.activeTopMeanRunId = null;
+        this.controlAbort.abort();
         this.stopTopMeanReattachPoll();
         this.renderTopMeanDiagnosticDebounced.cancel();
         this.persistTopMeanDiagnosticDebounced.cancel();

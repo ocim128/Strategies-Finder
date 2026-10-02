@@ -10,7 +10,7 @@ export interface TopMeanDateWindow {
     sampleToSec?: number;
 }
 
-function parseUtcDate(value: unknown, field: string): number {
+export function parseUtcDate(value: unknown, field: string): number {
     if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
         throw new Error(`${field} must be a date in YYYY-MM-DD format.`);
     }
@@ -28,6 +28,30 @@ function parseUtcDate(value: unknown, field: string): number {
         throw new Error(`${field} is not a valid UTC date.`);
     }
     return Math.floor(milliseconds / 1000);
+}
+
+/** Optional Batch boundaries; blank sides stay unbounded, To includes its UTC day. */
+export function parseOptionalReplayDateWindow(input: { sampleFrom?: unknown; sampleTo?: unknown }): {
+    sampleFromSec?: number;
+    sampleToSec?: number;
+} {
+    const parseOptional = (value: unknown, field: string): number | undefined => {
+        if (value === undefined || value === null || (typeof value === "string" && value.trim() === "")) {
+            return undefined;
+        }
+        try {
+            return parseUtcDate(typeof value === "string" ? value.trim() : value, field);
+        } catch (error) {
+            throw new Error(`Invalid ${field} date: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    };
+    const sampleFromSec = parseOptional(input.sampleFrom, "sampleFrom");
+    const endDateStartSec = parseOptional(input.sampleTo, "sampleTo");
+    const sampleToSec = endDateStartSec === undefined ? undefined : endDateStartSec + 24 * 3600 - 1;
+    if (sampleFromSec !== undefined && sampleToSec !== undefined && sampleFromSec > sampleToSec) {
+        throw new Error("Replay date window is reversed; From must not be after To.");
+    }
+    return { sampleFromSec, sampleToSec };
 }
 
 /** Validate the Finder's explicit Full / Date range replay-window contract. */
