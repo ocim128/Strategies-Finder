@@ -9,7 +9,14 @@ import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight, type ActiveCapTiltWeight, type
 export const TOP_MEAN_HORIZONS_MAX_LENGTH = 8;
 export const TOP_MEAN_HORIZONS_MAX_VALUE = 1000;
 export const TOP_MEAN_WORKER_COUNT_MIN = 1;
-export const TOP_MEAN_WORKER_COUNT_MAX = 24;
+/**
+ * Hard worker cap for both the auto count and explicit UI values (2026-10:
+ * raised from 24 — the disk-backed seed sidecar removed the per-worker text
+ * parse cost, so idle cores convert to throughput; the auto count is still
+ * bounded by availableParallelism and the 75%-RAM footprint ceiling in
+ * resolveTopMeanWorkerCount).
+ */
+export const TOP_MEAN_WORKER_COUNT_MAX = 32;
 /** Matches the Balanced Generator UI clamp (1..1_000_000). */
 export const TOP_MEAN_MAX_PAIRS_MAX = 1_000_000;
 /** Replay-only selector cooldown: bounded so malformed requests cannot force unbounded state windows. */

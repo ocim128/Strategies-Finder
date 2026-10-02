@@ -541,8 +541,16 @@ reads and synthetic-cache writes use their thread as the blocking boundary,
 avoiding Node's shared filesystem thread-pool bottleneck. Hosts with at least 48 GiB of
 RAM automatically raise each server loader's leg/pair LRUs from the 24/16
 defaults to 128/32; lower-memory hosts retain the defaults. An empty Workers
-field uses every available logical core up to the tuned 24-worker cap. Enter a lower
+field uses every available logical core up to the 32-worker cap. Enter a lower
 value only when the machine must reserve capacity for another workload.
+
+Large TOP_MEAN runs thrash the per-worker leg LRU (a 50k-pair run measured
+~38k leg misses), so each miss re-reads its seed. IBKR seed loads therefore
+consult the disk-backed parsed-seed sidecar
+(`price-data/ibkr/seed-cache/`, written once per CSV revision) before
+re-parsing the CSV text; on a 24-worker run with large-cap seeds this cut the
+measured load path from ~31 ms to ~6–10 ms per pair. See the
+[price-data guide](price-data.md) for the sidecar contract.
 
 IBKR and crypto historical CSV cache hits materialize only the requested
 newest bars. Complete columnar entries remain available to full-series callers;

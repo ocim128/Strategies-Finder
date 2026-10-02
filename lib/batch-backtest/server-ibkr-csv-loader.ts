@@ -1,7 +1,8 @@
-import { readFileSync, statSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
-import { resolve, sep } from "node:path";
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { dirname, resolve, sep } from "node:path";
 import { isMainThread } from "node:worker_threads";
+import { debugLogger } from "../debug-logger";
 import { extractCandlesFromCsvPayload } from "../candle-cache";
 import { normalizeTradFiDailyCandles } from "../data/data-interval-utils";
 import { isIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
@@ -124,30 +125,23 @@ interface CacheCheck {
     columns: ParsedSeedColumns;
 }
 
-async function checkParsedCsvCache(filePath: string, cache: ParsedCsvCache): Promise<CacheCheck | null> {
+function checkParsedCsvCache(filePath: string, cache: ParsedCsvCache, mtimeMs: number): CacheCheck | null {
     const cached = cache.get(filePath);
     if (!cached) return null;
-    try {
-        const mtimeMs = isMainThread
-            ? (await stat(filePath)).mtimeMs
-            : statSync(filePath).mtimeMs;
-        if (mtimeMs === cached.mtimeMs) {
-            // Move-to-end for LRU recency.
-            cache.delete(filePath);
-            cache.set(filePath, cached);
-            return { filePath, mtimeMs, columns: cached.columns };
-        }
+    if (mtimeMs === cached.mtimeMs) {
+        // Move-to-end for LRU recency.
         cache.delete(filePath);
-    } catch {
-        cache.delete(filePath);
+        cache.set(filePath, cached);
+        return { filePath, mtimeMs, columns: cached.columns };
     }
+    cache.delete(filePath);
     return null;
 }
 
-function storeParsedCsvCache(
+function storeParsedCsvColumns(
     filePath: string,
     mtimeMs: number,
-    candles: OHLCVData[],
+    columns: ParsedSeedColumns,
     cache: ParsedCsvCache,
     maxEntries: number,
 ): void {
@@ -157,12 +151,185 @@ function storeParsedCsvCache(
         const oldest = cache.keys().next().value;
         if (oldest !== undefined) cache.delete(oldest);
     }
-    cache.set(filePath, { mtimeMs, columns: columnsFromCandles(candles) });
+    cache.set(filePath, { mtimeMs, columns });
 }
 
 export function clearParsedIbkrCsvCache(): void {
     parsedCsvCache.clear();
     parsed4hTargetCache.clear();
+}
+
+// ============================================================================
+// Disk-backed parsed-seed sidecar
+// ============================================================================
+
+/**
+ * Binary columnar sidecar for parsed IBKR seed CSVs.
+ *
+ * The in-memory parsed-seed cache above holds 512–4096 entries PER PROCESS,
+ * but a large TOP_MEAN run's leg-affinity shards give each worker a working
+ * set of thousands of distinct seeds, so both per-worker LRU thrash. A 50k-
+ * pair cold run measured ~38k full text re-parses at ~70–140 ms each —
+ * 6.5M ms of summed worker load time (88.7% of the run's cost). Parsing must
+ * therefore amortize ACROSS the ~24 worker processes, and the only state
+ * they share is the filesystem.
+ *
+ * After a text parse, the six Float64 columns are written under
+ * `price-data/ibkr/seed-cache/<interval>/<SYM>.bin`. Later loads stat the CSV
+ * and, while (mtimeMs, size) still match the sidecar header, materialize
+ * candles straight from the typed-array payload — a few ms against the
+ * ~100 ms text parse. An IBKR/Alpaca sync rewrites the seed, which
+ * invalidates the sidecar automatically; the next parse rewrites it.
+ *
+ * The sidecar stores the POST-normalization series (what the in-memory cache
+ * stores), so bump {@link SEED_SIDECAR_FORMAT_VERSION} whenever parse or
+ * normalization behavior changes. `IBKR_CSV_SEED_CACHE=0|false|off` disables
+ * the cache; sidecar files are regenerable data and safe to delete.
+ */
+const SEED_SIDECAR_MAGIC = "IBSC";
+const SEED_SIDECAR_FORMAT_VERSION = 1;
+const SEED_SIDECAR_HEADER_BYTES = 32;
+const SEED_SIDECAR_COLUMN_COUNT = 6;
+
+interface SeedSidecarHit {
+    columns: ParsedSeedColumns;
+}
+
+function isSeedSidecarDisabled(): boolean {
+    const flag = process.env.IBKR_CSV_SEED_CACHE;
+    return flag === "0" || flag === "false" || flag === "off";
+}
+
+function seedSidecarPathForCsv(filePath: string): string {
+    return `${filePath.replace(`${sep}csv${sep}`, `${sep}seed-cache${sep}`)}.bin`;
+}
+
+function seedSidecarBuffer(columns: ParsedSeedColumns, mtimeMs: number, sizeBytes: number): Buffer {
+    const count = columns.time.length;
+    const out = Buffer.alloc(SEED_SIDECAR_HEADER_BYTES + count * 8 * SEED_SIDECAR_COLUMN_COUNT);
+    out.write(SEED_SIDECAR_MAGIC, 0, "latin1");
+    out.writeUInt32LE(SEED_SIDECAR_FORMAT_VERSION, 4);
+    out.writeUInt32LE(count, 8);
+    out.writeUInt32LE(0, 12);
+    out.writeDoubleLE(mtimeMs, 16);
+    out.writeDoubleLE(sizeBytes, 24);
+    const base = out.byteOffset + SEED_SIDECAR_HEADER_BYTES;
+    if (base % 8 === 0) {
+        const floats = new Float64Array(out.buffer, base, count * SEED_SIDECAR_COLUMN_COUNT);
+        floats.set(columns.time, 0);
+        floats.set(columns.open, count);
+        floats.set(columns.high, count * 2);
+        floats.set(columns.low, count * 3);
+        floats.set(columns.close, count * 4);
+        floats.set(columns.volume, count * 5);
+    } else {
+        // Misaligned backing store (not expected for Buffer.alloc): fall back
+        // to per-element LE writes rather than misinterpreting the bytes.
+        const writeColumn = (values: Float64Array, offset: number) => {
+            for (let i = 0; i < count; i += 1) {
+                out.writeDoubleLE(values[i]!, base + (offset * count + i) * 8);
+            }
+        };
+        writeColumn(columns.time, 0);
+        writeColumn(columns.open, 1);
+        writeColumn(columns.high, 2);
+        writeColumn(columns.low, 3);
+        writeColumn(columns.close, 4);
+        writeColumn(columns.volume, 5);
+    }
+    return out;
+}
+
+function parseSeedSidecarBuffer(buf: Buffer, mtimeMs: number, sizeBytes: number): SeedSidecarHit | null {
+    if (buf.length < SEED_SIDECAR_HEADER_BYTES) return null;
+    if (buf.toString("latin1", 0, 4) !== SEED_SIDECAR_MAGIC) return null;
+    if (buf.readUInt32LE(4) !== SEED_SIDECAR_FORMAT_VERSION) return null;
+    const count = buf.readUInt32LE(8);
+    const expectedLength = SEED_SIDECAR_HEADER_BYTES + count * 8 * SEED_SIDECAR_COLUMN_COUNT;
+    if (count === 0 || buf.length !== expectedLength) return null;
+    // The header stat pair must match the CURRENT CSV stat exactly; both come
+    // from stat(), so an IBKR/Alpaca sync invalidates the sidecar here.
+    if (buf.readDoubleLE(16) !== mtimeMs || buf.readDoubleLE(24) !== sizeBytes) return null;
+    const base = buf.byteOffset + SEED_SIDECAR_HEADER_BYTES;
+    if (base % 8 === 0) {
+        const column = (offset: number) => new Float64Array(buf.buffer, base + offset * count * 8, count);
+        return {
+            columns: {
+                time: column(0),
+                open: column(1),
+                high: column(2),
+                low: column(3),
+                close: column(4),
+                volume: column(5),
+            },
+        };
+    }
+    const column = (offset: number) => {
+        const values = new Float64Array(count);
+        for (let i = 0; i < count; i += 1) {
+            values[i] = buf.readDoubleLE(SEED_SIDECAR_HEADER_BYTES + (offset * count + i) * 8);
+        }
+        return values;
+    };
+    return {
+        columns: {
+            time: column(0),
+            open: column(1),
+            high: column(2),
+            low: column(3),
+            close: column(4),
+            volume: column(5),
+        },
+    };
+}
+
+async function readSeedSidecar(
+    filePath: string,
+    mtimeMs: number,
+    sizeBytes: number,
+    signal?: AbortSignal,
+): Promise<SeedSidecarHit | null> {
+    if (signal?.aborted) return null;
+    try {
+        const sidecarPath = seedSidecarPathForCsv(filePath);
+        const buf = isMainThread ? await readFile(sidecarPath) : readFileSync(sidecarPath);
+        if (signal?.aborted) return null;
+        return parseSeedSidecarBuffer(buf, mtimeMs, sizeBytes);
+    } catch {
+        return null;
+    }
+}
+
+function writeSeedSidecarSync(filePath: string, mtimeMs: number, sizeBytes: number, columns: ParsedSeedColumns): void {
+    try {
+        const payload = seedSidecarBuffer(columns, mtimeMs, sizeBytes);
+        const sidecarPath = seedSidecarPathForCsv(filePath);
+        mkdirSync(dirname(sidecarPath), { recursive: true });
+        // tmp-then-rename: a crash or concurrent writer can never leave a
+        // half-written sidecar that parseSeedSidecarBuffer would trust.
+        const temporary = `${sidecarPath}.${process.pid}.tmp`;
+        writeFileSync(temporary, payload);
+        renameSync(temporary, sidecarPath);
+    } catch (error) {
+        debugLogger.warn("ibkr.seed_sidecar_write_failed", {
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
+}
+
+async function writeSeedSidecarAsync(filePath: string, mtimeMs: number, sizeBytes: number, columns: ParsedSeedColumns): Promise<void> {
+    try {
+        const payload = seedSidecarBuffer(columns, mtimeMs, sizeBytes);
+        const sidecarPath = seedSidecarPathForCsv(filePath);
+        await mkdir(dirname(sidecarPath), { recursive: true });
+        const temporary = `${sidecarPath}.${process.pid}.tmp`;
+        await writeFile(temporary, payload);
+        await rename(temporary, sidecarPath);
+    } catch (error) {
+        debugLogger.warn("ibkr.seed_sidecar_write_failed", {
+            error: error instanceof Error ? error.message : String(error),
+        });
+    }
 }
 
 function buildIbkrFileCandidates(symbol: string): string[] {
@@ -278,17 +445,29 @@ export async function loadFreshIbkrCandlesFromDisk(
             const filePath = resolve(root, `${candidate}.csv`);
             if (!filePath.startsWith(`${root}${sep}`)) continue;
             try {
-                // Check the parsed-seed cache before re-reading. The cache keys
-                // on (filePath, mtimeMs), so an IBKR sync that rewrites the
-                // seed invalidates automatically. Cached entries are columnar
-                // (GC-invisible); candle objects are materialized per hit at
-                // ~1–2 ms against ~137 ms for a full re-parse.
-                const cached = await checkParsedCsvCache(filePath, parsedCache);
+                // One stat per candidate serves both caches: the in-memory
+                // parsed-seed cache validates on mtime, and the disk sidecar
+                // additionally keys on the CSV byte size.
+                const csvStat = isMainThread
+                    ? await stat(filePath)
+                    : statSync(filePath);
+                const cached = checkParsedCsvCache(filePath, parsedCache, csvStat.mtimeMs);
                 if (cached) {
                     if (signal?.aborted) return null;
                     return limitBars !== undefined
                         ? candlesFromColumnsTail(cached.columns, limitBars)
                         : candlesFromColumns(cached.columns);
+                }
+
+                // Disk sidecar: skips the text parse for seeds already parsed
+                // by any worker or previous run since the CSV last changed.
+                if (!isSeedSidecarDisabled()) {
+                    const sidecar = await readSeedSidecar(filePath, csvStat.mtimeMs, csvStat.size, signal);
+                    if (sidecar) {
+                        return limitBars !== undefined
+                            ? candlesFromColumnsTail(sidecar.columns, limitBars)
+                            : candlesFromColumns(sidecar.columns);
+                    }
                 }
 
                 // A TOP_MEAN worker is already an isolated blocking boundary.
@@ -301,10 +480,15 @@ export async function loadFreshIbkrCandlesFromDisk(
                 if (signal?.aborted) return null;
                 const candles = normalizeTradFiDailyCandles(parseIbkrCsvPayload(payload), baseInterval);
                 if (candles.length > 0) {
-                    const mtimeMs = isMainThread
-                        ? (await stat(filePath)).mtimeMs
-                        : statSync(filePath).mtimeMs;
-                    storeParsedCsvCache(filePath, mtimeMs, candles, parsedCache, parsedCacheMaxEntries);
+                    const columns = columnsFromCandles(candles);
+                    storeParsedCsvColumns(filePath, csvStat.mtimeMs, columns, parsedCache, parsedCacheMaxEntries);
+                    if (!isSeedSidecarDisabled()) {
+                        if (isMainThread) {
+                            await writeSeedSidecarAsync(filePath, csvStat.mtimeMs, csvStat.size, columns);
+                        } else {
+                            writeSeedSidecarSync(filePath, csvStat.mtimeMs, csvStat.size, columns);
+                        }
+                    }
                     return candles;
                 }
             } catch (error) {

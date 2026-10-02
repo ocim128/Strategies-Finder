@@ -80,10 +80,34 @@ Cold reads still parse/cache the complete capped series, and detached callers
 without a limit retain the full-series contract. File mtime invalidation and
 the columnar cache's entry cap remain intact.
 
+## Server IBKR seed sidecar
+
+`loadFreshIbkrCandlesFromDisk` persists each parsed IBKR seed as a binary
+columnar sidecar under `price-data/ibkr/seed-cache/<interval>/<SYM>.bin`
+(mirroring the `csv/` tree; `price-data/` is gitignored). The sidecar stores
+the post-normalization series with the source CSV's `(mtimeMs, size)` in its
+header, so an IBKR/Alpaca sync that rewrites a seed invalidates its sidecar
+automatically on the next stat — no explicit clear.
+
+- Reads validate magic, format version, bar count, length, and the stat pair;
+  any mismatch or I/O error falls back to the authoritative CSV text parse,
+  which rewrites the sidecar atomically (tmp-then-rename).
+- `limitBars` tail materialization works from sidecar columns exactly as it
+  does from the in-memory parsed-seed cache.
+- The sidecar amortizes parsing ACROSS worker processes and runs: the
+  in-memory parsed-seed cache is per-process (512–4096 entries), which large
+  TOP_MEAN runs exceed and then re-parse every seed. Sidecar files are
+  regenerable data and safe to delete; set `IBKR_CSV_SEED_CACHE=0|false|off`
+  to disable reads and writes.
+- Bump `SEED_SIDECAR_FORMAT_VERSION` in
+  `lib/batch-backtest/server-ibkr-csv-loader.ts` whenever the CSV parse or
+  TradFi normalization behavior changes; stale-format sidecars are ignored and
+  rebuilt.
+
 ## Validation
 
 ```powershell
-npm run test -- data-persistence data-fetcher.spec.ts candle-cache.spec.ts fetch-helpers.spec.ts local-sqlite local-route-authorization.spec.ts server-crypto-csv-loader.spec.ts batch-backtest-server-loader-parity.spec.ts finder-server-loader-parity.spec.ts
+npm run test -- data-persistence data-fetcher.spec.ts candle-cache.spec.ts fetch-helpers.spec.ts local-sqlite local-route-authorization.spec.ts server-crypto-csv-loader.spec.ts server-ibkr-csv-loader.spec.ts batch-backtest-server-loader-parity.spec.ts finder-server-loader-parity.spec.ts
 npm run typecheck
 npm run typecheck:tests
 ```

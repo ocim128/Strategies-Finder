@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -87,6 +87,66 @@ async function main(): Promise<void> {
         assert.equal(afterClear![0]!.open, 200, "clear forces re-parse but content is unchanged");
     } finally {
         rmSync(cacheBaseDir, { recursive: true, force: true });
+    }
+
+    // ---- disk-backed parsed-seed sidecar ----
+    // Intent: large TOP_MEAN runs give each worker a working set of thousands
+    // of distinct seeds; the 512-entry in-memory parse cache thrashes, so
+    // every revisit re-parses the CSV text (~70–140 ms each). The sidecar
+    // persists the parsed columns on disk keyed by the CSV (mtimeMs, size),
+    // so one parse amortizes across all worker processes and later runs.
+    const sidecarBaseDir = mkdtempSync(join(tmpdir(), "server-ibkr-seed-sidecar-"));
+    try {
+        const sidecarCsvDir = join(sidecarBaseDir, "price-data", "ibkr", "csv", "30m");
+        mkdirSync(sidecarCsvDir, { recursive: true });
+        const sidecarCsvPath = join(sidecarCsvDir, "TSLA.csv");
+        const sidecarPath = join(sidecarBaseDir, "price-data", "ibkr", "seed-cache", "30m", "TSLA.csv.bin");
+        writeFileSync(sidecarCsvPath, CSV, "utf8");
+        // Integer-second mtimes keep the (mtimeMs, size) sidecar key exact.
+        utimesSync(sidecarCsvPath, 1800000000, 1800000000);
+
+        clearParsedIbkrCsvCache();
+        const first = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        assert.equal(first!.length, 2, "first load parses the CSV text");
+        assert.ok(existsSync(sidecarPath), "first text parse writes the columnar sidecar");
+
+        // Same-length content rewrite with the original mtime restored: the
+        // sidecar (mtimeMs, size) key still matches, so the OLD columns must
+        // be served without re-parsing the CSV text.
+        clearParsedIbkrCsvCache();
+        writeFileSync(sidecarCsvPath, CSV.replace("100,102,99,101,1000", "900,102,99,101,1000"), "utf8");
+        utimesSync(sidecarCsvPath, 1800000000, 1800000000);
+        const fromSidecar = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        assert.equal(fromSidecar![0]!.open, 100, "sidecar hit serves cached columns without re-parsing the CSV");
+
+        // mtime bump → sidecar invalid → re-parse picks up the new content.
+        const sidecarFutureMs = Date.now() * 2;
+        utimesSync(sidecarCsvPath, sidecarFutureMs / 1000, sidecarFutureMs / 1000);
+        const afterSync = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        assert.equal(afterSync![0]!.open, 900, "mtime change invalidates the sidecar and re-parses");
+
+        // Tail materialization from sidecar columns matches the full-series slice.
+        clearParsedIbkrCsvCache();
+        const full = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        const tail = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 1);
+        assert.deepEqual(tail, full!.slice(-1), "limitBars tail materialization matches the full-series tail");
+
+        // Corrupt sidecar → fall back to the authoritative CSV parse.
+        writeFileSync(sidecarPath, Buffer.alloc(10));
+        clearParsedIbkrCsvCache();
+        const afterCorruption = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        assert.deepEqual(afterCorruption, full, "corrupt sidecar falls back to the CSV text parse");
+
+        // Kill switch: no sidecar reads or writes.
+        process.env.IBKR_CSV_SEED_CACHE = "0";
+        rmSync(sidecarPath, { force: true });
+        clearParsedIbkrCsvCache();
+        const disabled = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        assert.deepEqual(disabled, full, "kill switch serves from the CSV text parse");
+        assert.ok(!existsSync(sidecarPath), "kill switch prevents sidecar writes");
+        delete process.env.IBKR_CSV_SEED_CACHE;
+    } finally {
+        rmSync(sidecarBaseDir, { recursive: true, force: true });
     }
 
     console.log("PASS: server-ibkr-csv-loader.spec.ts");
