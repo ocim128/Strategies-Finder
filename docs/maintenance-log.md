@@ -4,6 +4,46 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Sequence symbol-search initial fill against user queries
+
+- **Evidence:** `initializeSearch` rendered its popular-assets response
+  unconditionally, outside the `searchSequence` guard added for `performSearch`.
+  Opening the dropdown and typing before the initial fetch resolved let the slow
+  "Popular Assets" response overwrite fresh query results while the input showed
+  the query. Symbol selection is step 1 of the README smoke check, and the
+  multi-provider `searchAssets` fan-out has genuinely variable completion order.
+- **Change:** The initial fill now participates in the same sequence counter:
+  superseded popular-assets responses (and their errors) are dropped, and the
+  newer query owns the dropdown view. Emptying the input still re-fetches
+  popular assets through `performSearch('')`.
+- **Checks:** `npm run typecheck`, `npm run typecheck:tests`, and
+  `npm run test -- feature-dom-contracts.spec.ts` pass; `git diff --check` clean.
+  Full suite verified 254/254 passing this run (see next entry).
+- **Follow-up:** None known for the search dropdown; all three render paths
+  (`performSearch`, `initializeSearch`, market-type switch) now share ordering.
+
+## 2026-10-03 - Ground-truth suite verification and UI hardening commit
+
+- **Evidence:** The log's standing follow-up asked for a suite rerun to confirm
+  the status of documented failures (trade-ledger checker/parity, Finder Asset
+  Opportunity metadata/export/server-plugin specs). Focused reruns passed, and a
+  full `npm run test` run completed 254 passed, 0 failed, 0 skipped — every
+  documented failure is resolved by intervening commits (CI-portability fixes
+  and spec renames). Some spec names in older entries no longer exist.
+- **Change:** Committed the completed UI reliability work from the prior
+  maintenance session as `a7eadccd` (crosshair time-map sync on streamed bars,
+  search response race guard, alert-modal HTML escaping, debounced backtest
+  auto-refresh, cached `getOptionalElement`, shared `ProgressiveListRenderer`,
+  entry bundle budget re-tightened to 650 KB against a measured 601 KB). No
+  code changes in this entry beyond the commit itself.
+- **Checks:** `npm run test` full suite: 254/254 pass in 29.8s.
+  `node --experimental-strip-types scripts/check-bundle-budget.ts`: 600.8 KB /
+  650 KB OK.
+- **Follow-up:** CI (`npm run verify` on windows-latest) gates the full suite on
+  every push, so suite health is now machine-enforced. The `vite` dev dependency
+  is only installed at the npm-workspace root; local `build:check` runs there,
+  not in this standalone directory (see AGENTS.md workspace-dependency note).
+
 ## 2026-10-01 - Finish Batch result invalidation when storage is denied
 
 - **Evidence:** `clearPersistedLatestResults` acquired `localStorage` outside

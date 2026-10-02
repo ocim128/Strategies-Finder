@@ -187,14 +187,20 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         if (isSearchInitialized) return;
         isSearchInitialized = true;
 
+        // The popular-assets fetch races performSearch when the user opens the
+        // dropdown and types before it resolves; only the newest request may
+        // render, so the initial fill obeys the same sequence guard.
+        const runId = ++searchSequence;
         symbolSearchLoading?.classList.remove('is-hidden');
 
         try {
             const popularAssets = await assetSearchService.searchAssets('', 20, {
                 binanceMarketType: getActiveBinanceMarketType(),
             });
+            if (runId !== searchSequence) return;
             renderSearchResults(popularAssets);
         } catch (error) {
+            if (runId !== searchSequence) return;
             debugLogger.error('ui.asset_search_init_failed', { error: error instanceof Error ? error.message : String(error) });
         }
     };
