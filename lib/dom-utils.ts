@@ -36,7 +36,15 @@ export function getRequiredElement<T extends HTMLElement>(id: string): T {
 }
 
 export function getOptionalElement<T extends HTMLElement>(id: string): T | null {
-    return (document.getElementById(id) as T | null) ?? null;
+    const cached = getCachedConnectedElement(id);
+    if (cached) {
+        return cached as T;
+    }
+    const element = document.getElementById(id);
+    if (element) {
+        elementCache.set(id, element);
+    }
+    return (element as T | null) ?? null;
 }
 
 export type RequiredDomElementMap<TIds extends Record<string, string>> = {
@@ -76,14 +84,7 @@ export function updateTextContent(id: string, text: string, className?: string) 
  * Internal helper for cached lookup
  */
 function getElementByIdCached(id: string): HTMLElement | null {
-    let element = getCachedConnectedElement(id);
-    if (!element) {
-        element = document.getElementById(id);
-        if (element) {
-            elementCache.set(id, element);
-        }
-    }
-    return element || null;
+    return getOptionalElement(id);
 }
 
 /**

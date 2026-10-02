@@ -22,10 +22,11 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const DIST_DIR = path.join(REPO_ROOT, "dist");
 const INDEX_HTML = path.join(DIST_DIR, "index.html");
 
-// Current entry is ~844 KB. Budget is current + ~7% headroom so trivial
-// changes don't trip the gate while a real lazy-load regression (tens of
-// KB) will. Lower this as the entry shrinks; raise only with cause.
-const MAX_ENTRY_KB = 900;
+// Entry measured at ~601 KB (615,216 bytes) after the lazy-feature split.
+// Budget is current + ~8% headroom so trivial changes don't trip the gate
+// while a real lazy-load regression (tens of KB) will. Lower this as the
+// entry shrinks; raise only with cause.
+const MAX_ENTRY_KB = 650;
 
 function resolveEntryAssetPath(): string {
     if (!fs.existsSync(INDEX_HTML)) {

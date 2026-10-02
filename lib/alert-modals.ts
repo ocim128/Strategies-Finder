@@ -14,6 +14,7 @@ import { backtestService } from "./backtest-service";
 import { dataManager } from "./data-manager";
 import { getOptionalElement } from "./dom-utils";
 import { resolveEntryRiskTargets } from "./entry-risk-targets";
+import { escapeHtml } from "./html-escape";
 import { createAccessibleModal, type AccessibleModalController } from "./modal-accessibility";
 import { BacktestSettings, OHLCVData, Time, Trade } from "./strategies/index";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -312,8 +313,8 @@ function showLastTradeResult(
 
         detailsEl.innerHTML = `
             <div class="detail-grid">
-                <div class="detail-row"><span class="label">Symbol</span><span class="value">${symbol}</span></div>
-                <div class="detail-row"><span class="label">Interval</span><span class="value">${interval}</span></div>
+                <div class="detail-row"><span class="label">Symbol</span><span class="value">${escapeHtml(symbol)}</span></div>
+                <div class="detail-row"><span class="label">Interval</span><span class="value">${escapeHtml(interval)}</span></div>
                 <div class="detail-row"><span class="label">Trade #</span><span class="value">${tradeNumber} of ${totalTrades}</span></div>
                 <div class="detail-row divider"></div>
                 <div class="detail-row"><span class="label">Entry Price</span><span class="value">${trade.entryPrice.toFixed(2)}</span></div>

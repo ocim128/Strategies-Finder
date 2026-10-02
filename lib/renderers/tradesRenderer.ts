@@ -8,7 +8,7 @@ import { escapeHtml } from "../html-escape";
 import { resolveOpenTradeDisplayMetrics } from "../open-trade-display";
 import { createTradesRendererDom, type TradesRendererDom } from "./trades-renderer-dom";
 import { copyToClipboard } from "../browser-transfer";
-import { cancelIdleBatched, scheduleIdleBatched } from "../render-scheduler";
+import { ProgressiveListRenderer } from "./progressive-list";
 import { getCurrentUiBacktestEndpointSnapshot } from "../backtest-endpoint-copy";
 import {
     buildBacktestDiagnosticOutput,
@@ -24,8 +24,7 @@ export class TradesRenderer {
     private jumpToTrade: ((time: Time) => void) | null = null;
     private jumpHandlersBound = false;
     private diagnosticsHandlersBound = false;
-    private tradeRenderGeneration = 0;
-    private pendingDeferredRenderIds: Array<ReturnType<typeof scheduleIdleBatched>> = [];
+    private progressiveList = new ProgressiveListRenderer<Trade>();
     private latestBacktestDiagnostics: BacktestDiagnosticOutput | null = null;
 
     private getDom(): TradesRendererDom {
@@ -42,8 +41,7 @@ export class TradesRenderer {
         this.jumpToTrade = jumpToTrade;
         this.ensureTradeJumpHandlersBound();
         this.ensureBacktestDiagnosticsHandlersBound();
-        this.cancelPendingDeferredRenders();
-        const renderGeneration = ++this.tradeRenderGeneration;
+        this.progressiveList.invalidate();
         container.classList.remove('trades-list-parity');
 
 if (trades.length === 0) {
@@ -56,10 +54,22 @@ if (trades.length === 0) {
 
         setVisible('emptyTrades', false);
         setVisible('tradesSummary', true);
-this.updateSummary(trades);
-this.renderBacktestDiagnostics(trades);
+        this.updateSummary(trades);
+        this.renderBacktestDiagnostics(trades);
 
-this.renderTradeItemsProgressively(renderGeneration, container, trades, formatPrice, formatDate);
+        const reversed = trades.slice().reverse();
+        this.progressiveList.render({
+            container,
+            items: reversed,
+            maxItems: TradesRenderer.MAX_TRADES,
+            initialBatchSize: TradesRenderer.INITIAL_RENDER_BATCH_SIZE,
+            deferredBatchSize: TradesRenderer.DEFERRED_RENDER_BATCH_SIZE,
+            renderChunk: (items, startIndex, endIndex) =>
+                this.renderTradeChunk(items, startIndex, endIndex, formatPrice, formatDate),
+            renderLimitNotice: (totalTrades) => totalTrades > TradesRenderer.MAX_TRADES
+                ? this.renderTradesLimitNotice(totalTrades)
+                : '',
+        });
         return true;
     }
 
@@ -101,60 +111,8 @@ this.renderTradeItemsProgressively(renderGeneration, container, trades, formatPr
         return encodeURIComponent(JSON.stringify(time));
     }
 
-    private renderTradeItemsProgressively(
-        renderGeneration: number,
-        container: HTMLElement,
-        trades: Trade[],
-        formatPrice: (p: number) => string,
-        formatDate: (t: Time) => string
-    ): void {
-        const reversed = trades.slice().reverse();
-        const toRender = reversed.slice(0, TradesRenderer.MAX_TRADES);
-        const initialCount = Math.min(toRender.length, TradesRenderer.INITIAL_RENDER_BATCH_SIZE);
-        container.innerHTML = this.renderTradeChunk(toRender, 0, initialCount, formatPrice, formatDate);
-
-        let offset = initialCount;
-        const appendLimitNotice = () => {
-            if (renderGeneration !== this.tradeRenderGeneration || trades.length <= TradesRenderer.MAX_TRADES) {
-                return;
-            }
-
-            const fragment = document.createRange().createContextualFragment(
-                this.renderTradesLimitNotice(trades.length)
-            );
-            container.appendChild(fragment);
-        };
-
-        if (offset >= toRender.length) {
-            appendLimitNotice();
-            return;
-        }
-
-        const appendChunk = () => {
-            if (renderGeneration !== this.tradeRenderGeneration) {
-                return;
-            }
-
-            const nextOffset = Math.min(offset + TradesRenderer.DEFERRED_RENDER_BATCH_SIZE, toRender.length);
-            const fragment = document.createRange().createContextualFragment(
-                this.renderTradeChunk(toRender, offset, nextOffset, formatPrice, formatDate)
-            );
-            container.appendChild(fragment);
-            offset = nextOffset;
-
-            if (offset < toRender.length) {
-                this.scheduleDeferredRender(appendChunk);
-                return;
-            }
-
-            appendLimitNotice();
-        };
-
-        this.scheduleDeferredRender(appendChunk);
-    }
-
     private renderTradeChunk(
-        trades: Trade[],
+        trades: readonly Trade[],
         startIndex: number,
         endIndex: number,
         formatPrice: (p: number) => string,
@@ -169,17 +127,6 @@ this.renderTradeItemsProgressively(renderGeneration, container, trades, formatPr
 
     private renderTradesLimitNotice(totalTrades: number): string {
         return `<div class="trades-limit-notice" style="padding: 12px; text-align: center; color: var(--text-muted); font-size: 0.9em; border-top: 1px solid var(--border-color);">Showing most recent ${TradesRenderer.MAX_TRADES} of ${totalTrades} trades</div>`;
-    }
-
-    private scheduleDeferredRender(callback: () => void): void {
-        this.pendingDeferredRenderIds.push(scheduleIdleBatched(callback));
-    }
-
-    private cancelPendingDeferredRenders(): void {
-        for (const deferredId of this.pendingDeferredRenderIds) {
-            cancelIdleBatched(deferredId);
-        }
-        this.pendingDeferredRenderIds = [];
     }
 
     private renderTradeItem(trade: Trade, formatPrice: (p: number) => string, formatDate: (t: Time) => string): string {
@@ -453,8 +400,7 @@ this.renderDiagnosticMetric("Mode", diagnostics.run.executionModel ?? "n/a"),
     }
 
     public clear() {
-        this.cancelPendingDeferredRenders();
-        this.tradeRenderGeneration += 1;
+        this.progressiveList.invalidate();
         setVisible('emptyTrades', true);
         setVisible('tradesSummary', false);
         this.hideBacktestDiagnostics();

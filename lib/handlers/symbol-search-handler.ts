@@ -159,19 +159,27 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         handleItemSelect(item);
     });
 
+    // Search fan-out resolves out of order across providers; only the newest
+    // query may render, or a slow broad-query response overwrites fresh results.
+    let searchSequence = 0;
     const performSearch = debounce(async (query: string) => {
+        const runId = ++searchSequence;
         symbolSearchSpinner?.classList.remove('is-hidden');
 
         try {
             const results = await assetSearchService.searchAssets(query, 20, {
                 binanceMarketType: getActiveBinanceMarketType(),
             });
+            if (runId !== searchSequence) return;
             renderSearchResults(results, query);
         } catch (error) {
+            if (runId !== searchSequence) return;
             debugLogger.error('ui.asset_search_failed', { error: error instanceof Error ? error.message : String(error) });
             symbolSearchEmpty?.classList.remove('is-hidden');
         } finally {
-            symbolSearchSpinner?.classList.add('is-hidden');
+            if (runId === searchSequence) {
+                symbolSearchSpinner?.classList.add('is-hidden');
+            }
         }
     }, 250);
 

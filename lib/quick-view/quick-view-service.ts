@@ -19,7 +19,7 @@ import {
     renderTradesLimitNoticeHtml,
     renderEmptyTradesHtml,
 } from "./quick-view-renderer";
-import { cancelIdleBatched, scheduleIdleBatched } from "../render-scheduler";
+import { ProgressiveListRenderer } from "../renderers/progressive-list";
 
 
 export function getQuickViewDiagnosticSections(result: BacktestResult): ExpectancyBreakdownSection[] {
@@ -41,8 +41,7 @@ class QuickViewManager {
     private sortNewestFirst = true;
     private currentTrades: Trade[] = [];
     private keyboardHandler: ((e: KeyboardEvent) => void) | null = null;
-    private tradeRenderGeneration = 0;
-    private pendingDeferredRenderIds: Array<ReturnType<typeof scheduleIdleBatched>> = [];
+    private tradeListRenderer = new ProgressiveListRenderer<Trade>();
     private overlayRenderGeneration = 0;
 
     init() {
@@ -162,8 +161,7 @@ class QuickViewManager {
     }
 
     destroy() {
-        this.cancelPendingDeferredRenders();
-        this.tradeRenderGeneration += 1;
+        this.tradeListRenderer.invalidate();
         this.overlayRenderGeneration += 1;
         if (this.keyboardHandler) {
             window.removeEventListener('keydown', this.keyboardHandler);
@@ -193,8 +191,7 @@ class QuickViewManager {
         const count = getQvTradesCount();
         const sortLabel = getQvSortLabel();
         if (!list) return;
-        this.cancelPendingDeferredRenders();
-        this.tradeRenderGeneration += 1;
+        this.tradeListRenderer.invalidate();
         if (count) count.textContent = String(trades.length);
         if (sortLabel) sortLabel.textContent = this.sortNewestFirst ? 'Newest first' : 'Oldest first';
 
@@ -204,58 +201,17 @@ class QuickViewManager {
         }
 
         const sorted = this.sortNewestFirst ? [...trades].reverse() : trades;
-        const toRender = sorted.slice(0, QuickViewManager.MAX_RENDERED_TRADES);
-        const limitNotice = trades.length > QuickViewManager.MAX_RENDERED_TRADES
-            ? renderTradesLimitNoticeHtml(trades.length, QuickViewManager.MAX_RENDERED_TRADES)
-            : '';
-        this.renderTradesProgressively(this.tradeRenderGeneration, list, toRender, limitNotice);
-    }
-
-    private renderTradesProgressively(
-        renderGeneration: number,
-        list: HTMLElement,
-        trades: Trade[],
-        limitNoticeHtml: string
-    ): void {
-        const initialCount = Math.min(trades.length, QuickViewManager.INITIAL_TRADE_BATCH_SIZE);
-        list.innerHTML = renderTradeChunkHtml(trades, 0, initialCount);
-
-        let offset = initialCount;
-        const appendLimitNotice = () => {
-            if (!limitNoticeHtml || renderGeneration !== this.tradeRenderGeneration) {
-                return;
-            }
-
-            const fragment = document.createRange().createContextualFragment(limitNoticeHtml);
-            list.appendChild(fragment);
-        };
-
-        if (offset >= trades.length) {
-            appendLimitNotice();
-            return;
-        }
-
-        const appendChunk = () => {
-            if (renderGeneration !== this.tradeRenderGeneration) {
-                return;
-            }
-
-            const nextOffset = Math.min(offset + QuickViewManager.DEFERRED_TRADE_BATCH_SIZE, trades.length);
-            const fragment = document.createRange().createContextualFragment(
-                renderTradeChunkHtml(trades, offset, nextOffset)
-            );
-            list.appendChild(fragment);
-            offset = nextOffset;
-
-            if (offset < trades.length) {
-                this.scheduleDeferredRender(appendChunk);
-                return;
-            }
-
-            appendLimitNotice();
-        };
-
-        this.scheduleDeferredRender(appendChunk);
+        this.tradeListRenderer.render({
+            container: list,
+            items: sorted,
+            maxItems: QuickViewManager.MAX_RENDERED_TRADES,
+            initialBatchSize: QuickViewManager.INITIAL_TRADE_BATCH_SIZE,
+            deferredBatchSize: QuickViewManager.DEFERRED_TRADE_BATCH_SIZE,
+            renderChunk: (items, startIndex, endIndex) => renderTradeChunkHtml(items, startIndex, endIndex),
+            renderLimitNotice: (totalTrades) => totalTrades > QuickViewManager.MAX_RENDERED_TRADES
+                ? renderTradesLimitNoticeHtml(totalTrades, QuickViewManager.MAX_RENDERED_TRADES)
+                : '',
+        });
     }
 
     private handleTradeItemActivation(target: EventTarget | null, list: HTMLElement): void {
@@ -290,17 +246,6 @@ class QuickViewManager {
         } catch {
             return (isNaN(Number(decoded)) ? decoded : Number(decoded)) as Time;
         }
-    }
-
-    private scheduleDeferredRender(callback: () => void): void {
-        this.pendingDeferredRenderIds.push(scheduleIdleBatched(callback));
-    }
-
-    private cancelPendingDeferredRenders(): void {
-        for (const deferredId of this.pendingDeferredRenderIds) {
-            cancelIdleBatched(deferredId);
-        }
-        this.pendingDeferredRenderIds = [];
     }
 
 }

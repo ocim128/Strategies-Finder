@@ -25,6 +25,7 @@ import {
 } from "./dataProviders/mock";
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { toTimeKey } from "./time-key";
 import { countRealtimeGapBars } from "./realtime-gap-utils";
 import { clearLocalDailyCsvCachesForSymbols, mergeCandles } from "./candle-cache";
 import { clearCachedCandlesDatabase } from "./candle-cache";
@@ -757,6 +758,12 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
         }
 
         if (!changed) return 0;
+
+        // The stream path mutates state.ohlcvData in place without a
+        // commitOhlcvData emit, so keep the crosshair lookup map in sync here —
+        // otherwise the map serves a stale candle (last-bar replace) or misses
+        // the bar entirely (new-bar push) until the next full commit.
+        state._ohlcvTimeMap.set(toTimeKey(updatedCandle.time), updatedCandle);
 
         if (state.candlestickSeries) {
             state.candlestickSeries.update(updatedCandle);

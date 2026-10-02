@@ -21,6 +21,7 @@ import { createStateSubscriptionsDom } from "./state-subscriptions-dom";
 import type { Time } from "lightweight-charts";
 import { getMockBarsInput, getVisibleCandlesInput } from "./ui-event-handlers-dom";
 import { coalesceAnimationFrame } from "../render-scheduler";
+import { debounce } from "../debounce";
 
 export function setupStateSubscriptions() {
     const dom = createStateSubscriptionsDom();
@@ -47,6 +48,23 @@ export function setupStateSubscriptions() {
     };
 
     let lastDataLength = 0;
+
+    // Gap-fill commits land in bursts (a commit per merged batch); without a
+    // trailing debounce each one would serialize the full candle array into a
+    // backtest re-run. Coalesce bursts into one run; the result check happens
+    // at fire time so a clearAll() between commit and fire cannot re-run a
+    // backtest for a symbol the user already left.
+    const autoRefreshBacktest = debounce(() => {
+        if (!state.currentBacktestResult || state.currentBacktestResultSource !== 'backtest') {
+            return;
+        }
+        void backtestService.runCurrentBacktest().catch((error) => {
+            debugLogger.error('backtest.auto_refresh_failed', {
+                source: state.currentBacktestResultSource,
+                error: error instanceof Error ? error.message : String(error),
+            });
+        });
+    }, 500);
 
     let reloadTimeout: number | null = null;
     let pendingBacktestResult: typeof state.currentBacktestResult = null;
@@ -162,12 +180,7 @@ export function setupStateSubscriptions() {
         }
 
         if (state.currentBacktestResult && state.currentBacktestResultSource === 'backtest') {
-            void backtestService.runCurrentBacktest().catch((error) => {
-                debugLogger.error('backtest.auto_refresh_failed', {
-                    source: state.currentBacktestResultSource,
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            });
+            autoRefreshBacktest();
         }
     });
 

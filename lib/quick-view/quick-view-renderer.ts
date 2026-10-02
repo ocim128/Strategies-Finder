@@ -122,7 +122,7 @@ export function renderResultsHtml(result: BacktestResult): string {
   `;
 }
 
-export function renderTradeChunkHtml(trades: Trade[], startIndex: number, endIndex: number): string {
+export function renderTradeChunkHtml(trades: readonly Trade[], startIndex: number, endIndex: number): string {
   let html = '';
   for (let index = startIndex; index < endIndex; index += 1) {
     html += renderTradeItemHtml(trades[index]);
