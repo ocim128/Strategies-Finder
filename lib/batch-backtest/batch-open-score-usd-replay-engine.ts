@@ -181,8 +181,11 @@ export async function runOpenScoreUsdReplay(
     // interleave yields + progress and Stop stays responsive on huge pair
     // lists. Each pair's deltas are sorted in-place (small, fast) right after
     // the pair is loaded — never one global Array.sort blocking the loop.
-    // Stage implementation: ./open-score-replay/artifact-scan.ts.
-    const scanOutcome = await scanArtifacts({
+    // Stage implementation: ./open-score-replay/artifact-scan.ts. An optional
+    // scanOverride (TOP_MEAN parallel scan pool) replaces the sequential scan
+    // entirely when it returns a result; null falls back to the loader path.
+    const overriddenScan = options.scanOverride ? await options.scanOverride() : null;
+    const scanOutcome = overriddenScan ?? await scanArtifacts({
         artifactLoader,
         shouldStop,
         onPhase,

@@ -552,6 +552,15 @@ re-parsing the CSV text; on a 24-worker run with large-cap seeds this cut the
 measured load path from ~31 ms to ~6–10 ms per pair. See the
 [price-data guide](price-data.md) for the sidecar contract.
 
+Replay stage 1 (artifact scan) can likewise fan out: when the run does not use
+cap-tilt weighting and at least 8 shards completed, the coordinator scans
+persisted shards with short-lived worker threads (`sp500-top-mean-scan-pool.ts`)
+and merges the packed per-pair delta streams in completed-shard order — the
+merge reproduces the sequential scan's first-encounter asset indexing and
+stable per-pair delta order exactly, so results are unchanged; the sequential
+scan remains the fallback for cap-tilt runs, resumed shards with read
+failures, and small runs.
+
 IBKR and crypto historical CSV cache hits materialize only the requested
 newest bars. Complete columnar entries remain available to full-series callers;
 mtime freshness checks and cache limits still apply. See the

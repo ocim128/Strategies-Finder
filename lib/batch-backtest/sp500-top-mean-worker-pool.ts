@@ -35,16 +35,31 @@ function moduleThisFileDir(): string {
 }
 
 export async function resolveTopMeanWorkerPath(): Promise<string> {
+    return resolveServerWorkerEntryPath("sp500-top-mean-worker.ts");
+}
+
+/** Bundled entry path for the parallel replay scan worker. */
+export async function resolveTopMeanScanWorkerPath(): Promise<string> {
+    return resolveServerWorkerEntryPath("sp500-top-mean-scan-worker.ts");
+}
+
+/**
+ * Resolve a TOP_MEAN worker entry: prefer the standalone deployment's sibling
+ * .js, then the repository .ts, else esbuild-bundle the .ts to a content-
+ * addressed worker.cjs. All entries share the same resolution so the backtest
+ * pool and auxiliary workers (replay scan) cannot drift.
+ */
+export async function resolveServerWorkerEntryPath(fileName: string): Promise<string> {
     const fs = await import("node:fs/promises");
-    const repositorySource = resolve(process.cwd(), "lib", "batch-backtest", "sp500-top-mean-worker.ts");
-    const moduleSource = join(moduleThisFileDir(), "sp500-top-mean-worker.ts");
+    const repositorySource = resolve(process.cwd(), "lib", "batch-backtest", fileName);
+    const moduleSource = join(moduleThisFileDir(), fileName);
     const sourcePath = await fs.access(repositorySource).then(() => repositorySource).catch(() => moduleSource);
     const sibling = sourcePath.replace(/\.ts$/, ".js");
     if (sourcePath.endsWith(".js") || (await fs.access(sibling).then(() => true).catch(() => false))) {
         return sourcePath.endsWith(".js") ? sourcePath : sibling;
     }
     try {
-        return await bundleWorkerWithEsbuild(sourcePath);
+        return await bundleWorkerWithEsbuild(sourcePath, fileName.replace(/\.ts$/, ".cjs"));
     } catch {
         return sourcePath;
     }
@@ -53,7 +68,7 @@ export async function resolveTopMeanWorkerPath(): Promise<string> {
 /**
  * Bundle the worker source and reuse the content-addressed output file.
  */
-async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
+async function bundleWorkerWithEsbuild(sourcePath: string, outfile: string): Promise<string> {
     const fs = await import("node:fs/promises");
     const os = await import("node:os");
     const esbuild = (await import("esbuild")) as unknown as {
@@ -68,26 +83,26 @@ async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
         platform: "node",
         format: "cjs",
         target: "node18",
-        outfile: "worker.cjs",
+        outfile,
         write: false,
         logLevel: "silent",
     });
 
     const contents = result.outputFiles?.[0]?.contents;
     if (!contents?.byteLength) {
-        throw new Error("esbuild produced an empty top-mean worker bundle");
+        throw new Error(`esbuild produced an empty bundle for ${outfile}`);
     }
 
     const bundleHash = createHash("sha256").update(contents).digest("hex").slice(0, 16);
     const dir = join(root, bundleHash);
-    const outfile = join(dir, "worker.cjs");
+    const outPath = join(dir, outfile);
     await fs.mkdir(dir, { recursive: true });
-    if (!(await fs.access(outfile).then(() => true).catch(() => false))) {
+    if (!(await fs.access(outPath).then(() => true).catch(() => false))) {
         const temporary = join(dir, `worker.${process.pid}.${Date.now()}.tmp`);
         await fs.writeFile(temporary, contents);
-        await fs.rename(temporary, outfile);
+        await fs.rename(temporary, outPath);
     }
-    return outfile;
+    return outPath;
 }
 
 /**

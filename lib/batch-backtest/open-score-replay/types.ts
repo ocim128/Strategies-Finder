@@ -11,6 +11,8 @@ import type { OHLCVData } from "../../types/strategies";
 import type { CandleGap } from "../../ibkr-data/candle-gap";
 import type { ActiveCapTiltWeight, CapTiltWeight } from "../cap-tilt-contract";
 import type { ReplayArmField } from "./arm-contract";
+import type { StageOutcome } from "./internal-types";
+import type { ArtifactScanResult } from "./artifact-scan";
 
 // ============================================================================
 // Public types
@@ -679,6 +681,16 @@ export interface RunOpenScoreUsdReplayOptions {
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate" | "switch", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */
     shouldStop?: () => boolean;
+    /**
+     * Optional stage-1 fast path. Runs BEFORE the sequential loader scan; a
+     * non-null result REPLACES the sequential scan entirely, null falls back
+     * to it. Implementations must reproduce the sequential scan semantics
+     * exactly (same artifact order, same first-encounter asset indexing — the
+     * TOP_MEAN parallel scan pool does) or return null on any uncertainty.
+     * Cap-tilt runs must not use it: the tilt classification needs the
+     * caller-injected market-cap lookup during reconstruction.
+     */
+    scanOverride?: () => Promise<StageOutcome<ArtifactScanResult> | null>;
     /**
      * Cap-tilt weighting (docs/open-score-cap-tilt.md): the base leg of LONG
      * trades gets entry delta +2 (instead of +1) when the entry-time market

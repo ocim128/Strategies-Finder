@@ -11,13 +11,25 @@ export class ScoreDeltaBuffer {
     /** Bit 0: entry; bit 1: causal vote applies. */
     readonly flags: Uint8Array;
 
-    constructor(readonly length: number) {
-        this.timeSecs = new Float64Array(length);
-        this.assetIndices = new Uint32Array(length);
-        this.deltas = new Float64Array(length);
-        this.pnlShares = new Float64Array(length);
-        this.confidenceWeights = new Float64Array(length);
-        this.flags = new Uint8Array(length);
+    /**
+     * When {@link columns} is supplied the buffer WRAPS those arrays instead of
+     * allocating (zero-copy per-pair views over one packed shard buffer). The
+     * caller owns column lifetimes; lengths must each be >= `length`.
+     */
+    constructor(readonly length: number, columns?: {
+        timeSecs: Float64Array;
+        assetIndices: Uint32Array;
+        deltas: Float64Array;
+        pnlShares: Float64Array;
+        confidenceWeights: Float64Array;
+        flags: Uint8Array;
+    }) {
+        this.timeSecs = columns?.timeSecs ?? new Float64Array(length);
+        this.assetIndices = columns?.assetIndices ?? new Uint32Array(length);
+        this.deltas = columns?.deltas ?? new Float64Array(length);
+        this.pnlShares = columns?.pnlShares ?? new Float64Array(length);
+        this.confidenceWeights = columns?.confidenceWeights ?? new Float64Array(length);
+        this.flags = columns?.flags ?? new Uint8Array(length);
     }
 
     static from(rows: readonly ScoreDelta[]): ScoreDeltaBuffer {

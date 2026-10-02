@@ -49,6 +49,9 @@ import {
 } from "./batch-open-score-usd-replay-engine";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
 import { SyntheticLegCache } from "./synthetic-leg-cache";
+import { runParallelArtifactScan } from "./sp500-top-mean-scan-pool";
+import type { StageOutcome } from "./open-score-replay/internal-types";
+import type { ArtifactScanResult } from "./open-score-replay/artifact-scan";
 // Import hygiene (docs/open-score-cap-tilt.md): the ONLY import allowed from
 // lib/ibkr-data/ — the reader is a dependency-free leaf, safe for the
 // vite.config esbuild bundle. NEVER import ibkr-data-vite-plugin.ts here.
@@ -1430,6 +1433,62 @@ export class TopMeanCoordinatorEngine {
                     : commissionPct,
             };
 
+            // Parallel stage-1 scan (sp500-top-mean-scan-pool.ts): every replay
+            // pass re-reads and re-parses every persisted shard on this single
+            // thread while the machine idles, so fan the scan out to worker
+            // threads. The override returns null (sequential fallback) for
+            // cap-tilt runs — tilt classification needs the main-thread
+            // market-cap lookup — and on any uncertainty, so it can only ever
+            // be an accelerator.
+            const capTiltRequested = Boolean(this._request.capTiltWeight && replayCapTiltLookup);
+            const replayOnPhase = (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate" | "switch", detail: string, completed: number, total: number): void => {
+                if (!detail) return;
+                if (phase !== activeReplayPhase) {
+                    finishActiveReplayPhase();
+                    activeReplayPhase = phase;
+                    activeReplayPhaseStartedAt = performance.now();
+                    // Phase transitions always emit so the UI
+                    // never sits on a stale phase label.
+                    lastReplayProgressEmit = { atMs: performance.now(), completed };
+                    this.progressText = detail;
+                    emitNdjson({ type: "progress", phase: "replay", completed, total, text: detail });
+                    return;
+                }
+                const nowMs = performance.now();
+                const elapsedMs = lastReplayProgressEmit
+                    ? nowMs - lastReplayProgressEmit.atMs
+                    : Number.POSITIVE_INFINITY;
+                const completedDelta = lastReplayProgressEmit
+                    ? completed - lastReplayProgressEmit.completed
+                    : completed;
+                if (!shouldEmitTopMeanReplayProgress(elapsedMs, completedDelta, total)) return;
+                lastReplayProgressEmit = { atMs: nowMs, completed };
+                this.progressText = detail;
+                emitNdjson({ type: "progress", phase: "replay", completed, total, text: detail });
+            };
+            const parallelScanOverride = async (): Promise<StageOutcome<ArtifactScanResult> | null> => {
+                if (capTiltRequested) return null;
+                // Open the scan phase on the coordinator's clock before the
+                // spawn/merge work so PERFORMANCE keeps its scanMs visibility
+                // on the fast path too.
+                replayOnPhase("scan", "scanning pair artifacts (parallel)", 0, 0);
+                const outcome = await runParallelArtifactScan({
+                    runId: this._request.runId,
+                    baseDir: this.baseDir,
+                    shouldStop: () => this.isStopped,
+                    onPhase: replayOnPhase,
+                });
+                if (outcome.status === "fallback") return null;
+                if (outcome.status === "cancelled") {
+                    return { ok: false, earlyExit: { reportLine: "OPEN_SCORE USD | cancelled during artifact scan.", pairs: outcome.pairs } };
+                }
+                // The sequential path counts tradeless artifacts inside the
+                // loader generator; the parallel scan bypasses that generator,
+                // so hand the counter over here (reset per pass, as above).
+                noTradePairs = outcome.tradelessPairs;
+                return { ok: true, result: outcome.result };
+            };
+
             let replayPassIndex = 0;
             const runReplayForWindow = (
                 sampleFromSec: number | undefined,
@@ -1549,6 +1608,9 @@ export class TopMeanCoordinatorEngine {
                             }
                             : {}),
                         shouldStop: () => this.isStopped,
+                        // Parallel stage-1 scan when eligible; the engine falls
+                        // back to the sequential loader scan on null.
+                        scanOverride: parallelScanOverride,
                         // Cap-tilt weighting: both fields ride together or
                         // neither; this closure covers the full-range pass
                         // AND every calendar-year pass.
@@ -1558,31 +1620,7 @@ export class TopMeanCoordinatorEngine {
                         ...(replayMode === "horizon" && this._request.selectionCooldownBars
                             ? { selectionCooldownBars: this._request.selectionCooldownBars }
                             : {}),
-                        onPhase: (phase, detail, completed, total) => {
-                            if (!detail) return;
-                            if (phase !== activeReplayPhase) {
-                                finishActiveReplayPhase();
-                                activeReplayPhase = phase;
-                                activeReplayPhaseStartedAt = performance.now();
-                                // Phase transitions always emit so the UI
-                                // never sits on a stale phase label.
-                                lastReplayProgressEmit = { atMs: performance.now(), completed };
-                                this.progressText = detail;
-                                emitNdjson({ type: "progress", phase: "replay", completed, total, text: detail });
-                                return;
-                            }
-                            const nowMs = performance.now();
-                            const elapsedMs = lastReplayProgressEmit
-                                ? nowMs - lastReplayProgressEmit.atMs
-                                : Number.POSITIVE_INFINITY;
-                            const completedDelta = lastReplayProgressEmit
-                                ? completed - lastReplayProgressEmit.completed
-                                : completed;
-                            if (!shouldEmitTopMeanReplayProgress(elapsedMs, completedDelta, total)) return;
-                            lastReplayProgressEmit = { atMs: nowMs, completed };
-                            this.progressText = detail;
-                            emitNdjson({ type: "progress", phase: "replay", completed, total, text: detail });
-                        },
+                        onPhase: replayOnPhase,
                         ...(sampleFromSec !== undefined ? { sampleFromSec } : {}),
                         ...(sampleToSec !== undefined ? { sampleToSec } : {}),
                     },
