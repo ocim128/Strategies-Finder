@@ -4,6 +4,43 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Verification sweep: no defect found, runtime data-defect exposure de-risked
+
+- **Evidence:** No code defect surfaced this run, so the worktree code is
+  unchanged; this entry banks the run's findings. Probes, all clean: Worker
+  alert routes vs `lib/alert-service.ts` client calls (README alignment
+  contract); standalone Vercel lockfile vs package.json (all deps present,
+  ranges satisfied); Vercel `middleware.ts` auth gate (escaping, return-to
+  normalization, HttpOnly/Secure cookie); advanced sizing models gate engine
+  selection (`backtest-executor.ts:495` forces TypeScript for anything beyond
+  percent/fixed/kelly, matching Rust's `TradeSizingMode`); worker cron
+  scheduling (`shouldPollSubscriptionOnSchedule` early-poll grace); browser
+  `/api/*` calls vs vite-plugin routes (only remote Binance endpoints
+  unmatched); `data-integrity-scan` timestamp normalization vs the loader's
+  `normalizeCsvDate` (V8 parses both forms, no false-BLOCK divergence);
+  `npm run test:e2e` including the new causal-arm and batch-menu steps.
+  Measured: entry bundle 600.4 KB / 650 KB budget after `0dd45789`'s browser
+  additions (vite reports 614.79 kB for the same file — vite uses kB/1000,
+  the check script uses KB/1024; same bytes, no drift).
+- **Key finding:** The preflight follow-up about BLOCK verdicts having no
+  runtime consumer is materially lower-risk than recorded. Both loader paths
+  self-heal the worst defect classes: `parseIbkrCsvPayload` falls back to the
+  shared parser on duplicate/non-monotonic timestamps, and
+  `extractCandlesFromCsvPayload` ends with `sortAndDedupeCandles`. Research
+  therefore does not corrupt on the 88 blocked symbols' structural defects;
+  the remaining exposure is wasted universe slots and stale-symbol selection.
+  Building the expensive cached-verdict universe integration is not justified
+  by corruption risk; at most, surface last-bar age in the universe UI
+  (the catalog already carries per-interval `lastTimes`).
+- **Change:** Maintenance log only; no code, test, or doc changes.
+- **Checks:** `npm run test:e2e` passed end to end (chart load, symbol/
+  interval switch, save config, ranking card, causal-arm selectors, batch
+  consistency, layout); `npm ci`-sync check via lockfile/package comparison;
+  bundle budget re-measured OK.
+- **Follow-up:** The 88 BLOCK symbols remain worth a data re-sync (stale
+  tails, empty files); the tooling side is done. Vite-vs-script KB unit
+  mismatch in the budget check is cosmetic.
+
 ## 2026-10-03 - Repair the preflight quote-overlap window and a spread-limit crash
 
 - **Evidence:** Running `npm run data:preflight` over the IBKR 30m tree
