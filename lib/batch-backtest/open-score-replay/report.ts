@@ -11,6 +11,7 @@ import type {
     SelectorPnlSummary,
     TopMeanPortfolioSummary,
 } from "./types";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "./arm-contract";
 
 const fmtPct = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : `${x >= 0 ? "+" : ""}${(x * 100).toFixed(2)}%`);
 const fmtNum = (x: number | null): string => (x === null || !Number.isFinite(x) ? "n/a" : x.toFixed(2));
@@ -96,6 +97,10 @@ export function buildReportLines(args: {
                 ? "PARTIAL"
                 : "FULL";
         lines.push(`--- horizon ${h.bars} bar(s) | coverage=${h.topRaw.events}/${args.candidateEvents} (${(coverageRate * 100).toFixed(1)}%) ${coverageStatus} ---`);
+        for (const field of CAUSAL_ARM_FIELDS) {
+            const comparison = h[field];
+            if (comparison) lines.push(comparisonLine(REPLAY_ARM_TO_FINDER_ARM[field], comparison));
+        }
         lines.push(comparisonLine("TOP_RAW_PROFIT_NOW", h.topRawProfitNow));
         lines.push(comparisonLine(`RAW_PROFIT_NOW_EX_${h.topRawProfitNowDominantAsset ?? "NONE"}`, h.topRawProfitNowExDominant));
         lines.push(comparisonLine("TOP_MEAN_PROFIT_NOW", h.topMeanProfitNow));

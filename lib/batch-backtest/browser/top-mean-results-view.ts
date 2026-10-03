@@ -16,7 +16,7 @@ import type { TopMeanCurrentSnapshot } from "../sp500-top-mean-stream-types";
 import type { TopMeanResultSummary } from "../sp500-top-mean-coordinator-engine";
 import { formatTopMeanPerformanceLines } from "../sp500-top-mean-performance";
 import { escapeHtml } from "../../html-escape";
-import { hasAssetSwitchDecisionEvents, REPLAY_ARM_FIELDS } from "../open-score-replay/arm-contract";
+import { hasAssetSwitchDecisionEvents, REPLAY_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, CAUSAL_ARM_FIELDS } from "../open-score-replay/arm-contract";
 
 /**
  * The Latest OPEN_SCORE card's arm picker is GENERATED inside the card (it is
@@ -39,6 +39,7 @@ export const LATEST_ARM_SELECTOR_NAMES: readonly OpenScoreUsdLatestSelectorName[
     "BOT_RAW_PROFIT_NOW",
     "BOT_MEAN_PROFIT_NOW",
     "BOT_Z",
+    ...CAUSAL_ARM_FIELDS.map((field) => REPLAY_ARM_TO_FINDER_ARM[field]),
 ];
 
 export function normalizeLatestArm(value: string | null | undefined): OpenScoreUsdLatestSelectorName {
@@ -204,7 +205,7 @@ export function renderLatestOpenScoreSelections(
     // universes. The arm comes from the in-card dropdown; the full list
     // stays available via Copy Result.
     const selection = latest.selections.find((entry) => entry.selector === latestArm)
-        ?? latest.selections[0];
+        ?? (CAUSAL_ARM_FIELDS.some((field) => REPLAY_ARM_TO_FINDER_ARM[field] === latestArm) ? undefined : latest.selections[0]);
     let html = `<div class="batch-report-card">`;
     html += `<div class="batch-report-title">Latest OPEN_SCORE Selector Picks</div>`;
     html += `<div class="batch-report-note">decision event: ${escapeHtml(decisionLabel)}</div>`;
@@ -213,12 +214,14 @@ export function renderLatestOpenScoreSelections(
         html += `<table class="finder-table batch-report-table"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
         html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${selection.reason === "selected" && selection.direction === "long" ? "is-positive" : selection.reason === "selected" && selection.direction === "short" ? "is-negative" : ""}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(latestSelectionText(selection))}</td><td>${escapeHtml(formatLatestMean(selection.mean))}</td><td>${escapeHtml(formatLatestScore(selection.score))}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
         html += `</tbody></table>`;
+        if (selection.rankingScore !== undefined) html += `<div class="batch-report-note">Arm score: ${escapeHtml(selection.rankingScore ?? "n/a")} | Score above is the raw net vote count.</div>`;
         html += renderLatestOpenScoreTopCandidates(selection);
         html += renderLatestArmYearPerformance(summary, selection.selector);
     } else {
-        html += `<div class="batch-report-note">No selector arms in this result.</div>`;
+        html += `<div class="batch-report-note">${escapeHtml(latestArm)}: Rerun required. This saved result has no selection for this arm.</div>`;
     }
-    html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(topMeanTieBreakNote(mode))} Research selectors only.</div>`;
+    const tieNote = selection?.rankingScore !== undefined ? "Score ties use deterministic replay digest tie breaking." : topMeanTieBreakNote(mode);
+    html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(tieNote)} Research selectors only.</div>`;
     html += `</div>`;
     return html;
 }
@@ -244,16 +247,18 @@ function renderLatestOpenScoreTopCandidates(selection: OpenScoreUsdLatestSelecti
     // The engine caps at 3; slice again so hand-built or future payloads
     // cannot grow the card.
     const candidates = (Array.isArray(selection.topCandidates) ? selection.topCandidates : []).slice(0, 3);
+    const hasRankingScore = candidates.some((candidate) => candidate.rankingScore !== undefined);
     if (candidates.length === 0) {
         return `<div class="batch-report-note">Top-candidate detail is unavailable for this result (produced by an older run).</div>`;
     }
     let html = `<div class="batch-report-subheading">Top ${candidates.length} candidates at this event | ranked by ${escapeHtml(selection.selector)}</div>`;
-    html += `<table class="finder-table batch-report-table"><thead><tr><th>Rank</th><th>Asset</th><th>Score</th><th>Mean</th><th>Active Pairs</th></tr></thead><tbody>`;
+    html += `<table class="finder-table batch-report-table"><thead><tr><th>Rank</th><th>Asset</th>${hasRankingScore ? "<th>Arm score</th>" : ""}<th>Score</th><th>Mean</th><th>Active Pairs</th></tr></thead><tbody>`;
     candidates.forEach((candidate, index) => {
         const isPick = selection.asset !== null && candidate.asset === selection.asset;
         html += `<tr${isPick ? ` class="batch-report-row-top"` : ""}>`;
         html += `<td>${index + 1}</td>`;
         html += `<td><strong>${escapeHtml(candidate.asset)}</strong>${isPick ? `<span class="batch-top-badge">PICK</span>` : ""}</td>`;
+        if (hasRankingScore) html += `<td>${escapeHtml(candidate.rankingScore ?? "n/a")}</td>`;
         html += `<td>${escapeHtml(formatLatestScore(candidate.score))}</td>`;
         html += `<td>${escapeHtml(formatLatestMean(candidate.mean))}</td>`;
         html += `<td>${escapeHtml(candidate.activePairs)}</td>`;
@@ -333,6 +338,7 @@ export function formatLatestOpenScoreSelectionLines(
             `mean=${selection.mean ?? "n/a"} | score=${selection.score ?? "n/a"} | ` +
             `activePairs=${selection.activePairs ?? "n/a"} | pool=${selection.eligibleCandidates} | reason=${selection.reason}`,
         );
+        if (selection.rankingScore !== undefined) lines.push(`${selection.selector} rankingScore=${selection.rankingScore ?? "n/a"}`);
     }
     lines.push("");
     return lines;
@@ -380,7 +386,13 @@ export function renderTopMeanResults(
     // No per-horizon asset leaderboard section here on purpose: it rendered
     // every asset per horizon and became unusably long on large universes.
     // Top assets remain available via the Copy button (top 10 per horizon).
-    const annualReports = Array.isArray(summary.annualReports) ? summary.annualReports : [];
+    // A single-year coordinator run can reuse the full-window replay as its
+    // annual result. Keep it in the data contract, but render that window once.
+    const annualReports = (Array.isArray(summary.annualReports) ? summary.annualReports : []).filter((annual) =>
+        !(summary.replayMode === "asset_switch" && summary.assetSwitch && annual.assetSwitch
+            && annual.assetSwitch.windowStartSec === summary.assetSwitch.windowStartSec
+            && annual.assetSwitch.windowEndSec === summary.assetSwitch.windowEndSec),
+    );
     if (annualReports.length > 0) {
         html += `<div class="batch-report-subheading batch-report-subheading--accent">${summary.replayMode === "asset_switch" ? "Independent Asset-Switch Calendar-Year Replays" : "OPEN_SCORE USD Calendar-Year Reports"}</div>`;
         for (const annual of annualReports) {
@@ -388,14 +400,28 @@ export function renderTopMeanResults(
             const toLabel = new Date(annual.sampleToSec * 1000).toISOString().slice(0, 10);
             html += `<details class="batch-report-details">`;
             html += `<summary>${escapeHtml(annual.year)} | ${escapeHtml(fromLabel)}..${escapeHtml(toLabel)}</summary>`;
-            html += `<pre class="batch-report-pre">${escapeHtml(annual.reportLines.join("\n"))}</pre>`;
             if (summary.replayMode === "asset_switch" && annual.assetSwitch) {
                 html += renderAssetSwitchReplay(annual.assetSwitch, `Independent ${annual.year} Asset-Switch Replay`);
+            } else {
+                html += `<pre class="batch-report-pre">${escapeHtml(annual.reportLines.join("\n"))}</pre>`;
             }
             html += `</details>`;
         }
     }
     dom.batchBacktestSp500TopMeanResults.innerHTML = html;
+}
+
+/** Compact history/component availability shared by results, details and copy. */
+export function formatCausalArmAvailabilityLines(summary: Pick<TopMeanResultSummary, "causalArmDefinitions" | "causalArmDiagnostics">): string[] {
+    if (!summary.causalArmDefinitions) return [];
+    const diagnostics = summary.causalArmDiagnostics;
+    const lines = [`Causal score definitions: ${summary.causalArmDefinitions.version}`];
+    if (!diagnostics) return lines;
+    for (const field of CAUSAL_ARM_FIELDS) lines.push(`${REPLAY_ARM_TO_FINDER_ARM[field]}: ${diagnostics.eligibleCandidates[field] ?? 0} eligible candidate observations`);
+    lines.push(`Zero available degree: ${diagnostics.unavailableDegree}`, `Insufficient support history: ${diagnostics.unavailableSupportHistory}`,
+        `Unavailable price history: ${diagnostics.unavailablePriceHistory}`, `Outside selected graph component: ${diagnostics.graphExcludedCandidates}`, `Graph solver failures: ${diagnostics.graphSolverFailures}`);
+    for (const [reason, count] of Object.entries(diagnostics.priceUnavailableReasons ?? {})) lines.push(`Price ${reason.replaceAll("_", " ")}: ${count}`);
+    return lines;
 }
 
 function renderAssetSwitchReplay(

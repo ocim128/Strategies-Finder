@@ -52,6 +52,8 @@ import { SyntheticLegCache } from "./synthetic-leg-cache";
 import { runParallelArtifactScan } from "./sp500-top-mean-scan-pool";
 import type { StageOutcome } from "./open-score-replay/internal-types";
 import type { ArtifactScanResult } from "./open-score-replay/artifact-scan";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "./open-score-replay/arm-contract";
+import { compactCausalArmDefinitions } from "./open-score-replay/causal-arm-constants";
 // Import hygiene (docs/open-score-cap-tilt.md): the ONLY import allowed from
 // lib/ibkr-data/ — the reader is a dependency-free leaf, safe for the
 // vite.config esbuild bundle. NEVER import ibkr-data-vite-plugin.ts here.
@@ -161,6 +163,8 @@ export interface TopMeanAnnualReplayWindow {
 }
 
 export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
+    causalArmDefinitions?: OpenScoreUsdReplayResult["causalArmDefinitions"];
+    causalArmDiagnostics?: OpenScoreUsdReplayResult["causalArmDiagnostics"];
     replayMode?: ReplayMode;
     horizons: TopMeanHorizonSummary[];
     assetSwitch?: AssetSwitchReplaySummary;
@@ -256,15 +260,16 @@ export function buildTopMeanHorizonSummaries(
             events: h.topMean.events,
             topMean: h.topMean,
             topAssets,
-                        latestArms: {
-                            TOP_RAW: h.topRaw,
-                            TOP_MEAN: h.topMean,
-                            TOP_MEAN_RAW_UNIQUE: h.topMeanRawUnique,
-                            TOP_RAW_PROFIT_NOW: h.topRawProfitNow,
-                            TOP_MEAN_PROFIT_NOW: h.topMeanProfitNow,
-                            TOP_RAW_PROFIT_NOW_CONF: h.topRawProfitNowConf,
-                            TOP_Z: h.topZ,
-                        },
+            latestArms: {
+                TOP_RAW: h.topRaw,
+                TOP_MEAN: h.topMean,
+                TOP_MEAN_RAW_UNIQUE: h.topMeanRawUnique,
+                TOP_RAW_PROFIT_NOW: h.topRawProfitNow,
+                TOP_MEAN_PROFIT_NOW: h.topMeanProfitNow,
+                TOP_RAW_PROFIT_NOW_CONF: h.topRawProfitNowConf,
+                TOP_Z: h.topZ,
+                ...Object.fromEntries(CAUSAL_ARM_FIELDS.filter((field) => h[field]).map((field) => [REPLAY_ARM_TO_FINDER_ARM[field], h[field]])),
+            },
             armComparisons,
             ...(h.armExTopContributorComparisons ? {
                 armComparisonsExTopContributor: Object.fromEntries(
@@ -323,13 +328,15 @@ export function capTopMeanEventDetailsForWire<Row>(
  * "Selected Window" section, and the per-year rows remain in result.json and
  * the research archive.
  */
-import { compactRankingMeasurement } from "./open-score-replay/types";
+import { compactRankingMeasurement, compactCausalArmDiagnostics } from "./open-score-replay/types";
 
 export function toWireSafeTopMeanResultSummary(
     result: TopMeanResultSummary,
 ): TopMeanResultSummary {
     return {
         ...result,
+        causalArmDefinitions: compactCausalArmDefinitions(result.causalArmDefinitions),
+        causalArmDiagnostics: compactCausalArmDiagnostics(result.causalArmDiagnostics),
         rankingMeasurement: compactRankingMeasurement(result.rankingMeasurement),
         openScoreEventDetails: result.openScoreEventDetails
             ? capTopMeanEventDetailsForWire(result.openScoreEventDetails)
@@ -339,6 +346,8 @@ export function toWireSafeTopMeanResultSummary(
         candidateOutcomes: undefined,
         annualReports: result.annualReports?.map((annual) => ({
             ...annual,
+            causalArmDefinitions: compactCausalArmDefinitions(annual.causalArmDefinitions),
+            causalArmDiagnostics: compactCausalArmDiagnostics(annual.causalArmDiagnostics),
             assetSwitch: annual.assetSwitch
                 ? {
                     ...annual.assetSwitch,
@@ -545,8 +554,8 @@ export interface TopMeanCoordinatorEngineDeps {
      * skips what the compact candidate result never reads: annual calendar
      * replays, the current-position snapshot, per-row event details, and both
      * result.json writes (the child directory is deleted after the sweep).
-     * Absent (standalone TOP_MEAN) preserves every existing behavior,
-     * including single-year deduplication and the pre-replay snapshot
+     * Standalone TOP_MEAN computes the same twenty arms, and also retains
+     * single-year deduplication and the pre-replay snapshot
      * persistence that the /status reattach path serves.
      */
     executionProfile?: "finder_arm";
@@ -1480,7 +1489,7 @@ export class TopMeanCoordinatorEngine {
                 // on the fast path too.
                 replayOnPhase("scan", "scanning pair artifacts (parallel)", 0, 0);
                 const outcome = await runParallelArtifactScan({
-                    enableCausalArms: finderArmProfile,
+                    enableCausalArms: true,
                     runId: this._request.runId,
                     baseDir: this.baseDir,
                     shouldStop: () => this.isStopped,
@@ -1533,7 +1542,8 @@ export class TopMeanCoordinatorEngine {
                         // cache (annual-reload finding): the first (full-window)
                         // pass populates the cache; annual passes are served
                         // from it and load no target datasets.
-                        enableCausalArms: finderArmProfile,
+                        // Batch TOP_MEAN and Finder share the same causal arm set.
+                        enableCausalArms: true,
                         loadTargetDataset,
                         prefetchTargetDatasets,
                         // finder_arm runs exactly ONE full-window pass, so a
@@ -1704,6 +1714,8 @@ export class TopMeanCoordinatorEngine {
                             ...window,
                             replayMode: this._request.replayMode ?? "horizon",
                             horizons: buildHorizonSummaries(replayResult),
+                            causalArmDefinitions: replayResult.causalArmDefinitions,
+                            causalArmDiagnostics: replayResult.causalArmDiagnostics,
                             ...(replayResult.assetSwitch
                                 ? { assetSwitch: { ...replayResult.assetSwitch, independentWindow: true } }
                                 : {}),
@@ -1741,6 +1753,8 @@ export class TopMeanCoordinatorEngine {
                         ...window,
                         replayMode: this._request.replayMode ?? "horizon",
                         horizons: buildHorizonSummaries(annualResult),
+                        causalArmDefinitions: annualResult.causalArmDefinitions,
+                        causalArmDiagnostics: annualResult.causalArmDiagnostics,
                         ...(annualResult.assetSwitch ? { assetSwitch: annualResult.assetSwitch } : {}),
                         eventDetails: annualResult.eventDetails,
                         warnings: annualResult.warnings,

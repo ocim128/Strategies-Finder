@@ -24,12 +24,34 @@
 import { tieBreakDigest } from "../max-active-research-contract";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
 import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback, StageOutcome } from "./internal-types";
-import { REPLAY_ARM_FIELDS, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, type CausalArmField } from "./arm-contract";
+import { REPLAY_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, type CausalArmField } from "./arm-contract";
 import type { ReplayArmField } from "./arm-contract";
 import { yieldLoop } from "./runtime";
 import type { RankingEvent, RankingPick } from "./internal-types";
 
 export const causalCandidatePool = (pool: readonly Candidate[], field: CausalArmField): Candidate[] => pool.filter((candidate) => typeof candidate[field] === "number" && Number.isFinite(candidate[field]));
+
+/** Latest causal picks retain the actual score and digest ordering, independent of future gaps. */
+function causalLatestSelection(time: number, field: CausalArmField, pool: readonly Candidate[], names: readonly string[], selectedIndex?: number): OpenScoreUsdLatestSelection {
+    const eligible = causalCandidatePool(pool, field);
+    const picks: RankingPick[] = [];
+    const spec = RANKING_ARM_SPECS.find((spec) => spec.field === field)!;
+    for (const candidate of eligible) insertRankingPick(picks, candidate, spec, time, names);
+    const selected = eligible.find((candidate) => candidate.assetIndex === (selectedIndex ?? (eligible.length >= 2 ? picks[0]?.assetIndex : -1)));
+    const tiedAssets = selected ? eligible.filter((candidate) => candidate[field] === selected[field]).map((candidate) => names[candidate.assetIndex]!).sort() : [];
+    return {
+        selector: REPLAY_ARM_TO_FINDER_ARM[field], direction: "long",
+        asset: selected ? names[selected.assetIndex]! : null,
+        tiedAssets: tiedAssets.length > 1 ? tiedAssets : [],
+        score: selected?.raw ?? null, mean: selected?.mean ?? null, activePairs: selected?.activePairs ?? null,
+        rankingScore: selected?.[field] ?? null,
+        eligibleCandidates: eligible.length, reason: selected ? "selected" : "insufficient_candidates",
+        topCandidates: picks.slice(0, 3).map((pick) => {
+            const candidate = eligible.find((candidate) => candidate.assetIndex === pick.assetIndex)!;
+            return { asset: names[pick.assetIndex]!, score: candidate.raw, mean: candidate.mean, activePairs: candidate.activePairs, rankingScore: pick.key };
+        }),
+    };
+}
 
 export const RANKING_ARM_SPECS = REPLAY_ARM_FIELDS.map((field) => ({
     field,
@@ -1161,6 +1183,7 @@ export async function selectAfterOutcomes(args: {
                 pick("BOT_RAW_PROFIT_NOW", "long", latestView.profitNowPositives, (candidate) => candidate.raw, "min"),
                 pick("BOT_MEAN_PROFIT_NOW", "long", latestView.profitNowPositives, (candidate) => candidate.mean, "min"),
                 pick("BOT_Z", "long", latestView.profitNowPositives, (candidate) => candidate.z ?? Number.POSITIVE_INFINITY, "min"),
+                ...(args.enableCausalArms ? CAUSAL_ARM_FIELDS.map((field) => causalLatestSelection(latestView.timeSec, field, latestView.positives, assetNames)) : []),
             ],
         };
     })();
@@ -1328,11 +1351,12 @@ export async function selectAfterOutcomes(args: {
                     BOT_MEAN_PROFIT_NOW: "botMeanProfitNow",
                     BOT_Z: "botZ",
                 };
-                const field = fieldBySelector[current.selector];
+                const field = fieldBySelector[current.selector] ?? REPLAY_ARM_FIELDS.find((field) => REPLAY_ARM_TO_FINDER_ARM[field] === current.selector);
                 const selection = field ? latestResolved[field] : undefined;
                 if (!field || !selection) return current;
                 const spec = specs.find((candidate) => candidate.field === field)!;
                 const eligiblePool = latestEligiblePools.get(field) ?? [];
+                if (isCausalArm(field)) return causalLatestSelection(latestSelections.decisionTime, field, eligiblePool, assetNames, selection.selectedAssetIndex);
                 const ranked = [...eligiblePool].sort((left, right) => {
                     const leftValue = usableRankValue(left, spec.key);
                     const rightValue = usableRankValue(right, spec.key);

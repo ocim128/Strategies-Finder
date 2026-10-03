@@ -244,6 +244,11 @@ both replay modes. Re-Sort lists all twenty through the existing arm selector;
 cards, filters, contributor exclusion, exports and Apply use the same inventory.
 There are no new search dimensions or settings controls.
 
+The same arms are also available under Batch Backtest's TOP_MEAN Coordinator,
+including its latest-pick and details selectors, full-window/annual summaries,
+copy/download and saved-result recovery. See the
+[Batch coordinator guide](batch-backtest-server-side.md#additional-causal-arms).
+
 The five arms use only the ordinary positive pool (`rawScore > 0`), further
 restricted when their own required score is unavailable. A negative or zero
 additional score is still eligible. Profit gates never apply to these arms;

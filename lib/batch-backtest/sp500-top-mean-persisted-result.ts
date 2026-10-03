@@ -1,6 +1,8 @@
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
 import type { OpenScoreUsdReplayResult } from "./open-score-replay/types";
 import type { CoverageCounts } from "./sp500-pair-enumerator";
+import { compactCausalArmDefinitions } from "./open-score-replay/causal-arm-constants";
+import { compactCausalArmDiagnostics } from "./open-score-replay/types";
 import {
     buildTopMeanHorizonSummaries,
     type TopMeanHorizonSummary,
@@ -78,6 +80,8 @@ export function normalizePersistedTopMeanResult(
             sampleToSec: annual.sampleToSec,
             replayMode: annual.replayMode,
             horizons: annualHorizons,
+            causalArmDefinitions: compactCausalArmDefinitions(annual.causalArmDefinitions),
+            causalArmDiagnostics: compactCausalArmDiagnostics(annual.causalArmDiagnostics),
             assetSwitch: annual.assetSwitch,
             eventDetails: annual.eventDetails,
             eventDetailCount: annual.eventDetailCount,
@@ -104,6 +108,8 @@ export function normalizePersistedTopMeanResult(
         warnings: stored.warnings ?? [],
         reportLines: stored.reportLines ?? [],
         latestSelections: stored.latestSelections,
+        causalArmDefinitions: compactCausalArmDefinitions(stored.causalArmDefinitions),
+        causalArmDiagnostics: compactCausalArmDiagnostics(stored.causalArmDiagnostics),
         performance: stored.performance,
         currentSnapshot: stored.currentSnapshot,
         replayTargetLoadFailureCount: stored.replayTargetLoadFailureCount,

@@ -4,6 +4,28 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Verify and land the Batch TOP_MEAN causal arms feature
+
+- **Evidence:** The worktree held a completed, uncommitted feature extending
+  the five causal arms (landed for Finder in `f1a997c7`/`08c45d11`) to the
+  Batch TOP_MEAN coordinator: engine replay options, latest-pick/details
+  selectors, availability diagnostics, persisted snapshot and wire compaction,
+  legacy `Rerun required` handling, docs, partial markup, unit specs, and a new
+  e2e step. No maintenance entry referenced it and its checks had never run.
+- **Change:** Verified the whole feature and committed it. Batch TOP_MEAN now
+  computes all twenty arms in full-window and annual replays for both horizon
+  and asset-switch modes, keeps causal picks frozen against later data gaps
+  with the actual arm score shown separately, and reports warm-up/price/
+  graph-exclusion diagnostics. Older saved results degrade to an explicit
+  rerun notice. No new request fields or settings.
+- **Checks:** `npm run typecheck`, `npm run typecheck:tests`, 35 focused
+  top-mean/open-score/batch specs, `feature-dom-contracts.spec.ts`, and
+  `npm run test:e2e` (including the new Batch causal-arm step) all pass;
+  `git diff --check` clean.
+- **Follow-up:** The full suite was not rerun after this patch; CI gates it on
+  every push. The separate Batch Run OPEN_SCORE post-analysis intentionally
+  keeps its legacy arm subset.
+
 ## 2026-10-03 - Sequence symbol-search initial fill against user queries
 
 - **Evidence:** `initializeSearch` rendered its popular-assets response

@@ -13,15 +13,16 @@ import {
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
 import { handleSp500TopMeanStatusRequest } from "../lib/batch-backtest/sp500-top-mean-vite-routes";
 import type { EnumerationResult } from "../lib/batch-backtest/sp500-pair-enumerator";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
 
-async function fixture(deps: TopMeanCoordinatorEngineDeps = {}) {
+async function fixture(deps: TopMeanCoordinatorEngineDeps = {}, replayMode: "horizon" | "asset_switch" = "horizon") {
     const root = await mkdtemp(join(tmpdir(), "top-mean-write-lifecycle-"));
     const request: TopMeanCoordinatorRunRequest = {
         runId: "write_lifecycle", strategyKey: "close_location_median_alignment",
         strategyParams: { lookback: 20 },
         backtestSettings: {} as TopMeanCoordinatorRunRequest["backtestSettings"],
         capitalSettings: {} as TopMeanCoordinatorRunRequest["capitalSettings"],
-        interval: "4h", horizons: [5], workerCount: 1,
+        interval: "4h", replayMode, ...(replayMode === "horizon" ? { horizons: [5] } : {}), workerCount: 1,
         resume: true, saveArchiveLog: false, useRustEnginePreference: false,
         sampleFromSec: 1_600_000_000, sampleToSec: 1_601_000_000,
     };
@@ -48,6 +49,7 @@ async function fixture(deps: TopMeanCoordinatorEngineDeps = {}) {
         strategyKey: request.strategyKey, interval: request.interval, pairCount: 1,
         shardSize: 1, totalShards: 1, completedShards: [0], failedShards: [],
         completedPairsCount: 1, failedPairsCount: 0, createdAt: Date.now(), updatedAt: Date.now(),
+        replayMode,
     }, root);
     const engine = new TopMeanCoordinatorEngine(request, root, {
         enumeration, evaluationNowSec: 1_700_000_000, ...deps,
@@ -56,6 +58,36 @@ async function fixture(deps: TopMeanCoordinatorEngineDeps = {}) {
 }
 
 describe("TOP_MEAN coordinator persistence boundaries", () => {
+    for (const mode of ["horizon", "asset_switch"] as const) {
+        it(`enables all twenty arms in Batch ${mode}, including annual and restored zero-event sections`, async () => {
+            const run = await fixture({}, mode);
+            try {
+                let result: TopMeanResultSummary | undefined;
+                await run.engine.run((event: any) => {
+                    assert.notEqual(event.type, "fatal", event.error);
+                    if (event.type === "done") result = event.result;
+                });
+                assert.ok(result);
+                assert.equal(result.causalArmDefinitions?.version, "finder-causal-arms-v1");
+                assert.ok(result.causalArmDiagnostics);
+                assert.equal(result.annualReports?.length, 1);
+                const status = await handleSp500TopMeanStatusRequest(run.request.runId, run.root);
+                assert.ok(!("ok" in status) && status.result);
+                assert.deepEqual(status.result.causalArmDefinitions, result.causalArmDefinitions);
+                assert.deepEqual(status.result.causalArmDiagnostics, result.causalArmDiagnostics);
+                for (const section of [result, result.annualReports![0]!, status.result, status.result.annualReports![0]!]) {
+                    assert.equal(section.causalArmDefinitions?.version, "finder-causal-arms-v1");
+                    for (const field of CAUSAL_ARM_FIELDS) {
+                        if (mode === "asset_switch") assert.equal(section.assetSwitch!.arms[field]!.status, "no_entry");
+                        else {
+                            assert.equal(section.horizons[0]!.armComparisons![REPLAY_ARM_TO_FINDER_ARM[field]]!.events, 0);
+                            assert.equal(section.horizons[0]!.latestArms![REPLAY_ARM_TO_FINDER_ARM[field]]!.events, 0);
+                        }
+                    }
+                }
+            } finally { await rm(run.root, { recursive: true, force: true }); }
+        });
+    }
     it("persists the snapshot before emitting it and restores real final output through status", async () => {
         const writes: string[] = [];
         const run = await fixture({

@@ -372,6 +372,36 @@ The TOP_MEAN UI Coordinator runs a long-running batch evaluation over an explici
 2. **Worker Pool Execution**: Node worker threads (`sp500-top-mean-worker.ts`) execute built-in strategy across pair shards and write atomic `CompactPairArtifact` files under `artifacts/sp500-top-mean/<runId>/shards/`.
 3. **Replay & Asset Ranking**: Invokes `runOpenScoreUsdReplay` using target asset price series and compact pair artifacts, yielding TOP_MEAN asset ranking summaries.
 
+### Additional causal arms
+
+New Batch TOP_MEAN runs calculate all twenty replay arms, including
+**TOP_COVERAGE**, **TOP_STABLE_SUPPORT**, **TOP_FRESH_SUPPORT**,
+**TOP_PRICE_STRENGTH** and **TOP_GRAPH_STRENGTH**, in both Fixed horizon and
+Hold until switch. They share the
+[fixed causal score definitions](finder.md#additional-causal-score-definitions)
+with Finder. Existing cap-tilt vote weights carry through coverage, support and
+graph scores; price strength still uses completed target closes. The
+cross-sectional current TOP_MEAN snapshot keeps its existing raw-score meaning.
+
+The existing latest-pick and details Arm selectors include these names.
+Latest picks show the actual arm score separately from raw votes, with their
+top three candidates ordered by the replay's digest tie break. New-arm picks
+remain frozen before future-data inspection; cooldown applies before ranking.
+Full-window and independent calendar-year comparisons appear in the same
+report and Copy OPEN_SCORE output. Copy Result, Download Result, status
+recovery and browser snapshots retain their calculated sections and
+`finder-causal-arms-v1` definitions. Details and copied results report warm-up,
+price history and graph-component/solver exclusions. Older saved results remain
+readable and show **Rerun required** for missing additional arms.
+
+Both sequential and packed-worker scans collect the optional entry-time and
+pair metadata. Target history uses the existing bounded lazy loader and
+prefetch queue; target cache capacities, row caps, Stop, ownership, archive
+formats and reattach behavior are unchanged. Every annual pass recomputes
+its causal price keys before selection and keeps its own availability counts.
+There are no new request fields or settings. The separate Batch Run
+OPEN_SCORE post-analysis action retains its legacy replay set.
+
 After worker artifacts are available, the coordinator also computes a current
 TOP_MEAN snapshot from positions open at a common closed-candle endpoint. This
 `currentSnapshot` is distinct from the historical `topAssets` leaderboard. It
@@ -430,6 +460,11 @@ full-window replay and each independent annual replay: status, total/realized/
 open USD P&L, closed trades, entries, costs, and current holding or pending
 order where present. In the Batch results UI, positive P&L is green and negative
 P&L is red; zero and unavailable values stay neutral.
+
+The Batch results UI renders each switch window once using the arm cards.
+An annual replay with the same bounds as the full-window replay is omitted
+from the UI; separate calendar-year windows keep their own collapsible cards.
+Annual text reports remain available in Copy OPEN_SCORE and downloads.
 
 The effective window end is the earlier of the requested end and frozen
 evaluation cutoff. No pre-window selection creates a position. Missing target

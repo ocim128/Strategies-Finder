@@ -24,6 +24,9 @@ import {
 } from "./helpers/fake-batch-backtest-dom";
 import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
 import { strategyRegistry } from "../strategyRegistry";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
+import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
+import { createEmptyAssetSwitchSummary } from "../lib/batch-backtest/open-score-replay/asset-switch";
 
 function fakeEl(): any {
     return createFakeBatchElement();
@@ -174,6 +177,46 @@ async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>)
 // ---------------------------------------------------------------------------
 
 describe("BatchBacktestService analysis lifecycle", () => {
+    for (const mode of ["horizon", "asset_switch"] as const) {
+        it(`retains new Batch ${mode} arm summaries and score provenance in browser storage`, () => {
+            setupForAnalysis();
+            const result = topMeanResultFixture();
+            result.replayMode = mode;
+            result.causalArmDefinitions = { ...FINDER_CAUSAL_ARMS_V1 };
+            result.causalArmDiagnostics = { eligibleCandidates: { topPriceStrength: 6 }, unavailableDegree: 0,
+                unavailableSupportHistory: 1, unavailablePriceHistory: 2, graphExcludedCandidates: 3, graphSolverFailures: 0 };
+            if (mode === "asset_switch") {
+                result.horizons = [];
+                result.assetSwitch = createEmptyAssetSwitchSummary({ enableCausalArms: true, evaluationCutoffSec: 1_700_000_000 });
+                result.assetSwitch.trades = CAUSAL_ARM_FIELDS.flatMap((field) => Array.from({ length: 25 }, (_, i) => ({
+                    arm: field, asset: "AAA", decisionTimeSec: i, entryTimeSec: i + 1, entryPrice: 100,
+                    exitTimeSec: i + 2, exitPrice: 101, holdingDurationSec: 1, netPnl: 10,
+                    entryCost: 0, exitCost: 0, status: "closed",
+                })));
+                result.assetSwitch.tradeCount = 125;
+            } else {
+                result.horizons[0].armComparisons = Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [REPLAY_ARM_TO_FINDER_ARM[field], result.horizons[0].topMean]));
+                result.latestSelections = { decisionTime: 1_700_000_000, selections: CAUSAL_ARM_FIELDS.map((field) => ({
+                    selector: REPLAY_ARM_TO_FINDER_ARM[field], direction: "long", asset: "AAA", tiedAssets: [],
+                    score: 7, mean: 1, activePairs: 7, rankingScore: -0.25, eligibleCandidates: 6, reason: "selected",
+                    topCandidates: [{ asset: "AAA", score: 7, mean: 1, activePairs: 7, rankingScore: -0.25 }],
+                })) };
+            }
+            persistLatestTopMeanResult(result);
+            const restored = readLatestTopMeanResult()!;
+            expect(restored.causalArmDefinitions).to.deep.equal(result.causalArmDefinitions);
+            expect(restored.causalArmDiagnostics).to.deep.equal(result.causalArmDiagnostics);
+            for (const field of CAUSAL_ARM_FIELDS) {
+                if (mode === "asset_switch") {
+                    expect(restored.assetSwitch!.arms[field]).to.deep.equal(result.assetSwitch.arms[field]);
+                    expect(restored.assetSwitch!.trades!.filter((row) => row.arm === field)).to.have.length(20);
+                } else {
+                    expect(restored.horizons[0]!.armComparisons![REPLAY_ARM_TO_FINDER_ARM[field]]).to.deep.equal(result.horizons[0].topMean);
+                    expect(restored.latestSelections!.selections.find((row) => row.selector === REPLAY_ARM_TO_FINDER_ARM[field])!.rankingScore).to.equal(-0.25);
+                }
+            }
+        });
+    }
     it("shows unreadable completed TOP_MEAN results and disables stale result actions", async () => {
         const dom = setupForAnalysis();
         const runId = "completed-with-missing-result";
@@ -950,7 +993,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         };
         const makeSwitch = (independentWindow: boolean, net: number) => ({
             semanticsVersion: "asset_switch.v1",
-            windowStartSec: 1_735_689_600, windowEndSec: 1_767_225_599,
+            windowStartSec: independentWindow ? 1_735_689_600 : 1_704_067_200, windowEndSec: 1_767_225_599,
             independentWindow, sizing: "fixed_entry_notional_non_compounding",
             notionalPerEntry: 1_000, slippageRate: 0, commissionRate: 0,
             valuation: "last_closed_candle_close_at_or_before_window_end",
@@ -982,6 +1025,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("cross-sectional raw-score view");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Independent Asset-Switch Calendar-Year Replays");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("Independent 2025 Asset-Switch Replay");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).not.to.include("annual independent report");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("LOOK-AHEAD RESEARCH");
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("−$2.00");
     });

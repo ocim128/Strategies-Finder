@@ -7,7 +7,10 @@ import type {
     ReplayComparison,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-performance-metrics";
-import { renderTopMeanResults } from "../lib/batch-backtest/browser/top-mean-results-view";
+import { renderTopMeanResults, renderLatestOpenScoreSelections, normalizeLatestArm, formatLatestOpenScoreSelectionLines } from "../lib/batch-backtest/browser/top-mean-results-view";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
+import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
+import { createEmptyAssetSwitchSummary } from "../lib/batch-backtest/open-score-replay/asset-switch";
 
 function comparison(events: number): ReplayComparison {
     return {
@@ -25,6 +28,32 @@ function comparison(events: number): ReplayComparison {
 }
 
 describe("buildTopMeanHorizonSummaries", () => {
+    it("renders a reused single-year switch window once without the causal availability card", () => {
+        const assetSwitch = createEmptyAssetSwitchSummary({
+            sampleFromSec: 1_735_689_600, sampleToSec: 1_767_225_599,
+            evaluationCutoffSec: 1_767_225_599, enableCausalArms: true,
+        });
+        const dom = { batchBacktestSp500TopMeanResults: { innerHTML: "" } };
+        const summary = {
+            completed: true, replayMode: "asset_switch", horizons: [], assetSwitch,
+            causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
+            annualReports: [{ year: 2025, sampleFromSec: assetSwitch.windowStartSec,
+                sampleToSec: assetSwitch.windowEndSec, horizons: [],
+                assetSwitch: { ...assetSwitch, independentWindow: true }, reportLines: ["duplicate annual report"] }],
+        } as unknown as TopMeanResultSummary;
+        renderTopMeanResults(dom, summary, { latestArm: "TOP_MEAN", tieMode: "off" });
+        const html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        expect(html.match(/>Asset-Switch Replay</g)).to.have.length(1);
+        expect(html).not.to.include("Independent Asset-Switch Calendar-Year Replays");
+        expect(html).not.to.include("duplicate annual report");
+        expect(html).not.to.include("Additional Causal Arms");
+        for (const field of CAUSAL_ARM_FIELDS) expect(html).to.include(`>${field}</div>`);
+        expect(summary.annualReports).to.have.length(1);
+
+        renderTopMeanResults(dom, { ...summary, causalArmDefinitions: undefined }, { latestArm: "TOP_MEAN", tieMode: "off" });
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).not.to.include("Additional causal arms:");
+    });
+
     it("keeps ranking scalar summaries on the coordinator wire without diagnostic arrays", () => {
         const rankingMeasurement = createEmptyRankingMeasurement(20);
         Object.assign(rankingMeasurement.arms.topRaw, { scoredEvents: 200, eligibleEvents: 200, comparisons: 2000, meanAccuracy: 0.6, top1Superiority: 0.65,
@@ -64,9 +93,33 @@ describe("buildTopMeanHorizonSummaries", () => {
             expect(summary.armComparisons?.[arm as keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS]?.events)
                 .to.equal(events, `${arm} should retain its replay comparison`);
         }
+        for (const field of CAUSAL_ARM_FIELDS) expect(summary.latestArms?.[REPLAY_ARM_TO_FINDER_ARM[field]])
+            .to.equal(replayHorizon[field]);
         // topAssets stays sorted by events desc, then asset name.
         expect(summary.topAssets.map((asset) => asset.asset)).to.deep.equal(["AAA", "BBB"]);
     });
+
+    for (const field of CAUSAL_ARM_FIELDS) {
+        const arm = REPLAY_ARM_TO_FINDER_ARM[field];
+        it(`renders and copies the actual ${arm} key, and requires a rerun for legacy results`, () => {
+            const latestSelections = { decisionTime: 1_700_000_000, selections: [{
+                selector: arm, direction: "long" as const, asset: "AAA", tiedAssets: [], score: 7, mean: 1,
+                activePairs: 7, eligibleCandidates: 6, reason: "selected" as const, rankingScore: -0.25,
+                topCandidates: [{ asset: "AAA", score: 7, mean: 1, activePairs: 7, rankingScore: -0.25 }],
+            }] };
+            const summary = { horizons: [], latestSelections, causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 } } as unknown as TopMeanResultSummary;
+            expect(normalizeLatestArm(arm)).to.equal(arm);
+            const html = renderLatestOpenScoreSelections(summary, arm, "off");
+            expect(html).to.include(`<strong>${arm}</strong>`);
+            expect(html).to.include("Arm score: -0.25");
+            expect(html).to.include("<th>Arm score</th>");
+            expect(html).to.include("AAA</strong><span class=\"batch-top-badge\">PICK</span>");
+            expect(formatLatestOpenScoreSelectionLines(latestSelections, "off").join("\n")).to.include(`${arm} rankingScore=-0.25`);
+            expect(renderLatestOpenScoreSelections({ ...summary, latestSelections: { ...latestSelections,
+                selections: [{ ...latestSelections.selections[0]!, selector: "TOP_MEAN" }] } }, arm, "off"))
+                .to.include(`${arm}: Rerun required`);
+        });
+    }
 
     it("carries contributor-excluded summaries and exclusion counts by Finder arm", () => {
         const replayHorizon: Record<string, unknown> = {

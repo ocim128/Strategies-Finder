@@ -136,6 +136,8 @@ export type OpenScoreUsdLatestSelectorName =
     | "TOP_GRAPH_STRENGTH";
 
 export interface OpenScoreUsdLatestSelectionCandidate {
+    /** Additional arm's actual ranking key; score remains the raw vote count. */
+    rankingScore?: number;
     asset: string;
     score: number;
     mean: number;
@@ -143,6 +145,7 @@ export interface OpenScoreUsdLatestSelectionCandidate {
 }
 
 export interface OpenScoreUsdLatestSelection {
+    rankingScore?: number | null;
     selector: OpenScoreUsdLatestSelectorName;
     direction: "long" | "short" | "none";
     /** Null when the selector is tied or has fewer than two eligible assets. */
@@ -801,7 +804,7 @@ export interface AssetSwitchReplaySummary {
 export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
 
 export interface RunOpenScoreUsdReplayOptions {
-    /** Trusted Finder coordinator only; never a public request setting. */
+    /** Trusted TOP_MEAN/Finder coordinator option; never a public request setting. */
     enableCausalArms?: boolean;
     /** Finder-only opt-in; independent of switch execution horizon. */
     rankingHorizon?: number;

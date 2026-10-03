@@ -63,6 +63,8 @@ import {
 import {
     formatCurrentTopMeanLines,
     formatLatestOpenScoreSelectionLines,
+    formatCausalArmAvailabilityLines,
+    formatReplayComparisonLine,
     formatTopMeanCompletionMessage,
     mergeTopMeanArchiveStatus,
     normalizeLatestArm,
@@ -668,6 +670,7 @@ export class TopMeanController {
         if (res.performance) {
             lines.push(...formatTopMeanPerformanceLines(res.performance), "");
         }
+        lines.push(...formatCausalArmAvailabilityLines(res));
 
         if (res.replayMode === "asset_switch" && res.assetSwitch) {
             lines.push(
@@ -708,6 +711,9 @@ export class TopMeanController {
             for (const h of res.horizons) {
                 lines.push(`--- HISTORICAL TOP_MEAN | Horizon ${h.horizon} Bars (${h.events?.toLocaleString()} decision events) ---`);
                 lines.push(`HISTORICAL TOP_MEAN | horizon=${h.horizon} | top=${formatSignedPercent(h.topMean?.topMean)} rand=${formatSignedPercent(h.topMean?.randomMean)} deltaMed=${formatSignedPercent(h.topMean?.delta)}`);
+                for (const [arm, comparison] of Object.entries(h.armComparisons ?? {})) {
+                    if (comparison) lines.push(`${arm} | ${formatReplayComparisonLine(comparison)}`);
+                }
                 lines.push("");
                 lines.push("Top Asset Rankings:");
                 const topAssets = Array.isArray(h.topAssets) ? h.topAssets : [];

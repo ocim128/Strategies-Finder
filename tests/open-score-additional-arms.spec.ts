@@ -190,6 +190,15 @@ describe("Finder additional causal arms", () => {
         assert.equal(s.assetNames[view.causalPicks!.topPriceStrength!], "B");
         assert.equal(s.assetNames[view.causalPicks!.topStableSupport!], "B");
         assert.equal(s.assetNames[view.causalPicks!.topFreshSupport!], "A");
+        const selected = await selectAfterOutcomes({ views: stage.result.views, profitOnlyEvents: [], assetNames: s.assetNames,
+            enableCausalArms: true, dataGapAssets: new Map([[view.causalPicks!.topPriceStrength!, true]]), dataGapEvents: new Set() });
+        const latest = selected.latestSelections!.selections;
+        const price = latest.find((row) => row.selector === "TOP_PRICE_STRENGTH")!;
+        assert.equal(price.asset, "B", "later gaps must not alter a causal latest pick");
+        assert.equal(price.rankingScore, view.positives.find((c) => s.assetNames[c.assetIndex] === "B")!.topPriceStrength);
+        assert.equal(price.topCandidates![0]!.asset, "B");
+        assert.equal(latest.find((row) => row.selector === "TOP_FRESH_SUPPORT")!.asset, "A");
+        assert.equal(latest.find((row) => row.selector === "TOP_STABLE_SUPPORT")!.asset, "B");
         near(view.positives.find((c) => s.assetNames[c.assetIndex] === "A")!.topCoverage, 2);
         const ranking = captureRankingEvent(1500, { positives: Array.from({ length: 6 }, (_, assetIndex) => ({ assetIndex, raw: assetIndex + 1, adjusted: 1, activePairs: 1, mean: 1, topCoverage: -assetIndex, topStableSupport: assetIndex, topFreshSupport: 0, topPriceStrength: -assetIndex, topGraphStrength: assetIndex })) }, ["A", "B", "C", "D", "E", "F"], true);
         assert.equal(ranking.arms.topCoverage.picks[0]!.assetIndex, 0);

@@ -282,6 +282,73 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
     }
 };
 
+const verifyBatchCausalArms = async (page: Page): Promise<void> => {
+    await page.click('.panel-tab[data-tab="batchbacktest"]');
+    await page.waitForSelector('#batchBacktestSp500TopMeanDetailsSelector', { visible: true });
+    await page.evaluate(async () => {
+        const servicePath = '/lib/batch-backtest/batch-backtest-service.ts';
+        const contractPath = '/lib/batch-backtest/open-score-replay/arm-contract.ts';
+        const definitionsPath = '/lib/batch-backtest/open-score-replay/causal-arm-constants.ts';
+        const switchPath = '/lib/batch-backtest/open-score-replay/asset-switch.ts';
+        const storePath = '/lib/batch-backtest/browser/batch-browser-store.ts';
+        const { batchBacktestService: service } = await import(servicePath);
+        const { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } = await import(contractPath);
+        const { FINDER_CAUSAL_ARMS_V1 } = await import(definitionsPath);
+        const { createEmptyAssetSwitchSummary } = await import(switchPath);
+        const { persistLatestTopMeanResult, readLatestTopMeanResult } = await import(storePath);
+        service.init();
+        const comparison = { events: 1, topMean: 0.01, randomMean: 0, delta: 0.01, topMedian: 0.01,
+            blockMeans: [], ciLower: null, ciUpper: null, positiveBlocks: 1, totalBlocks: 1 };
+        const armComparisons = Object.fromEntries(CAUSAL_ARM_FIELDS.map((field: string) => [REPLAY_ARM_TO_FINDER_ARM[field], comparison]));
+        const selections = CAUSAL_ARM_FIELDS.map((field: string) => ({ selector: REPLAY_ARM_TO_FINDER_ARM[field], direction: 'long',
+            asset: field, tiedAssets: [], score: 7, mean: 1, activePairs: 7, eligibleCandidates: 6,
+            reason: 'selected', rankingScore: -0.25,
+            topCandidates: [{ asset: field, score: 7, mean: 1, activePairs: 7, rankingScore: -0.25 }] }));
+        for (const mode of ['horizon', 'asset_switch']) {
+            const summary: any = { runId: 'batch-causal-e2e', completed: true, replayMode: mode, counts: {}, warnings: [], reportLines: [],
+                causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
+                horizons: mode === 'horizon' ? [{ horizon: 5, events: 1, topMean: comparison, topAssets: [], armComparisons, latestArms: armComparisons }] : [],
+                latestSelections: mode === 'horizon' ? { decisionTime: 1_700_000_000, selections } : undefined,
+                openScoreEventDetails: mode === 'horizon' ? CAUSAL_ARM_FIELDS.map((field: string) => ({ selector: REPLAY_ARM_TO_FINDER_ARM[field],
+                    decisionTime: 1_700_000_000, entryTime: 1_700_000_060, exitTime: 1_700_000_360, horizonBars: 5, direction: 'long', asset: field,
+                    selectedReturn: 0.01, controlReturn: 0, delta: 0.01, eligibleCandidates: 6 })) : undefined };
+            if (mode === 'asset_switch') {
+                summary.assetSwitch = createEmptyAssetSwitchSummary({ enableCausalArms: true, evaluationCutoffSec: 1_700_001_000 });
+                summary.assetSwitch.trades = CAUSAL_ARM_FIELDS.map((field: string) => ({ arm: field, asset: field, decisionTimeSec: 1_700_000_000,
+                    entryTimeSec: 1_700_000_060, entryPrice: 100, exitTimeSec: 1_700_000_360, exitPrice: 101, holdingDurationSec: 300,
+                    netPnl: 10, entryCost: 0, exitCost: 0, status: 'closed' }));
+                summary.assetSwitch.tradeCount = 5;
+            }
+            service.latestTopMeanResult = summary;
+            service.renderTopMeanResults(service.dom, summary);
+            service.topMean.syncTopMeanOpenScoreDetailsControl(service.dom, summary);
+            (document.getElementById('batchBacktestSp500TopMeanDetailsBtn') as HTMLButtonElement).click();
+            for (const field of CAUSAL_ARM_FIELDS) {
+                const arm = REPLAY_ARM_TO_FINDER_ARM[field];
+                const detailSelector = document.getElementById('batchBacktestSp500TopMeanDetailsSelector') as HTMLSelectElement;
+                if (!Array.from(detailSelector.options).some((option) => option.value === arm)) throw new Error('Missing Batch details arm ' + arm);
+                if (document.getElementById('batchBacktestSp500TopMeanDetails')!.hidden) (document.getElementById('batchBacktestSp500TopMeanDetailsBtn') as HTMLButtonElement).click();
+                detailSelector.value = arm; detailSelector.dispatchEvent(new Event('change', { bubbles: true }));
+                const details = document.getElementById('batchBacktestSp500TopMeanDetails')!;
+                if (details.hidden || !details.textContent!.includes(field) || details.textContent!.includes('Rerun required')) throw new Error('Missing Batch details for ' + mode + '/' + arm);
+                if (mode === 'horizon') {
+                    const selector = document.getElementById('batchBacktestSp500TopMeanLatestArmSelector') as HTMLSelectElement;
+                    selector.value = arm; selector.dispatchEvent(new Event('change', { bubbles: true }));
+                    const text = document.getElementById('batchBacktestSp500TopMeanResults')!.textContent!;
+                    if (!text.includes(field) || !text.includes('Arm score: -0.25') || text.includes('Rerun required')) throw new Error('Missing calculated Batch latest pick ' + arm);
+                }
+            }
+            persistLatestTopMeanResult(summary);
+            const recovered = readLatestTopMeanResult();
+            if (!recovered || recovered.causalArmDefinitions.version !== 'finder-causal-arms-v1') throw new Error('Batch causal definitions lost on reload');
+            for (const field of CAUSAL_ARM_FIELDS) {
+                if (mode === 'horizon' ? !recovered.horizons[0].armComparisons[REPLAY_ARM_TO_FINDER_ARM[field]] : !recovered.assetSwitch.arms[field]) throw new Error('Batch causal summary lost on reload');
+            }
+        }
+    });
+    console.log('Batch causal arm selectors, details and saved results passed.');
+};
+
 async function runTest() {
     try {
         console.log('Starting Vite server for E2E test...');
@@ -547,6 +614,7 @@ async function runTest() {
             console.log('Configuration saved successfully.');
 
             await verifyRankingCards(page);
+            await verifyBatchCausalArms(page);
 
             console.log('Performing layout verification...');
             const layoutIssues = await verifyLayout(page);

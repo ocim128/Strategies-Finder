@@ -199,11 +199,11 @@ server-side TOP_MEAN work should use
 
 ### Additional causal arms: execution and recovery
 
-Only trusted coordinator `executionProfile: "finder_arm"` enables the internal
-`enableCausalArms` replay option. Every new Finder child computes the five
-additional arms for Return and Ranking consistency. Standalone Batch/TOP_MEAN
-runs use the legacy subset derived from the canonical mapping and do not
-allocate entry-time columns, load causal target histories or solve graphs.
+The trusted TOP_MEAN coordinator enables the internal `enableCausalArms`
+replay option for both Batch TOP_MEAN and Finder children. Every new Finder
+child computes the five additional arms for Return and Ranking consistency;
+Batch TOP_MEAN also computes them for its full-window and annual replays.
+The separate Batch OPEN_SCORE post-analysis route keeps its legacy subset.
 This is not a public request field, route, service or infrastructure change.
 Definitions, clocks and eligible pools are specified in
 [Additional causal score definitions](finder.md#additional-causal-score-definitions).

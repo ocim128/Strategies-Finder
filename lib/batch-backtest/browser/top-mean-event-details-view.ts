@@ -14,6 +14,8 @@ import type {
 import type { TopMeanResultSummary } from "../sp500-top-mean-coordinator-engine";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import { escapeHtml } from "../../html-escape";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../open-score-replay/arm-contract";
+import { formatCausalArmAvailabilityLines } from "./top-mean-results-view";
 
 export type OngoingTopMeanEventDetail = OpenScoreUsdOngoingEventDetail;
 
@@ -182,8 +184,11 @@ export function renderTopMeanOpenScoreEventDetails(
     selector: OpenScoreUsdEventDetailSelector,
     year: number | null = null,
 ): string {
+    const causalField = CAUSAL_ARM_FIELDS.find((field) => REPLAY_ARM_TO_FINDER_ARM[field] === selector);
+    if (causalField && !summary.causalArmDefinitions) return `<div class="batch-open-score-details-empty">${escapeHtml(selector)}: Rerun required. This saved result predates the additional causal arms.</div>`;
+    const availability = causalField ? `<pre class="batch-report-pre">${escapeHtml(formatCausalArmAvailabilityLines(summary).join("\n"))}</pre>` : "";
     if (summary.replayMode === "asset_switch") {
-        return renderAssetSwitchTradeDetails(summary, selector, year);
+        return availability + renderAssetSwitchTradeDetails(summary, selector, year);
     }
     const annualReports = summary.annualReports ?? [];
     const ongoingRows = buildOngoingEventDetails(summary);
@@ -293,11 +298,12 @@ export function renderTopMeanOpenScoreEventDetails(
         }
         html += `</tbody></table></div></details>`;
     }
-    return html;
+    return availability + html;
 }
 
 function selectorArm(selector: OpenScoreUsdEventDetailSelector): ReplayArmField | null {
     const mapping: Partial<Record<OpenScoreUsdEventDetailSelector, ReplayArmField>> = {
+        ...Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [REPLAY_ARM_TO_FINDER_ARM[field], field])),
         TOP_RAW: "topRaw",
         TOP_MEAN: "topMean",
         TOP_MEAN_RAW_UNIQUE: "topMeanRawUnique",
