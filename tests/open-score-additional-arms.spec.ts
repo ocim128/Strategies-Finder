@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import { scanArtifacts } from "../lib/batch-backtest/open-score-replay/artifact-scan";
 import { sweepScoreEvents } from "../lib/batch-backtest/open-score-replay/event-sweep";
 import { scoreGraphStrength } from "../lib/batch-backtest/open-score-replay/graph-strength";
+import { ScoreDeltaBuffer } from "../lib/batch-backtest/open-score-replay/score-delta-buffer";
+import type { ScoreDelta } from "../lib/batch-backtest/open-score-replay/internal-types";
 import { TemporalSupport } from "../lib/batch-backtest/open-score-replay/temporal-support";
 import { prepareCausalPriceHistory, causalPriceStrength } from "../lib/batch-backtest/open-score-replay/causal-target-scores";
 import { runOpenScoreUsdReplay } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
@@ -66,7 +68,31 @@ describe("Finder additional causal arms", () => {
         assert.deepEqual([...split.scores.values()], [0, 0]);
         assert.equal((await scoreGraphStrength(names, [{ base: 0, quote: 1, vote: NaN, count: 1 }])).failed, true);
         assert.equal((await scoreGraphStrength(names, [{ base: 0, quote: 1, vote: 1, count: 1 }], () => false, 0)).failed, true);
-        let checks = 0; await assert.rejects(scoreGraphStrength(names, edges, () => ++checks > 2), /cancelled/);
+        // Stop is observed at solve entry only; the sweep owns the per-bucket checks.
+        await assert.rejects(scoreGraphStrength(names, edges, () => true), /cancelled/);
+    });
+
+    it("counts each failed graph solve exactly once in the causal diagnostics", async () => {
+        const deltas: ScoreDelta[] = [{ entrySec: 0, timeSec: 0, assetIndex: 0, delta: NaN, isEntry: 1, pnlShare: 0, voteApplied: true, profitNowConfidenceWeight: 0 }];
+        const outcome = await sweepScoreEvents({
+            enableCausalArms: true,
+            interval: "1m",
+            mode: "horizon",
+            assetNames: ["A", "Q"],
+            validDegree: new Map([["A", 1], ["Q", 1]]),
+            pairEndpoints: [{ base: 0, quote: 1 }],
+            streams: [ScoreDeltaBuffer.from(deltas, true)],
+            profitableStreams: [true],
+            sampleFromSec: undefined,
+            sampleToSec: undefined,
+            shouldStop: () => false,
+            onPhase() {},
+            pairCount: 1,
+            assetCount: 2,
+        });
+        assert.ok(outcome.ok);
+        assert.equal(outcome.result.events.length, 1);
+        assert.equal(outcome.result.causalArmDiagnostics!.graphSolverFailures, 1);
     });
 
     it("uses exactly 25 completed positive closes, population volatility and the causal prefix", () => {

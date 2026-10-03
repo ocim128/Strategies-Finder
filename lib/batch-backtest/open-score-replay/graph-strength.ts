@@ -23,8 +23,8 @@ export function buildNameRanks(names: readonly string[]): Int32Array {
  * sweep): sorts use the caller-provided integer name ranks instead of
  * per-comparison `localeCompare`, the conjugate-gradient loop runs without
  * inner event-loop yields (the sweep checks `shouldStop` per bucket and the
- * entry check remains), scratch vectors are reused across iterations, and an
- * Every ordering derives from the
+ * entry check remains), scratch vectors are reused across iterations, and
+ * every solve stays cold. Every ordering derives from the
  * same comparisons the original implementation performed, so results are
  * unchanged.
  */

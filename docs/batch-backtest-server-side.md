@@ -165,6 +165,10 @@ time-ordered merge. Its distinct-bucket indexing pass yields every 2,000 bucket
 times. Sorting the timestamps uses the native synchronous array sort, so Stop
 is checked immediately before and after that sort.
 
+The causal arms' per-entry-bucket graph-strength solve checks Stop once at
+solve entry and deliberately does not yield inside the solve, so a Stop raised
+mid-solve is honored at the next bucket or solve boundary.
+
 ## Stop vs Cancel vs Reload
 
 - **Stop button**: cancels the in-flight server-side run. The owner-lock is

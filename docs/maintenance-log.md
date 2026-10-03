@@ -4,6 +4,38 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Repair perf-commit fallout: doubled solver-failure diagnostic and stale cancellation pin
+
+- **Evidence:** A ground-truth full-suite run found 1 of 257 specs failing:
+  `open-score-additional-arms.spec.ts` expected `scoreGraphStrength` to reject
+  when a Stop flag tripped on its third observation, but the perf commit
+  `07fc95b6` deliberately reduced the solver to a single Stop check at solve
+  entry (documented in its message and code comment; the sweep owns the
+  per-bucket checks), leaving the test pinning the retired inner-check
+  pattern. The same commit also left a duplicated
+  `diagnostics.graphSolverFailures++` in `event-sweep.ts` (blame-confirmed),
+  double-counting the "Graph solver failures" diagnostic shown in the Batch
+  TOP_MEAN results view and the Finder arm metrics. The new equivalence spec
+  could not catch the doubling: its reference fixture produces zero solver
+  failures (`graphSolverFailures: 0` pinned).
+- **Change:** Removed the duplicated increment; updated the cancellation
+  assertion to the current entry-check contract and added a sweep-level
+  regression test (one-pair fixture with a non-finite entry delta) asserting
+  `graphSolverFailures` counts each failed solve exactly once and the event
+  still forms — verified to fail with the duplicate re-introduced. Documented
+  the graph-solve Stop contract in `docs/batch-backtest-server-side.md` and
+  repaired a mangled sentence in the `graph-strength.ts` performance-contract
+  comment left by the same commit.
+- **Checks:** Focused: `open-score-additional-arms.spec.ts`,
+  `open-score-replay-event-sweep.spec.ts`,
+  `sp500-top-mean-causal-sweep.spec.ts` pass; regression test confirmed red
+  with the bug present. `npm run typecheck`, `npm run typecheck:tests`,
+  `git diff --check` pass. Full suite: 257/257 (was 256/257).
+- **Follow-up:** None open for this area. The graphEdgePool slice per entry
+  bucket (when edgeCount < pool length) remains a minor allocation the sweep
+  could avoid by passing an explicit count, only worth revisiting with
+  profiling evidence.
+
 ## 2026-10-03 - Remove dead UI orphaned by removed and refactored features
 
 - **Evidence:** A scripted cross-check of all 693 structural ids in

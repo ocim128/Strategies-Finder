@@ -353,7 +353,6 @@ export async function sweepScoreEvents(args: {
                         nameRanks!,
                     );
                     if (graph.failed) diagnostics!.graphSolverFailures++;
-                    if (graph.failed) diagnostics!.graphSolverFailures++;
                     if (args.mode === "asset_switch") causalArms = Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [field, { picks: [], eligibleCount: 0 }]));
                     else causalScores = new Map();
                     for (let a = 0; a < assetCount; a++) {
