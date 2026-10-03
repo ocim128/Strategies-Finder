@@ -17,6 +17,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [finder-server-side.md](finder-server-side.md) - server-owned Finder Symbol Universe and Asset Opportunity jobs, parallel batch worker pool, JSONL run log, heap budget, scalar-only wire contract, Stop scoped by run id, and tab-reload reattach via `/api/finder/status`.
 - [finder-asset-opportunity-resort-guide.md](finder-asset-opportunity-resort-guide.md) - how to add an Asset Opportunity Re-Sort metric end to end (browser control, archive contract, tests).
 - [alpaca-ibkr-sync.md](alpaca-ibkr-sync.md) - Alpaca-backed IBKR Data downloads, source guards, credentials, 30m-to-4h aggregation, and the EDGAR market-cap download.
+- [marketcap-download.md](marketcap-download.md) - design reference for the shipped EDGAR MarketCap download: route, service wiring, fetcher, and the split-factor invariant.
 - [price-data.md](price-data.md) - shared price-data source selection, stream persistence, body deadlines, SQLite authorization, and crypto CSV tail loading.
 - [pairlist-pools.md](pairlist-pools.md) - committed, hash-locked pair-list pools for S&P-500 TOP_MEAN campaigns: registry schema, generation scripts, archive stamping, and the integrity test.
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation and supported surfaces.
@@ -36,13 +37,11 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [Finder causal arm definitions](finder.md#additional-causal-score-definitions) - coverage, stable support, fresh support, price strength and graph strength; execution and recovery are in [the server guide](finder-server-side.md#additional-causal-arms-execution-and-recovery).
 
 - [maintenance-log.md](maintenance-log.md) - concise log of completed repository maintenance improvements, evidence, checks, and follow-ups.
-- [top-mean-event-sweep-plan.md](top-mean-event-sweep-plan.md) - planned bounded replay sweeps, removal of temporary delta copies, and guarded linear exit-signal merging.
-
-- [top-mean-shard-overhead-plan.md](top-mean-shard-overhead-plan.md) - planned fixes for sparse shard fragmentation, per-shard diagnostic sampling, and sequential artifact loading in TOP_MEAN.
+- [asset-opportunity-time-filter-audit.md](asset-opportunity-time-filter-audit.md) - negative-result audit: why the large Entry Time Filter improvement was untrustworthy evidence, with the correction and rerun protocol.
+- [open-score-cap-tilt.md](open-score-cap-tilt.md) - implemented cap-tilt weight design record; the TOP_MEAN coordinator's import-hygiene rule cites this file.
+- [finder-arm-performance plan records](finder-arm-performance-plan.md) - retired delivery plan and the optimization chain built on it (allocation, redundant work, worker reuse, replay efficiency); each file's status banner records implemented, deferred, and measured-rejected phases. Current behavior lives in [Finder behavior](finder.md#arm-performance).
 
 - [complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md](complexity-audit-finder-batch-ibkr-crypto-2026-08-27.md) - point-in-time complexity audit driving the `chore/complexity-reduction` branch; some findings are already addressed.
-
-- [polymarket-removal-plan.md](polymarket-removal-plan.md) - the executed removal plan for the Polymarket subsystems on `chore/remove-polymarket`. Kept as the decision record for why these surfaces no longer exist; fold into the surviving guides when it stops earning its keep.
 
 - [rust-engine-complexity-audit.md](rust-engine-complexity-audit.md) - audit whose deletions landed: the Rust engine is a generic server-first kernel; explains why the specialized Asset Opportunity Rust paths were removed.
 

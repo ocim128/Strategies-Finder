@@ -81,8 +81,8 @@ a rerun while
 original return/P&L summaries survive. The existing terminal/status inventory
 remains authoritative on reload. No annual passes, pool snapshots, outcome
 archives, detailed ranking event rows, database migration or resume storage
-are introduced. The [original v1 delivery plan and release checks](finder-arm-performance-ranking-consistency-plan.md)
-remain a historical record; the current v2 rules are documented above.
+are introduced. The original v1 delivery plan has been retired; the current
+v2 rules are documented above.
 
 Arm Performance is a server-owned Finder job registered at
 `POST /api/finder/arm-performance-run`. The browser sends the selected entry

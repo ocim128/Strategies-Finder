@@ -1,6 +1,10 @@
 # Finder Arm Performance optimization plan
 
-Status: Proposed; implementation has not started.
+Status: Absorbed. All three items shipped through later work: the Finder
+profile skips annual replays and detail outputs, and worker reuse is enabled
+in production — see [worker reuse plan](finder-arm-performance-worker-reuse-plan.md)
+and [the server guide](finder-server-side.md). The pre-implementation
+architecture below is historical; do not redo these changes.
 
 Scope: the server-owned Finder `arm_performance` path only. Implement the
 three reviewed improvements in this order: omit annual replays, omit unused

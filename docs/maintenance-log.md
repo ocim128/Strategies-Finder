@@ -4,6 +4,31 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Repair broken documentation links and reconcile the docs index
+
+- **Evidence:** A scripted scan of every relative `.md` link across the
+  maintained tree (2,714 files) found six broken references: the docs index
+  pointed at three deleted plans (`top-mean-event-sweep-plan.md`,
+  `top-mean-shard-overhead-plan.md`, `polymarket-removal-plan.md`), the
+  server guide linked the retired `finder-arm-performance-ranking-consistency-plan.md`,
+  the allocation plan linked the deleted aggregation plan, and the root README
+  still linked `docs/cross-symbol.md` twice although the cross-symbol runtime
+  was retired. Seven existing docs (time-filter audit, cap-tilt record, five
+  arm-performance plans, market-cap download) were absent from the index.
+- **Change:** Removed the dead index entries and the README cross-symbol
+  references (including a dangling "secondary dataset" clause describing
+  retired behavior); reworded the two in-guide dead links; indexed all
+  previously undiscoverable records; and corrected the stale
+  `finder-arm-performance-optimization-plan.md` banner ("Proposed; not
+  started") to "Absorbed" — its three items shipped per the worker-reuse plan
+  and the server guide's enabled worker reuse.
+- **Checks:** Link rescan reports 0 broken across the same 2,714 files;
+  `git diff --check` clean. Docs-only change; no code or tests affected.
+- **Follow-up:** Per the index's maintenance rules, the five arm-performance
+  plan records could eventually be folded into `finder.md`/`finder-server-side.md`
+  and deleted; deferred because they carry measured outcomes and a rejected
+  phase that must not be re-litigated, and they cross-reference each other.
+
 ## 2026-10-03 - Verify and land the Batch TOP_MEAN causal arms feature
 
 - **Evidence:** The worktree held a completed, uncommitted feature extending

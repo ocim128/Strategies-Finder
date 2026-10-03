@@ -3,8 +3,8 @@
 Status: Implemented 2026-09 (see [Measured outcomes](#measured-outcomes-implemented-2026-09-worktree-choresf-alloc-reduction-tmp)). Original code baseline: `da895b84`.
 
 Scope: three additional allocation costs in Finder's shared replay and
-worker artifact path. The [aggregation plan](finder-arm-performance-aggregation-plan.md)
-is implemented. Preserve its exclusion reuse, bootstrap rank-table reduction,
+worker artifact path. The aggregation plan this work builds on is
+implemented. Preserve its exclusion reuse, bootstrap rank-table reduction,
 and event-local tie cache, plus earlier worker/replay optimizations.
 
 These findings identify work that can be removed without changing research

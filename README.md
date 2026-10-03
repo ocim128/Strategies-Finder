@@ -224,14 +224,13 @@ Built-in strategy authoring has enough contract surface to deserve its own guide
 
 Use:
 - [`docs/strategy-authoring.md`](docs/strategy-authoring.md) for the template, normalization rules, and common failure modes
-- [`docs/cross-symbol.md`](docs/cross-symbol.md) for the cross-symbol runtime contract, support matrix, and change map
 - [`docs/synthetic-pairs.md`](docs/synthetic-pairs.md) for generating synthetic pair data (e.g. BNBPAXG) for backtest and Finder research
 - [`docs/backtest-endpoint.md`](docs/backtest-endpoint.md) for local HTTP backtest usage, payload examples, and parity rules
 - [`AGENTS.md`](AGENTS.md) for the operational checklist and validation habits
 
 Endpoint note:
 - the HTTP backtest endpoint intentionally uses one fixed sizing profile only: `$1000` per trade with `0.1%` commission
-- the UI `Preview Endpoint` and `Copy Endpoint` actions are the preferred parity path because they reuse the exact latest UI backtest snapshot, upload the matching dataset, include the resolved secondary dataset for cross-symbol runs,
+- the UI `Preview Endpoint` and `Copy Endpoint` actions are the preferred parity path because they reuse the exact latest UI backtest snapshot and upload the matching dataset
 
 The short version:
 1. Create `lib/strategies/lib/<strategy-key>.ts`.
@@ -337,7 +336,6 @@ These are intentionally narrower than the repo itself:
 - `docs/asset-opportunity-explorer.md`: descriptive heatmap over the Asset Opportunity holdout archive (routes, cell semantics, limits)
 - `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/alpaca-ibkr-sync.md`: Alpaca-backed IBKR Data workflow, source guards, and aggregation
-- `docs/cross-symbol.md`: cross-symbol strategy runtime and support matrix
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
 - `docs/path-dependent-exits.md`: path-dependent Risk Management exits
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
