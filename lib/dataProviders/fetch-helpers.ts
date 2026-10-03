@@ -230,8 +230,8 @@ export async function readJsonOrText(response: Response): Promise<{ json: unknow
 
 /**
  * Extracts a trimmed `.error` string from a parsed API error payload (the
- * `{ ok: false, error: "..." }` shape used across the local API, alert
- * worker, and Execution Lab), falling back to `fallback` when the payload has
+ * `{ ok: false, error: "..." }` shape used across the local API and the
+ * alert worker), falling back to `fallback` when the payload has
  * no usable error string. Returns `null` only when both the payload and the
  * fallback are empty, so callers can chain their own fallback (e.g. an HTTP
  * status line).

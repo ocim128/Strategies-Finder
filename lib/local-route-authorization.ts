@@ -6,7 +6,7 @@
  * `lightweight-charts` / `chart-manager` deps), so it is safe to import from
  * any Vite plugin that `vite.config.ts` bundles.
  *
- * Established repo idiom: the Batch, Crypto, Finder, Execution Lab, and IBKR
+ * Established repo idiom: the Batch, Crypto, Finder, and IBKR
  * plugins all gate their mutation routes through this leaf. Audit Finding 2
  * factored the policy out of the per-plugin copies so every route gets the
  * same loopback/bearer check without drift. The strategy-library admin plugin

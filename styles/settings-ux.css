@@ -385,25 +385,6 @@
     max-width: 320px;
 }
 
-/* --------------------------------------------------------------------------
-   5. Section changed indicator
-   -------------------------------------------------------------------------- */
-
-.section-header .section-changed-dot {
-    width: 4px;
-    height: 4px;
-    border-radius: 50%;
-    background: var(--accent-color);
-    margin-left: var(--space-1);
-    flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 0.15s ease;
-}
-
-.section-header .section-changed-dot.visible {
-    opacity: 1;
-}
-
 @media (max-width: 720px) {
     .strategy-workspace-header {
         position: static;

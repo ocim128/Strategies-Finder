@@ -4,6 +4,36 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Remove dead UI orphaned by removed and refactored features
+
+- **Evidence:** A scripted cross-check of all 693 structural ids in
+  `html-partials/*` against every reference site (contracts, handlers, tests,
+  selector and template-concatenation patterns) surfaced three genuinely dead
+  controls after eliminating the live false positives: (1) the More-menu item
+  `data-tab="executionlab"` — its `#executionlabTab` panel was removed with the
+  Execution Lab in `d654d295`, and `switchTab` returns false, so the menu item
+  silently does nothing; (2) the `crosshairTool` toolbar button — no handler,
+  contract, or CSS since the initial commit, while every sibling tool button is
+  wired through `ui-event-handlers-dom.ts`; (3) four `section-changed-dot`
+  spans (direction/risk/sizing/realism) — orphaned by the settings workspace
+  refactor in `00a8854e`; their `.visible` CSS class is never applied, so the
+  dots are permanently invisible dead markup. Candidates such as `mc-summary-grid`,
+  `timeframeTabs`, `backtestToolsMenu`, and the `*Tab` panels were verified live
+  (child ids, class delegation, or `#${tabId}Tab` construction) and left alone.
+- **Change:** Removed the Execution Lab More-menu item, the crosshair toolbar
+  button, and the four changed-dot spans, plus the now-dead "Section changed
+  indicator" CSS block in `styles/settings-ux.css`; dropped two stale
+  "Execution Lab" mentions from comments in `lib/local-route-authorization.ts`
+  and `lib/dataProviders/fetch-helpers.ts`.
+- **Checks:** No remaining references to the removed ids anywhere in lib,
+  tests, scripts, styles, partials, or `index.ts`. `feature-dom-contracts.spec.ts`,
+  `npm run typecheck`, and `npm run test:e2e` (including layout verification)
+  pass; full suite 256/256; `git diff --check` clean.
+- **Follow-up:** The dead-id scan technique (partials vs reference corpus with
+  construction-pattern elimination) is worth rerunning periodically; it also
+  flags harmless-but-unused wrapper ids (`alertSubscriptionsList`,
+  `lastTradeModalBody`) that need no action.
+
 ## 2026-10-03 - Repair broken documentation links and reconcile the docs index
 
 - **Evidence:** A scripted scan of every relative `.md` link across the
