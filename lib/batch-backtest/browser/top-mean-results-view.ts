@@ -24,6 +24,8 @@ import { hasAssetSwitchDecisionEvents, REPLAY_ARM_FIELDS, REPLAY_ARM_TO_FINDER_A
  * events are delegated to the persistent results container (see the service's
  * bindEvents).
  */
+export const CURRENT_SNAPSHOT_SELECTOR = "[data-batch-current-snapshot]";
+export const LATEST_SELECTION_CONTENT_SELECTOR = "[data-batch-latest-selection-content]";
 export const LATEST_ARM_SELECTOR_ID = "batchBacktestSp500TopMeanLatestArmSelector";
 export const LATEST_ARM_SELECTOR_NAMES: readonly OpenScoreUsdLatestSelectorName[] = [
     "TOP_MEAN",
@@ -204,12 +206,25 @@ export function renderLatestOpenScoreSelections(
     // One arm at a time: every arm in one card was unusably long on large
     // universes. The arm comes from the in-card dropdown; the full list
     // stays available via Copy Result.
-    const selection = latest.selections.find((entry) => entry.selector === latestArm)
-        ?? (CAUSAL_ARM_FIELDS.some((field) => REPLAY_ARM_TO_FINDER_ARM[field] === latestArm) ? undefined : latest.selections[0]);
     let html = `<div class="batch-report-card">`;
     html += `<div class="batch-report-title">Latest OPEN_SCORE Selector Picks</div>`;
     html += `<div class="batch-report-note">decision event: ${escapeHtml(decisionLabel)}</div>`;
     html += renderLatestArmSelector(latestArm);
+    html += `<div data-batch-latest-selection-content>${renderLatestOpenScoreSelectionContent(summary, latestArm, mode)}</div>`;
+    return html + `</div>`;
+}
+
+/** Only the arm-dependent content; the mounted select and reports stay intact. */
+export function renderLatestOpenScoreSelectionContent(
+    summary: TopMeanResultSummary,
+    latestArm: OpenScoreUsdLatestSelectorName,
+    mode: TopMeanTieBreakMode,
+): string {
+    if (!summary.latestSelections) return "";
+    const latest = applyTieBreakToLatest(summary.latestSelections, mode);
+    const selection = latest.selections.find((entry) => entry.selector === latestArm)
+        ?? (CAUSAL_ARM_FIELDS.some((field) => REPLAY_ARM_TO_FINDER_ARM[field] === latestArm) ? undefined : latest.selections[0]);
+    let html = "";
     if (selection) {
         html += `<table class="finder-table batch-report-table"><thead><tr><th>Selector</th><th>Direction</th><th>Selection</th><th>Mean</th><th>Score</th><th>Active Pairs</th><th>Pool</th></tr></thead><tbody>`;
         html += `<tr><td><strong>${escapeHtml(selection.selector)}</strong></td><td class="${selection.reason === "selected" && selection.direction === "long" ? "is-positive" : selection.reason === "selected" && selection.direction === "short" ? "is-negative" : ""}"><strong>${escapeHtml(selection.direction.toUpperCase())}</strong></td><td>${escapeHtml(latestSelectionText(selection))}</td><td>${escapeHtml(formatLatestMean(selection.mean))}</td><td>${escapeHtml(formatLatestScore(selection.score))}</td><td>${escapeHtml(selection.activePairs ?? "--")}</td><td>${escapeHtml(selection.eligibleCandidates)}</td></tr>`;
@@ -222,14 +237,13 @@ export function renderLatestOpenScoreSelections(
     }
     const tieNote = selection?.rankingScore !== undefined ? "Score ties use deterministic replay digest tie breaking." : topMeanTieBreakNote(mode);
     html += `<div class="batch-report-note batch-report-note--after">${escapeHtml(tieNote)} Research selectors only.</div>`;
-    html += `</div>`;
     return html;
 }
 
 /**
  * Generated (non-structural) arm picker inside the Latest OPEN_SCORE
- * card. Change events are delegated to the results container in the
- * service's bindEvents because re-rendering the card replaces this element.
+ * card. Events are delegated because a new result replaces the card;
+ * display-only changes keep this element mounted.
  */
 function renderLatestArmSelector(latestArm: OpenScoreUsdLatestSelectorName): string {
     const options = LATEST_ARM_SELECTOR_NAMES
@@ -362,7 +376,7 @@ export function renderTopMeanResults(
     // OPEN_SCORE replay leaderboard below — the two answer different
     // questions (cross-sectional "now" vs per-event historical edge).
     if (summary.currentSnapshot) {
-        html += renderCurrentTopMeanBanner(summary.currentSnapshot, opts.tieMode);
+        html += `<div data-batch-current-snapshot>${renderCurrentTopMeanBanner(summary.currentSnapshot, opts.tieMode)}</div>`;
         if (summary.replayMode === "asset_switch") {
             html += `<div class="batch-report-note">The current snapshot is a cross-sectional raw-score view. Asset-switch replay results below include their own held position and pending orders.</div>`;
         }

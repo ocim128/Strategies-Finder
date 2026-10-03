@@ -69,6 +69,9 @@ import {
     mergeTopMeanArchiveStatus,
     normalizeLatestArm,
     renderCurrentTopMeanBanner,
+    renderLatestOpenScoreSelectionContent,
+    CURRENT_SNAPSHOT_SELECTOR,
+    LATEST_SELECTION_CONTENT_SELECTOR,
     renderTopMeanResults as renderTopMeanResultsView,
 } from "./top-mean-results-view";
 import {
@@ -82,13 +85,24 @@ import {
 
 export class TopMeanController {
     private readonly controlAbort = new AbortController();
+    private readonly replayControlCleanup: Array<() => void> = [];
+    private detailsDirty = true;
+    private currentSnapshot: TopMeanCurrentSnapshot | null = null;
+    private readonly onBusyStateChange: () => void;
     private readonly getDom: () => BatchBacktestDom;
     /** DOM read that must not force-create the tab DOM (pre-init reads). */
     private readonly peekDom: () => BatchBacktestDom | null;
     private latestTopMeanResult: TopMeanResultSummary | null = null;
     /** Arm shown in the Latest OPEN_SCORE Selector Picks card (one at a time). */
     private latestOpenScoreArm: OpenScoreUsdLatestSelectorName = "TOP_MEAN";
-    private activeTopMeanRunId: string | null = null;
+    private ownedRunId: string | null = null;
+    private get activeTopMeanRunId(): string | null {
+        return this.ownedRunId;
+    }
+    private set activeTopMeanRunId(value: string | null) {
+        this.ownedRunId = value;
+        this.onBusyStateChange();
+    }
     private topMeanDiagnosticRunId: string | null = null;
     private topMeanDiagnosticEntries: TopMeanDiagnosticEntry[] = [];
     private topMeanDiagnosticProgressSeen = 0;
@@ -113,15 +127,23 @@ export class TopMeanController {
         this.writeTopMeanDiagnosticLogNow();
     }, TopMeanController.TOP_MEAN_DIAGNOSTIC_PERSIST_DEBOUNCE_MS);
     /** True while the TOP_MEAN reattach serial poll loop owns the UI. */
-    private topMeanReattachInFlight = false;
+    private reattachInFlight = false;
+    private get topMeanReattachInFlight(): boolean {
+        return this.reattachInFlight;
+    }
+    private set topMeanReattachInFlight(value: boolean) {
+        this.reattachInFlight = value;
+        this.onBusyStateChange();
+    }
     private topMeanReattachTimer: ReturnType<typeof setTimeout> | null = null;
     private topMeanReattachTimerResolve: (() => void) | null = null;
     // Audit Finding 1: shared transient-failure backoff state machine.
     private readonly topMeanReattachBackoff = new ReattachBackoffController();
 
-    constructor(deps: { getDom: () => BatchBacktestDom; peekDom: () => BatchBacktestDom | null }) {
+    constructor(deps: { getDom: () => BatchBacktestDom; peekDom: () => BatchBacktestDom | null; onBusyStateChange?: () => void }) {
         this.getDom = deps.getDom;
         this.peekDom = deps.peekDom;
+        this.onBusyStateChange = deps.onBusyStateChange ?? (() => {});
     }
 
     // ── Facade-facing state (cross-workflow busy gate + tests) ──────────
@@ -154,8 +176,10 @@ export class TopMeanController {
                 mode === "asset_switch" || !dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.checked;
             persistTopMeanReplayMode(mode);
         };
-        dom.batchBacktestSp500TopMeanReplayMode.addEventListener("change", sync);
-        dom.batchBacktestSp500TopMeanSelectionCooldownEnabled.addEventListener("change", sync);
+        for (const control of [dom.batchBacktestSp500TopMeanReplayMode, dom.batchBacktestSp500TopMeanSelectionCooldownEnabled]) {
+            control.addEventListener("change", sync);
+            this.replayControlCleanup.push(() => control.removeEventListener("change", sync));
+        }
         sync();
     }
 
@@ -296,6 +320,7 @@ export class TopMeanController {
         this.resetTopMeanOpenScoreDetails(dom);
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
 
+        this.currentSnapshot = null;
         dom.batchBacktestSp500TopMeanCoverageSummary.innerHTML = "";
         dom.batchBacktestSp500TopMeanProgressText.textContent = "Starting TOP_MEAN coordinator...";
         dom.batchBacktestSp500TopMeanResults.innerHTML = "";
@@ -387,8 +412,9 @@ export class TopMeanController {
                         // historical replay. Surface it immediately after the
                         // current-snapshot phase instead of making the user wait
                         // for the terminal leaderboard.
+                        this.currentSnapshot = event.currentSnapshot;
                         dom.batchBacktestSp500TopMeanResults.innerHTML =
-                            this.renderCurrentTopMeanBanner(event.currentSnapshot)
+                            `<div data-batch-current-snapshot>${this.renderCurrentTopMeanBanner(event.currentSnapshot)}</div>`
                             + ((event.selectionCooldownBars ?? 0) > 0
                                 ? `<div class="batch-report-note">Current snapshot uses raw scores. The ${event.selectionCooldownBars}-bar selection cooldown applies to historical replay picks.</div>`
                                 : "");
@@ -530,11 +556,29 @@ export class TopMeanController {
     // ── Results rendering / persistence / details ───────────────────────
 
     public renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
+        this.currentSnapshot = summary.currentSnapshot ?? null;
         renderTopMeanResultsView(dom, summary, {
             latestArm: this.latestOpenScoreArm,
             tieMode: this.topMeanTieBreakMode(),
         });
         this.syncTopMeanOpenScoreDetailsControl(dom, summary);
+    }
+
+    /** Display controls never reset details, annual disclosures, or the arm select. */
+    public refreshTopMeanDisplay(dom: BatchBacktestDom): void {
+        const mode = this.topMeanTieBreakMode();
+        const snapshot = dom.batchBacktestSp500TopMeanResults.querySelector<HTMLElement>(CURRENT_SNAPSHOT_SELECTOR);
+        if (snapshot && this.currentSnapshot) {
+            snapshot.innerHTML = renderCurrentTopMeanBanner(this.currentSnapshot, mode);
+        }
+        this.refreshLatestArm(dom);
+    }
+
+    public refreshLatestArm(dom: BatchBacktestDom): void {
+        const content = dom.batchBacktestSp500TopMeanResults.querySelector<HTMLElement>(LATEST_SELECTION_CONTENT_SELECTOR);
+        if (content && this.latestTopMeanResult) {
+            content.innerHTML = renderLatestOpenScoreSelectionContent(this.latestTopMeanResult, this.latestOpenScoreArm, this.topMeanTieBreakMode());
+        }
     }
 
     public persistLatestTopMeanResult(result: TopMeanResultSummary): void {
@@ -559,6 +603,7 @@ export class TopMeanController {
     }
 
     public resetTopMeanOpenScoreDetails(dom: BatchBacktestDom): void {
+        this.detailsDirty = true;
         resetTopMeanOpenScoreDetails(dom);
     }
 
@@ -566,7 +611,14 @@ export class TopMeanController {
         dom: BatchBacktestDom,
         summary: TopMeanResultSummary,
     ): void {
+        this.detailsDirty = true;
         syncTopMeanOpenScoreDetailsControl(dom, summary);
+    }
+
+    public refreshTopMeanDetails(): void {
+        this.detailsDirty = true;
+        const dom = this.getDom();
+        if (!dom.batchBacktestSp500TopMeanDetails.hidden) this.renderTopMeanDetails(dom);
     }
 
     public toggleSp500TopMeanOpenScoreDetails(): void {
@@ -579,7 +631,11 @@ export class TopMeanController {
         dom.batchBacktestSp500TopMeanDetailsBtn.textContent = show
             ? "Hide OPEN_SCORE Details"
             : "Show OPEN_SCORE Details";
-        if (show && !dom.batchBacktestSp500TopMeanDetails.innerHTML) {
+        if (show && this.detailsDirty) this.renderTopMeanDetails(dom);
+    }
+
+    private renderTopMeanDetails(dom: BatchBacktestDom): void {
+        if (this.latestTopMeanResult) {
             // Recorded (and persisted) BEFORE rendering: if the details table
             // render is what kills the tab, the log must already say so.
             this.recordTopMeanDiagnostic("ui.details_render.start", {
@@ -593,6 +649,7 @@ export class TopMeanController {
                     this.getTopMeanOpenScoreDetailSelector(dom),
                     this.getTopMeanOpenScoreDetailYear(dom),
                 );
+            this.detailsDirty = false;
             this.recordTopMeanDiagnostic("ui.details_render.done", {
                 htmlChars: dom.batchBacktestSp500TopMeanDetails.innerHTML.length,
             });
@@ -1069,6 +1126,7 @@ export class TopMeanController {
      */
     public dispose(): void {
         this.activeTopMeanRunId = null;
+        for (const cleanup of this.replayControlCleanup.splice(0)) cleanup();
         this.controlAbort.abort();
         this.stopTopMeanReattachPoll();
         this.renderTopMeanDiagnosticDebounced.cancel();

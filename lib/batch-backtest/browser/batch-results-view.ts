@@ -72,6 +72,9 @@ export function createBatchResultsView(deps: {
     /** Run-owner token check; false when the token lost ownership. */
     isRunTokenCurrent: (token: number) => boolean;
 }): BatchResultsView {
+    // Streamed scalar rows are immutable. Identity keys preserve duplicate symbols
+    // and let obsolete runs be collected without a separate cache reset.
+    const rowElements = new WeakMap<BatchBacktestSymbolResult, HTMLDivElement>();
     const liveRenderQueue: BatchBacktestSymbolResult[] = [];
     let pendingLiveRender: { dom: BatchBacktestDom; token: number; sortedRender?: () => void } | null = null;
     const liveRenderFrame = coalesceAnimationFrame(() => {
@@ -138,7 +141,12 @@ export function createBatchResultsView(deps: {
         if (results.length === 0) return;
         const fragment = document.createDocumentFragment();
         for (const result of results) {
-            fragment.appendChild(createResultRow(result));
+            let row = rowElements.get(result);
+            if (!row) {
+                row = createResultRow(result);
+                rowElements.set(result, row);
+            }
+            fragment.appendChild(row);
         }
         dom.batchBacktestResults.appendChild(fragment);
     }

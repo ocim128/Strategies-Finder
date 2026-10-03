@@ -73,6 +73,38 @@ timers/backoff belong to their controllers and are released by each
 controller's `dispose()` (TOP_MEAN clears its run id before resolving poll
 delays so the loop cannot reschedule).
 
+## Batch menu interaction contracts
+
+Pair-list editing (Pairs, Template, Use Current, Clear, and Generate & Apply)
+is locked by the same busy predicate as Run, including strategy preflight,
+TOP_MEAN ownership, reattach, standalone replay, and pending Stop requests.
+The Pairs textarea stays selectable while read-only. Bound mutation handlers
+also reject changes while busy, preserving the submitted pair list, streamed
+rows, and run id used to scope Stop. Controls unlock when all owners release.
+
+Standalone OPEN_SCORE and TOP_MEAN share strict integer horizon parsing:
+nonblank invalid tokens and decimal horizons are errors, rather than silently
+dropped or rounded. Standalone replay still requires a nonblank horizon input;
+TOP_MEAN retains its blank-input defaults.
+
+Tie Break changes immediately refresh the current snapshot and latest picks
+with the same deterministic resolution used by Copy Result. Latest-arm changes
+update only the arm-dependent content, keeping the select mounted and retaining
+keyboard focus, annual disclosure expansion, and the separate details panel.
+Changing the details Arm or Year invalidates its cached table even while hidden;
+the next Show renders the new filter. New results reset the details state.
+
+Sorted stream flushes reuse row elements by immutable result-object identity.
+The view uses a WeakMap so replaced results create fresh nodes and obsolete runs
+can be collected. Sorting semantics and stale run-token checks remain unchanged.
+Disposal removes DOM, replay-mode, and pagehide listeners, stops controller
+polling/debounces, and drops queued rows. Disposal is terminal for an instance;
+use `createBatchBacktestService()` to mount a replacement.
+
+Focused regressions live in `batch-results-view.spec.ts` and
+`batch-backtest-service-lifecycle.browser.spec.ts`; the E2E Batch smoke checks
+mounted select identity, focus, and preserved report/details state.
+
 ## Runtime requirement
 
 Batch Run and OPEN_SCORE USD Replay require

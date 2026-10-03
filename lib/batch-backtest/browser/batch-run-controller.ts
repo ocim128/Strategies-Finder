@@ -72,6 +72,7 @@ export class BatchRunController {
     private readonly deps: {
         getDom: () => BatchBacktestDom;
         resultsView: BatchResultsView;
+        onBusyStateChange?: () => void;
         /** Facade cross-workflow busy gate (synchronous single-flight). */
         isUiBusy: () => boolean;
         /** Balanced-generator lock inputs, computed from facade state. */
@@ -105,13 +106,27 @@ export class BatchRunController {
     // Audit single-flight finding: closes the double-click window between the
     // user's click and the Run button being disabled. The facade's wrapper
     // reads this through isUiBusy.
-    private runInFlight = false;
+    private inFlight = false;
+    private get runInFlight(): boolean {
+        return this.inFlight;
+    }
+    private set runInFlight(value: boolean) {
+        this.inFlight = value;
+        this.deps.onBusyStateChange?.();
+    }
     // Browser-generated server run id (audit Finding 5). Sent on the /run body
     // and the /stop body so the server can scope Stop to THIS run: a stale tab
     // cannot cancel a newer run. Reattach also matches this against the
     // terminal snapshot's runId to decide whether to adopt the recovered run.
     private activeServerRunId: string | null = null;
-    private serverRunActive = false;
+    private serverActive = false;
+    private get serverRunActive(): boolean {
+        return this.serverActive;
+    }
+    private set serverRunActive(value: boolean) {
+        this.serverActive = value;
+        this.deps.onBusyStateChange?.();
+    }
     // True when the most recent server-side Run finished with artifacts still
     // on the server (the OPEN_SCORE USD button is enabled on this flag, NOT on
     // `row.data !== undefined`, because in server-side mode the browser never
@@ -126,7 +141,14 @@ export class BatchRunController {
     private pendingServerRunPerformance: BatchBacktestPerformance | null = null;
     // Reattach polling timer id (set when this tab is observing a server-side
     // run that started before page load).
-    private reattachTimer: ReturnType<typeof setTimeout> | null = null;
+    private pollTimer: ReturnType<typeof setTimeout> | null = null;
+    private get reattachTimer(): ReturnType<typeof setTimeout> | null {
+        return this.pollTimer;
+    }
+    private set reattachTimer(value: ReturnType<typeof setTimeout> | null) {
+        this.pollTimer = value;
+        this.deps.onBusyStateChange?.();
+    }
     private reattachTimerResolve: (() => void) | null = null;
     private reattachPollingStopped = false;
     // Consecutive failed status polls during a reattach (audit Finding 4).
@@ -142,6 +164,7 @@ export class BatchRunController {
     constructor(deps: {
         getDom: () => BatchBacktestDom;
         resultsView: BatchResultsView;
+        onBusyStateChange?: () => void;
         isUiBusy: () => boolean;
         balancedLock: () => { blocked: boolean; hasResult: boolean };
         getPairListProvenance: () => PairListProvenanceV1 | null;
@@ -259,6 +282,7 @@ export class BatchRunController {
 
     setRunBusy(dom: BatchBacktestDom, busy: boolean): void {
         this.deps.resultsView.setRunBusy(dom, busy, this.deps.balancedLock());
+        this.deps.onBusyStateChange?.();
     }
 
     /**
@@ -1519,5 +1543,6 @@ export class BatchRunController {
         this.controlAbort.abort();
         this.stopReattachPoll();
         this.cancelLiveRenderRaf();
+        this.deps.resultsView.dropQueuedRows();
     }
 }

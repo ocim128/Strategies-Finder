@@ -8,6 +8,7 @@ export function createFakeElement() {
     return {
         style: { display: "", width: "" },
         disabled: false,
+        readOnly: false,
         value: "",
         checked: false,
         textContent: "",
@@ -26,6 +27,7 @@ export function createFakeElement() {
         },
         replaceChildren(...children: unknown[]) { this.children = [...children]; },
         appendChild<T>(child: T): T { this.children.push(child); return child; },
+        querySelector: (_selector: string): any => null,
         querySelectorAll: () => [],
         setAttribute: () => {},
         addEventListener(type: string, handler: Listener) {
