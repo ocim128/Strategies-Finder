@@ -305,6 +305,31 @@ describe("alpaca fetchAlpacaBars (stubbed fetch)", () => {
         adjustment: ALPACA_DEFAULT_ADJUSTMENT,
     };
 
+    it("excludes TANH's zero-trade reverse-split placeholder from stock daily downloads", async () => {
+        pushResponse({ bars: [
+            { t: "2026-09-03T04:00:00Z", o: 12.89, h: 20.5, l: 12.7, c: 18.48, v: 7598, n: 664 },
+            { t: "2026-09-04T04:00:00Z", o: 0.3696, h: 0.3696, l: 0.3696, c: 0.3696, v: 0, n: 0 },
+            { t: "2026-09-08T04:00:00Z", o: 18.585, h: 20, l: 18.425, c: 19.99, v: 7674, n: 108 },
+        ] });
+        const result = await fetchAlpacaBars(config, {
+            symbol: "TANH", timeframe: "1Day", start: "2026-09-03T00:00:00Z", end: "2026-09-09T00:00:00Z",
+        });
+        assert.deepEqual(result.candles.map(candle => candle.open), [12.89, 18.585]);
+        assert.equal(result.complete, true);
+        assert.equal(result.pages, 1);
+    });
+
+    it("keeps the daily placeholder rule scoped to stocks, preserving crypto and intraday contracts", async () => {
+        const bar = { t: "2026-09-04T04:00:00Z", o: 1, h: 1, l: 1, c: 1, v: 0 };
+        for (const [symbol, timeframe] of [["PAXG/USD", "1Day"], ["TANH", "30Min"]]) {
+            pushResponse({ bars: [bar] });
+            const result = await fetchAlpacaBars(config, {
+                symbol, timeframe, start: "2026-09-03T00:00:00Z", end: "2026-09-09T00:00:00Z",
+            });
+            assert.equal(result.candles.length, 1);
+        }
+    });
+
     it("passes the auth header on the outbound request and nowhere else", async () => {
         pushResponse({ bars: [{ t: "2026-01-01T00:00:00Z", o: 1, h: 2, l: 0.5, c: 1.5, v: 10 }] });
         await fetchAlpacaBars(config, { symbol: "AAPL", timeframe: "30Min", start: "2026-01-01T00:00:00Z", end: "2026-02-01T00:00:00Z" });

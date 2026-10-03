@@ -103,6 +103,27 @@ function createFetcher(options: {
 }
 
 describe("DataFetcher chart lookback", () => {
+    it("filters IBKR daily placeholders from both imports and warm chart caches", async () => {
+        const symbol = "TANH\u2022";
+        const key = `${symbol}::1d`;
+        const data: OHLCVData[] = [
+            { time: "2026-09-03", open: 12.89, high: 20.5, low: 12.7, close: 18.48, volume: 7598 },
+            { time: "2026-09-04", open: 0.3696, high: 0.3696, low: 0.3696, close: 0.3696, volume: 0 },
+            { time: "2026-09-08", open: 18.585, high: 20, low: 18.425, close: 19.99, volume: 7674 },
+        ];
+        globalThis.fetch = async () => { throw new Error("fast path must avoid network"); };
+        const cache = new DataCache();
+        cache.set(key, data, "seed");
+        for (const imported of [true, false]) {
+            const fetcher = createFetcher({
+                provider: "ibkr-local", cache, getLookbackBars: () => 2,
+                importedDataByKey: imported ? new Map([[key, data]]) : undefined,
+            });
+            const loaded = await fetcher.fetchData(symbol, "1d");
+            assert.deepEqual(loaded.map(candle => candle.open), [12.89, 18.585]);
+        }
+    });
+
     it("never substitutes mock candles for an unsupported provider", async () => {
         const messages: string[] = [];
         const sources: string[] = [];

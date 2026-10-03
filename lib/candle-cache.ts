@@ -1,6 +1,6 @@
 import type { Time } from "lightweight-charts";
 import type { OHLCVData } from "./types/index";
-import { normalizeTradFiDailyCandles } from "./data/data-interval-utils";
+import { normalizeIbkrCandles } from "./data/data-interval-utils";
 import { debugLogger } from "./debug-logger";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { fetchLocalApiWithBody } from "./local-api-transport";
@@ -369,7 +369,7 @@ async function loadLocalDailyDatasetCandles(
                 continue;
             }
 
-            const candles = normalizeTradFiDailyCandles(extractCandlesFromCsvPayload(payload), baseInterval);
+            const candles = normalizeIbkrCandles(extractCandlesFromCsvPayload(payload), baseInterval);
             if (candles.length === 0) {
                 rememberMissing(missingLocalDailyCsvFiles, cacheKey);
                 continue;

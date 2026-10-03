@@ -6,12 +6,35 @@ import {
     getStorageInterval,
     isIntervalAlignedTime,
     normalizeTradFiDailyCandles,
+    normalizeIbkrCandles,
     normalizeTradFiDailySessionTime,
     sliceCandlesToLookback,
 } from "../lib/data/data-interval-utils";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 
 describe("Data interval utils", () => {
+    it("excludes untraded IBKR daily placeholders without guessing a replacement price", () => {
+        const input: OHLCVData[] = [
+            { time: "2026-09-03T04:00:00Z", open: 12.89, high: 20.5, low: 12.7, close: 18.48, volume: 7598 },
+            { time: "2026-09-04T04:00:00Z", open: 0.3696, high: 0.3696, low: 0.3696, close: 0.3696, volume: 0 },
+            { time: "2026-09-08T04:00:00Z", open: 18.585, high: 20, low: 18.425, close: 19.99, volume: 7674 },
+        ];
+        const normalized = normalizeIbkrCandles(input, "1d");
+        expect(normalized.map(candle => candle.open)).to.deep.equal([12.89, 18.585]);
+        expect(Number(normalized[1].time)).to.equal(Date.parse("2026-09-08T00:00:00Z") / 1000);
+        expect(input).to.have.length(3);
+        expect(normalizeIbkrCandles(input, "30m")).to.equal(input);
+        expect(normalizeTradFiDailyCandles(input, "1d")).to.have.length(3);
+    });
+
+    it("preserves traded flat bars and non-flat bars with unavailable volume", () => {
+        const input: OHLCVData[] = [
+            { time: "2026-09-03", open: 19, high: 19, low: 19, close: 19, volume: 1 },
+            { time: "2026-09-04", open: 19, high: 20, low: 18, close: 19, volume: 0 },
+        ];
+        expect(normalizeIbkrCandles(input, "1d@close-odd")).to.have.length(2);
+    });
+
     it("normalizes 2h storage keys to the single supported interval", () => {
         expect(getImportStorageIntervals("2h")).to.deep.equal(["2h"]);
         expect(getImportStorageIntervals("2H")).to.deep.equal(["2h"]);

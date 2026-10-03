@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { selectBestNonBinanceLocalCandidate } from "../lib/data/data-persistence";
+import { DataPersistence, selectBestNonBinanceLocalCandidate } from "../lib/data/data-persistence";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 
 function candles(count: number): OHLCVData[] {
@@ -15,6 +15,23 @@ function candles(count: number): OHLCVData[] {
 }
 
 describe("non-Binance local data priority", () => {
+    it("filters IBKR daily imports before applying the requested bar limit", async () => {
+        const data: OHLCVData[] = [
+            { time: "2026-09-03", open: 12.89, high: 20.5, low: 12.7, close: 18.48, volume: 7598 },
+            { time: "2026-09-04", open: 0.3696, high: 0.3696, low: 0.3696, close: 0.3696, volume: 0 },
+            { time: "2026-09-08", open: 18.585, high: 20, low: 18.425, close: 19.99, volume: 7674 },
+        ].map(bar => ({ ...bar, time: (Date.parse(String(bar.time)) / 1000) as Time }));
+        let cached: OHLCVData[] = [];
+        const result = await new DataPersistence().loadNonBinanceLocalData({
+            symbol: "TANH\u2022", storageSymbol: "TANH\u2022", interval: "1d", storageInterval: "1d",
+            provider: "ibkr-local", maxBars: 2, cacheKey: "TANH::1d", importedCandles: data,
+            ctx: { syncAtByKey: new Map(), setCachedCandles: (_key, bars) => { cached = bars; } },
+        });
+        assert.equal(result?.source, "imported");
+        assert.deepEqual(cached.map(bar => bar.open), [12.89, 18.585]);
+        assert.deepEqual(result?.candles, cached);
+    });
+
     it("prefers the longest non-imported candidate so short live overlays do not hide seed history", () => {
         const best = selectBestNonBinanceLocalCandidate([
             { source: "seed", candles: candles(500) },

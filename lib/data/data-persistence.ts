@@ -16,6 +16,7 @@ import {
     DATA_CHART_TOTAL_LIMIT,
 } from "./constants";
 import {
+    normalizeIbkrCandles,
     normalizeTradFiDailyCandles,
     takeLastCandles as trimToLastCandles,
 } from "./data-interval-utils";
@@ -86,7 +87,8 @@ export class DataPersistence {
         trusted = false
     ): OHLCVData[] {
         const normalized = this.normalizeExternalCandles(candles, trusted);
-        return provider === 'bybit-tradfi' || provider === 'ibkr-local'
+        if (provider === 'ibkr-local') return normalizeIbkrCandles(normalized, interval);
+        return provider === 'bybit-tradfi'
             ? normalizeTradFiDailyCandles(normalized, interval)
             : normalized;
     }

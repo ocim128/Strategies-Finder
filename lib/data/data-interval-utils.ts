@@ -75,6 +75,24 @@ export function normalizeTradFiDailyCandles(candles: OHLCVData[], interval: stri
     return deduped;
 }
 
+/** Alpaca IEX can emit carry-forward prices on days without any trades. */
+export function isZeroVolumeFlatCandle(candle: OHLCVData): boolean {
+    return candle.volume === 0
+        && candle.open === candle.high
+        && candle.open === candle.low
+        && candle.open === candle.close;
+}
+
+/** Keep untraded daily placeholders out of IBKR stock signals and fills. */
+export function filterIbkrDailyPlaceholders(candles: OHLCVData[], interval: string): OHLCVData[] {
+    if (normalizeStorageInterval(interval).split("@")[0] !== "1d") return candles;
+    return candles.filter(candle => !isZeroVolumeFlatCandle(candle));
+}
+
+export function normalizeIbkrCandles(candles: OHLCVData[], interval: string): OHLCVData[] {
+    return normalizeTradFiDailyCandles(filterIbkrDailyPlaceholders(candles, interval), interval);
+}
+
 export function estimateBybitSeedOverlayBars(
     interval: string,
     seedData: OHLCVData[],

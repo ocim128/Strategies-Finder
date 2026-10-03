@@ -218,6 +218,23 @@ describe('Candle cache', () => {
         expect(requestedPaths.filter((path) => path.includes('/price-data/ibkr/csv/4h/NVDA.csv'))).to.have.length(1);
     });
 
+    it('excludes daily no-trade placeholders on cold, cached, and fresh IBKR seed reads', async () => {
+        globalThis.fetch = async () => new Response([
+            'time,open,high,low,close,volume',
+            '2026-09-03T04:00:00Z,12.89,20.5,12.7,18.48,7598',
+            '2026-09-04T04:00:00Z,0.3696,0.3696,0.3696,0.3696,0',
+            '2026-09-08T04:00:00Z,18.585,20,18.425,19.99,7674',
+        ].join('\n'));
+        const symbol = 'TANH\u2022';
+        for (const data of [
+            await loadSeedCandlesFromPriceData(symbol, '1d'),
+            await loadSeedCandlesFromPriceData(symbol, '1d'),
+            await loadFreshIbkrCandlesFromPriceData(symbol, '1d'),
+        ]) {
+            expect(data?.map(bar => bar.open)).to.deep.equal([12.89, 18.585]);
+        }
+    });
+
     it('can bypass a retained IBKR CSV entry when a server synthetic leg needs authoritative data', async () => {
         let close = 101;
         let requests = 0;

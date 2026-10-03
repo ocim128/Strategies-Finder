@@ -26,6 +26,17 @@ timestamps with last-write-wins semantics, normalizes times to Unix seconds,
 and treats missing/invalid volume as `0`. A bounded page ceiling or a
 cancellation is reported as incomplete rather than silently marked complete.
 
+Stock daily downloads exclude flat bars (`open = high = low = close`) with
+zero volume. IEX can emit these carry-forward placeholders without any
+trades, including an unadjusted prior close on a split date (TANH on
+2026-09-04). They cannot supply an executable price. Existing IBKR daily CSV,
+import, SQLite, and browser-cache loads apply the same exclusion before
+signals or fills; the next Alpaca merge also removes saved placeholders.
+No replacement price is invented. A next-open order waits for the next
+available traded candle, subject to the replay's existing cancellation rules.
+Positive-volume flat bars and non-flat bars with missing volume remain
+available. Crypto and intraday bars retain their existing contracts.
+
 ## Configure the server
 
 Copy `.env.example` to `.env`, then provide the two credentials. Non-`VITE_`

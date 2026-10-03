@@ -31,6 +31,7 @@ import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-h
 import type { AlpacaPriceSettings } from "./alpaca-refresh-symbols";
 import { HttpStatusError } from "../vite-http-utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { filterIbkrDailyPlaceholders } from "../data/data-interval-utils";
 import type { OHLCVData } from "../types/strategies";
 
 /** Public Alpaca market-data host (free-tier IEX feed lives here). */
@@ -550,11 +551,15 @@ export async function fetchAlpacaBars(
         }
         pages += 1;
         totalRetries += pageResult.retries;
-        for (const row of pageResult.bars) {
-            for (const candle of normalizeAlpacaBars([row])) {
-                const time = Number(candle.time);
-                if (Number.isFinite(time)) byTime.set(time, candle);
-            }
+        const candles = normalizeAlpacaBars(pageResult.bars);
+        // No-trade stock daily bars can carry an unadjusted previous close
+        // across a split (TANH 2026-09-04). Never use that placeholder as a fill.
+        const tradedCandles = !args.symbol.includes("/") && args.timeframe === "1Day"
+            ? filterIbkrDailyPlaceholders(candles, "1d")
+            : candles;
+        for (const candle of tradedCandles) {
+            const time = Number(candle.time);
+            if (Number.isFinite(time)) byTime.set(time, candle);
         }
         if (!pageResult.nextPageToken) {
             return finalizeAlpaca(byTime, pages, totalRetries, "covered", config, args.symbol, startedAt);

@@ -72,7 +72,8 @@ import type { SyntheticPairDiskCacheArgs } from "./batch-dataset-loader-core";
 // the parsed/persistence caches, so they cannot be trusted after a sync.
 // v7 additionally moves the on-disk format from JSON to v8 serialization
 // (.bin), so it invalidates every prior JSON file (v1–v6) by extension as well.
-export const SYNTHETIC_PAIR_CACHE_VERSION = 7;
+// v8 rebuilds ratios after excluding untraded IBKR daily carry-forward bars.
+export const SYNTHETIC_PAIR_CACHE_VERSION = 8;
 
 const CACHE_DIR_NAME = "synthetic-cache";
 const SERIES_META_TIMEOUT_MS = 2_000;

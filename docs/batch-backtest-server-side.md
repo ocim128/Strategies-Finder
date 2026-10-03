@@ -693,6 +693,12 @@ newest bars. Complete columnar entries remain available to full-series callers;
 mtime freshness checks and cache limits still apply. See the
 [shared price-data guide](price-data.md) for loading and persistence contracts.
 
+IBKR daily legs and USD targets exclude flat, zero-volume carry-forward
+placeholders. This prevents untraded pre-split IEX prices from inflating
+TOP_MEAN signals or replay returns. Older seed sidecars and synthetic caches
+rebuild automatically; restart the server, reload the browser, and rerun
+TOP_MEAN to replace an existing result snapshot.
+
 ### API Endpoints
 
 - `POST /api/batch-backtest/sp500-top-mean/run`

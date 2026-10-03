@@ -5,6 +5,7 @@ import type { Plugin } from "vite";
 import { debugLogger } from "../debug-logger";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { filterIbkrDailyPlaceholders } from "../data/data-interval-utils";
 import type { OHLCVData } from "../types/strategies";
 import { beginNdjsonStream, createDisconnectSafeStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { isAllowedLocalRequest } from "../local-route-authorization";
@@ -1997,7 +1998,7 @@ export async function syncOneAlpacaSymbol(
         ? []
         : existingCandles;
     const existingHasBars = existing.length > 0;
-    const merged = mergeCandlesByTime([...existing, ...fetched]);
+    const merged = filterIbkrDailyPlaceholders(mergeCandlesByTime([...existing, ...fetched]), interval);
     writeCsv(symbol, interval, merged);
     const gapWarning = describeLargeCandleGap(merged);
     // Catalog source: if the interval already existed with a DIFFERENT

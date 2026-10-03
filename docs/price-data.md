@@ -19,6 +19,16 @@ loading persisted sources. On a non-Binance fallback load,
   take precedence; otherwise prefer the longest series, with source priority
   breaking ties. A short live overlay must not hide deeper seed history.
 
+IBKR daily stock normalization excludes flat, zero-volume carry-forward
+placeholders before session deduplication and lookback slicing. This rule
+also applies to imports, persisted fallbacks, warm browser caches, and the
+server CSV loader. It prevents stale pre-split IEX closes from becoming
+signals or fills; see [Alpaca / IBKR sync](alpaca-ibkr-sync.md).
+Parsed-seed sidecars and synthetic-pair disk caches from before this rule
+are version-invalidated and rebuild automatically. Existing TOP_MEAN results,
+archives, and endpoint dataset references are snapshots: rerun or regenerate
+them to obtain results using the filtered candles.
+
 The IBKR fast path preserves that source precedence rather than assuming the
 longest cached history is authoritative. Normalize times with the existing
 time helpers and keep TradFi daily normalization in `data-interval-utils.ts`.

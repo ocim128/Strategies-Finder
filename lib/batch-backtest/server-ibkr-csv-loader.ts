@@ -4,7 +4,7 @@ import { dirname, resolve, sep } from "node:path";
 import { isMainThread } from "node:worker_threads";
 import { debugLogger } from "../debug-logger";
 import { extractCandlesFromCsvPayload } from "../candle-cache";
-import { normalizeTradFiDailyCandles } from "../data/data-interval-utils";
+import { normalizeIbkrCandles } from "../data/data-interval-utils";
 import { isIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 
@@ -231,7 +231,7 @@ export const __testInternals = { PointBoundedParsedCache };
  * the cache; sidecar files are regenerable data and safe to delete.
  */
 const SEED_SIDECAR_MAGIC = "IBSC";
-const SEED_SIDECAR_FORMAT_VERSION = 1;
+const SEED_SIDECAR_FORMAT_VERSION = 2;
 const SEED_SIDECAR_HEADER_BYTES = 32;
 const SEED_SIDECAR_COLUMN_COUNT = 6;
 
@@ -529,7 +529,7 @@ export async function loadFreshIbkrCandlesFromDisk(
                     ? await readFile(filePath, { encoding: "utf8", signal })
                     : readFileSync(filePath, "utf8");
                 if (signal?.aborted) return null;
-                const candles = normalizeTradFiDailyCandles(parseIbkrCsvPayload(payload), baseInterval);
+                const candles = normalizeIbkrCandles(parseIbkrCsvPayload(payload), baseInterval);
                 if (candles.length > 0) {
                     const columns = columnsFromCandles(candles);
                     storeParsedCsvColumns(filePath, csvStat.mtimeMs, columns, parsedCache, parsedCacheMaxEntries);

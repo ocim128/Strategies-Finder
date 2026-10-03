@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,6 +11,10 @@ import {
 } from "../lib/batch-backtest/server-ibkr-csv-loader";
 import { resolveServerBatchCacheBudget } from "../lib/batch-backtest/server-batch-cache-budget";
 import { extractCandlesFromCsvPayload } from "../lib/candle-cache";
+import { runAssetSwitchReplay } from "../lib/batch-backtest/open-score-replay/asset-switch";
+import { replayArmFields, type ReplayArmResults } from "../lib/batch-backtest/open-score-replay/arm-contract";
+import { normalizeTradFiDailyCandles } from "../lib/data/data-interval-utils";
+import type { OHLCVData } from "../lib/types/strategies";
 
 const CSV = [
     "time,open,high,low,close,volume",
@@ -20,6 +24,87 @@ const CSV = [
 ].join("\n");
 
 async function main(): Promise<void> {
+    const tanhBaseDir = mkdtempSync(join(tmpdir(), "server-ibkr-tanh-placeholder-"));
+    try {
+        const csvDir = join(tanhBaseDir, "price-data", "ibkr", "csv", "1d");
+        mkdirSync(csvDir, { recursive: true });
+        const csvPath = join(csvDir, "TANH.csv");
+        const csv = [
+            "time,open,high,low,close,volume",
+            "2026-09-03T04:00:00.000Z,12.89,20.5,12.7,18.48,7598",
+            "2026-09-04T04:00:00.000Z,0.3696,0.3696,0.3696,0.3696,0",
+            "2026-09-08T04:00:00.000Z,18.585,20,18.425,19.99,7674",
+            "2026-09-09T04:00:00.000Z,19.1,19.1,19.1,19.1,241",
+            "",
+        ].join("\n");
+        writeFileSync(csvPath, csv);
+        // Seed a valid v1 sidecar containing the bad bar, matching current CSV
+        // stat metadata. A process restart must rebuild it under the new rule.
+        const raw = parseIbkrCsvPayload(csv);
+        const oldSidecar = Buffer.alloc(32 + raw.length * 6 * 8);
+        oldSidecar.write("IBSC");
+        oldSidecar.writeUInt32LE(1, 4);
+        oldSidecar.writeUInt32LE(raw.length, 8);
+        const csvStat = statSync(csvPath);
+        oldSidecar.writeDoubleLE(csvStat.mtimeMs, 16);
+        oldSidecar.writeDoubleLE(csvStat.size, 24);
+        const keys = ["time", "open", "high", "low", "close", "volume"] as const;
+        keys.forEach((key, col) => raw.forEach((bar, row) => {
+            oldSidecar.writeDoubleLE(Number(bar[key]), 32 + (col * raw.length + row) * 8);
+        }));
+        const sidecarDir = join(tanhBaseDir, "price-data", "ibkr", "seed-cache", "1d");
+        mkdirSync(sidecarDir, { recursive: true });
+        const sidecarPath = join(sidecarDir, "TANH.csv.bin");
+        writeFileSync(sidecarPath, oldSidecar);
+        clearParsedIbkrCsvCache();
+        const symbol = "TANH\u2022";
+        const load = () => loadFreshIbkrCandlesFromDisk(symbol, "1d", undefined, tanhBaseDir);
+        const loaded = await load();
+        assert.deepEqual(loaded!.map(bar => bar.open), [12.89, 18.585, 19.1]);
+        assert.equal(readFileSync(sidecarPath).readUInt32LE(4), 2, "pre-filter sidecar must rebuild");
+        assert.deepEqual(await load(), loaded, "warm column cache stays filtered");
+        clearParsedIbkrCsvCache();
+        assert.deepEqual(await load(), loaded, "new sidecar stays filtered after restart");
+        const sec = (day: string) => Date.parse(`${day}T00:00:00Z`) / 1000;
+        const emptyPicks = Object.fromEntries(replayArmFields().map(arm => [arm, null])) as ReplayArmResults<number | null>;
+        const replay = (loadTanh: () => Promise<OHLCVData[] | null>, switchDay: string) => runAssetSwitchReplay({
+            views: [{ timeSec: sec("2026-09-03"), picks: { ...emptyPicks, topMean: 0 } },
+                { timeSec: sec(switchDay), picks: { ...emptyPicks, topMean: 1 } }],
+            assetNames: [symbol, "AAPL\u2022"], pairCount: 1, assetCount: 2,
+            slippageRate: 0.0002, commissionRate: 0,
+            options: { mode: "asset_switch", interval: "1d", sampleFromSec: sec("2026-09-03"),
+                sampleToSec: sec("2026-09-10"), evaluationCutoffSec: sec("2026-09-11"),
+                includeEventDetails: true, loadTargetDataset: asset => asset === symbol ? loadTanh() : Promise.resolve([
+                    { time: sec("2026-09-08") as OHLCVData["time"], open: 100, high: 100, low: 100, close: 100, volume: 100 },
+                    { time: sec("2026-09-09") as OHLCVData["time"], open: 100, high: 100, low: 100, close: 100, volume: 100 },
+                ]) },
+            shouldStop: () => false, onPhase: () => undefined,
+        });
+        const before = await replay(async () => normalizeTradFiDailyCandles(raw, "1d"), "2026-09-04");
+        assert.ok(before.ok);
+        if (!before.ok) throw new Error("Replay interrupted");
+        const phantom = before.result.trades!.find(row => row.asset === symbol)!;
+        assert.equal(phantom.netPnl!.toFixed(2), "49263.98", "reproduce the reported phantom trade exactly");
+        assert.equal((phantom.entryCost + phantom.exitCost).toFixed(2), "10.25");
+        const after = await replay(load, "2026-09-04");
+        assert.ok(after.ok);
+        if (!after.ok) throw new Error("Replay interrupted");
+        assert.equal(after.result.trades!.some(row => row.asset === symbol), false,
+            "the same decisions cancel the unfilled TANH order before its next traded candle");
+        const result = await replay(load, "2026-09-08");
+        assert.ok(result.ok);
+        if (!result.ok) throw new Error("Replay interrupted");
+        const trade = result.result.trades!.find(row => row.arm === "topMean")!;
+        assert.equal(trade.entryTimeSec, sec("2026-09-08"));
+        assert.equal(trade.entryPrice, 18.585 * 1.0002);
+        assert.equal(result.result.arms.topMean.completedTrades, 1);
+        assert.ok(Math.abs(result.result.arms.topMean.realizedNetPnl!) < 100,
+            "TANH cannot produce a $49k phantom profit from the untraded split-day price");
+    } finally {
+        clearParsedIbkrCsvCache();
+        rmSync(tanhBaseDir, { recursive: true, force: true });
+    }
+
     const pointCache = new __testInternals.PointBoundedParsedCache(5);
     const entry = (n: number) => ({ mtimeMs: 1, columns: {
         time: new Float64Array(n), open: new Float64Array(n), high: new Float64Array(n),

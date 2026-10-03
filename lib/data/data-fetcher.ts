@@ -38,6 +38,7 @@ import {
     DATA_CHART_TOTAL_LIMIT,
 } from "./constants";
 import {
+    normalizeIbkrCandles,
     estimateBybitSeedOverlayBars as estimateBybitSeedOverlayBarsValue,
     getIntervalAlignment,
     getStorageInterval as resolveStorageInterval,
@@ -463,6 +464,7 @@ export class DataFetcher {
         candles: OHLCVData[],
         source: string
     ): OHLCVData[] {
+        if (provider === 'ibkr-local') return normalizeIbkrCandles(candles, storageInterval);
         return isBinanceDataProvider(provider)
             ? this.sanitizeBinanceCandles(symbol, storageInterval, candles, source)
             : candles;

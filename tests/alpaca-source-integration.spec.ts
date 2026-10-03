@@ -443,6 +443,7 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
     const FRESH_SYMBOL = "ZZXFRSH";
     const FALLBACK_SYMBOL = "ZZXFALL";
     const GAP_SYMBOL = "ZZXGAP";
+    const DAILY_SYMBOL = "ZZXEMPTY";
 
     beforeEach(() => {
         // Stub fetch to return one Alpaca-shaped bar so the worker has data
@@ -469,6 +470,43 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
                 if (existsSync(p)) rmSync(p, { force: true });
             }
         }
+        const dailyDir = resolve(process.cwd(), "price-data", "ibkr", "csv", "1d");
+        for (const ext of [".csv", ".csv.bak", ".csv.tmp"]) {
+            const p = resolve(dailyDir, `${DAILY_SYMBOL}${ext}`);
+            if (existsSync(p)) rmSync(p, { force: true });
+        }
+    });
+
+    it("removes saved daily placeholders during a bounded Alpaca merge and updates catalog counts", async () => {
+        const { getCsvPath } = await import("../lib/ibkr-data/ibkr-data-vite-plugin");
+        const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+        const { resolve } = require("node:path");
+        const seedPath = getCsvPath(DAILY_SYMBOL, "1d");
+        mkdirSync(resolve(seedPath, ".."), { recursive: true });
+        writeFileSync(seedPath, [
+            "time,open,high,low,close,volume",
+            "2026-09-03T04:00:00Z,12.89,20.5,12.7,18.48,7598",
+            "2026-09-04T04:00:00Z,0.3696,0.3696,0.3696,0.3696,0",
+            "",
+        ].join("\n"));
+        globalThis.fetch = async input => new Response(JSON.stringify(
+            String(input).includes("/corporate-actions") ? { corporate_actions: {} } : { bars: [
+                { t: "2026-09-08T04:00:00Z", o: 18.585, h: 20, l: 18.425, c: 19.99, v: 7674 },
+                { t: "2026-09-09T04:00:00Z", o: 19.1, h: 19.1, l: 19.1, c: 19.1, v: 0 },
+            ] },
+        ));
+        const catalog = { entries: [{ symbol: DAILY_SYMBOL, intervals: { "1d": {
+            source: "alpaca", alpacaFeed: "iex", alpacaAdjustment: "split", splitAdjustedThrough: "2026-10-03",
+            bars: 2, firstTime: "2026-09-03T04:00:00Z", lastTime: "2026-09-04T04:00:00Z", lastSyncAt: "2026-10-03T00:00:00Z",
+        } } }] };
+        const result = await syncOneAlpacaSymbol(catalog as never, DAILY_SYMBOL, "1d", "1m", false, undefined, STUB_CONFIG);
+        const csv = readFileSync(seedPath, "utf8") as string;
+        assert.ok(csv.includes("2026-09-03") && csv.includes("2026-09-08"), "traded history survives");
+        assert.ok(!csv.includes("2026-09-04") && !csv.includes("2026-09-09"), "old and fetched placeholders excluded");
+        assert.equal(result.bars, 2);
+        assert.equal(result.fetchedBars, 1);
+        assert.equal(catalog.entries[0].intervals["1d"].bars, 2);
+        assert.ok(readFileSync(`${seedPath}.bak`, "utf8").includes("0.3696"), "backup preserves the original CSV");
     });
 
     it("merges Alpaca bars onto an existing IBKR-sourced interval and labels it mixed", async () => {
