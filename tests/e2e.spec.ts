@@ -319,6 +319,8 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
                     netPnl: 10, entryCost: 0, exitCost: 0, status: 'closed' }));
                 summary.assetSwitch.tradeCount = 5;
             }
+            summary.annualReports = mode === 'horizon' ? [{ year: 2023, sampleFromSec: 1_700_000_000, sampleToSec: 1_700_001_000,
+                horizons: [], warnings: [], reportLines: ['annual report retained during display changes'] }] : [];
             service.latestTopMeanResult = summary;
             service.renderTopMeanResults(service.dom, summary);
             service.topMean.syncTopMeanOpenScoreDetailsControl(service.dom, summary);
@@ -333,7 +335,14 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
                 if (details.hidden || !details.textContent!.includes(field) || details.textContent!.includes('Rerun required')) throw new Error('Missing Batch details for ' + mode + '/' + arm);
                 if (mode === 'horizon') {
                     const selector = document.getElementById('batchBacktestSp500TopMeanLatestArmSelector') as HTMLSelectElement;
+                    const annual = document.querySelector<HTMLDetailsElement>('#batchBacktestSp500TopMeanResults .batch-report-details')!;
+                    annual.open = true;
+                    const detailsBefore = details.innerHTML;
+                    selector.focus();
                     selector.value = arm; selector.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (document.getElementById('batchBacktestSp500TopMeanLatestArmSelector') !== selector || document.activeElement !== selector) throw new Error('Batch arm update replaced or blurred the picker');
+                    if (!annual.isConnected || !annual.open) throw new Error('Batch arm update reset the annual disclosure');
+                    if (details.hidden || details.innerHTML !== detailsBefore) throw new Error('Batch arm update reset the details panel');
                     const text = document.getElementById('batchBacktestSp500TopMeanResults')!.textContent!;
                     if (!text.includes(field) || !text.includes('Arm score: -0.25') || text.includes('Rerun required')) throw new Error('Missing calculated Batch latest pick ' + arm);
                 }
@@ -347,6 +356,59 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
         }
     });
     console.log('Batch causal arm selectors, details and saved results passed.');
+    await page.evaluate(async () => {
+        const servicePath = '/lib/batch-backtest/batch-backtest-service.ts';
+        const { batchBacktestService: service, createBatchBacktestService } = await import(servicePath);
+        const dom = service.dom;
+        const result = { runId: 'batch-ui-interactions', completed: true, counts: {}, horizons: [], warnings: [], reportLines: [],
+            latestSelections: { decisionTime: 1_700_000_000, selections: [{ selector: 'TOP_MEAN', direction: 'long', asset: null,
+                tiedAssets: ['BBB', 'AAA'], reason: 'tied', score: null, mean: null, activePairs: null, eligibleCandidates: 2 }] },
+            openScoreEventDetails: [
+                { selector: 'TOP_MEAN', asset: 'OLD_ASSET', year: 2022 },
+                { selector: 'TOP_RAW', asset: 'NEW_ASSET', year: 2023 },
+            ].map(({ selector, asset, year }) => ({ selector, asset, direction: 'long',
+                decisionTime: Date.UTC(year, 0, 1) / 1000, entryTime: Date.UTC(year, 0, 2) / 1000,
+                exitTime: Date.UTC(year, 0, 3) / 1000, horizonBars: 12, selectedReturn: 0.1, controlReturn: 0, delta: 0.1, eligibleCandidates: 2 })) };
+        dom.batchBacktestSp500TopMeanTieBreak.value = 'off';
+        service.topMean.setLatestArm('TOP_MEAN');
+        service.latestTopMeanResult = result;
+        service.renderTopMeanResults(dom, result);
+        if (!dom.batchBacktestSp500TopMeanResults.textContent.includes('TIE / SKIP')) throw new Error('Missing tie precondition');
+        dom.batchBacktestSp500TopMeanTieBreak.value = 'alpha';
+        dom.batchBacktestSp500TopMeanTieBreak.dispatchEvent(new Event('change', { bubbles: true }));
+        const pick = dom.batchBacktestSp500TopMeanResults.querySelector('[data-batch-latest-selection-content]');
+        if (!pick.textContent.includes('AAA') || pick.textContent.includes('TIE / SKIP')) throw new Error('Tie Break did not update displayed selection');
+        if (!service.topMean.formatLatestOpenScoreSelectionLines(result.latestSelections).join('\n').includes('asset=AAA')) throw new Error('Tie Break copy/display mismatch');
+        dom.batchBacktestSp500TopMeanDetailsSelector.value = 'TOP_MEAN';
+        dom.batchBacktestSp500TopMeanDetailsBtn.click();
+        if (!dom.batchBacktestSp500TopMeanDetails.textContent.includes('OLD_ASSET')) throw new Error('Missing details precondition');
+        dom.batchBacktestSp500TopMeanDetailsBtn.click();
+        dom.batchBacktestSp500TopMeanDetailsSelector.value = 'TOP_RAW';
+        dom.batchBacktestSp500TopMeanDetailsSelector.dispatchEvent(new Event('change', { bubbles: true }));
+        dom.batchBacktestSp500TopMeanDetailsYear.value = '2023';
+        dom.batchBacktestSp500TopMeanDetailsYear.dispatchEvent(new Event('change', { bubbles: true }));
+        dom.batchBacktestSp500TopMeanDetailsBtn.click();
+        if (!dom.batchBacktestSp500TopMeanDetails.textContent.includes('NEW_ASSET') || dom.batchBacktestSp500TopMeanDetails.textContent.includes('OLD_ASSET')) throw new Error('Hidden details filters reused stale content');
+        dom.batchBacktestSymbols.value = 'ORIGINAL';
+        service.activeServerRunId = 'owned-ui-run';
+        service.topMean.setActiveTopMeanRunId('top-mean-ui-run');
+        if (!dom.batchBacktestSymbols.readOnly || !dom.batchBacktestClear.disabled || !dom.batchBacktestBalancedGenerateBtn.disabled) throw new Error('TOP_MEAN did not lock pair-list controls');
+        dom.batchBacktestSymbols.value = 'UNSUBMITTED';
+        dom.batchBacktestSymbols.dispatchEvent(new Event('input', { bubbles: true }));
+        if (dom.batchBacktestSymbols.value !== 'ORIGINAL' || service.activeServerRunId !== 'owned-ui-run') throw new Error('Busy pair-list edit lost submitted state');
+        service.topMean.setActiveTopMeanRunId(null);
+        if (dom.batchBacktestSymbols.readOnly || dom.batchBacktestClear.disabled) throw new Error('Pair-list controls did not unlock');
+        service.dispose();
+        const replacement = createBatchBacktestService();
+        replacement.dom = dom;
+        replacement.bindEvents(dom);
+        dom.batchBacktestSymbols.value = 'REMOUNTED';
+        dom.batchBacktestSymbols.dispatchEvent(new Event('input', { bubbles: true }));
+        if (dom.batchBacktestSummary.textContent !== '1 pair' || service.activeServerRunId !== 'owned-ui-run') throw new Error('Disposed Batch listeners still handle remounted input');
+        replacement.dispose();
+    });
+    console.log('Batch display consistency, hidden filters, editing locks and remount passed.');
+
 };
 
 async function runTest() {

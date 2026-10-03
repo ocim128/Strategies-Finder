@@ -34,13 +34,15 @@ import {
     type BatchResultsView,
 } from "./browser/batch-results-view";
 import { LATEST_ARM_SELECTOR_ID } from "./browser/top-mean-results-view";
-import type { OpenScoreUsdEventDetailSelector } from "./batch-open-score-usd-replay-engine";
 
 export { formatTopMeanCompletionMessage } from "./browser/top-mean-results-view";
 
 export class BatchBacktestService {
     private dom: BatchBacktestDom | null = null;
     private initialized = false;
+    private disposed = false;
+    private readonly eventCleanup: Array<() => void> = [];
+    private lockedPairListText: string | null = null;
     private get lastOpenScoreUsdResult(): OpenScoreUsdReplayResult | null {
         return this.openScore.getResult();
     }
@@ -86,7 +88,14 @@ export class BatchBacktestService {
      * `runInFlight` so rapid clicks cannot stack overlapping POSTs or replace
      * the active run id while another action is mid-preflight.
      */
-    private batchActionInFlight = false;
+    private actionInFlight = false;
+    private get batchActionInFlight(): boolean {
+        return this.actionInFlight;
+    }
+    private set batchActionInFlight(value: boolean) {
+        this.actionInFlight = value;
+        this.syncPairListControls();
+    }
     // OPEN_SCORE USD analysis state (lock, cancel flag, retained result) lives
     // on the controller; the accessors keep the facade wiring unchanged.
     private get analysisInFlight(): boolean {
@@ -94,6 +103,7 @@ export class BatchBacktestService {
     }
     private set analysisInFlight(value: boolean) {
         this.openScore.setAnalysisInFlight(value);
+        this.syncPairListControls();
     }
     private get analysisCancelRequested(): boolean {
         return this.openScore.isCancelRequested();
@@ -102,7 +112,14 @@ export class BatchBacktestService {
         this.openScore.setCancelRequested(value);
     }
     // /stop is not operation-scoped, so new work must wait for every request.
-    private pendingStopPromise: Promise<void> | null = null;
+    private stopPromise: Promise<void> | null = null;
+    private get pendingStopPromise(): Promise<void> | null {
+        return this.stopPromise;
+    }
+    private set pendingStopPromise(value: Promise<void> | null) {
+        this.stopPromise = value;
+        this.syncPairListControls();
+    }
     // Results presentation (rows, sort header, summary/progress, live render
     // queue). The view owns the queue and frame scheduling; run-token
     // authorization stays here via the isRunTokenCurrent check below.
@@ -116,6 +133,7 @@ export class BatchBacktestService {
     private readonly batchRun: BatchRunController = new BatchRunController({
         getDom: () => this.getDom(),
         resultsView: this.resultsView,
+        onBusyStateChange: () => this.syncPairListControls(),
         isUiBusy: () => this.isBatchUiBusy(),
         balancedLock: () => this.balancedGeneratorLockState(),
         getPairListProvenance: () => this.balanced.getActiveProvenance(),
@@ -158,6 +176,7 @@ export class BatchBacktestService {
     private readonly topMean = new TopMeanController({
         getDom: () => this.getDom(),
         peekDom: () => this.dom,
+        onBusyStateChange: () => this.syncPairListControls(),
     });
 
     private writeTopMeanDiagnosticLogNow(): void {
@@ -169,6 +188,7 @@ export class BatchBacktestService {
     }
 
     public init(): void {
+        if (this.disposed) return;
         ensureLazyStylesheet("batch-backtest-styles", new URL("../../styles/batch-backtest.css", import.meta.url).href);
         if (this.initialized) {
             return;
@@ -183,9 +203,7 @@ export class BatchBacktestService {
         // Flush the durable diagnostic log when the page goes away (reload,
         // navigation, tab close) — the trailing debounce would otherwise lose
         // the last window of entries.
-        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-            window.addEventListener("pagehide", () => this.writeTopMeanDiagnosticLogNow());
-        }
+        this.bindPageLifecycle();
         this.activeServerRunId = this.loadPersistedActiveServerRun()?.runId ?? null;
         this.batchRun.setServerRunActive(this.activeServerRunId !== null);
         this.updateSummary(dom);
@@ -195,8 +213,19 @@ export class BatchBacktestService {
         void this.reattachToInProgressTopMeanRun();
     }
 
+    private bindPageLifecycle(): void {
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+            this.listen(window, "pagehide", () => this.writeTopMeanDiagnosticLogNow());
+        }
+    }
+
+    private listen(target: EventTarget, type: string, listener: EventListener): void {
+        target.addEventListener(type, listener);
+        this.eventCleanup.push(() => target.removeEventListener(type, listener));
+    }
+
     private bindEvents(dom: BatchBacktestDom): void {
-        dom.batchBacktestResultsHeader.addEventListener("click", (event) => {
+        this.listen(dom.batchBacktestResultsHeader, "click", (event) => {
             if (!(event.target instanceof Element)) return;
             const button = event.target.closest<HTMLButtonElement>("button[data-batch-sort-key]");
             if (!button || !dom.batchBacktestResultsHeader.contains(button)) return;
@@ -207,10 +236,10 @@ export class BatchBacktestService {
                 this.batchRun.toggleBatchResultSort(dom, rawKey);
             }
         });
-        dom.batchBacktestRunBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestRunBtn, "click", () => {
             void this.runBatch();
         });
-        dom.batchBacktestStopBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestStopBtn, "click", () => {
             // The same button also stops normal Batch runs and analysis.
             this.batchRun.requestLocalCancel();
             if (this.analysisInFlight) {
@@ -218,81 +247,56 @@ export class BatchBacktestService {
             }
             this.requestServerStop();
         });
-        dom.batchBacktestCopyBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestCopyBtn, "click", () => {
             void this.copyResults();
         });
-        dom.batchBacktestCopyOpenPositionsBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestCopyOpenPositionsBtn, "click", () => {
             void this.copyOpenPositionPairs();
         });
-        dom.batchBacktestCopyBenchmarkBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestCopyBenchmarkBtn, "click", () => {
             void this.copyBenchmarkPerformance();
         });
-        dom.batchBacktestOpenScoreUsdBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestOpenScoreUsdBtn, "click", () => {
             void this.runOpenScoreUsdReplay();
         });
-        dom.batchBacktestCopyOpenScoreUsdBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestCopyOpenScoreUsdBtn, "click", () => {
             void this.copyOpenScoreUsdResults();
         });
-        dom.batchBacktestSp500TopMeanRunBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestSp500TopMeanRunBtn, "click", () => {
             void this.runSp500TopMeanCoordinator();
         });
         this.topMean.initializeReplayModeControls(dom);
-        dom.batchBacktestSp500TopMeanStopBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestSp500TopMeanStopBtn, "click", () => {
             void this.stopSp500TopMeanCoordinator();
         });
-        dom.batchBacktestSp500TopMeanCopyBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestSp500TopMeanCopyBtn, "click", () => {
             void this.copySp500TopMeanResults();
         });
-        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn, "click", () => {
             void this.copySp500TopMeanOpenScoreResults();
         });
-        dom.batchBacktestSp500TopMeanDetailsBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestSp500TopMeanDetailsBtn, "click", () => {
             this.toggleSp500TopMeanOpenScoreDetails();
         });
-        dom.batchBacktestSp500TopMeanDetailsSelector.addEventListener("change", () => {
-            if (
-                this.latestTopMeanResult
-                && !dom.batchBacktestSp500TopMeanDetails.hidden
-            ) {
-                dom.batchBacktestSp500TopMeanDetails.innerHTML =
-                    this.renderTopMeanOpenScoreEventDetails(
-                        this.latestTopMeanResult,
-                        this.getTopMeanOpenScoreDetailSelector(dom),
-                        this.getTopMeanOpenScoreDetailYear(dom),
-                    );
-            }
-        });
-        dom.batchBacktestSp500TopMeanDetailsYear.addEventListener("change", () => {
-            if (
-                this.latestTopMeanResult
-                && !dom.batchBacktestSp500TopMeanDetails.hidden
-            ) {
-                dom.batchBacktestSp500TopMeanDetails.innerHTML =
-                    this.renderTopMeanOpenScoreEventDetails(
-                        this.latestTopMeanResult,
-                        this.getTopMeanOpenScoreDetailSelector(dom),
-                        this.getTopMeanOpenScoreDetailYear(dom),
-                    );
-            }
-        });
-        // The arm picker is generated inside the Latest OPEN_SCORE card and
-        // re-created on every render, so its change events are delegated to
-        // the persistent results container.
-        dom.batchBacktestSp500TopMeanResults.addEventListener("change", (event) => {
+        this.listen(dom.batchBacktestSp500TopMeanDetailsSelector, "change", () => this.topMean.refreshTopMeanDetails());
+        this.listen(dom.batchBacktestSp500TopMeanDetailsYear, "change", () => this.topMean.refreshTopMeanDetails());
+        this.listen(dom.batchBacktestSp500TopMeanTieBreak, "change", () => this.topMean.refreshTopMeanDisplay(dom));
+        // Delegate changes from the generated arm picker. Display updates keep
+        // the picker mounted, and a new result replaces the card.
+        this.listen(dom.batchBacktestSp500TopMeanResults, "change", (event) => {
             const target = event?.target as { id?: string; value?: string } | null | undefined;
             if (!target || target.id !== LATEST_ARM_SELECTOR_ID) return;
             this.topMean.setLatestArm(target.value);
-            if (this.latestTopMeanResult) {
-                this.renderTopMeanResults(dom, this.latestTopMeanResult);
-            }
+            if (this.latestTopMeanResult) this.topMean.refreshLatestArm(dom);
         });
-        dom.batchBacktestSp500TopMeanDownloadBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestSp500TopMeanDownloadBtn, "click", () => {
             void this.downloadSp500TopMeanResults();
         });
-        dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestSp500TopMeanCopyDiagnosticBtn, "click", () => {
             void this.copySp500TopMeanDiagnostic();
         });
-        dom.batchBacktestSymbolTemplate.addEventListener("change", () => {
+        this.listen(dom.batchBacktestSymbolTemplate, "change", () => {
+            if (this.isBatchUiBusy()) return;
             const key = dom.batchBacktestSymbolTemplate.value as BatchSymbolTemplateKey;
             if (!key) return;
             const template = getBatchSymbolTemplate(key);
@@ -302,7 +306,8 @@ export class BatchBacktestService {
             this.clearStaleResults(dom);
             this.updateSummary(dom);
         });
-        dom.batchBacktestUseCurrent.addEventListener("click", () => {
+        this.listen(dom.batchBacktestUseCurrent, "click", () => {
+            if (this.isBatchUiBusy()) return;
             const current = state.currentSymbol?.trim().toUpperCase();
             if (current) {
                 dom.batchBacktestSymbols.value = dom.batchBacktestSymbols.value.trim();
@@ -313,12 +318,17 @@ export class BatchBacktestService {
             this.clearStaleResults(dom);
             this.updateSummary(dom);
         });
-        dom.batchBacktestClear.addEventListener("click", () => {
+        this.listen(dom.batchBacktestClear, "click", () => {
+            if (this.isBatchUiBusy()) return;
             dom.batchBacktestSymbols.value = "";
             this.clearStaleResults(dom);
             this.updateSummary(dom);
         });
-        dom.batchBacktestSymbols.addEventListener("input", () => {
+        this.listen(dom.batchBacktestSymbols, "input", () => {
+            if (this.isBatchUiBusy()) {
+                if (this.lockedPairListText !== null) dom.batchBacktestSymbols.value = this.lockedPairListText;
+                return;
+            }
             // Fast path: when there is nothing derived from a prior run/cache
             // to invalidate (no fingerprint, no live results, no OPEN_SCORE USD
             // result, no active server run, no provenance to recheck), the
@@ -337,10 +347,10 @@ export class BatchBacktestService {
             }
             this.updateSummary(dom);
         });
-        dom.batchBacktestBalancedGenerateBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestBalancedGenerateBtn, "click", () => {
             void this.generateAndApplyBalancedPairList();
         });
-        dom.batchBacktestBalancedCopyBtn.addEventListener("click", () => {
+        this.listen(dom.batchBacktestBalancedCopyBtn, "click", () => {
             void this.copyBalancedPairList();
         });
     }
@@ -361,11 +371,24 @@ export class BatchBacktestService {
         );
     }
 
+    /** Refresh editing controls from the same ownership gate as Run. */
+    private syncPairListControls(): void {
+        const dom = this.dom;
+        if (!dom || this.disposed) return;
+        const busy = this.isBatchUiBusy();
+        if (busy && this.lockedPairListText === null) this.lockedPairListText = dom.batchBacktestSymbols.value;
+        if (!busy) this.lockedPairListText = null;
+        dom.batchBacktestSymbols.readOnly = busy;
+        dom.batchBacktestSymbolTemplate.disabled = busy;
+        dom.batchBacktestUseCurrent.disabled = busy;
+        dom.batchBacktestClear.disabled = busy;
+        this.resultsView.updateBalancedGeneratorButtons(dom, this.balancedGeneratorLockState());
+    }
+
     /** Balanced-generator lock inputs, computed from shared facade state. */
     private balancedGeneratorLockState(): { blocked: boolean; hasResult: boolean } {
         return {
-            blocked: this.runInFlight || this.analysisInFlight
-                || this.pendingStopPromise !== null || this.batchRun.isServerRunActive(),
+            blocked: this.isBatchUiBusy(),
             hasResult: this.balanced.hasResult(),
         };
     }
@@ -445,15 +468,7 @@ export class BatchBacktestService {
      * single-flight discipline the rest of the service uses.
      */
     private balancedGeneratorActionGuard(): boolean {
-        return (
-            this.runInFlight ||
-            this.analysisInFlight ||
-            this.pendingStopPromise !== null ||
-            // A reloaded tab can have no local in-flight promise while the
-            // server still owns the run. Do not let generator edits mutate
-            // the submitted universe during that ownership window.
-            this.batchRun.isServerRunActive()
-        );
+        return this.isBatchUiBusy();
     }
 
     private async generateAndApplyBalancedPairList(): Promise<void> {
@@ -590,7 +605,7 @@ export class BatchBacktestService {
     }
 
 
-    private renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
+    public renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
         this.topMean.renderTopMeanResults(dom, summary);
     }
 
@@ -604,26 +619,6 @@ export class BatchBacktestService {
     private toggleSp500TopMeanOpenScoreDetails(): void {
         this.topMean.toggleSp500TopMeanOpenScoreDetails();
     }
-
-    private getTopMeanOpenScoreDetailSelector(
-        dom: BatchBacktestDom,
-    ): OpenScoreUsdEventDetailSelector {
-        return this.topMean.getTopMeanOpenScoreDetailSelector(dom);
-    }
-
-    /** Selected calendar year for the details table; null = full window. */
-    private getTopMeanOpenScoreDetailYear(dom: BatchBacktestDom): number | null {
-        return this.topMean.getTopMeanOpenScoreDetailYear(dom);
-    }
-
-    private renderTopMeanOpenScoreEventDetails(
-        summary: TopMeanResultSummary,
-        selector: OpenScoreUsdEventDetailSelector,
-        year: number | null = null,
-    ): string {
-        return this.topMean.renderTopMeanOpenScoreEventDetails(summary, selector, year);
-    }
-
 
     /**
      * Phase-1 current snapshot lines for the Copy Results output. Mirrors the
@@ -660,6 +655,8 @@ export class BatchBacktestService {
     }
 
     public dispose(): void {
+        this.disposed = true;
+        for (const cleanup of this.eventCleanup.splice(0)) cleanup();
         // Detach this instance from server-owned work before resolving its
         // polling delays. The TOP_MEAN controller clears its run id first (so
         // its reattach loop wakes without rescheduling), then the Batch

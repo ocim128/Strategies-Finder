@@ -11,6 +11,7 @@ import { debugLogger } from "../../debug-logger";
 import { uiManager } from "../../ui-manager";
 import { copyToClipboard } from "../../browser-transfer";
 import { postBatchNdjson } from "../batch-ndjson-post";
+import { parseTopMeanMenuHorizons } from "../sp500-top-mean-request-limits";
 import { isActiveCapTiltWeight } from "../cap-tilt-contract";
 import type { OpenScoreUsdReplayResult } from "../open-score-replay/types";
 import type { OpenScoreUsdReplayStreamEvent } from "../batch-open-score-usd-replay-stream-types";
@@ -114,14 +115,15 @@ export class OpenScoreController {
             if (this.analysisCancelRequested) return;
             // Horizons: comma-separated positive bar counts. Required in v1.
             const horizonsRaw = dom.batchBacktestOpenScoreUsdHorizons.value.trim();
-            const horizons = horizonsRaw
-                ? horizonsRaw.split(",").map((s) => Number(s.trim())).filter((n) => Number.isFinite(n) && n >= 1).map((n) => Math.floor(n))
-                : [];
-            if (horizons.length === 0) {
-                dom.batchBacktestOpenScoreUsdSummary.textContent = "Enter at least one positive horizon (e.g. 12,24,48).";
+            const parsed = horizonsRaw ? parseTopMeanMenuHorizons(horizonsRaw) : null;
+            if (!parsed || parsed.kind === "invalid") {
+                dom.batchBacktestOpenScoreUsdSummary.textContent = parsed?.kind === "invalid"
+                    ? `Invalid horizon "${parsed.token}". Use comma-separated positive integers (e.g. 12,24,48).`
+                    : "Enter at least one positive horizon (e.g. 12,24,48).";
                 dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
                 return;
             }
+            const horizons = parsed.horizons;
             // Optional decision-event date window (YYYY-MM-DD); blank = full side.
             const sampleFrom = dom.batchBacktestOpenScoreUsdFrom.value.trim();
             const sampleTo = dom.batchBacktestOpenScoreUsdTo.value.trim();

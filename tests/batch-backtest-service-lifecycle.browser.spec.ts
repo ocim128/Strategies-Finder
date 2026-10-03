@@ -24,6 +24,7 @@ import {
 } from "./helpers/fake-batch-backtest-dom";
 import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
 import { strategyRegistry } from "../strategyRegistry";
+import { CURRENT_SNAPSHOT_SELECTOR, LATEST_SELECTION_CONTENT_SELECTOR } from "../lib/batch-backtest/browser/top-mean-results-view";
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { createEmptyAssetSwitchSummary } from "../lib/batch-backtest/open-score-replay/asset-switch";
@@ -119,6 +120,14 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     const dom = fakeDom();
     const s = svc();
     s.dom = dom;
+    // Mounted content nodes are independent of the full-results HTML in this
+    // minimal harness. Real DOM identity/focus is covered by the E2E smoke.
+    const snapshotContent = fakeEl();
+    const latestContent = fakeEl();
+    dom.batchBacktestSp500TopMeanResults.querySelector = ((selector: string) =>
+        selector === CURRENT_SNAPSHOT_SELECTOR ? snapshotContent
+            : selector === LATEST_SELECTION_CONTENT_SELECTOR ? latestContent : null
+    ) as typeof dom.batchBacktestSp500TopMeanResults.querySelector;
     s.bindEvents(dom);
     s.batchRun.setServerHasArtifacts(true);
     s.lastRunFingerprint = fingerprint;
@@ -140,6 +149,10 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     (globalThis as any).localStorage._store.clear();
     s.buildCurrentRunFingerprint = () => fingerprint;
     return dom;
+}
+
+function latestPickContent(dom: BatchBacktestDom): string {
+    return dom.batchBacktestSp500TopMeanResults.querySelector<HTMLElement>(LATEST_SELECTION_CONTENT_SELECTOR)!.innerHTML;
 }
 
 function persistTopMeanRunForTest(runId: string): void {
@@ -502,6 +515,146 @@ describe("BatchBacktestService analysis lifecycle", () => {
         dom.batchBacktestSp500TopMeanDetailsYear.dispatchEvent({ type: "change" } as unknown as Event);
         html = dom.batchBacktestSp500TopMeanDetails.innerHTML;
         expect(html).to.include("ASSET_2023");
+    });
+
+    for (const filter of ["arm", "year"] as const) {
+        it(`invalidates ${filter} changes while OPEN_SCORE details are hidden`, () => {
+            const dom = setupForAnalysis();
+            const result = topMeanResultFixture();
+            result.openScoreEventDetails = [
+                { selector: "TOP_MEAN", asset: "OLD_ASSET", direction: "long", decisionTime: Date.UTC(2022, 0, 1) / 1000,
+                    entryTime: 1_640_999_000, exitTime: 1_641_000_000, horizonBars: 12, selectedReturn: 0.1, controlReturn: 0, delta: 0.1, eligibleCandidates: 2 },
+                { selector: filter === "arm" ? "TOP_RAW" : "TOP_MEAN", asset: "NEW_ASSET", direction: "long", decisionTime: Date.UTC(2023, 0, 1) / 1000,
+                    entryTime: 1_672_531_000, exitTime: 1_672_532_000, horizonBars: 12, selectedReturn: 0.2, controlReturn: 0, delta: 0.2, eligibleCandidates: 2 },
+            ];
+            svc().latestTopMeanResult = result;
+            svc().renderTopMeanResults(dom, result);
+            dom.batchBacktestSp500TopMeanDetailsBtn.click();
+            expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("OLD_ASSET");
+            dom.batchBacktestSp500TopMeanDetailsBtn.click();
+            const oldHtml = dom.batchBacktestSp500TopMeanDetails.innerHTML;
+            const control = filter === "arm" ? dom.batchBacktestSp500TopMeanDetailsSelector : dom.batchBacktestSp500TopMeanDetailsYear;
+            control.value = filter === "arm" ? "TOP_RAW" : "2023";
+            control.dispatchEvent(new Event("change"));
+            expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.equal(oldHtml, "hidden filter changes defer rendering");
+            dom.batchBacktestSp500TopMeanDetailsBtn.click();
+            expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("NEW_ASSET");
+            expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.not.include("OLD_ASSET");
+        });
+    }
+
+    it("refreshes tie-break display and copy without resetting open details", () => {
+        const dom = setupForAnalysis();
+        const result = topMeanResultFixture();
+        result.latestSelections = { decisionTime: 1_700_000_000, selections: [{ selector: "TOP_MEAN", direction: "long", asset: null,
+            tiedAssets: ["BBB", "AAA"], reason: "tied", score: null, mean: null, activePairs: null, eligibleCandidates: 2 }] };
+        svc().latestTopMeanResult = result;
+        svc().renderTopMeanResults(dom, result);
+        dom.batchBacktestSp500TopMeanDetails.hidden = false;
+        dom.batchBacktestSp500TopMeanDetails.innerHTML = "KEEP_DETAILS";
+        const reports = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        dom.batchBacktestSp500TopMeanTieBreak.value = "alpha";
+        dom.batchBacktestSp500TopMeanTieBreak.dispatchEvent(new Event("change"));
+        expect(latestPickContent(dom)).to.include("<td>AAA</td>");
+        expect(latestPickContent(dom)).to.not.include("TIE / SKIP");
+        expect(svc().topMean.formatLatestOpenScoreSelectionLines(result.latestSelections).join("\n")).to.include("asset=AAA");
+        expect(dom.batchBacktestSp500TopMeanDetails.hidden).to.equal(false);
+        expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.equal("KEEP_DETAILS");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.equal(reports, "full result reports are not rebuilt");
+    });
+
+    for (const owner of ["batch", "analysis", "preflight", "reattach", "top_mean"] as const) {
+        it(`preserves submitted pairs and run ownership during ${owner}`, async () => {
+            const dom = setupForAnalysis();
+            dom.batchBacktestSymbols.value = "ORIGINAL";
+            svc().activeServerRunId = "owned-run";
+            svc().lastResults = [{ symbol: "ORIGINAL", status: "failed", barCount: 0 }];
+            const token = svc().batchRun.currentRunToken();
+            const setBusy = (busy: boolean): void => {
+                if (owner === "batch") svc().runInFlight = busy;
+                if (owner === "analysis") svc().analysisInFlight = busy;
+                if (owner === "preflight") svc().batchActionInFlight = busy;
+                if (owner === "reattach") svc().batchRun.setServerRunActive(busy);
+                if (owner === "top_mean") svc().topMean.setActiveTopMeanRunId(busy ? "top-mean-run" : null);
+            };
+            setBusy(true);
+            expect(dom.batchBacktestSymbols.readOnly).to.equal(true);
+            for (const control of [dom.batchBacktestClear, dom.batchBacktestUseCurrent, dom.batchBacktestSymbolTemplate, dom.batchBacktestBalancedGenerateBtn]) {
+                expect(control.disabled).to.equal(true);
+            }
+            dom.batchBacktestClear.click();
+            dom.batchBacktestUseCurrent.click();
+            dom.batchBacktestSymbolTemplate.value = "nasdaq";
+            dom.batchBacktestSymbolTemplate.dispatchEvent(new Event("change"));
+            dom.batchBacktestSymbols.value = "UNSUBMITTED";
+            dom.batchBacktestSymbols.dispatchEvent(new Event("input"));
+            await svc().generateAndApplyBalancedPairList();
+            expect(dom.batchBacktestSymbols.value).to.equal("ORIGINAL");
+            expect(svc().activeServerRunId).to.equal("owned-run");
+            expect(svc().lastResults.length).to.equal(1);
+            expect(svc().batchRun.currentRunToken()).to.equal(token);
+            setBusy(false);
+            expect(dom.batchBacktestSymbols.readOnly).to.equal(false);
+            expect(dom.batchBacktestClear.disabled).to.equal(false);
+            expect(dom.batchBacktestBalancedGenerateBtn.disabled).to.equal(false);
+        });
+    }
+
+    for (const input of ["", "abc", "12,abc,24", "12,24.9", "12,0", "12,-1"]) {
+        it(`rejects standalone replay horizons ${JSON.stringify(input)} before POST`, async () => {
+            const dom = setupForAnalysis();
+            dom.batchBacktestOpenScoreUsdHorizons.value = input;
+            let requests = 0;
+            await withMockFetch(() => { requests++; return { ok: false, status: 400 }; }, async () => {
+                await svc().runOpenScoreUsdReplay();
+            });
+            expect(requests).to.equal(0);
+            expect(dom.batchBacktestOpenScoreUsdSummary.textContent).to.match(/positive|Invalid horizon/);
+            expect(dom.batchBacktestSymbols.readOnly).to.equal(false);
+        });
+    }
+
+    it("preserves valid standalone integer horizons", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestOpenScoreUsdHorizons.value = "12, 24,48";
+        let horizons: unknown;
+        await withMockFetch((_url, init) => {
+            horizons = JSON.parse(init.body).horizons;
+            return { ok: false, status: 400, text: "probe ends after request capture" };
+        }, async () => { await svc().runOpenScoreUsdReplay(); });
+        expect(horizons).to.deep.equal([12, 24, 48]);
+    });
+
+    it("disposes DOM, replay-mode, and pagehide listeners before a replacement mounts", () => {
+        const dom = setupForAnalysis();
+        const s = svc();
+        const savedWindow = globalThis.window;
+        const pageEvents = fakeEl();
+        globalThis.window = pageEvents as Window & typeof globalThis;
+        let flushes = 0;
+        s.writeTopMeanDiagnosticLogNow = () => { flushes++; };
+        try {
+            s.bindPageLifecycle();
+            pageEvents.dispatchEvent({ type: "pagehide" });
+            expect(flushes).to.equal(1);
+            s.dispose();
+            pageEvents.dispatchEvent({ type: "pagehide" });
+            expect(flushes).to.equal(1);
+            dom.batchBacktestSymbols.value = "AFTER_DISPOSE";
+            expect(dom.batchBacktestSymbols.dispatchEvent(new Event("input"))).to.equal(false);
+            expect(dom.batchBacktestSp500TopMeanReplayMode.dispatchEvent(new Event("change"))).to.equal(false);
+            const replacement: any = createBatchBacktestService();
+            replacement.dom = dom;
+            let clears = 0;
+            replacement.clearStaleResults = () => { clears++; };
+            replacement.bindEvents(dom);
+            dom.batchBacktestClear.click();
+            expect(clears).to.equal(1);
+            replacement.dispose();
+        } finally {
+            if (savedWindow === undefined) Reflect.deleteProperty(globalThis, "window");
+            else globalThis.window = savedWindow;
+        }
     });
 
     it("does not persist large OPEN_SCORE detail rows in localStorage", () => {
@@ -1254,10 +1407,10 @@ describe("BatchBacktestService analysis lifecycle", () => {
             type: "change",
             target: { id: "batchBacktestSp500TopMeanLatestArmSelector", value: "TOP_MEAN_PROFIT_NOW" },
         } as unknown as Event);
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TOP_MEAN_PROFIT_NOW");
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("TIE / SKIP: AAA, CCC");
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("<strong>TOP_RAW</strong>");
-        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.not.include("<strong>TOP_MEAN_RAW_UNIQUE</strong>");
+        expect(latestPickContent(dom)).to.include("TOP_MEAN_PROFIT_NOW");
+        expect(latestPickContent(dom)).to.include("TIE / SKIP: AAA, CCC");
+        expect(latestPickContent(dom)).to.not.include("<strong>TOP_RAW</strong>");
+        expect(latestPickContent(dom)).to.not.include("<strong>TOP_MEAN_RAW_UNIQUE</strong>");
         const copiedLines = svc().topMean.formatLatestOpenScoreSelectionLines(result.latestSelections);
         expect(copiedLines).to.include(
             "TOP_MEAN_PROFIT_NOW NOW | direction=LONG | asset=TIE_SKIP[AAA,CCC] | mean=n/a | score=n/a | activePairs=n/a | pool=2 | reason=tied",
@@ -1413,7 +1566,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             type: "change",
             target: { id: "batchBacktestSp500TopMeanLatestArmSelector", value: "TOP_MEAN" },
         } as unknown as Event);
-        let html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        let html = latestPickContent(dom);
         // Ranked detail is capped at 3 candidates with the pick badged.
         expect(html).to.include("Top 3 candidates at this event");
         expect(html).to.include("AAA</strong><span class=\"batch-top-badge\">PICK</span>");
@@ -1432,12 +1585,11 @@ describe("BatchBacktestService analysis lifecycle", () => {
             type: "change",
             target: { id: "batchBacktestSp500TopMeanLatestArmSelector", value: "TOP_RAW" },
         } as unknown as Event);
-        html = dom.batchBacktestSp500TopMeanResults.innerHTML;
+        html = latestPickContent(dom);
         expect(html).to.include("<strong>TOP_RAW</strong>");
         expect(html).to.include("ZZZ</strong><span class=\"batch-top-badge\">PICK</span>");
         expect(html).to.not.include("<strong>TOP_MEAN</strong>");
-        // The in-card dropdown re-renders with the chosen arm selected.
-        expect(html).to.include(`value="TOP_RAW" selected`);
+        expect(svc().topMean.getLatestArm()).to.equal("TOP_RAW");
         // Performance lines follow the arm: TOP_RAW's full line replaces
         // TOP_MEAN's, and its zero-event year is omitted rather than zero-filled.
         expect(html).to.include("full: n=3200 top=+2.00% rand=+0.40% deltaMed=+1.60% CI95=[+0.20%,+3.00%] +blocks=8/10");
@@ -1555,6 +1707,15 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(html).to.include("ALGORITHMIC TRADE DECISION — LONG AAA");
         expect(html).to.include("Current Pick (tie-break)");
         expect(html).to.include("Tie-break ALPHABETICAL applied");
+        dom.batchBacktestSp500TopMeanTieBreak.value = "off";
+        dom.batchBacktestSp500TopMeanTieBreak.dispatchEvent(new Event("change"));
+        const banner = dom.batchBacktestSp500TopMeanResults.querySelector<HTMLElement>(CURRENT_SNAPSHOT_SELECTOR)!;
+        expect(banner.innerHTML).to.not.include("LONG AAA");
+        expect(banner.innerHTML).to.include("Tied Winner");
+        dom.batchBacktestSp500TopMeanTieBreak.value = "alpha";
+        dom.batchBacktestSp500TopMeanTieBreak.dispatchEvent(new Event("change"));
+        expect(banner.innerHTML).to.include("LONG AAA");
+        expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.equal(html, "only the banner content is refreshed");
     });
 
     it("shows the latest TOP_MEAN selection while its horizon is ongoing", () => {
@@ -2040,24 +2201,23 @@ describe("BatchBacktestService Balanced Generator lifecycle", () => {
         expect(dom.batchBacktestBalancedGenerateBtn.disabled, "Generate & Apply must be clickable after analysis ends").to.equal(false);
     });
 
-    it("re-enables Generate & Apply after a Stop request settles", async () => {
-        // Regression: the post-Stop busy restore bakes the buttons disabled
-        // (runInFlight still held at setRunBusy time) and nothing refreshed
-        // them once pendingStopPromise settled.
+    it("locks pair edits until a pending Stop settles", async () => {
         const dom = setupForAnalysis();
-        svc().runInFlight = true;
-        svc().batchRun.setRunBusy(dom, false);
-        svc().runInFlight = false;
-        expect(dom.batchBacktestBalancedGenerateBtn.disabled, "precondition: buttons baked disabled by the busy restore").to.equal(true);
-        await withMockFetch(() => ({
-            ok: true,
-            status: 200,
-            text: JSON.stringify({ ok: true }),
-        }), async () => {
-            await svc().requestServerStop();
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        await withMockFetch(async () => {
+            await gate;
+            return { ok: true, status: 200, text: JSON.stringify({ ok: true }) };
+        }, async () => {
+            const pending = svc().requestServerStop();
+            expect(dom.batchBacktestBalancedGenerateBtn.disabled).to.equal(true);
+            expect(dom.batchBacktestSymbols.readOnly).to.equal(true);
+            release();
+            await pending;
+            await new Promise((resolve) => setTimeout(resolve, 0));
         });
-        await new Promise((r) => setTimeout(r, 0));
-        expect(dom.batchBacktestBalancedGenerateBtn.disabled, "Generate & Apply must be clickable after Stop settles").to.equal(false);
+        expect(dom.batchBacktestBalancedGenerateBtn.disabled).to.equal(false);
+        expect(dom.batchBacktestSymbols.readOnly).to.equal(false);
     });
 });
 
