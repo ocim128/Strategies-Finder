@@ -52,6 +52,8 @@ export type FinderPersistedActiveServerRun = {
 };
 
 export function readFinderUiState(): FinderPersistedUiState {
+	// Additive v1 preferences (including measurement and local ranking sort) default through the same
+	// migration for legacy raw payloads and existing envelopes.
 	return readPersistedJson<FinderPersistedUiState>({
 		...FINDER_UI_STORAGE,
 		fallback: { ...DEFAULT_FINDER_UI_STATE },

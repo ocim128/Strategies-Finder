@@ -1309,3 +1309,13 @@
         grid-template-columns: minmax(0, 1fr);
     }
 }
+
+.finder-measurement-details {
+    margin-top: var(--space-2);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+}
+
+.finder-measurement-details > summary {
+    cursor: pointer;
+}

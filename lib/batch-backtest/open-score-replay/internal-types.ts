@@ -145,6 +145,17 @@ export interface EventView {
     ties: Record<SelectorName, number>;
 }
 
+/** Only five members per arm/event survive switch snapshot release. */
+export interface RankingPick {
+    assetIndex: number;
+    key: number;
+    secondary: number;
+}
+export interface RankingEvent {
+    timeSec: number;
+    arms: Record<ReplayArmField, { picks: RankingPick[]; reason?: import("./types").RankingSkipReason }>;
+}
+
 /** Minimal event input needed by the path-dependent asset-switch simulator. */
 export interface AssetSwitchDecision {
     timeSec: number;

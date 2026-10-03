@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildTopMeanHorizonSummaries } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
+import { buildTopMeanHorizonSummaries, toWireSafeTopMeanResultSummary, type TopMeanResultSummary } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
+import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
 import type {
     OpenScoreUsdReplayResult,
     ReplayComparison,
@@ -24,6 +25,18 @@ function comparison(events: number): ReplayComparison {
 }
 
 describe("buildTopMeanHorizonSummaries", () => {
+    it("keeps ranking scalar summaries on the coordinator wire without diagnostic arrays", () => {
+        const rankingMeasurement = createEmptyRankingMeasurement(20);
+        Object.assign(rankingMeasurement.arms.topRaw, { scoredEvents: 200, eligibleEvents: 200, comparisons: 2000, meanAccuracy: 0.6, top1Superiority: 0.65,
+            ciLower: 0.5, ciUpper: 0.7, blockCount: 12, measurementWindowSec: 10, timeBlockWidthSec: 20, timeCoverageSec: 250, soleFirstPlaceCount: 40, sharedFirstPlaceCount: 30, soleFirstPlaceRate: 0.2, sharedFirstPlaceRate: 0.15, status: "available" });
+        Object.assign(rankingMeasurement, { eventRows: [1, 2, 3] });
+        const summary = { rankingMeasurement, horizons: [], counts: {}, reportLines: [], warnings: [], poolSnapshots: [1], candidateOutcomes: [1] } as unknown as TopMeanResultSummary;
+        const wire = toWireSafeTopMeanResultSummary(summary);
+        expect(wire.rankingMeasurement?.arms.topRaw).to.include({ status: "available", scoredEvents: 200, blockCount: 12, timeBlockWidthSec: 20, timeCoverageSec: 250, soleFirstPlaceCount: 40, sharedFirstPlaceRate: 0.15 });
+        expect(wire.rankingMeasurement).not.to.have.property("eventRows");
+        expect(wire.poolSnapshots).to.equal(undefined);
+        expect(wire.candidateOutcomes).to.equal(undefined);
+    });
     it("maps all requested arm names to their own comparisons", () => {
         const replayHorizon: Record<string, unknown> = {
             bars: 24,

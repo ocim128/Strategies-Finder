@@ -37,6 +37,8 @@ import type { CapitalSettings } from "../lib/types/backtest";
 import type { FinderOptions } from "../lib/types/finder";
 
 interface BenchArgs {
+    ranking: boolean;
+    mode: "horizon" | "asset_switch";
     pairs: number;
     candidates: number;
     reuse: boolean;
@@ -50,6 +52,8 @@ interface BenchArgs {
 
 function parseArgs(argv: readonly string[]): BenchArgs {
     const args: BenchArgs = {
+        ranking: false,
+        mode: "horizon",
         pairs: 50,
         candidates: 3,
         reuse: false,
@@ -69,6 +73,8 @@ function parseArgs(argv: readonly string[]): BenchArgs {
             return value;
         };
         switch (flag) {
+            case "--ranking": args.ranking = true; break;
+            case "--mode": { const mode = take(); if (mode !== "horizon" && mode !== "asset_switch") fail("Invalid mode"); args.mode = mode; break; }
             case "--pairs": args.pairs = Number(take()); break;
             case "--candidates": args.candidates = Number(take()); break;
             case "--reuse": args.reuse = take() === "true"; break;
@@ -165,7 +171,7 @@ async function main(): Promise<void> {
         freezeRiskManagement: true,
         randomSeed: args.seed,
         dataSlice: "all",
-        armPerformance: { horizon: args.horizon, dateMode: "full" },
+        armPerformance: { replayMode: args.mode, measurement: args.ranking ? "ranking_consistency" : "return", horizon: args.horizon, rankingHorizon: args.horizon, dateMode: "full" },
     } as unknown as FinderOptions;
 
     const plans = buildFinderArmPerformanceCandidatePlans({
@@ -259,6 +265,9 @@ async function main(): Promise<void> {
                 actualEngineMode: candidate.actualEngineMode,
                 pairCoverage: candidate.pairCoverage,
                 metrics: candidate.metrics,
+                assetSwitchMetrics: candidate.assetSwitchMetrics,
+                rankingMeasurement: candidate.rankingMeasurement,
+                replay: performance_?.replay,
                 worker: performance_?.worker,
                 phases: performance_?.phases,
                 engine: performance_?.engine,
@@ -287,6 +296,7 @@ async function main(): Promise<void> {
         params: candidate.params,
         horizon: candidate.horizon,
         pairCoverage: candidate.pairCoverage,
+        assetSwitchMetrics: candidate.assetSwitchMetrics,
         metrics: Object.fromEntries(Object.entries(candidate.metrics ?? {}).map(([arm, comparison]) => [arm, {
             events: comparison.events,
             topMean: comparison.topMean,
@@ -296,6 +306,8 @@ async function main(): Promise<void> {
 
     const report = {
         label: args.label,
+        ranking: args.ranking,
+        mode: args.mode,
         reuse: args.reuse,
         rust: args.rust,
         pairs: enumeration.canonicalPairs.length,

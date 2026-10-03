@@ -237,6 +237,121 @@ equity curves merely to implement a post-run sort.
 
 ### Arm Performance
 
+**Measurement** defaults to **Return**. **Ranking consistency** opts into a
+fixed forward top-five comparison for every arm, alongside the original replay.
+Its **Ranking sort** defaults to **Overall ordering**, which ranks configurations
+by the lower bound of the mean-accuracy CI95. **Selected asset** instead sorts
+descending by the existing #1 superiority point score. Both choices require the
+same confidence eligibility (100 scored events, ten populated time blocks and
+an available mean-accuracy CI); unavailable values sort last and equal values
+use `candidateOrdinal`. The choice is saved locally and sorts the complete retained
+inventory before `Top Results`, without running backtests. Return sorting and
+the arm selector retain their existing behavior. Five distinct
+assets must have complete cost-adjusted long returns with matching entry and
+exit timestamps. Predictor and outcome ties receive half credit. BOT arms use
+their minimum-first preference order and remain hypothetical longs.
+
+Each pair-entry decision is an observation; exit-only updates are excluded.
+Membership is frozen before future target inspection, including cooldown from
+the existing arm history. Missing, invalid, gapped, censored, mismatched-calendar,
+small-pool or unresolved-pick events are skipped without replacement. A changed
+effective replay pick also skips its frozen ranking. Every valid completed event,
+including overlapping forward windows, contributes to both mean accuracy and
+#1 superiority. Ten pair comparisons contribute one equally weighted event.
+The event filter uses **scored ranking events** in both replay modes.
+
+For those same events, **Best asset frequency** is the fraction where the actual
+selected #1 has a strictly higher completed return than all four other assets.
+**Shared first place** is the fraction where #1 equals the highest return and
+at least one other asset ties it. These separate counts divide by `scoredEvents`;
+shared first places never count as sole wins. Comparisons use the existing exact
+return equality, including when predictor scores were tied. Predictor ties still
+receive half credit in accuracy and superiority; they do not prevent a sole
+realized first place. Zero scored events show unavailable rates.
+
+Ranking cards put **Selected asset score**, **Best asset frequency**, **Shared
+first place**, **Overall ordering accuracy**, and actual replay return/P&L first.
+Scored events, holding, pending orders, incomplete replay status and Apply stay
+outside the measurement panel; completed replay status is omitted. The native
+**Measurement details** panel starts expanded and contains the mean-accuracy CI, skipped
+counts/reasons, tied comparisons, populated time-block count, width and elapsed
+coverage, and existing replay metadata. Durations use readable units such as
+`22 days`. The mean-accuracy CI estimates overall ordering accuracy; selecting
+the superiority sort does not give that separate point score its own CI.
+
+Mean accuracy remains visible with any scored events. Sortable confidence
+requires **at least 100 scored events AND at least ten populated time blocks**.
+Event counts and the ten comparisons within an event are not independent-sample
+counts. The deterministic time-block bootstrap uses this exact duration rule:
+
+1. Use normalized target entry and exit candle-open timestamps in Unix seconds.
+   For each completed measurement, define `D_i = exitOpen - entryOpen + B_i`.
+   `B_i` is the replay interval parsed by `parseIntervalSeconds`; adding it
+   includes the final candle. Observed elapsed time includes nights, weekends,
+   holidays and other irregular calendar spacing. If the interval is unavailable
+   and `H > 1`, infer `B_i = (exitOpen - entryOpen) / (H - 1)`; this may
+   conservatively include calendar closures in the inferred final candle.
+2. Set `D = max(D_i)` across this arm's scored windows and initial block width
+   `W = 2 * D`. Anchor half-open elapsed-time bins at the earliest scored entry
+   `A`: event entries in `[A + k*W, A + (k+1)*W)` belong to the same block.
+   An entry exactly at a boundary belongs to the next bin. Empty bins are
+   omitted and never count toward the ten-block requirement. Block sizes can
+   differ; blocks are never formed from fixed event counts.
+3. Resample all `K` populated blocks with replacement, drawing `K` whole blocks
+   per replicate. Pool their accuracy sums and event counts, then divide the
+   sum by the count. Use the existing deterministic seed/LCG and **10,000**
+   draws; report the 2.5th and 97.5th percentile bounds. This estimates the same
+   all-valid-event mean shown on the card, rather than an equal-block mean.
+
+For `H = 1`, entry and exit have the same candle-open timestamp, but the window
+still covers one full parsed interval: `D_i = B_i`, not zero seconds. If no
+valid interval is available for that one-bar measurement, means remain visible
+but time-block metadata and confidence are unavailable. Finder supplies the
+captured interval. Elapsed coverage is the latest measured candle end minus
+the earliest scored entry; it can include empty calendar stretches, so populated
+block count is shown separately.
+
+Time blocks preserve neighboring observations within each bin, including their
+shared price data. Overlapping windows can cross bin boundaries; this finite
+block approximation does not remove all dependence. The internal block helper
+also supports longer widths (including `2*W`) for deterministic sensitivity
+checks without adding a user setting. Longer widths can reduce populated blocks
+below ten; they do not necessarily produce wider bounds. A single unusually
+long valid calendar window can conservatively enlarge all blocks and suppress
+confidence. Bounds are null when either count requirement or duration coverage
+is unavailable, and unavailable scores sort last.
+
+A 50% score is a no-information reference, not a probability of luck. These
+exploratory intervals do not correct for searching configurations or eliminate
+market dependence. Profit look-ahead arms retain their research labels. Compare
+finalists on a separately chosen later window with configuration, universe and
+horizon frozen; Finder does not add automatic OOS validation for this scope.
+
+Ranking reuses the saved horizon input. It stays enabled in switch mode while
+ranking is selected: a switch after seven bars or a 50-bar hold still measures
+the full selected horizon (for example 20 bars). Trading follows the original
+switch path, and ranking-data failures do not change trading status or P&L.
+**Exclude top contributor** is disabled for ranking while retaining its saved
+Return preference. Re-Sort changes arm, measurement or ranking sort locally using the full
+inventory; unavailable intervals sort last with stable candidate-order ties.
+The current measurement semantics are `top-five-ranking-v2`. Older v1 ranking
+summaries require a rerun because both their scoring sample and bootstrap changed;
+their original return/P&L results survive. First-place counts/rates are additive
+fields within v2, with no measurement or persistence-envelope version bump.
+Older v2 summaries retain their accuracy, superiority, confidence and return/P&L;
+only the new frequencies show unavailable with a rerun message when their source
+counts are absent or malformed. An older Return-only run, unsupported
+ranking semantics, or a different ranking
+horizon shows **Rerun required**. Copy Configuration uses the frozen run context;
+Copy Top Results identifies the current display measurement and ranking sort,
+first-place frequency availability, scored-event filter,
+frozen measurement horizon, availability and scalar summaries. Reload recovers
+measurements through the existing compact checkpoint and server inventory,
+and restores the saved local sort preference. Copy Configuration includes the
+ranking sort captured at run submission; later local changes are recorded by
+Copy Top Results without changing that frozen configuration.
+Apply continues to copy only strategy/backtest settings.
+
 Arm Performance reuses Finder's selected strategies, Grid Sweep or Random
 Search, Runs / Strategy budget, risk controls, optional exit-strategy sampling,
 Run / Stop, result cards, Apply, and copy actions. Enter one supported local
@@ -347,11 +462,15 @@ mark). An entered arm with no closed trades remains rankable; a never-entered
 or incomplete arm is unavailable. Cards and Copy Top Results show total,
 realized, and open P&L, completed trades, costs, current holding, and pending
 order separately. The optional count filter then means **completed trades**.
+Pending switch text names the held asset being sold and the intended purchase
+separately (for example, "Pending sell AMAT, then buy GEV"). A pending buy
+while flat names only its destination; any scheduled timestamp applies to the
+next pending action.
 Re-Sort uses the completed result's mode even if the live control has changed.
 Switch-mode total, realized, and open P&L values are green when positive and red
 when negative.
 
-Switch mode disables the horizon and cooldown controls while retaining their
+Switch Return mode disables the horizon and cooldown controls while retaining their
 saved horizon-mode values. Contributor exclusion remains available as a
 display-side sensitivity for completed switch results. A mode change requires
 a new run; it never reinterprets completed results. Both modes persist through

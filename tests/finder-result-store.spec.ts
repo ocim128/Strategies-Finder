@@ -9,6 +9,7 @@
  * full strategy-level row set while grouping displayed rows by symbol.
  */
 import { expect } from "chai";
+import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
 import { describe, it } from "node:test";
 import { FinderResultStore } from "../lib/finder/browser/finder-result-store";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
@@ -170,6 +171,40 @@ describe("FinderResultStore", () => {
         store.restoreRunSort();
         expect(store.latestResults.results[0]!.params.threshold).to.equal(1);
         expect(writes.length).to.be.greaterThan(1, "re-sorts persist as semantic checkpoints");
+    });
+
+    it("switches measurement locally before Top Results and preserves the full source", () => {
+        const { store } = makeStore();
+        store.armPerformanceDisplayLimit = 1;
+        const rows = [makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2)];
+        for (const [index, row] of rows.entries()) {
+            row.rankingMeasurement = createEmptyRankingMeasurement(20);
+            const arm = row.rankingMeasurement.arms.topRawProfitNow;
+            Object.assign(arm, { scoredEvents: 100, eligibleEvents: 100, comparisons: 1000, meanAccuracy: 0.8, top1Superiority: index === 0 ? 0.6 : 0.9, ciLower: index === 0 ? 0.7 : 0.6, ciUpper: 0.9, blockCount: 10, measurementWindowSec: 10, timeBlockWidthSec: 20, timeCoverageSec: 200, status: "available" });
+        }
+        store.adoptArmPerformanceResults(rows, null, true);
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1);
+        store.setArmPerformanceDisplayFilter({ measurement: "ranking_consistency", rankingHorizon: 20 });
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(0);
+        store.setArmPerformanceDisplayFilter({ measurement: "ranking_consistency", rankingHorizon: 20, rankingSort: "selected_asset" });
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1, "the previously hidden configuration is sorted before Top Results");
+        // Reload adopts the same inventory with the saved local display preference,
+        // even if the run was originally submitted with the compatibility default.
+        const { store: recovered } = makeStore();
+        recovered.armPerformanceDisplayLimit = 1;
+        recovered.initializeArmPerformanceDisplayFilter({ ...store.armPerformanceDisplayFilter });
+        recovered.adoptArmPerformanceResults(rows, { searchOptions: { armPerformance: { measurement: "ranking_consistency", rankingSort: "overall_ordering", horizon: 20 } } } as any, true);
+        expect(recovered.armPerformanceDisplayFilter.rankingSort).to.equal("selected_asset");
+        expect((recovered.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1);
+        const { store: fromContext } = makeStore();
+        fromContext.adoptArmPerformanceResults(rows, { searchOptions: { armPerformance: { measurement: "ranking_consistency", rankingSort: "selected_asset", horizon: 20 } } } as any, true);
+        expect(fromContext.armPerformanceDisplayFilter.rankingSort).to.equal("selected_asset");
+        expect((fromContext.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1);
+        store.setArmPerformanceDisplayFilter({ measurement: "return", rankingSort: "selected_asset" });
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1);
+        store.setArmPerformanceDisplayFilter({ measurement: "ranking_consistency", rankingHorizon: 21 });
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(0);
+        expect(store.armPerformanceRunResults).to.deep.equal(rows);
     });
 
     it("survives repeated Arm re-sorts and restores the default arm ordering", () => {

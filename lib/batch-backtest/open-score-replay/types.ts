@@ -2,7 +2,7 @@
  * Public contracts for the OPEN_SCORE USD replay
  * (batch-open-score-usd-replay-engine.ts). Result/option/selector shapes,
  * Phase 0b archive row records, and the caller-owned cross-window target
- * cache. Type-only module: no runtime behavior, safe for every bundle.
+ * cache and scalar ranking recovery helpers. Safe for every bundle.
  *
  * Internal stage records live in ./internal-types; stage implementations
  * import these contracts directly and never through the engine entry point.
@@ -10,9 +10,10 @@
 import type { OHLCVData } from "../../types/strategies";
 import type { CandleGap } from "../../ibkr-data/candle-gap";
 import type { ActiveCapTiltWeight, CapTiltWeight } from "../cap-tilt-contract";
-import type { ReplayArmField } from "./arm-contract";
+import { REPLAY_ARM_FIELDS, type ReplayArmField } from "./arm-contract";
 import type { StageOutcome } from "./internal-types";
 import type { ArtifactScanResult } from "./artifact-scan";
+import { TOP_MEAN_HORIZONS_MAX_VALUE } from "../sp500-top-mean-request-limits";
 
 // ============================================================================
 // Public types
@@ -259,7 +260,111 @@ export interface CandidateOutcomeRecord {
     status: CandidateOutcomeStatus;
 }
 
+export const RANKING_MEASUREMENT_SEMANTICS = "top-five-ranking-v2";
+export type RankingMeasurement = "return" | "ranking_consistency";
+export type RankingSkipReason = "small_pool" | "unresolved_pick" | "pick_changed" | "missing_target" | "missing_entry" | "invalid_price" | "data_gap" | "right_censored" | "calendar_mismatch";
+export interface RankingArmSummary {
+    eligibleEvents: number;
+    scoredEvents: number;
+    skippedEvents: number;
+    skippedReasons: Partial<Record<RankingSkipReason, number>>;
+    tiedComparisons: number;
+    comparisons: number;
+    meanAccuracy: number | null;
+    top1Superiority: number | null;
+    /** Optional additive diagnostics; absent counts on older v2 summaries require rerun. */
+    soleFirstPlaceCount?: number;
+    sharedFirstPlaceCount?: number;
+    soleFirstPlaceRate?: number | null;
+    sharedFirstPlaceRate?: number | null;
+    ciLower: number | null;
+    ciUpper: number | null;
+    /** Populated elapsed-time bins, not independent observations. */
+    blockCount: number;
+    measurementWindowSec: number | null;
+    timeBlockWidthSec: number | null;
+    timeCoverageSec: number | null;
+    status: "available" | "insufficient_data" | "no_events";
+}
+/** Scalar-only additive diagnostic, separate from trading status. */
+export interface RankingMeasurementSummary {
+    semanticsVersion: typeof RANKING_MEASUREMENT_SEMANTICS;
+    horizonBars: number;
+    arms: Record<ReplayArmField, RankingArmSummary>;
+}
+
+export function createEmptyRankingMeasurement(horizonBars: number): RankingMeasurementSummary {
+    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars, arms: Object.fromEntries(REPLAY_ARM_FIELDS.map((field) => [field, {
+        eligibleEvents: 0, scoredEvents: 0, skippedEvents: 0, skippedReasons: {}, tiedComparisons: 0, comparisons: 0,
+        meanAccuracy: null, top1Superiority: null, soleFirstPlaceCount: 0, sharedFirstPlaceCount: 0, soleFirstPlaceRate: null, sharedFirstPlaceRate: null, ciLower: null, ciUpper: null, blockCount: 0, measurementWindowSec: null, timeBlockWidthSec: null, timeCoverageSec: null, status: "no_events",
+    }])) as RankingMeasurementSummary["arms"] };
+}
+
+/** Explicit scalar serialization and tolerant additive-field recovery. Unknown semantics require rerun. */
+export function compactRankingMeasurement(value: unknown): RankingMeasurementSummary | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const section = value as RankingMeasurementSummary;
+    if (section.semanticsVersion !== RANKING_MEASUREMENT_SEMANTICS || !Number.isInteger(section.horizonBars) || section.horizonBars < 1 || section.horizonBars > TOP_MEAN_HORIZONS_MAX_VALUE || !section.arms || typeof section.arms !== "object") return undefined;
+    const result = createEmptyRankingMeasurement(section.horizonBars);
+    const countKeys = ["eligibleEvents", "scoredEvents", "skippedEvents", "tiedComparisons", "comparisons", "blockCount"] as const;
+    const scoreKeys = ["meanAccuracy", "top1Superiority", "ciLower", "ciUpper"] as const;
+    const reasons: RankingSkipReason[] = ["small_pool", "unresolved_pick", "pick_changed", "missing_target", "missing_entry", "invalid_price", "data_gap", "right_censored", "calendar_mismatch"];
+    for (const field of REPLAY_ARM_FIELDS) {
+        const row = section.arms[field];
+        if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
+        const target = result.arms[field];
+        // Do not turn missing or malformed additive frequencies into zero wins.
+        delete target.soleFirstPlaceCount; delete target.sharedFirstPlaceCount;
+        delete target.soleFirstPlaceRate; delete target.sharedFirstPlaceRate;
+        for (const key of countKeys) {
+            if (!Number.isSafeInteger(row[key]) || row[key] < 0) return undefined;
+            target[key] = row[key];
+        }
+        for (const key of scoreKeys) {
+            if (row[key] !== null && (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key]! < 0 || row[key]! > 1)) return undefined;
+            target[key] = row[key];
+        }
+        if (row.status !== "available" && row.status !== "insufficient_data" && row.status !== "no_events") return undefined;
+        if (row.scoredEvents !== row.eligibleEvents || row.comparisons !== row.scoredEvents * 10 || row.tiedComparisons > row.comparisons || row.blockCount > row.scoredEvents) return undefined;
+        for (const key of ["measurementWindowSec", "timeBlockWidthSec", "timeCoverageSec"] as const) {
+            if (row[key] !== null && (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key]! <= 0)) return undefined;
+            target[key] = row[key];
+        }
+        const hasCoverage = row.measurementWindowSec !== null && row.timeBlockWidthSec !== null && row.timeCoverageSec !== null;
+        if (hasCoverage ? row.blockCount < 1 || row.timeBlockWidthSec! < 2 * row.measurementWindowSec! || row.timeCoverageSec! < row.measurementWindowSec!
+            : row.blockCount !== 0 || row.measurementWindowSec !== null || row.timeBlockWidthSec !== null || row.timeCoverageSec !== null) return undefined;
+        if (row.scoredEvents === 0 && hasCoverage) return undefined;
+        if (row.scoredEvents === 0 ? row.meanAccuracy !== null || row.top1Superiority !== null : row.meanAccuracy === null || row.top1Superiority === null) return undefined;
+        target.status = row.scoredEvents >= 100 && row.blockCount >= 10 ? "available" : row.scoredEvents ? "insufficient_data" : "no_events";
+        if (row.status !== target.status) return undefined;
+        if (target.status !== "available") { target.ciLower = null; target.ciUpper = null; }
+        else if (row.ciLower === null || row.ciUpper === null || row.ciLower > row.ciUpper) return undefined;
+        if (!row.skippedReasons || typeof row.skippedReasons !== "object" || Array.isArray(row.skippedReasons)) return undefined;
+        for (const reason of reasons) {
+            const n = row.skippedReasons[reason];
+            if (n === undefined) continue;
+            if (!Number.isSafeInteger(n) || n < 0) return undefined;
+            target.skippedReasons[reason] = n;
+        }
+        if (Object.values(target.skippedReasons).reduce((sum, n) => sum + n, 0) !== row.skippedEvents) return undefined;
+        const sole = row.soleFirstPlaceCount, shared = row.sharedFirstPlaceCount;
+        if (typeof sole === "number" && Number.isSafeInteger(sole) && sole >= 0
+            && typeof shared === "number" && Number.isSafeInteger(shared) && shared >= 0 && sole + shared <= row.scoredEvents) {
+            const soleRate = row.scoredEvents ? sole / row.scoredEvents : null;
+            const sharedRate = row.scoredEvents ? shared / row.scoredEvents : null;
+            const matches = (actual: number | null | undefined, expected: number | null): boolean => actual === undefined || actual === expected
+                || (typeof actual === "number" && Number.isFinite(actual) && expected !== null && Math.abs(actual - expected) <= 1e-12);
+            if (matches(row.soleFirstPlaceRate, soleRate) && matches(row.sharedFirstPlaceRate, sharedRate)) {
+                target.soleFirstPlaceCount = sole; target.sharedFirstPlaceCount = shared;
+                target.soleFirstPlaceRate = soleRate; target.sharedFirstPlaceRate = sharedRate;
+            }
+        }
+    }
+    return result;
+}
+
 export interface OpenScoreUsdReplayResult {
+    rankingMeasurement?: RankingMeasurementSummary;
     /** New results always include this discriminator; absent means legacy horizon data. */
     mode?: ReplayMode;
     pairs: number;
@@ -637,6 +742,8 @@ export interface AssetSwitchReplaySummary {
 export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
 
 export interface RunOpenScoreUsdReplayOptions {
+    /** Finder-only opt-in; independent of switch execution horizon. */
+    rankingHorizon?: number;
     /** Required only for horizon mode. Omitted mode defaults to `horizon`. */
     mode?: ReplayMode;
     /** Required in horizon mode: positive bar horizons. */

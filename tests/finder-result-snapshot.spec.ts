@@ -1,4 +1,6 @@
 import { expect } from "chai";
+import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
+import { REPLAY_ARM_FIELDS } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { describe, it } from "node:test";
 import {
     FINDER_RESULT_SNAPSHOT_LIMIT,
@@ -293,6 +295,52 @@ describe("Finder result snapshots", () => {
         expect(normalized.results[0]!.worstMaxDrawdownPercent).to.equal(0);
         expect(normalized.results[0]!.medianMaxDrawdownPercent).to.equal(0);
         expect(normalized.results[0]!.medianReturnDrawdownRatio).to.equal(0);
+    });
+
+    it("round-trips scalar ranking sections in both modes and preserves return data for unknown or malformed semantics", () => {
+        for (const replayMode of ["horizon", "asset_switch"] as const) {
+            const original = makeArmPerformanceCandidate(0);
+            const ranking = createEmptyRankingMeasurement(20);
+            Object.assign(ranking.arms.topRaw, { scoredEvents: 100, eligibleEvents: 100, comparisons: 1000, meanAccuracy: 0.6, top1Superiority: 0.65,
+                ciLower: 0.5, ciUpper: 0.7, blockCount: 12, measurementWindowSec: 10, timeBlockWidthSec: 20, timeCoverageSec: 250, soleFirstPlaceCount: 20, sharedFirstPlaceCount: 10, soleFirstPlaceRate: 0.2, sharedFirstPlaceRate: 0.1, status: "available" });
+            const candidate = replayMode === "horizon" ? { ...original, rankingMeasurement: ranking } : {
+                ...original, replayMode, horizon: undefined, metrics: undefined, rankingMeasurement: ranking,
+                assetSwitchMetrics: Object.fromEntries(Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, makeSwitchArmSummary()])),
+            } as FinderArmPerformanceCandidate;
+            Object.assign(ranking, { eventRows: [{ candles: [1, 2] }] });
+            Object.assign(ranking.arms.topRaw, { eventRows: [1, 2, 3] });
+            const scalar = toScalarArmPerformanceCandidate(candidate);
+            expect(scalar.rankingMeasurement).not.to.have.property("eventRows");
+            expect(scalar.rankingMeasurement?.arms.topRaw).not.to.have.property("eventRows");
+            const restored = normalizeFinderLatestResultsSnapshot({ scope: "arm_performance", results: [scalar], runContext: null, inventoryComplete: true });
+            if (restored?.scope !== "arm_performance") throw new Error("missing snapshot");
+            expect(restored.results[0]!.rankingMeasurement).to.deep.equal(scalar.rankingMeasurement);
+            expect(restored.results[0]!.rankingMeasurement?.arms.topRaw).to.include({ soleFirstPlaceCount: 20, sharedFirstPlaceCount: 10, soleFirstPlaceRate: 0.2, sharedFirstPlaceRate: 0.1 });
+            const missingFrequencies = structuredClone(scalar.rankingMeasurement!);
+            delete missingFrequencies.arms.topRaw.soleFirstPlaceCount; delete missingFrequencies.arms.topRaw.sharedFirstPlaceCount;
+            delete missingFrequencies.arms.topRaw.soleFirstPlaceRate; delete missingFrequencies.arms.topRaw.sharedFirstPlaceRate;
+            const oldV2 = normalizeFinderLatestResultsSnapshot({ scope: "arm_performance", results: [{ ...scalar, rankingMeasurement: missingFrequencies }], runContext: null });
+            if (oldV2?.scope !== "arm_performance") throw new Error("legacy v2 result lost");
+            expect(oldV2.results[0]!.rankingMeasurement).to.deep.equal(missingFrequencies);
+            expect(oldV2.results[0]!.rankingMeasurement?.arms.topRaw).not.to.have.property("soleFirstPlaceCount");
+            expect(oldV2.results[0]!.metrics ?? oldV2.results[0]!.assetSwitchMetrics).to.deep.equal(scalar.metrics ?? scalar.assetSwitchMetrics);
+            for (const bad of [
+                { ...ranking, semanticsVersion: "future-v3" },
+                { ...ranking, semanticsVersion: "top-five-ranking-v1" },
+                { ...ranking, arms: { ...ranking.arms, topRaw: { ...ranking.arms.topRaw, timeBlockWidthSec: 1 } } },
+                { ...ranking, arms: { ...ranking.arms, topRaw: { ...ranking.arms.topRaw, blockCount: 9 } } },
+                { ...ranking, horizonBars: -1 },
+                { ...ranking, arms: { ...ranking.arms, topRaw: { ...ranking.arms.topRaw, meanAccuracy: NaN } } },
+                { ...ranking, arms: { ...ranking.arms, topRaw: { ...ranking.arms.topRaw, ciLower: 2 } } },
+                { ...ranking, arms: Object.fromEntries(REPLAY_ARM_FIELDS.slice(1).map((field) => [field, ranking.arms[field]])) },
+            ]) {
+                const legacy = normalizeFinderLatestResultsSnapshot({ scope: "arm_performance", results: [{ ...scalar, rankingMeasurement: bad }], runContext: null });
+                if (legacy?.scope !== "arm_performance") throw new Error("original data lost");
+                expect(legacy.results[0]!.rankingMeasurement).to.equal(undefined);
+                expect(legacy.results[0]!.replayMode).to.equal(replayMode);
+                expect(legacy.results[0]!.metrics ?? legacy.results[0]!.assetSwitchMetrics).to.deep.equal(scalar.metrics ?? scalar.assetSwitchMetrics);
+            }
+        }
     });
 
     it("restores Arm Performance only as a bounded incomplete preview", () => {

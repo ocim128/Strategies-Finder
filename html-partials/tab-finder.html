@@ -70,6 +70,20 @@
     </div>
 
     <div id="finderArmPerformanceSettings" class="finder-arm-performance-settings" style="display:none;">
+        <div class="param-group">
+            <label class="param-label" for="finderArmPerformanceMeasurement">Measurement</label>
+            <select class="param-input" id="finderArmPerformanceMeasurement">
+                <option value="return">Return</option>
+                <option value="ranking_consistency">Ranking consistency</option>
+            </select>
+        </div>
+        <div class="param-group">
+            <label class="param-label" for="finderArmPerformanceRankingSort">Ranking sort</label>
+            <select class="param-input" id="finderArmPerformanceRankingSort">
+                <option value="overall_ordering" selected>Overall ordering</option>
+                <option value="selected_asset">Selected asset</option>
+            </select>
+        </div>
         <div class="param-row">
             <div class="param-group">
                 <label class="param-label" for="finderArmPerformanceReplayMode">Replay mode</label>
@@ -79,7 +93,7 @@
                 </select>
             </div>
             <div class="param-group">
-                <label class="param-label" for="finderArmPerformanceHorizon">Replay Horizon (bars)</label>
+                <label class="param-label" id="finderArmPerformanceHorizonLabel" for="finderArmPerformanceHorizon">Replay Horizon (bars)</label>
                 <input type="number" class="param-input" id="finderArmPerformanceHorizon" value="5" min="1" max="1000" step="1">
             </div>
             <div class="param-group">

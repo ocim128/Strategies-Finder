@@ -188,6 +188,7 @@ import { hasCapabilityIndependentTypescriptRequirement } from "../../rust-settin
 import { enumerateSp500Pairs, type EnumerationResult } from "../../batch-backtest/sp500-pair-enumerator";
 import {
     TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX,
+    TOP_MEAN_HORIZONS_MAX_VALUE,
     validateTopMeanRequestLimits,
 } from "../../batch-backtest/sp500-top-mean-request-limits";
 import { parseTopMeanDateWindow } from "../../batch-backtest/top-mean-date-window";
@@ -3102,7 +3103,13 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
     if (replayMode !== "horizon" && replayMode !== "asset_switch") {
         throw new HttpStatusError(400, "options.armPerformance.replayMode must be horizon or asset_switch.");
     }
-    const scoringBasis = requestedScoringBasis;
+    const measurement = armOptions.measurement ?? "return";
+    if (measurement !== "return" && measurement !== "ranking_consistency") throw new HttpStatusError(400, "options.armPerformance.measurement must be return or ranking_consistency.");
+    const rankingSort = armOptions.rankingSort ?? "overall_ordering";
+    if (rankingSort !== "overall_ordering" && rankingSort !== "selected_asset") throw new HttpStatusError(400, "options.armPerformance.rankingSort must be overall_ordering or selected_asset.");
+    const rankingHorizon = armOptions.rankingHorizon === undefined ? undefined : readOptionalInteger("rankingHorizon", 5, 1, TOP_MEAN_HORIZONS_MAX_VALUE);
+    if (measurement === "ranking_consistency" && replayMode === "asset_switch" && rankingHorizon === undefined) throw new HttpStatusError(400, "Switch ranking requires rankingHorizon.");
+    const scoringBasis = measurement === "ranking_consistency" ? "raw" : requestedScoringBasis;
     const eventFilterEnabled = readOptionalBoolean("eventFilterEnabled", false);
     const minEvents = readOptionalInteger("minEvents", 1, 0, 1_000_000);
     let maxEvents: number | null = null;
@@ -3167,6 +3174,9 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
         maxTrades: Number.POSITIVE_INFINITY,
         oosValidationEnabled: false,
         armPerformance: {
+            measurement,
+            rankingSort,
+            ...(measurement === "ranking_consistency" ? { rankingHorizon: replayMode === "horizon" ? horizonLimits.value.horizons[0]! : rankingHorizon } : {}),
             replayMode,
             ...(replayMode === "horizon" ? { horizon: horizonLimits.value.horizons[0]! } : {}),
             dateMode: dateWindow.mode,
@@ -3305,6 +3315,8 @@ async function handleArmPerformanceRunRequest(
         skippedPairs: [...prepared.enumeration.skippedPairTokens],
         interval: prepared.interval,
         replayMode: prepared.options.armPerformance!.replayMode ?? "horizon",
+        measurement: prepared.options.armPerformance!.measurement ?? "return",
+        ...(prepared.options.armPerformance!.measurement === "ranking_consistency" ? { rankingHorizon: prepared.options.armPerformance!.rankingHorizon } : {}),
         ...(prepared.options.armPerformance!.horizon !== undefined
             ? { horizon: prepared.options.armPerformance!.horizon }
             : {}),

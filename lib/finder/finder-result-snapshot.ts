@@ -1,3 +1,4 @@
+import { compactRankingMeasurement } from "../batch-backtest/open-score-replay/types";
 import type {
     FinderArmPerformanceCandidate,
     FinderArmPerformanceRunContext,
@@ -212,7 +213,9 @@ function compactStrategyQualityResult(result: FinderStrategyQualityResult): Find
 }
 
 function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate): FinderArmPerformanceCandidate {
+    const rankingMeasurement = compactRankingMeasurement(candidate.rankingMeasurement);
     const common = {
+        ...(rankingMeasurement ? { rankingMeasurement } : {}),
         candidateId: candidate.candidateId,
         candidateOrdinal: candidate.candidateOrdinal,
         strategyKey: candidate.strategyKey,

@@ -98,6 +98,7 @@ import {
 } from "../finder/finder-arm-performance-metrics";
 
 export interface TopMeanCoordinatorRunRequest {
+    rankingHorizon?: number;
     runId: string;
     strategyKey: string;
     strategyParams: StrategyParams;
@@ -175,6 +176,7 @@ export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
 }
 
 export interface TopMeanResultSummary {
+    rankingMeasurement?: import("./open-score-replay/types").RankingMeasurementSummary;
     runId: string;
     /** Completed run discriminator; absent old payloads mean horizon. */
     replayMode?: ReplayMode;
@@ -319,11 +321,14 @@ export function capTopMeanEventDetailsForWire<Row>(
  * "Selected Window" section, and the per-year rows remain in result.json and
  * the research archive.
  */
+import { compactRankingMeasurement } from "./open-score-replay/types";
+
 export function toWireSafeTopMeanResultSummary(
     result: TopMeanResultSummary,
 ): TopMeanResultSummary {
     return {
         ...result,
+        rankingMeasurement: compactRankingMeasurement(result.rankingMeasurement),
         openScoreEventDetails: result.openScoreEventDetails
             ? capTopMeanEventDetailsForWire(result.openScoreEventDetails)
             : undefined,
@@ -1534,6 +1539,7 @@ export class TopMeanCoordinatorEngine {
                         // retaining every target until the pass ends.
                         ...(finderArmProfile || replayMode === "asset_switch" ? {} : { sharedTargetCache: sharedTargetOutcomeCache }),
                         mode: replayMode,
+                        ...(finderArmProfile && this._request.rankingHorizon !== undefined ? { rankingHorizon: this._request.rankingHorizon } : {}),
                         ...(replayMode === "horizon"
                             ? { horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48] }
                             : {}),
@@ -1820,6 +1826,7 @@ export class TopMeanCoordinatorEngine {
                 counts: this.counts,
                 horizons: horizonSummaries,
                 ...(replayResult.assetSwitch ? { assetSwitch: replayResult.assetSwitch } : {}),
+                ...(replayResult.rankingMeasurement ? { rankingMeasurement: replayResult.rankingMeasurement } : {}),
                 annualReports,
                 openScoreEventDetails: replayResult.eventDetails,
                 ongoingEventDetails: replayResult.ongoingEventDetails,

@@ -113,6 +113,10 @@ export interface FinderAssetOpportunityOptions {
 }
 
 export interface FinderArmPerformanceOptions {
+    measurement?: import("../batch-backtest/open-score-replay/types").RankingMeasurement;
+    /** Local display preference; never changes replay computation. */
+    rankingSort?: import("../finder/finder-arm-performance-metrics").FinderArmPerformanceRankingSort;
+    rankingHorizon?: number;
     replayMode?: ReplayMode;
     horizon?: number;
     dateMode: "full" | "date_range";
@@ -127,6 +131,8 @@ export interface FinderArmPerformanceOptions {
 }
 
 export interface FinderArmPerformanceRunContext {
+    measurement?: import("../batch-backtest/open-score-replay/types").RankingMeasurement;
+    rankingHorizon?: number;
     runId: string;
     startedAt: number;
     strategyKeys: string[];
@@ -168,6 +174,7 @@ export interface FinderArmPerformancePairCoverage {
 }
 
 interface FinderArmPerformanceCandidateBase {
+    rankingMeasurement?: import("../batch-backtest/open-score-replay/types").RankingMeasurementSummary;
     candidateId: string;
     candidateOrdinal: number;
     strategyKey: string;

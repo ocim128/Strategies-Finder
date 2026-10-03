@@ -127,5 +127,10 @@ describe("Arm Performance run configuration capture", () => {
         expect(restored.backtestSettings).to.deep.equal(context.backtestSettings);
         expect(restored.capitalSettings).to.deep.equal(context.capitalSettings);
         expect(restored.finder.defaultSort).to.equal("TOP_RAW_PROFIT_NOW by topMean");
+        const selected = { ...context, measurement: "ranking_consistency" as const, searchOptions: { ...context.searchOptions, armPerformance: { ...context.searchOptions.armPerformance!, rankingSort: "selected_asset" as const } } };
+        const ranking = buildFinderArmPerformanceRunConfiguration(selected, 6, true);
+        expect(ranking.finder.rankingSort).to.equal("selected_asset");
+        expect(ranking.finder.defaultSort).to.equal("TOP_RAW_PROFIT_NOW by top1Superiority");
+        expect(ranking.finder.rankingSemantics).to.equal("top-five-ranking-v2");
     });
 });

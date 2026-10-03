@@ -2121,6 +2121,7 @@ describe("Finder Arm Performance request preflight", () => {
             expect(prepared.enumeration.skippedPairTokens).to.deep.equal(["MISSING•+BBB•"]);
             expect(prepared.options.armPerformance).to.deep.include({
                 scoringBasis: "raw",
+                rankingSort: "overall_ordering",
                 eventFilterEnabled: false,
                 minEvents: 1,
                 maxEvents: null,
@@ -2142,6 +2143,12 @@ describe("Finder Arm Performance request preflight", () => {
                 [{ minEvents: 1.5 }, /minEvents must be an integer/],
                 [{ minEvents: 5, maxEvents: 4 }, /maxEvents must be greater than or equal to minEvents/],
                 [{ scoringBasis: "raw_plus_magic" }, /scoringBasis must be raw or exclude_top_contributor/],
+                [{ measurement: "magic" }, /measurement must be return or ranking_consistency/],
+                [{ rankingSort: "magic" }, /rankingSort must be overall_ordering or selected_asset/],
+                [{ rankingHorizon: 0 }, /rankingHorizon must be an integer/],
+                [{ rankingHorizon: 1001 }, /rankingHorizon must be an integer/],
+                [{ rankingHorizon: 1.5 }, /rankingHorizon must be an integer/],
+                [{ replayMode: "asset_switch", measurement: "ranking_consistency" }, /requires rankingHorizon/],
             ] as const) {
                 await assert.rejects(
                     prepareFinderArmPerformanceRunForTests({
@@ -2155,6 +2162,12 @@ describe("Finder Arm Performance request preflight", () => {
                 );
             }
 
+            for (const mode of ["horizon", "asset_switch"] as const) {
+                const ranked = await prepareFinderArmPerformanceRunForTests({ ...body, options: { ...body.options, armPerformance: {
+                    replayMode: mode, horizon: 5, rankingHorizon: 20, measurement: "ranking_consistency", rankingSort: "selected_asset", scoringBasis: "exclude_top_contributor", dateMode: "full",
+                } } } as any, baseDir);
+                expect(ranked.options.armPerformance).to.include({ measurement: "ranking_consistency", rankingSort: "selected_asset", scoringBasis: "raw", rankingHorizon: mode === "horizon" ? 5 : 20 });
+            }
             const switchPrepared = await prepareFinderArmPerformanceRunForTests({
                 ...body,
                 options: {

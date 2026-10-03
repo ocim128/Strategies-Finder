@@ -1,4 +1,5 @@
 import { expect } from "chai";
+import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
 import { describe, it } from "node:test";
 import {
     FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
@@ -52,6 +53,52 @@ function switchArm(
 }
 
 describe("Finder Arm Performance metrics", () => {
+    it("sorts ranking by lower bound with unavailable last and scored-event filters in both modes", () => {
+        const section = (ciLower: number | null, scoredEvents = 100) => {
+            const ranking = createEmptyRankingMeasurement(20);
+            ranking.arms.topRaw = { ...ranking.arms.topRaw, scoredEvents, blockCount: 10, ciLower, ciUpper: 1, meanAccuracy: 0.9, status: scoredEvents >= 100 ? "available" : "insufficient_data" };
+            return ranking;
+        };
+        for (const replayMode of ["horizon", "asset_switch"] as const) {
+            const rows = [
+                { candidateOrdinal: 3, replayMode, rankingMeasurement: section(0.4) },
+                { candidateOrdinal: 1, replayMode, rankingMeasurement: section(0.6) },
+                { candidateOrdinal: 0, replayMode, rankingMeasurement: section(0.6) },
+                { candidateOrdinal: 2, replayMode, rankingMeasurement: section(null, 99) },
+                { candidateOrdinal: 4, replayMode },
+                { candidateOrdinal: 5, replayMode, rankingMeasurement: (() => { const summary = section(0.99); summary.arms.topRaw.blockCount = 9; return summary; })() },
+            ];
+            const filter = { measurement: "ranking_consistency" as const, rankingHorizon: 20, basis: "exclude_top_contributor" as const };
+            expect(sortFinderArmPerformanceResults(rows, "TOP_RAW", filter).map((row) => row.candidateOrdinal)).to.deep.equal([0, 1, 3, 2, 4, 5]);
+            expect(sortFinderArmPerformanceResults(rows, "TOP_RAW", { ...filter, eventFilterEnabled: true, minEvents: 100, maxEvents: 100 }).map((row) => row.candidateOrdinal)).to.deep.equal([0, 1, 3, 5]);
+            expect(sortFinderArmPerformanceResults(rows, "TOP_RAW", { ...filter, rankingHorizon: 21 }).map((row) => row.candidateOrdinal)).to.deep.equal([0, 1, 2, 3, 4, 5]);
+            expect(rows.map((row) => row.candidateOrdinal)).to.deep.equal([3, 1, 0, 2, 4, 5]);
+        }
+    });
+    it("sorts selected-asset superiority locally with the existing eligibility gates and ordinal ties", () => {
+        const section = (top1Superiority: number | null, ciLower: number, blockCount = 10) => {
+            const ranking = createEmptyRankingMeasurement(20);
+            Object.assign(ranking.arms.topRaw, { scoredEvents: 100, top1Superiority, ciLower, ciUpper: 1, blockCount, status: "available" });
+            return ranking;
+        };
+        for (const replayMode of ["horizon", "asset_switch"] as const) {
+            const rows = [
+                { candidateOrdinal: 3, replayMode, rankingMeasurement: section(0.8, 0.5) },
+                { candidateOrdinal: 1, replayMode, rankingMeasurement: section(0.8, 0.4) },
+                { candidateOrdinal: 0, replayMode, rankingMeasurement: section(0.6, 0.9) },
+                { candidateOrdinal: 2, replayMode, rankingMeasurement: section(null, 0.3) },
+                { candidateOrdinal: 4, replayMode, rankingMeasurement: section(1, 0.99, 9) },
+            ];
+            const filter = { measurement: "ranking_consistency" as const, rankingHorizon: 20 };
+            expect(sortFinderArmPerformanceResults(rows, "TOP_RAW", filter).map((row) => row.candidateOrdinal)).to.deep.equal([0, 3, 1, 2, 4]);
+            expect(sortFinderArmPerformanceResults(rows, "TOP_RAW", { ...filter, rankingSort: "selected_asset" }).map((row) => row.candidateOrdinal)).to.deep.equal([1, 3, 0, 2, 4]);
+            expect(rows.map((row) => row.candidateOrdinal)).to.deep.equal([3, 1, 0, 2, 4]);
+            const rankingSort = "selected_asset" as const;
+            const returns = rows.map((row) => ({ ...row, metrics: { TOP_RAW: compactFinderArmComparison(comparison(row.candidateOrdinal)) }, assetSwitchMetrics: { TOP_RAW: switchArm("complete", row.candidateOrdinal, 1) } }));
+            expect(sortFinderArmPerformanceResults(returns, "TOP_RAW", { measurement: "return", rankingSort }).map((row) => row.candidateOrdinal)).to.deep.equal([4, 3, 2, 1, 0]);
+        }
+    });
+
     it("maps every replay field into its named compact arm metric", () => {
         const horizon: Record<string, ReplayComparison> = {};
         let value = -7;

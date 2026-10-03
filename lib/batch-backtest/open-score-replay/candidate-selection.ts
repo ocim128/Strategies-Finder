@@ -27,6 +27,49 @@ import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, Event
 import { REPLAY_ARM_FIELDS } from "./arm-contract";
 import type { ReplayArmField } from "./arm-contract";
 import { yieldLoop } from "./runtime";
+import type { RankingEvent, RankingPick } from "./internal-types";
+
+export const RANKING_ARM_SPECS = REPLAY_ARM_FIELDS.map((field) => ({
+    field,
+    pool: (field.includes("ProfitNowConf") ? "profitNowConfidencePositives"
+        : field.includes("ProfitNow") || field === "topZ" || field === "botZ" ? "profitNowPositives"
+        : field.includes("Profit") ? "profitPositives" : "positives") as "positives" | "profitPositives" | "profitNowPositives" | "profitNowConfidencePositives",
+    key: (field === "topZ" || field === "botZ" ? "z" : field.includes("Mean") ? "mean" : "raw") as "raw" | "mean" | "z",
+    direction: field.startsWith("bot") ? 1 : -1,
+    unique: field.endsWith("RawUnique"),
+}));
+
+/** Bounded insertion retains membership using the existing digest, never outcomes. */
+export function insertRankingPick(picks: RankingPick[], candidate: Candidate, spec: typeof RANKING_ARM_SPECS[number], time: number, names: readonly string[], digestFor?: (index: number) => string): void {
+    const row = { assetIndex: candidate.assetIndex, key: spec.key === "z" ? candidate.z ?? 0 : candidate[spec.key], secondary: spec.unique ? candidate.raw : 0 };
+    const compare = (a: RankingPick, b: RankingPick): number => {
+        const score = spec.direction * (a.key - b.key || a.secondary - b.secondary);
+        if (score) return score;
+        const ad = digestFor?.(a.assetIndex) ?? tieBreakDigest(time, names[a.assetIndex]!);
+        const bd = digestFor?.(b.assetIndex) ?? tieBreakDigest(time, names[b.assetIndex]!);
+        return ad.localeCompare(bd) || names[a.assetIndex]!.localeCompare(names[b.assetIndex]!);
+    };
+    let index = 0;
+    while (index < picks.length && compare(picks[index]!, row) <= 0) index += 1;
+    if (index < 5) { picks.splice(index, 0, row); if (picks.length > 5) picks.pop(); }
+}
+
+export function captureRankingEvent(timeSec: number, pools: Partial<Record<typeof RANKING_ARM_SPECS[number]["pool"], readonly Candidate[]>>, assetNames: readonly string[]): RankingEvent {
+    const arms = {} as RankingEvent["arms"];
+    const digests = new Map<number, string>();
+    const digestFor = (index: number): string => {
+        let digest = digests.get(index);
+        if (digest === undefined) { digest = tieBreakDigest(timeSec, assetNames[index]!); digests.set(index, digest); }
+        return digest;
+    };
+    for (const spec of RANKING_ARM_SPECS) {
+        const picks: RankingPick[] = [];
+        for (const candidate of pools[spec.pool] ?? []) insertRankingPick(picks, candidate, spec, timeSec, assetNames, digestFor);
+        arms[spec.field] = { picks, ...(picks.length < 5 ? { reason: "small_pool" as const }
+            : spec.unique && picks[0]!.key === picks[1]!.key && picks[0]!.secondary === picks[1]!.secondary ? { reason: "unresolved_pick" as const } : {}) };
+    }
+    return { timeSec, arms };
+}
 
 export interface CandidateStageResult {
     views: EventView[];
@@ -34,6 +77,7 @@ export interface CandidateStageResult {
 }
 
 export interface AssetSwitchCandidateStageResult {
+    rankingEvents?: RankingEvent[];
     decisions: AssetSwitchDecision[];
     candidateComparisonEvents: number;
     selectedAssets: Set<string>;
@@ -49,6 +93,7 @@ export async function buildCandidateViews(args: {
     selectionCooldownBars?: number;
     /** Legacy full-view fixtures can retain empty/singleton switch events. */
     includeAllDecisionEvents?: boolean;
+    onRankingEvent?: (event: RankingEvent) => void;
     shouldStop?: () => boolean;
     onPhase: ReplayPhaseCallback;
 }): Promise<StageOutcome<CandidateStageResult>> {
@@ -171,6 +216,7 @@ export async function buildCandidateViews(args: {
         // TOP_Z history update: strictly-past semantics — this event's
         // profit-now scores join each asset's history only AFTER the pools
         // above captured this event's z values.
+        args.onRankingEvent?.(captureRankingEvent(ev.timeSec, { positives, profitPositives, profitNowPositives, profitNowConfidencePositives }, assetNames));
         for (let a = 0; a < assetCount; a += 1) updateZStats(a, ev.rawScoreProfitNow[a]!);
         // A singleton cannot form a paired comparison, but with cooldown
         // enabled it still represents a real selection event and must be
@@ -488,10 +534,12 @@ export async function buildAssetSwitchDecisions(args: {
     shouldStop?: () => boolean;
     onPhase: ReplayPhaseCallback;
     onEventProcessed?: (eventIndex: number) => void;
+    captureRanking?: boolean;
 }): Promise<StageOutcome<AssetSwitchCandidateStageResult>> {
     const { events, totalEvents, assetNames, assetCount, onPhase, onEventProcessed } = args;
     onPhase("targets", "forming asset-switch decisions", 0, totalEvents);
     const decisions: AssetSwitchDecision[] = [];
+    const rankingEvents = args.captureRanking ? [] as RankingEvent[] : undefined;
     const selectedAssets = new Set<string>();
     const zWelfordMean = new Float64Array(assetCount);
     const zWelfordM2 = new Float64Array(assetCount);
@@ -524,6 +572,12 @@ export async function buildAssetSwitchDecisions(args: {
             } };
         }
         const event = events[eventIndex]!;
+        const ranking = rankingEvents ? captureRankingEvent(event.timeSec, {}, assetNames) : null;
+        const considerRanking = (pool: typeof RANKING_ARM_SPECS[number]["pool"], raw: number, count: number, assetIndex: number, z?: number): void => {
+            if (!ranking || raw <= 0) return;
+            const candidate: Candidate = { assetIndex, raw, mean: count > 0 ? raw / count : raw, activePairs: count, adjusted: raw, z };
+            for (const spec of RANKING_ARM_SPECS) if (spec.pool === pool) insertRankingPick(ranking.arms[spec.field].picks, candidate, spec, event.timeSec, assetNames, digestFor);
+        };
         let digestCache: Map<number, string> | null = null;
         const digestFor = (assetIndex: number): string => {
             const cached = digestCache?.get(assetIndex);
@@ -553,6 +607,7 @@ export async function buildAssetSwitchDecisions(args: {
         for (let assetIndex = 0; assetIndex < assetCount; assetIndex += 1) {
             const raw = event.rawScore[assetIndex]!;
             const activePairs = event.activePairCount[assetIndex]!;
+            considerRanking("positives", raw, activePairs, assetIndex);
             if (raw > 0) {
                 const mean = activePairs > 0 ? raw / activePairs : raw;
                 positiveCount += 1;
@@ -565,6 +620,7 @@ export async function buildAssetSwitchDecisions(args: {
             }
 
             const rawProfit = event.rawScoreProfit[assetIndex]!;
+            considerRanking("profitPositives", rawProfit, event.activePairCountProfit[assetIndex]!, assetIndex);
             if (rawProfit > 0) {
                 const count = event.activePairCountProfit[assetIndex]!;
                 topRawProfit.consider(rawProfit, assetIndex);
@@ -572,6 +628,7 @@ export async function buildAssetSwitchDecisions(args: {
             }
 
             const rawProfitNow = event.rawScoreProfitNow[assetIndex]!;
+            if (ranking) considerRanking("profitNowPositives", rawProfitNow, event.activePairCountProfitNow[assetIndex]!, assetIndex, zSurprise(assetIndex, rawProfitNow));
             if (rawProfitNow > 0) {
                 const count = event.activePairCountProfitNow[assetIndex]!;
                 const mean = count > 0 ? rawProfitNow / count : rawProfitNow;
@@ -585,6 +642,7 @@ export async function buildAssetSwitchDecisions(args: {
             }
 
             const rawProfitNowConf = event.rawScoreProfitNowConf[assetIndex]!;
+            considerRanking("profitNowConfidencePositives", rawProfitNowConf, event.activePairCountProfitNowConf[assetIndex]!, assetIndex);
             if (rawProfitNowConf > 0) topRawProfitNowConf.consider(rawProfitNowConf, assetIndex);
 
             // Each asset's TOP_Z history is independent. Read its prior
@@ -620,6 +678,14 @@ export async function buildAssetSwitchDecisions(args: {
             }
         }
         decisions.push({ timeSec: event.timeSec, picks });
+        if (ranking) {
+            for (const field of REPLAY_ARM_FIELDS) {
+                const row = ranking.arms[field];
+                row.reason = row.picks.length < 5 ? "small_pool" : picks[field] === null ? "unresolved_pick"
+                    : row.picks[0]!.assetIndex !== picks[field] ? "pick_changed" : undefined;
+            }
+            rankingEvents!.push(ranking);
+        }
         onEventProcessed?.(eventIndex);
 
         if (eventIndex % 1000 === 0) {
@@ -634,7 +700,7 @@ export async function buildAssetSwitchDecisions(args: {
             }
         }
     }
-    return { ok: true, result: { decisions, candidateComparisonEvents, selectedAssets } };
+    return { ok: true, result: { decisions, candidateComparisonEvents, selectedAssets, ...(rankingEvents ? { rankingEvents } : {}) } };
 }
 
 export interface OutcomeRequestPlan {
@@ -798,6 +864,7 @@ export function pickUsableMinByAssetNames(
 
 
 export async function selectAfterOutcomes(args: {
+    onRankingSelection?: (time: number, field: ReplayArmField, pool: readonly Candidate[], effectivePick: number) => void;
     views: readonly EventView[];
     profitOnlyEvents: readonly ProfitOnlyEvent[];
     assetNames: readonly string[];
@@ -1199,6 +1266,16 @@ export async function selectAfterOutcomes(args: {
                 eligiblePoolSize: remaining.length,
                 control,
             };
+            if (args.onRankingSelection) {
+                const original = entry.kind === "view" ? views[entry.index] : profitOnlyEvents[entry.index];
+                const originalPool = original && spec.pool in original ? (original as EventView)[spec.pool] : [];
+                const frozenPool = boundaryByAsset ? originalPool.filter((candidate) => {
+                    const boundary = boundaryByAsset.get(candidate.assetIndex);
+                    const last = previous.get(candidate.assetIndex);
+                    return boundary === undefined || last === undefined || boundary - last > cooldownBars;
+                }) : originalPool;
+                args.onRankingSelection(entry.timeSec, spec.field, frozenPool, selectedAssetIndex);
+            }
             if (entry.kind === "view" && entry.index === views.length - 1) {
                 latestEligiblePools.set(spec.field, remaining);
             }

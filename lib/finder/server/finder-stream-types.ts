@@ -1,3 +1,4 @@
+import { compactRankingMeasurement } from "../../batch-backtest/open-score-replay/types";
 /**
  * Stream + status contract for the server-owned Finder Symbol Universe job.
  *
@@ -499,7 +500,9 @@ export function toScalarCandidate(candidate: FinderUniverseCandidate): FinderUni
 export function toScalarArmPerformanceCandidate(
     candidate: FinderArmPerformanceCandidate,
 ): FinderArmPerformanceCandidate {
+    const rankingMeasurement = compactRankingMeasurement(candidate.rankingMeasurement);
     const common = {
+        ...(rankingMeasurement ? { rankingMeasurement } : {}),
         candidateId: candidate.candidateId,
         candidateOrdinal: candidate.candidateOrdinal,
         strategyKey: candidate.strategyKey,

@@ -31,6 +31,88 @@ import { pickUsableMaxByAssetNames, pickUsableMinByAssetNames } from "./candidat
 import { yieldLoop } from "./runtime";
 import { REPLAY_ARM_FIELDS } from "./arm-contract";
 import { REPLAY_ARM_TO_FINDER_ARM } from "./arm-contract";
+import { RANKING_MEASUREMENT_SEMANTICS, type RankingMeasurementSummary, type RankingSkipReason } from "./types";
+import type { RankingEvent, RankingPick } from "./internal-types";
+import { blockBootstrapMeanCi, buildRankingTimeBlocks, meanOrNull, type RankingMeasurementWindow } from "./statistics";
+import type { TargetOutcomeStageResult } from "./target-outcomes";
+
+/** Predictor ties and equal outcomes are neutral, irrespective of tie digest. */
+export function rankingPairCredit(a: RankingPick, b: RankingPick, aReturn: number, bReturn: number): number {
+    return (a.key === b.key && a.secondary === b.secondary) || aReturn === bReturn ? 0.5 : aReturn > bReturn ? 1 : 0;
+}
+
+export async function aggregateRankingMeasurement(args: {
+    events: readonly RankingEvent[];
+    outcomes: TargetOutcomeStageResult;
+    horizonBars: number;
+    horizonIndex?: number;
+    interval?: string;
+    outcomeIndexOf?: (time: number, index: number) => number;
+    shouldStop: () => boolean;
+}): Promise<RankingMeasurementSummary> {
+    const arms = {} as RankingMeasurementSummary["arms"];
+    const hi = args.horizonIndex ?? 0;
+    // Sweep and candidate timelines are chronological; sorting also supports pure fixtures.
+    const order = args.events.map((event, index) => ({ event, index })).sort((a, b) => a.event.timeSec - b.event.timeSec);
+    for (const field of REPLAY_ARM_FIELDS) {
+        const skippedReasons: Partial<Record<RankingSkipReason, number>> = {};
+        const values: number[] = [], firstValues: number[] = [];
+        const windows: RankingMeasurementWindow[] = [];
+        let eligibleEvents = 0, tiedComparisons = 0, soleFirstPlaceCount = 0, sharedFirstPlaceCount = 0;
+        const skip = (reason: RankingSkipReason): void => { skippedReasons[reason] = (skippedReasons[reason] ?? 0) + 1; };
+        for (let i = 0; i < order.length; i += 1) {
+            if ((i & 511) === 0) { await yieldLoop(); if (args.shouldStop()) throw new Error("OPEN_SCORE USD replay cancelled during ranking measurement."); }
+            const { event, index } = order[i]!;
+            const row = event.arms[field];
+            if (row.reason) { skip(row.reason); continue; }
+            if (row.picks.length !== 5 || new Set(row.picks.map((pick) => pick.assetIndex)).size !== 5) { skip("small_pool"); continue; }
+            const outcomeIndex = args.outcomeIndexOf?.(event.timeSec, index) ?? index;
+            const outcomes = args.outcomes.returnsByView[outcomeIndex];
+            let reason: RankingSkipReason | undefined;
+            const completed: ViewOutcomeRecord[] = [];
+            for (const pick of row.picks) {
+                const outcome = outcomes?.get(pick.assetIndex);
+                if (args.outcomes.invalidRankingAssets?.has(pick.assetIndex)) reason ??= "invalid_price";
+                else if (args.outcomes.dataGapAssets.has(pick.assetIndex) || args.outcomes.rankingGapAssetsByView?.get(outcomeIndex)?.has(pick.assetIndex)) reason ??= "data_gap";
+                else if (args.outcomes.missingAssets.has(pick.assetIndex)) reason ??= "missing_target";
+                else if (!outcome) reason ??= "missing_entry";
+                else if (outcome.statuses[hi] !== "ok") reason ??= outcome.statuses[hi] === "right_censored" ? "right_censored" : "invalid_price";
+                else if (![outcome.long[hi], outcome.entryTime, outcome.exitTimes[hi]].every(Number.isFinite)) reason ??= "invalid_price";
+                else completed.push(outcome);
+            }
+            if (reason) { skip(reason); continue; }
+            const first = completed[0]!;
+            if (completed.some((outcome) => outcome.entryTime !== first.entryTime || outcome.exitTimes[hi] !== first.exitTimes[hi])) { skip("calendar_mismatch"); continue; }
+            eligibleEvents += 1;
+            const selectedReturn = first.long[hi]!;
+            if (completed.every((outcome) => outcome.long[hi]! <= selectedReturn)) {
+                if (completed.some((outcome, index) => index > 0 && outcome.long[hi] === selectedReturn)) sharedFirstPlaceCount += 1;
+                else soleFirstPlaceCount += 1;
+            }
+            let credits = 0, firstCredits = 0;
+            for (let a = 0; a < 5; a += 1) for (let b = a + 1; b < 5; b += 1) {
+                const credit = rankingPairCredit(row.picks[a]!, row.picks[b]!, completed[a]!.long[hi]!, completed[b]!.long[hi]!);
+                if (credit === 0.5) tiedComparisons += 1;
+                credits += credit;
+                if (a === 0) firstCredits += credit;
+            }
+            values.push(credits / 10); firstValues.push(firstCredits / 4);
+            windows.push({ entryTime: first.entryTime, exitTime: first.exitTimes[hi]! });
+        }
+        if (args.shouldStop()) throw new Error("OPEN_SCORE USD replay cancelled during ranking measurement.");
+        const { blocks, measurementWindowSec, timeBlockWidthSec, timeCoverageSec } = buildRankingTimeBlocks(values, windows, args.horizonBars, args.interval);
+        const ci = await blockBootstrapMeanCi(blocks, 10_000, args.shouldStop);
+        arms[field] = { eligibleEvents, scoredEvents: values.length,
+            skippedEvents: Object.values(skippedReasons).reduce((sum, n) => sum + n, 0), skippedReasons,
+            tiedComparisons, comparisons: values.length * 10, meanAccuracy: meanOrNull(values), top1Superiority: meanOrNull(firstValues),
+            soleFirstPlaceCount, sharedFirstPlaceCount,
+            soleFirstPlaceRate: values.length ? soleFirstPlaceCount / values.length : null,
+            sharedFirstPlaceRate: values.length ? sharedFirstPlaceCount / values.length : null,
+            ciLower: ci.lower, ciUpper: ci.upper, blockCount: blocks.length, measurementWindowSec, timeBlockWidthSec, timeCoverageSec,
+            status: ci.lower !== null && ci.upper !== null ? "available" : values.length ? "insufficient_data" : "no_events" };
+    }
+    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars: args.horizonBars, arms };
+}
 
 const ARM_EVENT_DETAIL_SELECTORS = REPLAY_ARM_TO_FINDER_ARM as Record<ReplayArmField, OpenScoreUsdEventDetailSelector>;
 

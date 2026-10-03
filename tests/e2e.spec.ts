@@ -146,6 +146,85 @@ const verifyLayout = async (page: Page): Promise<string[]> => {
     });
 };
 
+const verifyRankingCards = async (page: Page): Promise<void> => {
+    let replayRequests = 0;
+    const observe = (request: { url(): string }) => {
+        if (request.url().includes('/api/finder/arm-performance-run')) replayRequests += 1;
+    };
+    page.on('request', observe);
+    try {
+        await page.click('.panel-tab[data-tab="finder"]');
+        await page.waitForSelector('#finderScope', { visible: true });
+        await page.evaluate(async () => {
+            const managerPath = '/lib/finder-manager.ts';
+            const typesPath = '/lib/batch-backtest/open-score-replay/types.ts';
+            const { finderManager: manager } = await import(managerPath);
+            const { createEmptyRankingMeasurement } = await import(typesPath);
+            for (const [id, value] of [
+                ['finderScope', 'arm_performance'],
+                ['finderArmPerformanceMeasurement', 'ranking_consistency'],
+                ['finderArmPerformanceHorizon', '20'],
+                ['finderArmPerformanceRankingSort', 'overall_ordering'],
+            ]) {
+                const element = document.getElementById(id) as HTMLSelectElement;
+                element.value = value!;
+                element.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+            manager.resultStore.armPerformanceDisplayLimit = 1;
+            const rows = [0, 1].map((ordinal) => {
+                const rankingMeasurement = createEmptyRankingMeasurement(20);
+                Object.assign(rankingMeasurement.arms.topRawProfitNow, {
+                    scoredEvents: 100, eligibleEvents: 100, comparisons: 1000, meanAccuracy: 0.8,
+                    top1Superiority: ordinal === 0 ? 0.6 : 0.9, ciLower: ordinal === 0 ? 0.7 : 0.6,
+                    ciUpper: 0.9, status: 'available', blockCount: 10,
+                    soleFirstPlaceCount: 20, sharedFirstPlaceCount: 10, soleFirstPlaceRate: 0.2, sharedFirstPlaceRate: 0.1,
+                    measurementWindowSec: 11 * 86400, timeBlockWidthSec: 22 * 86400, timeCoverageSec: 220 * 86400,
+                });
+                return {
+                    candidateId: `ranking-card-${ordinal}`, candidateOrdinal: ordinal,
+                    strategyKey: 'ema_confirmation', strategyName: `Ranking fixture ${ordinal}`,
+                    params: { fastPeriod: 12 }, backtestSettings: {}, replayMode: 'horizon', horizon: 20,
+                    requestedEngineMode: 'typescript', actualEngineMode: 'typescript',
+                    pairCoverage: { requestedPairs: 5, completedPairs: 5, failedPairs: 0, replayTargetLoadFailures: 0, noTradePairs: 0 },
+                    metrics: { TOP_RAW_PROFIT_NOW: { events: 100, topMean: 0.01, randomMean: 0, delta: 0.01, ciLower: 0, ciUpper: 0.02 } },
+                    rankingMeasurement,
+                };
+            });
+            manager.adoptArmPerformanceResults(rows, null, true, false);
+            manager.renderLatestResults();
+            if (manager.getLatestCandidate().candidateOrdinal !== 0) throw new Error('Overall ordering sort failed');
+            const sort = document.getElementById('finderArmPerformanceRankingSort') as HTMLSelectElement;
+            sort.value = 'selected_asset';
+            sort.dispatchEvent(new Event('change', { bubbles: true }));
+            if (manager.getLatestCandidate().candidateOrdinal !== 1 || manager.resultStore.armPerformanceRunResults.length !== 2) {
+                throw new Error('Selected asset sort must use the full inventory before Top Results');
+            }
+        });
+        const panel = '#finderList details.finder-measurement-details';
+        const inspect = () => page.$eval(panel, (element) => ({
+            open: (element as HTMLDetailsElement).open,
+            readable: element.textContent?.includes('width 22 days'),
+            panelHeight: element.getBoundingClientRect().height,
+            applyEnabled: !(element.closest('.finder-row')!.querySelector('.finder-apply') as HTMLButtonElement).disabled,
+        }));
+        const initial = await inspect();
+        if (!initial.open || !initial.readable || !initial.applyEnabled) throw new Error(`Expanded ranking card contract failed: ${JSON.stringify(initial)}`);
+        const visibleCount = await page.$eval('#finderList .finder-row', (row) =>
+            Array.from(row.querySelectorAll('.finder-metrics > span')).some((chip) => chip.textContent === 'Scored events 100' && !chip.closest('details')));
+        if (!visibleCount) throw new Error('Scored events must be outside Measurement details');
+        await page.click(`${panel} summary`);
+        const closed = await inspect();
+        if (closed.open || closed.panelHeight >= initial.panelHeight) throw new Error('Measurement details collapse failed');
+        await page.click(`${panel} summary`);
+        const opened = await inspect();
+        if (!opened.open || opened.panelHeight <= closed.panelHeight || !opened.applyEnabled) throw new Error('Measurement details expansion failed');
+        if (replayRequests !== 0) throw new Error('Local ranking sort launched a replay');
+        console.log('Ranking card expansion and local sorting passed.');
+    } finally {
+        page.off('request', observe);
+    }
+};
+
 async function runTest() {
     try {
         console.log('Starting Vite server for E2E test...');
@@ -409,6 +488,8 @@ async function runTest() {
                 'configuration save'
             );
             console.log('Configuration saved successfully.');
+
+            await verifyRankingCards(page);
 
             console.log('Performing layout verification...');
             const layoutIssues = await verifyLayout(page);

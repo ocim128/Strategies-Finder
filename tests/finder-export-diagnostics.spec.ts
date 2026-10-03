@@ -9,6 +9,7 @@
  * failure/fallback control flow.
  */
 import { expect } from "chai";
+import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
 import type { AssetSwitchArmSummary } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 import { describe, it, after } from "node:test";
 import {
@@ -200,6 +201,42 @@ describe("Finder metadata payload builders", () => {
         expect(payload.rank).to.equal(1);
         expect(payload.metrics.averageExpectancy).to.equal(1.5);
         expect(payload.oos).to.equal(null);
+    });
+
+    it("copies ranking measurement with scored counts, frozen horizon and original return metric", () => {
+        const rankingMeasurement = createEmptyRankingMeasurement(20);
+        Object.assign(rankingMeasurement.arms.topRaw, { scoredEvents: 5, eligibleEvents: 5, comparisons: 50, meanAccuracy: 0.8, top1Superiority: 0.9, soleFirstPlaceCount: 2, sharedFirstPlaceCount: 1, soleFirstPlaceRate: 0.4, sharedFirstPlaceRate: 0.2, blockCount: 5, measurementWindowSec: 10, timeBlockWidthSec: 20, timeCoverageSec: 100, status: "insufficient_data" });
+        const candidate = { candidateId: "r:0", candidateOrdinal: 0, replayMode: "horizon", horizon: 20, metrics: { TOP_RAW: { events: 42, topMean: 0.1 } }, rankingMeasurement } as unknown as FinderArmPerformanceCandidate;
+        const args = { results: [candidate], runContext: null, inventoryComplete: true, selectedArm: "TOP_RAW" as const, scoringBasis: "exclude_top_contributor" as const,
+            displayFilter: { measurement: "ranking_consistency" as const, rankingHorizon: 20, eventFilterEnabled: true, minEvents: 5, maxEvents: 5 } };
+        const payload = buildArmPerformanceTopResultsPayload(args);
+        expect(payload.measurement).to.equal("ranking_consistency");
+        expect(payload.scoringBasis).to.equal("raw");
+        expect(payload.rankingMetric).to.equal("mean_accuracy_ci_lower");
+        expect(payload.rankingHorizon).to.equal(20);
+        expect(payload).not.to.have.property("eventFilter");
+        expect(payload.results).to.have.length(1);
+        expect(payload.results[0].selectedArmMetric).to.deep.equal(candidate.metrics?.TOP_RAW);
+        expect(payload.results[0].selectedArmRanking.meanAccuracy).to.equal(0.8);
+        expect(payload.results[0].selectedArmRanking).to.include({ soleFirstPlaceCount: 2, sharedFirstPlaceCount: 1, soleFirstPlaceRate: 0.4, sharedFirstPlaceRate: 0.2 });
+        expect(payload.rankingSort).to.equal("overall_ordering");
+        const selected = buildArmPerformanceTopResultsPayload({ ...args, displayFilter: { ...args.displayFilter, rankingSort: "selected_asset" } });
+        expect(selected.rankingSort).to.equal("selected_asset");
+        expect(selected.rankingMetric).to.equal("top1_superiority");
+        expect(selected.results[0].firstPlaceFrequencyAvailability).to.equal("available");
+        const legacy = structuredClone(candidate);
+        delete legacy.rankingMeasurement!.arms.topRaw.soleFirstPlaceCount; delete legacy.rankingMeasurement!.arms.topRaw.sharedFirstPlaceCount;
+        delete legacy.rankingMeasurement!.arms.topRaw.soleFirstPlaceRate; delete legacy.rankingMeasurement!.arms.topRaw.sharedFirstPlaceRate;
+        const legacyPayload = buildArmPerformanceTopResultsPayload({ ...args, results: [legacy] });
+        expect(legacyPayload.results[0].firstPlaceFrequencyAvailability).to.equal("rerun_required");
+        expect(legacyPayload.results[0].selectedArmRanking.top1Superiority).to.equal(0.9);
+        expect(payload.results[0].selectedArmRanking).to.include({ scoredEvents: 5, blockCount: 5, timeBlockWidthSec: 20, timeCoverageSec: 100 });
+        expect(payload.rankingSemantics).to.equal("top-five-ranking-v2");
+        expect(payload.scoredEventFilter).to.deep.equal({ enabled: true, minEvents: 5, maxEvents: 5 });
+        expect(payload).not.to.have.property("retainedEventFilter");
+        const missing = buildArmPerformanceTopResultsPayload({ ...args, displayFilter: { ...args.displayFilter, eventFilterEnabled: false, rankingHorizon: 21 } });
+        expect(missing.results[0].rankingAvailability).to.equal("rerun_required");
+        expect(missing.results[0].selectedArmRanking).to.equal(null);
     });
 
     it("labels Arm rows with the selected arm, its metric, and the run id", () => {

@@ -22,6 +22,7 @@ import type {
 } from "./types";
 import type { DecisionEvent, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { yieldLoop } from "./runtime";
+import { selectClosedCandleWindow } from "../../alert-evaluation-window";
 
 const POOL_SNAPSHOT_EMA_PERIOD = 200;
 
@@ -123,6 +124,8 @@ function firstBarAfter(times: readonly (number | null)[], t: number): number {
 export type ViewOutcomeRecord = OpenScoreUsdSharedOutcomeRecord;
 
 export interface TargetOutcomeStageResult {
+    invalidRankingAssets?: Set<number>;
+    rankingGapAssetsByView?: Map<number, Set<number>>;
     returnsByView: Array<Map<number, ViewOutcomeRecord> | null>;
     missingAssets: Set<number>;
     dataGapAssets: Map<number, CandleGap>;
@@ -149,6 +152,8 @@ function lastBarAtOrBefore(times: readonly (number | null)[], t: number): number
 }
 
 export async function evaluateTargetOutcomes(args: {
+    /** Switch datasets also carry a known current open; ranking requires completed candles. */
+    requireClosedBars?: boolean;
     options: RunOpenScoreUsdReplayOptions;
     targetLoader: (() => AsyncIterable<OpenScoreUsdTarget>) | undefined;
     horizons: number[];
@@ -218,6 +223,8 @@ export async function evaluateTargetOutcomes(args: {
     }> | null> = new Array(totalEventCount).fill(null);
     const boundaryIndicesByView: Array<Map<number, number> | null> = new Array(totalEventCount).fill(null);
     const missingAssets = new Set<number>();
+    const invalidRankingAssets = options.rankingHorizon !== undefined ? new Set<number>() : undefined;
+    const rankingGapAssetsByView = options.rankingHorizon !== undefined ? new Map<number, Set<number>>() : undefined;
     const dataGapAssets = new Map<number, CandleGap>();
     const dataGapEvents = new Set<number>();
     const censoredEvents = new Set<number>();
@@ -361,16 +368,25 @@ export async function evaluateTargetOutcomes(args: {
         let data: OHLCVData[] | null = null;
         let cacheEntry = options.sharedTargetCache?.get(item.name) ?? null;
         if (item.diagnosticIdx !== undefined || !cacheEntry) {
-            const loaded = options.loadTargetDataset
+            let loaded = options.loadTargetDataset
                 ? await options.loadTargetDataset(item.name)
                 : datasetByAsset.get(item.name)?.data ?? null;
+            if (args.requireClosedBars && loaded && options.interval && options.evaluationCutoffSec !== undefined) {
+                loaded = selectClosedCandleWindow(loaded, options.interval, options.evaluationCutoffSec, 1)?.candles ?? [];
+            }
             // Absent target (mode-dependent): the missing-target backfill
             // below covers it, matching the prior loader-yield semantics.
-            if (loaded === null) continue;
+            if (loaded === null) {
+                if (item.aIdx !== undefined) missingAssets.add(item.aIdx);
+                continue;
+            }
             data = loaded;
             if (!cacheEntry) {
                 cacheEntry = {
-                    gapIntervals: findCandleGaps(data),
+                    // The gap helper expects seconds; target series also support
+                    // milliseconds, ISO strings and BusinessDay timestamps.
+                    gapIntervals: findCandleGaps(data.some((bar) => typeof bar.time !== "number" || timeToNumber(bar.time) !== bar.time)
+                        ? data.map((bar) => ({ ...bar, time: timeToNumber(bar.time)! as OHLCVData["time"] })) : data),
                     outcomesByEventTimeSec: new Map(),
                     boundaryIndexByEventTimeSec: new Map(),
                 };
@@ -389,6 +405,7 @@ export async function evaluateTargetOutcomes(args: {
         targetsSeen += 1;
         if (diagnosticIdx !== undefined) diagnosticTargetsSeen?.add(diagnosticIdx);
         let times = data ? data.map((b) => timeToNumber(b.time)) : null;
+        if (invalidRankingAssets && aIdx !== undefined && times && times.some((time, index) => time === null || !Number.isFinite(time) || (index > 0 && time <= times![index - 1]!))) invalidRankingAssets.add(aIdx);
         if (dataGap) {
             if (aIdx !== undefined) dataGapAssets.set(aIdx, dataGap);
             if (candidateOutcomes && diagnosticIdx !== undefined) {
@@ -632,6 +649,13 @@ export async function evaluateTargetOutcomes(args: {
             let perAsset = returnsByView[viewIdx];
             if (!perAsset) { perAsset = new Map(); returnsByView[viewIdx] = perAsset; }
             perAsset.set(aIdx, record);
+            if (rankingGapAssetsByView) {
+                const horizonIndex = horizons.indexOf(options.rankingHorizon!);
+                if (cacheEntry.gapIntervals.some((gap) => gap.to > record.entryTime && gap.from < record.exitTimes[horizonIndex]!)) {
+                    const set = rankingGapAssetsByView.get(viewIdx) ?? new Set<number>();
+                    set.add(aIdx); rankingGapAssetsByView.set(viewIdx, set);
+                }
+            }
             if (record.long.some((r) => !Number.isFinite(r))) censoredEvents.add(viewIdx);
         }
         onPhase("outcomes", `evaluated ${item.name} (${targetsSeen}/${totalTargets})`, targetsSeen, totalTargets);
@@ -720,6 +744,6 @@ export async function evaluateTargetOutcomes(args: {
 
     return {
         ok: true,
-        result: { returnsByView, missingAssets, dataGapAssets, dataGapEvents, censoredEvents, noDataEvents, boundaryIndicesByView },
+        result: { returnsByView, missingAssets, dataGapAssets, dataGapEvents, censoredEvents, noDataEvents, boundaryIndicesByView, ...(invalidRankingAssets ? { invalidRankingAssets, rankingGapAssetsByView } : {}) },
     };
 }

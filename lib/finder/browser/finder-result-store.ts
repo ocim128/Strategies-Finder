@@ -160,6 +160,9 @@ export class FinderResultStore {
 		if (Object.keys(this.armPerformanceDisplayFilter).length === 0) {
 			const armOptions = context?.searchOptions?.armPerformance;
 			this.armPerformanceDisplayFilter = {
+				measurement: armOptions?.measurement ?? "return",
+				rankingSort: armOptions?.rankingSort ?? "overall_ordering",
+				rankingHorizon: armOptions?.replayMode === "asset_switch" ? armOptions?.rankingHorizon : armOptions?.horizon,
 				basis: armOptions?.scoringBasis ?? "raw",
 				eventFilterEnabled: armOptions?.eventFilterEnabled ?? false,
 				minEvents: armOptions?.minEvents ?? 1,

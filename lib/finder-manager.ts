@@ -61,7 +61,7 @@ import type {
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 } from './types/finder';
-import type { FinderArmPerformanceArm } from "./finder/finder-arm-performance-metrics";
+import { getFinderArmRankingMetric, type FinderArmPerformanceArm } from "./finder/finder-arm-performance-metrics";
 
 export class FinderManager {
 	/** Owns every result inventory, display limit, and the run-sort baseline. */
@@ -254,6 +254,9 @@ export class FinderManager {
 		this.controls.initOosValidationUI();
 		this.getDom().finderResort.addEventListener("change", () => this.applyResort());
 		for (const element of [
+			dom.finderArmPerformanceMeasurement,
+			dom.finderArmPerformanceRankingSort,
+			dom.finderArmPerformanceHorizon,
 			dom.finderArmPerformanceExcludeTopContributor,
 			dom.finderArmPerformanceEventFilterEnabled,
 			dom.finderArmPerformanceMinEvents,
@@ -349,7 +352,7 @@ export class FinderManager {
 			this.resultStore.armPerformanceRunContext = restoredResults.runContext;
 			this.resultStore.armPerformanceInventoryComplete = restoredResults.inventoryComplete;
 			this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.controls.uiState.topN);
-			this.getDom().finderCopyDiagnostics.disabled = !restoredResults.runContext && restoredResults.results.length === 0;
+			this.adoptArmPerformanceResults(restoredResults.results, restoredResults.runContext, restoredResults.inventoryComplete, false);
 		}
 		debugLogger.event("finder.latest_results_restored", {
 			scope: restoredResults.scope,
@@ -631,6 +634,18 @@ export class FinderManager {
 		complete: boolean,
 		persist = true,
 	): void {
+		if (Object.keys(this.resultStore.armPerformanceDisplayFilter).length === 0) {
+			const saved = this.controls.uiState;
+			this.resultStore.initializeArmPerformanceDisplayFilter({
+				measurement: saved.armPerformanceMeasurement,
+				rankingSort: saved.armPerformanceRankingSort,
+				rankingHorizon: saved.armPerformanceHorizon,
+				basis: saved.armPerformanceExcludeTopContributor ? "exclude_top_contributor" : "raw",
+				eventFilterEnabled: saved.armPerformanceEventFilterEnabled,
+				minEvents: saved.armPerformanceMinEvents,
+				maxEvents: saved.armPerformanceMaxEventsText === "" ? null : Number(saved.armPerformanceMaxEventsText),
+			});
+		}
 		this.resultStore.adoptArmPerformanceResults(results, context, complete, persist);
 		this.getDom().finderCopyDiagnostics.disabled = !context && results.length === 0;
 	}
@@ -711,6 +726,9 @@ export class FinderManager {
 		const selected = dom.finderResort.value;
 		const arm = (selected || "TOP_RAW_PROFIT_NOW") as FinderArmPerformanceArm;
 		this.resultStore.setArmPerformanceDisplayFilter({
+			rankingSort: dom.finderArmPerformanceRankingSort.value === "selected_asset" ? "selected_asset" : "overall_ordering",
+			measurement: dom.finderArmPerformanceMeasurement.value === "ranking_consistency" ? "ranking_consistency" : "return",
+			rankingHorizon: Number(dom.finderArmPerformanceHorizon.value),
 			basis: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
 			eventFilterEnabled: dom.finderArmPerformanceEventFilterEnabled.checked,
 			minEvents: Number.isInteger(minRaw) && minRaw >= 0 ? minRaw : 1,
@@ -759,6 +777,7 @@ export class FinderManager {
 					? candidate.assetSwitchMetrics[currentArm]?.status === "complete"
 						&& !candidate.assetSwitchMetrics[currentArm]?.topContributorExclusion
 					: !candidate.metricsExTopContributor?.[currentArm]),
+				this.resultStore.armPerformanceRunResults.some((candidate) => !getFinderArmRankingMetric(candidate, currentArm, this.resultStore.armPerformanceDisplayFilter)),
 			);
 			return;
 		}

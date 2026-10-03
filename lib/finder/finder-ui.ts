@@ -1,3 +1,5 @@
+import { RANKING_MEASUREMENT_SEMANTICS } from "../batch-backtest/open-score-replay/types";
+import { getFinderArmRankingMetric } from "./finder-arm-performance-metrics";
 import { getRequiredElement, setVisible } from "../dom-utils";
 import { escapeHtml } from "../html-escape";
 import {
@@ -15,6 +17,15 @@ import { calculateFinderAssetOosAverageHorizonMetrics } from "./finder-asset-opp
 import { computePerformanceVerdict, computeStrategyVerdict } from "./finder-universe-metrics";
 import type { FinderArmPerformanceArm, FinderArmPerformanceDisplayFilter } from "./finder-arm-performance-metrics";
 import type { FinderArmPerformanceScoringBasis } from "./finder-arm-performance-metrics";
+
+/** Human-readable scalar measurement durations; replay metadata remains in seconds. */
+function formatMeasurementDuration(seconds: number | null): string {
+    if (seconds === null || !Number.isFinite(seconds) || seconds < 0) return "n/a";
+    const units: Array<[number, string]> = [[86400, "day"], [3600, "hour"], [60, "minute"], [1, "second"]];
+    const [size, unit] = units.find(([size]) => seconds >= size) ?? units[3]!;
+    const amount = Number((seconds / size).toFixed(1));
+    return `${amount} ${unit}${amount === 1 ? "" : "s"}`;
+}
 
 function formatExitAlpha(value: number): string {
     return `${value >= 0 ? "+" : ""}${value.toFixed(2)} pp`;
@@ -406,7 +417,7 @@ export class FinderUI {
                 unavailableDetail.textContent = `Unavailable reasons: ${[...unavailableReasonCounts.entries()]
                     .sort(([left], [right]) => left.localeCompare(right))
                     .map(([reason, count]) => `${reason} ${count}`)
-                    .join(" Â· ")}`;
+                    .join(" · ")}`;
                 summary.appendChild(unavailableDetail);
             }
 
@@ -650,22 +661,30 @@ export class FinderUI {
 			? candidate.assetSwitchMetrics[arm]?.status === "complete"
 				&& !candidate.assetSwitchMetrics[arm]?.topContributorExclusion
 			: !candidate.metricsExTopContributor?.[arm]),
+		rankingMetricsUnavailable = results.some((candidate) => !getFinderArmRankingMetric(candidate, arm, filter)),
 	): void {
         const list = this.getListElement();
         const copyButton = this.getCopyButton();
         list.innerHTML = "";
         const replayMode = results[0]?.replayMode ?? context?.replayMode ?? "horizon";
-        const countLabelMode = replayMode === "asset_switch";
+        const ranking = filter.measurement === "ranking_consistency";
+        const countLabelMode = !ranking && replayMode === "asset_switch";
         const eventFilterLabel = document.getElementById("finderArmPerformanceEventFilterLabel");
         const minFilterLabel = document.getElementById("finderArmPerformanceMinEventsLabel");
         const maxFilterLabel = document.getElementById("finderArmPerformanceMaxEventsLabel");
-        if (eventFilterLabel) eventFilterLabel.textContent = countLabelMode ? "Completed trade count filter" : "Completed event count filter";
+        if (eventFilterLabel) eventFilterLabel.textContent = ranking ? "Scored ranking event count filter" : countLabelMode ? "Completed trade count filter" : "Completed event count filter";
         if (minFilterLabel) minFilterLabel.textContent = countLabelMode ? "Min trades" : "Min events";
         if (maxFilterLabel) maxFilterLabel.textContent = countLabelMode ? "Max trades" : "Max events";
         if (results.length === 0) {
             setVisible("finderEmpty", true);
             if (copyButton) copyButton.disabled = true;
-			if (replayMode === "horizon" && basis === "exclude_top_contributor" && adjustedMetricsUnavailable) {
+			if (ranking && rankingMetricsUnavailable) {
+				const note = document.createElement("div");
+				note.className = "finder-sub finder-arm-performance-note";
+				note.textContent = "Rerun required: this saved inventory has no ranking measurement for the selected horizon.";
+				list.appendChild(note);
+			}
+			if (!ranking && replayMode === "horizon" && basis === "exclude_top_contributor" && adjustedMetricsUnavailable) {
 				const note = document.createElement("div");
 				note.className = "finder-sub finder-arm-performance-note";
 				note.textContent = "Contributor-excluded summaries are unavailable for this saved result. Rerun Finder to use this scoring basis.";
@@ -673,7 +692,7 @@ export class FinderUI {
 			} else if (filter.eventFilterEnabled) {
 				const note = document.createElement("div");
 				note.className = "finder-sub finder-arm-performance-note";
-				note.textContent = replayMode === "asset_switch"
+				note.textContent = ranking ? "No configurations match this arm and scored-ranking-event filter." : replayMode === "asset_switch"
 					? "No configurations match this arm and completed-trade filter."
 					: "No configurations match this arm and completed-event filter.";
 				list.appendChild(note);
@@ -683,7 +702,7 @@ export class FinderUI {
 
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
-		const effectiveBasis = basis;
+		const effectiveBasis = ranking ? "raw" : basis;
 		const note = document.createElement("div");
 		note.className = "finder-sub finder-arm-performance-note";
 		const cooldownBars = replayMode === "horizon" && context?.searchOptions.armPerformance?.selectionCooldownEnabled
@@ -697,11 +716,16 @@ export class FinderUI {
 			note.textContent = replayMode === "asset_switch"
 				? `Asset-switch replay holds one long target-asset position per arm, starts flat, and enters fixed $1,000 non-compounding positions. Raw ranking uses total net P&L in USD, including the open mark; costs are informational. Basis: ${effectiveBasis === "raw" ? "raw" : "top contributor excluded"}.${effectiveBasis === "exclude_top_contributor" ? " The highest cumulative asset P&L contribution is removed from the reported totals; the original position path is unchanged." : ""} ${eventFilterText} Ranked-arm ties use the deterministic selector tie-break; unresolved unique-only ties and no-pick decisions keep the current holding. A pending order is shown separately from the current position snapshot.${effectiveBasis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for some saved results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`
 			: `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Basis: ${effectiveBasis === "raw" ? "raw" : "top contributor excluded"}. ${eventFilterText} Cooldown: ${cooldownBars} bars${cooldownBars > 0 ? " (requires a new run to change)" : " (off)"}. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${effectiveBasis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for older results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
+        if (ranking) note.textContent = `Ranking consistency: descending ${filter.rankingSort === "selected_asset" ? "selected asset score" : "overall ordering CI lower bound"}. Fixed horizon ${results[0]?.rankingMeasurement?.horizonBars ?? context?.rankingHorizon ?? "?"} bars; ${RANKING_MEASUREMENT_SEMANTICS}. All valid events are scored, including overlapping windows. A sortable interval requires at least 100 scored events and ten populated time blocks; initial block width is twice the longest completed forward window. A 50% accuracy is the no-information reference. Intervals do not correct for searching configurations or market dependence. ${filter.eventFilterEnabled ? "Scored-event filter: " + (filter.minEvents ?? 1) + ".." + (filter.maxEvents ?? "unlimited") + "." : "Scored-event filter: off."}${inventoryIncomplete ? " Cached preview: unseen candidates may rank higher." : ""}`;
         list.appendChild(note);
 
         const fragment = document.createDocumentFragment();
         results.forEach((item, index) => {
 			const selectedSwitchMetric = item.replayMode === "asset_switch" ? item.assetSwitchMetrics[arm] : null;
+            const pendingOrder = selectedSwitchMetric?.pendingOrder;
+            const pendingAction = pendingOrder?.side === "sell"
+                ? `sell ${selectedSwitchMetric?.openPosition?.asset ?? "current holding"}${pendingOrder.destinationAsset ? `, then buy ${pendingOrder.destinationAsset}` : ""}`
+                : `buy ${pendingOrder?.destinationAsset ?? "selected asset"}`;
             const title = document.createElement("div");
             title.className = "finder-title";
             const titleText = document.createElement("span");
@@ -718,6 +742,16 @@ export class FinderUI {
                 value === null || !Number.isFinite(value) ? "n/a" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
+            const technicalMetrics = ranking ? document.createElement("div") : metrics;
+            technicalMetrics.className = "finder-metrics";
+            const rankingMetric = ranking ? getFinderArmRankingMetric(item, arm, filter) : undefined;
+            const percent = (value: number | null | undefined): string => value == null ? "n/a" : (value * 100).toFixed(2) + "%";
+            if (ranking) {
+                metrics.appendChild(this.createMetricChip(`Selected asset score ${percent(rankingMetric?.top1Superiority)}`));
+                metrics.appendChild(this.createMetricChip(`Best asset frequency ${percent(rankingMetric?.soleFirstPlaceRate)}`));
+                metrics.appendChild(this.createMetricChip(`Shared first place ${percent(rankingMetric?.sharedFirstPlaceRate)}`));
+                metrics.appendChild(this.createMetricChip(`Overall ordering accuracy ${percent(rankingMetric?.meanAccuracy)}`));
+            }
 			const appendSwitchPnlChip = (label: string, value: number | null): void => {
 				const chip = this.createMetricChip(`${label} ${formatNullableCurrency(value)}`);
 				if (value !== null && Number.isFinite(value)) {
@@ -727,11 +761,11 @@ export class FinderUI {
 				}
 				metrics.appendChild(chip);
 			};
-			metrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.replayMode === "horizon" ? `${item.horizon} bars` : "hold until asset changes"}`));
+			technicalMetrics.appendChild(this.createMetricChip(`${arm.replaceAll("_", " ")} · ${item.replayMode === "horizon" ? `${item.horizon} bars` : "hold until asset changes"}`));
 			if (item.replayMode === "asset_switch") {
 				const switchMetric = selectedSwitchMetric!;
 				const contributorExclusion = switchMetric.topContributorExclusion;
-				metrics.appendChild(this.createMetricChip(`Status ${switchMetric.status.replaceAll("_", " ")}`));
+				if (!ranking && switchMetric.status !== "complete") metrics.appendChild(this.createMetricChip(`Status ${switchMetric.status.replaceAll("_", " ")}`));
 				appendSwitchPnlChip("Total net P&L", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedTotalNetPnl ?? null
 					: switchMetric.totalNetPnl);
@@ -741,46 +775,87 @@ export class FinderUI {
 				appendSwitchPnlChip("Open", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedOpenPositionNetPnl ?? null
 					: switchMetric.openPositionNetPnl);
-				metrics.appendChild(this.createMetricChip(`Completed trades ${switchMetric.completedTrades} · entries ${switchMetric.enteredCount}`));
-				metrics.appendChild(this.createMetricChip(`Costs ${formatNullableCurrency(switchMetric.totalCosts)}`));
+				if (ranking && switchMetric.status !== "complete") metrics.appendChild(this.createMetricChip(`Status ${switchMetric.status.replaceAll("_", " ")}`));
+				technicalMetrics.appendChild(this.createMetricChip(`Completed trades ${switchMetric.completedTrades} · entries ${switchMetric.enteredCount}`));
+				technicalMetrics.appendChild(this.createMetricChip(`Costs ${formatNullableCurrency(switchMetric.totalCosts)}`));
 				if (effectiveBasis === "exclude_top_contributor") {
 					metrics.appendChild(this.createMetricChip("TOP CONTRIBUTOR EXCLUDED"));
 					metrics.appendChild(this.createMetricChip(`Excluded ${contributorExclusion?.asset ?? "n/a"} (${formatNullableCurrency(contributorExclusion?.contributionNetPnl ?? null)})`));
 				}
-				metrics.appendChild(this.createMetricChip("Fixed $1,000 per entry · non-compounding"));
+				technicalMetrics.appendChild(this.createMetricChip("Fixed $1,000 per entry · non-compounding"));
 			} else {
 				const horizonMetric = effectiveBasis === "exclude_top_contributor"
 					? item.metricsExTopContributor?.[arm]
 					: item.metrics?.[arm];
-				metrics.appendChild(this.createMetricChip(effectiveBasis === "raw" ? "RAW" : "TOP CONTRIBUTOR EXCLUDED"));
-				metrics.appendChild(this.createMetricChip(`Events ${horizonMetric?.events ?? "n/a"}`));
-				metrics.appendChild(this.createMetricChip(`Mean ${formatPct(horizonMetric?.topMean ?? null)}`));
-				metrics.appendChild(this.createMetricChip(`Random ${formatPct(horizonMetric?.randomMean ?? null)}`));
-				metrics.appendChild(this.createMetricChip(`DeltaMed ${formatPct(horizonMetric?.delta ?? null)}`));
-				metrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(horizonMetric?.ciLower ?? null)}, ${formatPct(horizonMetric?.ciUpper ?? null)}]`));
+				technicalMetrics.appendChild(this.createMetricChip(effectiveBasis === "raw" ? "RAW" : "TOP CONTRIBUTOR EXCLUDED"));
+				technicalMetrics.appendChild(this.createMetricChip(`Events ${horizonMetric?.events ?? "n/a"}`));
+				metrics.appendChild(this.createMetricChip(`${ranking ? "Replay mean" : "Mean"} ${formatPct(horizonMetric?.topMean ?? null)}`));
+				technicalMetrics.appendChild(this.createMetricChip(`Random ${formatPct(horizonMetric?.randomMean ?? null)}`));
+				technicalMetrics.appendChild(this.createMetricChip(`DeltaMed ${formatPct(horizonMetric?.delta ?? null)}`));
+				technicalMetrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(horizonMetric?.ciLower ?? null)}, ${formatPct(horizonMetric?.ciUpper ?? null)}]`));
 			}
-			metrics.appendChild(this.createMetricChip(`Pairs ${item.pairCoverage.completedPairs}/${item.pairCoverage.requestedPairs}`));
-			metrics.appendChild(this.createMetricChip(`No trade ${item.pairCoverage.noTradePairs}`));
+            if (ranking) {
+                metrics.appendChild(this.createMetricChip(`Scored events ${rankingMetric?.scoredEvents ?? "n/a"}`));
+                technicalMetrics.appendChild(this.createMetricChip(rankingMetric ? "Ranking data: " + rankingMetric.status.replaceAll("_", " ") : "Rerun required"));
+                technicalMetrics.appendChild(this.createMetricChip(`Semantics ${item.rankingMeasurement?.semanticsVersion ?? "n/a"}`));
+                if (rankingMetric) {
+                    technicalMetrics.appendChild(this.createMetricChip(`Ranking horizon ${item.rankingMeasurement!.horizonBars} bars`));
+                    technicalMetrics.appendChild(this.createMetricChip(`Mean accuracy CI95 [${percent(rankingMetric.ciLower)}, ${percent(rankingMetric.ciUpper)}]`));
+                    technicalMetrics.appendChild(this.createMetricChip(`Other skipped ${rankingMetric.skippedEvents}`));
+                    technicalMetrics.appendChild(this.createMetricChip(`Time blocks ${rankingMetric.blockCount} (min 10) | width ${formatMeasurementDuration(rankingMetric.timeBlockWidthSec)} | coverage ${formatMeasurementDuration(rankingMetric.timeCoverageSec)}`));
+                    technicalMetrics.appendChild(this.createMetricChip(`Longest forward window ${formatMeasurementDuration(rankingMetric.measurementWindowSec)}`));
+                    technicalMetrics.appendChild(this.createMetricChip(`Tied comparisons ${rankingMetric.tiedComparisons}/${rankingMetric.comparisons}`));
+                    technicalMetrics.appendChild(this.createMetricChip(`Skipped: ${Object.entries(rankingMetric.skippedReasons).map(([reason, count]) => reason.replaceAll("_", " ") + " " + count).join(" | ") || "none"}`));
+                    if (rankingMetric.soleFirstPlaceCount !== undefined && rankingMetric.sharedFirstPlaceCount !== undefined) {
+                        technicalMetrics.appendChild(this.createMetricChip(`First-place counts: sole ${rankingMetric.soleFirstPlaceCount} | shared ${rankingMetric.sharedFirstPlaceCount} / ${rankingMetric.scoredEvents} scored events`));
+                    }
+                }
+            }
+			technicalMetrics.appendChild(this.createMetricChip(`Pairs ${item.pairCoverage.completedPairs}/${item.pairCoverage.requestedPairs}`));
+			technicalMetrics.appendChild(this.createMetricChip(`No trade ${item.pairCoverage.noTradePairs}`));
 			if (effectiveBasis === "exclude_top_contributor" && item.replayMode === "horizon") {
 				const excluded = item.contributorExclusions?.[arm];
 				metrics.appendChild(this.createMetricChip(`Excluded ${excluded?.asset ?? "n/a"} (${excluded ? excluded.events : "n/a"} events)`));
 			}
+
+            const detailLines = [
+                    `Pair failures ${item.pairCoverage.failedPairs} · replay target load failures ${item.pairCoverage.replayTargetLoadFailures}`,
+					...(selectedSwitchMetric?.openPosition
+						? [`Holding ${selectedSwitchMetric.openPosition.asset} since ${new Date(selectedSwitchMetric.openPosition.entryTimeSec * 1000).toISOString()} · current-path open P&L ${formatNullableCurrency(selectedSwitchMetric.openPosition.openNetPnl)}`]
+                        : []),
+                    ...(pendingOrder
+                        ? [`Pending ${pendingAction} from ${new Date(pendingOrder.decisionTimeSec * 1000).toISOString()}${pendingOrder.scheduledTimeSec !== null ? ` · scheduled ${new Date(pendingOrder.scheduledTimeSec * 1000).toISOString()}` : " · no executable open within the window"}`]
+                        : []),
+                    ...(item.exitStrategyKey ? [`Exit override ${item.exitStrategyName ?? item.exitStrategyKey} (${this.formatParams(item.exitStrategyParams ?? {})})`] : []),
+            ];
+            const details = ranking ? document.createElement("div") : undefined;
+            if (details) {
+                // Keep holding, pending orders and exit overrides visible below the primary measures.
+                for (const line of detailLines.slice(1)) {
+                    const detail = document.createElement("div"); detail.className = "finder-sub"; detail.textContent = line;
+                    details.appendChild(detail);
+                }
+                if (!rankingMetric || rankingMetric.soleFirstPlaceCount === undefined || rankingMetric.sharedFirstPlaceCount === undefined) {
+                    const notice = document.createElement("div"); notice.className = "finder-sub";
+                    notice.textContent = rankingMetric ? "Best asset frequencies unavailable. Rerun required to calculate first-place counts." : "Rerun required: ranking measurements are unavailable for this horizon.";
+                    details.appendChild(notice);
+                }
+                const panel = document.createElement("details"); panel.className = "finder-measurement-details";
+                panel.open = true;
+                const summary = document.createElement("summary"); summary.textContent = "Measurement details";
+                panel.appendChild(summary);
+                technicalMetrics.appendChild(this.createMetricChip(detailLines[0]!));
+                panel.appendChild(technicalMetrics);
+                details.appendChild(panel);
+            }
 
             fragment.appendChild(this.createResultRow({
                 index,
                 title,
                 subText: `${item.strategyKey} · candidate ${item.candidateOrdinal + 1} · ${item.actualEngineMode}`,
                 paramsText: this.formatParams(item.params),
-                detailLines: [
-                    `Pair failures ${item.pairCoverage.failedPairs} · replay target load failures ${item.pairCoverage.replayTargetLoadFailures}`,
-					...(selectedSwitchMetric?.openPosition
-						? [`Holding ${selectedSwitchMetric.openPosition.asset} since ${new Date(selectedSwitchMetric.openPosition.entryTimeSec * 1000).toISOString()} · current-path open P&L ${formatNullableCurrency(selectedSwitchMetric.openPosition.openNetPnl)}`]
-                        : []),
-                    ...(selectedSwitchMetric?.pendingOrder
-                        ? [`Pending ${selectedSwitchMetric.pendingOrder.side} ${selectedSwitchMetric.pendingOrder.destinationAsset ?? ""} from ${new Date(selectedSwitchMetric.pendingOrder.decisionTimeSec * 1000).toISOString()}${selectedSwitchMetric.pendingOrder.scheduledTimeSec !== null ? ` · scheduled ${new Date(selectedSwitchMetric.pendingOrder.scheduledTimeSec * 1000).toISOString()}` : " · no executable open within the window"}`]
-                        : []),
-                    ...(item.exitStrategyKey ? [`Exit override ${item.exitStrategyName ?? item.exitStrategyKey} (${this.formatParams(item.exitStrategyParams ?? {})})`] : []),
-                ],
+                detailLines: ranking ? [] : detailLines,
+                details,
                 metrics,
             }));
         });

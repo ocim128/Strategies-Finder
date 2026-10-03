@@ -17,6 +17,7 @@ async function main(): Promise<void> {
                 import { computeCurrentTopMeanSnapshot } from "./lib/batch-backtest/sp500-top-mean-current-snapshot";
                 import { scanArtifacts } from "./lib/batch-backtest/open-score-replay/artifact-scan";
                 import { sweepScoreEvents } from "./lib/batch-backtest/open-score-replay/event-sweep";
+                import { buildAssetSwitchDecisions } from "./lib/batch-backtest/open-score-replay/candidate-selection";
                 import { toBatchSyntheticPairAdapter } from "./lib/batch-backtest/compact-pair-artifact";
                 let passes = 0;
                 const raw = () => (async function* () {
@@ -64,6 +65,23 @@ async function main(): Promise<void> {
                     assert.equal(last.rawScore[0], 600);
                     assert.equal(last.rawScoreProfitNow[0], 600);
                     assert.equal(last.activePairCount[0], 600);
+                    const names = Array.from({length: 600}, (_, i) => "ASSET" + i);
+                    const snapshots = Array.from({length: 1000}, (_, i) => {
+                        const scores = Float64Array.from(names, (_, a) => 600 - a);
+                        const counts = new Float64Array(600).fill(1);
+                        return { timeSec: i, rawScore: scores, activePairCount: counts, rawScoreProfit: scores,
+                            activePairCountProfit: counts, rawScoreProfitNow: scores, activePairCountProfitNow: counts,
+                            rawScoreProfitNowConf: scores, activePairCountProfitNowConf: counts };
+                    });
+                    const selected = await buildAssetSwitchDecisions({ events: snapshots, totalEvents: snapshots.length,
+                        assetCount: names.length, assetNames: names, captureRanking: true, onPhase() {},
+                        onEventProcessed(index) { snapshots[index] = null; } });
+                    assert.equal(selected.ok, true);
+                    assert.equal(selected.result.rankingEvents.length, 1000);
+                    assert.ok(snapshots.every(row => row === null));
+                    for (const event of selected.result.rankingEvents) for (const row of Object.values(event.arms)) {
+                        assert.equal(row.picks.length, 5);
+                    }
                     console.log("PASS: 600,000 trades under a 128 MiB heap");
                 })().catch(error => { console.error(error); process.exitCode = 1; });
             `,

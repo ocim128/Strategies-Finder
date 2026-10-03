@@ -7,6 +7,8 @@
  */
 import { MAX_ACTIVE_BLOCK_COUNT, MAX_ACTIVE_BOOTSTRAP_SEED } from "../max-active-research-contract";
 import type { AssetSelectionSummary, DegreeSummary, ReplayComparison } from "./types";
+import { parseIntervalSeconds } from "../../interval-utils";
+import { yieldLoop } from "./runtime";
 
 // ============================================================================
 // Small stat helpers (NaN/Infinity never cross the wire — they serialize to
@@ -361,6 +363,77 @@ export function splitIntoBlocks(values: readonly number[], times: readonly numbe
         if (slice.length > 0) blocks.push(slice);
     }
     return blocks;
+}
+
+/** Completed measurement times are normalized unix seconds from target outcomes. */
+export interface RankingMeasurementWindow {
+    entryTime: number;
+    exitTime: number;
+}
+
+/**
+ * Fixed elapsed-time bins anchored at the earliest scored entry. The initial
+ * width is twice the longest completed window including its last candle.
+ * Empty bins are omitted, never replaced by event-count partitions. The
+ * multiplier is an internal sensitivity check, not a Finder setting.
+ */
+export function buildRankingTimeBlocks(
+    values: readonly number[], windows: readonly RankingMeasurementWindow[], horizonBars: number,
+    interval?: string, widthMultiplier = 1,
+): { blocks: number[][]; measurementWindowSec: number | null; timeBlockWidthSec: number | null; timeCoverageSec: number | null } {
+    const unavailable = { blocks: [] as number[][], measurementWindowSec: null, timeBlockWidthSec: null, timeCoverageSec: null };
+    if (!values.length || values.length !== windows.length || !Number.isInteger(horizonBars) || horizonBars < 1 || !Number.isFinite(widthMultiplier) || widthMultiplier < 1) return unavailable;
+    const nominalBarSec = interval ? parseIntervalSeconds(interval) : null;
+    let firstEntry = Infinity, lastEnd = -Infinity, measurementWindowSec = 0;
+    for (const window of windows) {
+        const elapsed = window.exitTime - window.entryTime;
+        if (![window.entryTime, window.exitTime, elapsed].every(Number.isFinite) || elapsed < 0) return unavailable;
+        // Calendar closures are already in elapsed. Without a known interval,
+        // infer one final candle from the mean observed inter-bar duration.
+        // A one-bar window has no inter-bar duration: never invent coverage.
+        const barSec = nominalBarSec ?? (horizonBars > 1 ? elapsed / (horizonBars - 1) : null);
+        if (barSec === null || !Number.isFinite(barSec) || barSec <= 0) return unavailable;
+        const duration = elapsed + barSec;
+        firstEntry = Math.min(firstEntry, window.entryTime);
+        lastEnd = Math.max(lastEnd, window.exitTime + barSec);
+        measurementWindowSec = Math.max(measurementWindowSec, duration);
+    }
+    const timeBlockWidthSec = 2 * measurementWindowSec * widthMultiplier;
+    if (!Number.isFinite(timeBlockWidthSec) || timeBlockWidthSec <= 0) return unavailable;
+    const bins = new Map<number, number[]>();
+    windows.forEach((window, index) => {
+        const bin = Math.floor((window.entryTime - firstEntry) / timeBlockWidthSec);
+        const block = bins.get(bin) ?? [];
+        block.push(values[index]!); bins.set(bin, block);
+    });
+    return { blocks: [...bins.entries()].sort((a, b) => a[0] - b[0]).map(([, block]) => block),
+        measurementWindowSec, timeBlockWidthSec, timeCoverageSec: lastEnd - firstEntry };
+}
+
+/** Pooled event mean, weighting drawn chronological blocks by their counts. */
+export async function blockBootstrapMeanCi(blocks: readonly (readonly number[])[], resamples = 10_000, shouldStop?: () => boolean): Promise<{ lower: number | null; upper: number | null }> {
+    if (blocks.length < 10 || blocks.some((block) => block.length === 0) || blocks.reduce((n, block) => n + block.length, 0) < 100) {
+        return { lower: null, upper: null };
+    }
+    const sums = blocks.map((block) => block.reduce((sum, value) => sum + value, 0));
+    let seed = (Math.floor(MAX_ACTIVE_BOOTSTRAP_SEED) >>> 0) || 0x9e3779b9;
+    const means: number[] = [];
+    for (let draw = 0; draw < resamples; draw += 1) {
+        if (shouldStop && (draw & 63) === 0) {
+            await yieldLoop();
+            if (shouldStop()) throw new Error("OPEN_SCORE USD replay cancelled during ranking measurement.");
+        }
+        let sum = 0, count = 0;
+        for (let k = 0; k < blocks.length; k += 1) {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            const index = Math.floor(seed / 0x100000000 * blocks.length);
+            sum += sums[index]!;
+            count += blocks[index]!.length;
+        }
+        means.push(sum / count);
+    }
+    means.sort((a, b) => a - b);
+    return { lower: finiteOrNull(means[Math.floor(resamples * 0.025)]!), upper: finiteOrNull(means[Math.min(resamples - 1, Math.floor(resamples * 0.975))]!) };
 }
 
 /** Build the shared paired-event summary with the frozen block/bootstrap definitions. */

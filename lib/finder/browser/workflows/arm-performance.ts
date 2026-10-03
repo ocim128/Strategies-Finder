@@ -64,6 +64,9 @@ export async function runArmPerformanceFinder(args: ArmPerformanceWorkflowArgs):
 	writeFinderActiveServerRun({ runId, scope: 'arm_performance', startedAt: startTime });
 	store.armPerformanceDisplayLimit = Math.max(1, options.topN);
 	store.initializeArmPerformanceDisplayFilter({
+		measurement: options.armPerformance?.measurement ?? 'return',
+		rankingSort: options.armPerformance?.rankingSort ?? 'overall_ordering',
+		rankingHorizon: options.armPerformance?.replayMode === 'asset_switch' ? options.armPerformance?.rankingHorizon : options.armPerformance?.horizon,
 		basis: options.armPerformance?.scoringBasis ?? 'raw',
 		eventFilterEnabled: options.armPerformance?.eventFilterEnabled ?? false,
 		minEvents: options.armPerformance?.minEvents ?? 1,

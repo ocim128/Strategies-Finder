@@ -209,6 +209,20 @@ describe("normalizeFinderUiState", () => {
 });
 
 describe("finder UI state persistence", () => {
+    it("migrates measurement defaults and retains the shared horizon and exclusion preference", () => {
+        const storage = (globalThis as any).localStorage;
+        for (const envelope of [false, true]) {
+            const legacy = { armPerformanceHorizon: 20, armPerformanceExcludeTopContributor: true };
+            storage.setItem(FINDER_UI_STORAGE.key, JSON.stringify(envelope ? { schema: "finder.ui", version: 1, data: legacy } : legacy));
+            expect(readFinderUiState().armPerformanceMeasurement).to.equal("return");
+            expect(readFinderUiState().armPerformanceRankingSort).to.equal("overall_ordering");
+            const ranking = normalizeFinderUiState({ ...legacy, armPerformanceMeasurement: "ranking_consistency", armPerformanceRankingSort: "selected_asset" });
+            writeFinderUiState(ranking);
+            expect(readFinderUiState()).to.include({ armPerformanceRankingSort: "selected_asset", armPerformanceMeasurement: "ranking_consistency", armPerformanceHorizon: 20, armPerformanceExcludeTopContributor: true });
+        }
+        expect(normalizeFinderUiState({ armPerformanceMeasurement: "future" }).armPerformanceMeasurement).to.equal("return");
+        expect(normalizeFinderUiState({ armPerformanceRankingSort: "future" }).armPerformanceRankingSort).to.equal("overall_ordering");
+    });
     it("reads back what was written and defaults to the defaults when empty", () => {
         expect(readFinderUiState()).to.deep.equal({ ...DEFAULT_FINDER_UI_STATE });
 

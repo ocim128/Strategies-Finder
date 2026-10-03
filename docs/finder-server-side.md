@@ -14,6 +14,76 @@ Detached loads retain the full series. See the
 
 ## Arm Performance
 
+Ranking consistency is an optional measurement on the existing local route.
+`options.armPerformance.measurement` is `return` (also the omitted legacy
+default) or `ranking_consistency`. Fixed-horizon ranking uses `horizon`; switch
+ranking requires `rankingHorizon`, sent from the same saved UI input. Both use
+the existing positive integer bound of 1,000 bars. Validation occurs before
+owner acquisition; stale contributor exclusion becomes raw when ranking is
+selected. Optional `options.armPerformance.rankingSort` accepts
+`overall_ordering` (the compatibility default) or `selected_asset`. It is a local
+display preference captured for configuration/export metadata; replay never uses
+it to select assets or calculate scores. The captured context records the
+effective measurement, horizon and submitted sort preference.
+Authorization, pair limits, memory admission and run-id-scoped Stop are unchanged.
+
+Only the trusted `finder_arm` execution profile forwards the opt-in to replay.
+Switch capture retains at most five indexes and complete predictor keys per arm
+before releasing score snapshots. Its simulation and target-outcome measurement
+run sequentially; horizon mode shares its existing same-horizon outcomes. Both
+reuse lazy target loading, bounded prefetch/LRUs, frozen cutoff and cost arithmetic.
+Ranking uses completed candles, including when switch fills can use the current
+candle's known open. Target timestamps are normalized before gap detection.
+Forward gaps beyond the decision-window end also invalidate frozen measurements.
+Cooldown capture uses original pools and the existing pre-update selection
+history; it never adds a second history or replaces failed members with #6.
+
+Replay, coordinator and both Finder candidate variants add a scalar-only
+`rankingMeasurement` section: `semanticsVersion: "top-five-ranking-v2"`,
+`horizonBars` and `arms` keyed by the canonical replay arm mapping. Each arm
+carries `eligibleEvents` and `scoredEvents` (both count every valid event),
+other skipped counts and reasons, tied/total comparisons, mean accuracy, #1
+superiority, optional `soleFirstPlaceCount`, `sharedFirstPlaceCount`,
+`soleFirstPlaceRate`, `sharedFirstPlaceRate`, CI bounds, populated `blockCount`, `measurementWindowSec`,
+`timeBlockWidthSec`, and `timeCoverageSec`
+and `available` / `insufficient_data` / `no_events` status. Ranking status is
+independent of switch trading status. Overlap never removes a valid event from
+these means. CI availability requires 100 scored events and ten populated
+elapsed-time blocks. Per arm, `D` is the maximum completed exit-open minus
+entry-open duration plus one parsed interval; initial width is `2*D`. Bins are
+anchored at the earliest scored entry and are half-open; empty bins are omitted.
+If no interval is available, multi-bar windows infer their final-candle duration
+as elapsed/(H-1); a one-bar window cannot infer coverage and has null confidence.
+Ten thousand seeded draws resample whole populated blocks and pool their sums
+and event counts. Unequal blocks never give events unequal point-score weight.
+See [the exact rule and its limits](finder.md#arm-performance).
+
+A valid zero-event section is unavailable
+data; a requested missing, malformed or wrong-horizon child section is a fatal
+child contract error, collected before owned artifact cleanup. Stop prevents
+partial measurement scores from completing a candidate.
+
+The first-place counts use the same five completed returns and scored events:
+strictly highest selected return is sole first place; a tied highest return is
+shared first place. Their rates divide separately by scored events and are null
+at zero events. Predictor ties do not change these realized outcomes. No extra
+loads, outcome arrays or backtests are needed.
+
+The coordinator wire serializer, Finder preview/terminal serializer and local
+snapshot compactor explicitly copy these scalars and discard unknown arrays.
+Frequency fields are additive within v2. Missing or malformed source counts
+leave only frequencies unavailable with a rerun message; existing accuracy,
+superiority, CI and return/P&L survive. Valid counts can reconstruct absent rates;
+provided rates must agree with counts. Recovery never invents zero counts.
+Version-1 persistence envelopes remain unchanged. Missing UI preference means
+Return and Overall ordering; v1 ranking, missing or future/malformed measurement semantics require
+a rerun while
+original return/P&L summaries survive. The existing terminal/status inventory
+remains authoritative on reload. No annual passes, pool snapshots, outcome
+archives, detailed ranking event rows, database migration or resume storage
+are introduced. The [original v1 delivery plan and release checks](finder-arm-performance-ranking-consistency-plan.md)
+remain a historical record; the current v2 rules are documented above.
+
 Arm Performance is a server-owned Finder job registered at
 `POST /api/finder/arm-performance-run`. The browser sends the selected entry
 and exit strategy keys, search options, captured backtest/capital settings,

@@ -15,6 +15,7 @@ import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";
 import { finderManager } from "../lib/finder-manager";
 import { FinderUI } from "../lib/finder/finder-ui";
+import { createEmptyRankingMeasurement, type AssetSwitchArmSummary } from "../lib/batch-backtest/open-score-replay/types";
 import { clearDomElementCache } from "../lib/dom-utils";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
 import { ASSET_OPPORTUNITY_ALL_SORTS } from "../lib/finder/finder-asset-opportunity-metrics";
@@ -1188,13 +1189,14 @@ describe("Finder Arm Performance scope controls", () => {
     it("retains horizon controls and keeps completed-result count labels after mode changes", () => {
         const dom: any = createFakeFinderManagerDom();
         let completedMode: "horizon" | "asset_switch" | null = null;
+        let runRequests = 0;
         const controls = new FinderControls({
             getDom: () => dom,
             setStatus: () => {},
             renderLatestResults: () => {},
             populateResortOptions: () => {},
             applyResort: () => {},
-            requestRun: () => {},
+            requestRun: () => { runRequests += 1; },
             getArmPerformanceReplayMode: () => completedMode,
             renderRandomBenchmark: () => {},
             selection: { getVisibleStrategyKeys: () => [] } as any,
@@ -1212,6 +1214,31 @@ describe("Finder Arm Performance scope controls", () => {
         expect(dom.finderArmPerformanceHorizon.value).to.equal("48");
         expect(dom.finderArmPerformanceSelectionCooldownBars.value).to.equal("9");
         expect((globalThis as any).document.getElementById("finderArmPerformanceMinEventsLabel").textContent).to.equal("Min trades");
+
+        expect(dom.finderArmPerformanceRankingSort.disabled).to.equal(true);
+        dom.finderArmPerformanceExcludeTopContributor.checked = true;
+        dom.finderArmPerformanceMeasurement.value = "ranking_consistency";
+        dom.finderArmPerformanceMeasurement.dispatchEvent({ type: "change" });
+        expect(dom.finderArmPerformanceHorizon.disabled).to.equal(false);
+        expect(dom.finderArmPerformanceHorizonLabel.textContent).to.equal("Ranking Horizon (bars)");
+        expect(dom.finderArmPerformanceExcludeTopContributor.disabled).to.equal(true);
+        expect(dom.finderArmPerformanceExcludeTopContributor.checked).to.equal(true);
+        expect(dom.finderArmPerformanceSelectionCooldownEnabled.disabled).to.equal(true);
+        expect((globalThis as any).document.getElementById("finderArmPerformanceEventFilterLabel").textContent).to.equal("Scored ranking event count filter");
+        expect(dom.finderArmPerformanceRankingSort.disabled).to.equal(false);
+        dom.finderArmPerformanceRankingSort.value = "selected_asset";
+        dom.finderArmPerformanceRankingSort.dispatchEvent({ type: "change" });
+        controls.captureFinderUiState();
+        expect(controls.uiState.armPerformanceRankingSort).to.equal("selected_asset");
+        expect(controls.uiState).to.include({ armPerformanceMeasurement: "ranking_consistency", armPerformanceHorizon: 48, armPerformanceExcludeTopContributor: true });
+        dom.finderArmPerformanceMeasurement.value = "return";
+        dom.finderArmPerformanceMeasurement.dispatchEvent({ type: "change" });
+        expect(dom.finderArmPerformanceHorizon.disabled).to.equal(true);
+        expect(dom.finderArmPerformanceExcludeTopContributor.disabled).to.equal(false);
+        expect(dom.finderArmPerformanceRankingSort.disabled).to.equal(true);
+        expect(dom.finderArmPerformanceRankingSort.value).to.equal("selected_asset");
+        expect(runRequests).to.equal(0, "local display changes never request backtests");
+        expect(dom.finderArmPerformanceExcludeTopContributor.checked).to.equal(true);
 
         completedMode = "asset_switch";
         dom.finderArmPerformanceReplayMode.value = "horizon";
@@ -1485,6 +1512,98 @@ describe("Copy Diagnostics availability transitions", () => {
 // ---------------------------------------------------------------------------
 
 describe("FinderUI Arm Performance preview actions", () => {
+    it("names the held asset in pending sales and the destination in pending buys", () => {
+        const { horizon: _horizon, metrics: _metrics, ...base } = makeArmCandidate(0, 1, 1);
+        const summary: AssetSwitchArmSummary = {
+            status: "complete", enteredCount: 1, completedTrades: 0,
+            realizedNetPnl: 0, openPositionNetPnl: -7.61, totalNetPnl: -7.61, partialRealizedNetPnl: 0,
+            completedHoldingDurationSec: 0, averageCompletedHoldingDurationSec: null, totalCosts: 0,
+            openPosition: { asset: "AMAT", entryDecisionTimeSec: 0, entryTimeSec: 1, entryPrice: 100,
+                markTimeSec: 2, markPrice: 99, markAgeSec: 0, openNetPnl: -7.61, entryCost: 0, holdingDurationSec: 1 },
+            pendingOrder: { side: "sell", destinationAsset: "GEV", decisionTimeSec: 2, scheduledTimeSec: null },
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        };
+        const pendingLines = (node: any): string[] => [
+            ...(node.textContent?.startsWith("Pending ") ? [node.textContent] : []),
+            ...(node.children ?? []).flatMap(pendingLines),
+        ];
+        const texts = (node: any): string[] => [node.textContent ?? "", ...(node.children ?? []).flatMap(texts)];
+        const cases = [
+            { metric: summary, action: "sell AMAT, then buy GEV", timing: "no executable open within the window" },
+            { metric: { ...summary, openPosition: null, pendingOrder: { ...summary.pendingOrder!, side: "buy" as const, scheduledTimeSec: 3 } }, action: "buy GEV", timing: "scheduled 1970-01-01T00:00:03.000Z" },
+            { metric: { ...summary, pendingOrder: { ...summary.pendingOrder!, destinationAsset: null } }, action: "sell AMAT", timing: "no executable open within the window" },
+        ];
+        for (const { metric, action, timing } of cases) {
+            const ui = new FinderUI();
+            const assetSwitchMetrics = Object.fromEntries(Object.keys(_metrics!).map((arm) => [arm, metric])) as Extract<FinderArmPerformanceCandidate, { replayMode: "asset_switch" }>["assetSwitchMetrics"];
+            ui.renderArmPerformanceResults([{ ...base, replayMode: "asset_switch", assetSwitchMetrics }], null, "TOP_RAW");
+            const line = pendingLines(elsById.get("finderList")).at(-1)!;
+            expect(line).to.include(`Pending ${action} from 1970-01-01T00:00:02.000Z`);
+            expect(line).to.include(timing);
+            expect(line).not.to.include("Pending sell GEV");
+            expect(texts(elsById.get("finderList"))).not.to.include("Status complete");
+            ui.renderArmPerformanceResults([{ ...base, replayMode: "asset_switch", assetSwitchMetrics }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency" });
+            expect(texts(elsById.get("finderList"))).not.to.include("Status complete");
+            expect(pendingLines(elsById.get("finderList")).at(-1)).to.include(`Pending ${action}`);
+        }
+        const incomplete = { ...summary, status: "incomplete" as const };
+        const assetSwitchMetrics = Object.fromEntries(Object.keys(_metrics!).map((arm) => [arm, incomplete])) as Extract<FinderArmPerformanceCandidate, { replayMode: "asset_switch" }>["assetSwitchMetrics"];
+        for (const measurement of ["return", "ranking_consistency"] as const) {
+            new FinderUI().renderArmPerformanceResults([{ ...base, replayMode: "asset_switch", assetSwitchMetrics }], null, "TOP_RAW", false, "raw", { measurement });
+            expect(texts(elsById.get("finderList"))).to.include("Status incomplete");
+        }
+    });
+
+    it("shows scored-event and time-block coverage while keeping means visible without confidence", () => {
+        const candidate = makeArmCandidate(0, 1, 1);
+        const rankingMeasurement = createEmptyRankingMeasurement(5);
+        Object.assign(rankingMeasurement.arms.topRaw, { scoredEvents: 1336, eligibleEvents: 1336, comparisons: 13360,
+            meanAccuracy: 0.5361, top1Superiority: 0.5633, blockCount: 9, measurementWindowSec: 60, timeBlockWidthSec: 120,
+            timeCoverageSec: 1080, soleFirstPlaceCount: 200, sharedFirstPlaceCount: 100, soleFirstPlaceRate: 200 / 1336, sharedFirstPlaceRate: 100 / 1336, status: "insufficient_data" });
+        const ui = new FinderUI();
+        ui.renderArmPerformanceResults([{ ...candidate, rankingMeasurement }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency" });
+        const texts = (node: any): string[] => [node.textContent ?? "", ...(node.children ?? []).flatMap(texts)];
+        const rendered = texts(elsById.get("finderList"));
+        expect(rendered).to.include("Scored events 1336");
+        expect(rendered).to.include("Other skipped 0");
+        expect(rendered).to.include("Time blocks 9 (min 10) | width 2 minutes | coverage 18 minutes");
+        expect(rendered).to.include("Overall ordering accuracy 53.61%");
+        expect(rendered).to.include("Selected asset score 56.33%");
+        expect(rendered).to.include("Mean accuracy CI95 [n/a, n/a]");
+        expect(rendered.some((text) => text.includes("overlap skipped"))).to.equal(false);
+        const findNodes = (node: any, predicate: (node: any) => boolean): any[] => [
+            ...(predicate(node) ? [node] : []), ...(node.children ?? []).flatMap((child: any) => findNodes(child, predicate)),
+        ];
+        const panel = findNodes(elsById.get("finderList"), (node) => node.tagName === "details")[0];
+        expect(panel.open).to.equal(true);
+        expect(panel.children[0].tagName).to.equal("summary");
+        expect(panel.children[0].textContent).to.equal("Measurement details");
+        expect(texts(panel)).to.include("Mean accuracy CI95 [n/a, n/a]");
+        expect(texts(panel).some((text) => text.includes("Scored events"))).to.equal(false);
+        const primary = findNodes(elsById.get("finderList"), (node) => node.className === "finder-metrics")[0];
+        expect(primary.children.slice(0, 4).map((node: any) => node.textContent)).to.deep.equal([
+            "Selected asset score 56.33%", "Best asset frequency 14.97%", "Shared first place 7.49%", "Overall ordering accuracy 53.61%",
+        ]);
+        expect(texts(primary)).to.include("Scored events 1336");
+        expect(texts(primary).some((text) => text.includes("CI95"))).to.equal(false);
+        expect(findNodes(elsById.get("finderList"), (node) => node.className === "btn btn-secondary finder-apply")[0].disabled).to.equal(false);
+        rankingMeasurement.arms.topRaw.measurementWindowSec = 11 * 86400;
+        rankingMeasurement.arms.topRaw.timeBlockWidthSec = 22 * 86400;
+        rankingMeasurement.arms.topRaw.timeCoverageSec = 198 * 86400;
+        ui.renderArmPerformanceResults([{ ...candidate, rankingMeasurement }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency" });
+        expect(texts(elsById.get("finderList"))).to.include("Time blocks 9 (min 10) | width 22 days | coverage 198 days");
+        const withoutFrequencies = structuredClone(rankingMeasurement);
+        delete withoutFrequencies.arms.topRaw.soleFirstPlaceCount; delete withoutFrequencies.arms.topRaw.sharedFirstPlaceCount;
+        delete withoutFrequencies.arms.topRaw.soleFirstPlaceRate; delete withoutFrequencies.arms.topRaw.sharedFirstPlaceRate;
+        ui.renderArmPerformanceResults([{ ...candidate, rankingMeasurement: withoutFrequencies }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency" });
+        expect(texts(elsById.get("finderList"))).to.include("Best asset frequency n/a");
+        expect(texts(elsById.get("finderList"))).to.include("Best asset frequencies unavailable. Rerun required to calculate first-place counts.");
+        expect(texts(elsById.get("finderList"))).to.include("Selected asset score 56.33%");
+        const legacy = { ...rankingMeasurement, semanticsVersion: "top-five-ranking-v1" } as unknown as typeof rankingMeasurement;
+        ui.renderArmPerformanceResults([{ ...candidate, rankingMeasurement: legacy }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency" });
+        expect(texts(elsById.get("finderList"))).to.include("Rerun required");
+    });
+
     it("renders horizon cards from contributor-excluded metrics and shows unavailable values", () => {
         const ui = new FinderUI();
         const base = makeArmCandidate(0, 1, 1);

@@ -238,6 +238,8 @@ applyPersistedUiStateToDom(): void {
 	dom.finderTradesMax.value = this.uiState.maxTradesText;
 	dom.finderOosValidationToggle.checked = this.uiState.oosValidationEnabled;
 	dom.finderArmPerformanceHorizon.value = String(this.uiState.armPerformanceHorizon);
+	dom.finderArmPerformanceMeasurement.value = this.uiState.armPerformanceMeasurement;
+	dom.finderArmPerformanceRankingSort.value = this.uiState.armPerformanceRankingSort;
 	dom.finderArmPerformanceReplayMode.value = this.uiState.armPerformanceReplayMode;
 	dom.finderArmPerformanceExcludeTopContributor.checked = this.uiState.armPerformanceExcludeTopContributor;
 	dom.finderArmPerformanceEventFilterEnabled.checked = this.uiState.armPerformanceEventFilterEnabled;
@@ -629,16 +631,20 @@ private syncArmPerformanceControls(): void {
 	const completedMode = this.deps.getArmPerformanceReplayMode?.() ?? null;
 	const labelMode = completedMode ?? (switchMode ? "asset_switch" : "horizon");
 	const filterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
-	dom.finderArmPerformanceHorizon.disabled = switchMode;
+	const ranking = dom.finderArmPerformanceMeasurement.value === "ranking_consistency";
+	dom.finderArmPerformanceHorizon.disabled = switchMode && !ranking;
+	dom.finderArmPerformanceHorizonLabel.textContent = ranking ? "Ranking Horizon (bars)" : "Replay Horizon (bars)";
+	dom.finderArmPerformanceExcludeTopContributor.disabled = ranking;
+	dom.finderArmPerformanceRankingSort.disabled = !ranking;
 	dom.finderArmPerformanceSelectionCooldownEnabled.disabled = switchMode;
 	dom.finderArmPerformanceSelectionCooldownBars.disabled = switchMode || !dom.finderArmPerformanceSelectionCooldownEnabled.checked;
 	dom.finderArmPerformanceMinEvents.disabled = !filterEnabled;
 	dom.finderArmPerformanceMaxEvents.disabled = !filterEnabled;
-	const useTradeCount = labelMode === "asset_switch";
+	const useTradeCount = !ranking && labelMode === "asset_switch";
 	const eventFilterLabel = document.getElementById("finderArmPerformanceEventFilterLabel");
 	const minLabel = document.getElementById("finderArmPerformanceMinEventsLabel");
 	const maxLabel = document.getElementById("finderArmPerformanceMaxEventsLabel");
-	if (eventFilterLabel) eventFilterLabel.textContent = useTradeCount ? "Completed trade count filter" : "Completed event count filter";
+	if (eventFilterLabel) eventFilterLabel.textContent = ranking ? "Scored ranking event count filter" : useTradeCount ? "Completed trade count filter" : "Completed event count filter";
 	if (minLabel) minLabel.textContent = useTradeCount ? "Min trades" : "Min events";
 	if (maxLabel) maxLabel.textContent = useTradeCount ? "Max trades" : "Max events";
 }
@@ -686,6 +692,8 @@ initFinderSettingsPersistenceUI(): void {
 		dom.finderTradesMin,
 		dom.finderTradesMax,
 		dom.finderOosValidationToggle,
+		dom.finderArmPerformanceMeasurement,
+		dom.finderArmPerformanceRankingSort,
 		dom.finderArmPerformanceReplayMode,
 		dom.finderArmPerformanceHorizon,
 		dom.finderArmPerformanceExcludeTopContributor,
@@ -713,6 +721,7 @@ initFinderSettingsPersistenceUI(): void {
 	dom.finderArmPerformanceEventFilterEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
 	dom.finderArmPerformanceSelectionCooldownEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
 	dom.finderArmPerformanceReplayMode.addEventListener("change", () => this.syncArmPerformanceControls());
+	dom.finderArmPerformanceMeasurement.addEventListener("change", () => this.syncArmPerformanceControls());
 }
 
 captureFinderUiState(persist = true): void {
@@ -750,6 +759,8 @@ captureFinderUiState(persist = true): void {
 		DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
 		1,
 	))));
+	this.uiState.armPerformanceRankingSort = dom.finderArmPerformanceRankingSort.value === "selected_asset" ? "selected_asset" : "overall_ordering";
+	this.uiState.armPerformanceMeasurement = dom.finderArmPerformanceMeasurement.value === "ranking_consistency" ? "ranking_consistency" : "return";
 	this.uiState.armPerformanceReplayMode = dom.finderArmPerformanceReplayMode.value === "asset_switch" ? "asset_switch" : "horizon";
 	this.uiState.armPerformanceExcludeTopContributor = dom.finderArmPerformanceExcludeTopContributor.checked;
 	this.uiState.armPerformanceEventFilterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
@@ -954,7 +965,11 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 	if (scope === 'arm_performance') {
 		const dateMode = dataSlice === 'date_range' ? 'date_range' : 'full';
 		const replayMode = dom.finderArmPerformanceReplayMode.value === "asset_switch" ? "asset_switch" : "horizon";
+		const measurement = dom.finderArmPerformanceMeasurement.value === "ranking_consistency" ? "ranking_consistency" : "return";
 		options.armPerformance = {
+			measurement,
+			rankingSort: dom.finderArmPerformanceRankingSort.value === "selected_asset" ? "selected_asset" : "overall_ordering",
+			...(measurement === "ranking_consistency" && replayMode === "asset_switch" ? { rankingHorizon: Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(dom.finderArmPerformanceHorizon, DEFAULT_FINDER_UI_STATE.armPerformanceHorizon, 1)))) } : {}),
 			replayMode,
 			...(replayMode === "horizon" ? {
 				horizon: Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(
@@ -964,7 +979,7 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 				)))),
 			} : {}),
 			dateMode,
-			scoringBasis: dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
+			scoringBasis: measurement === "return" && dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
 			eventFilterEnabled: dom.finderArmPerformanceEventFilterEnabled.checked,
 			minEvents: Math.max(1, Math.round(this.readFinderNumberInput(
 				dom.finderArmPerformanceMinEvents,

@@ -36,6 +36,7 @@ const T0 = 1_700_000_000;
 const BAR_SEC = 100;
 
 interface BenchArgs {
+    ranking: boolean;
     assets: number;
     events: number;
     eventSpacingSec: number;
@@ -56,6 +57,7 @@ interface BenchArgs {
 
 function parseArgs(argv: readonly string[]): BenchArgs {
     const args: BenchArgs = {
+        ranking: false,
         assets: 60,
         events: 2000,
         eventSpacingSec: 300,
@@ -82,6 +84,7 @@ function parseArgs(argv: readonly string[]): BenchArgs {
             return value;
         };
         switch (flag) {
+            case "--ranking": args.ranking = true; break;
             case "--assets": args.assets = Number(take()); break;
             case "--events": args.events = Number(take()); break;
             case "--event-spacing": args.eventSpacingSec = Number(take()); break;
@@ -320,11 +323,13 @@ async function main(): Promise<void> {
         () => (async function* () { for (const t of fixture.targets) yield t; })(),
         {
             mode: args.mode,
+            ...(args.ranking ? { rankingHorizon: fixture.horizons[0]! } : {}),
             ...(args.mode === "horizon" ? { horizons: fixture.horizons } : {}),
             interval: "4h",
             slippageRate: 0,
             commissionRate: 0,
             blockCount: fixture.blockCount,
+            loadTargetDataset: async (asset: string) => { targetReads += 1; return targetByAsset.get(asset.toUpperCase()) ?? null; },
             ...(args.mode === "asset_switch" ? {
                 sampleToSec: replayEndSec,
                 evaluationCutoffSec: replayEndSec,
@@ -366,6 +371,8 @@ async function main(): Promise<void> {
         ...result,
         reportLines: result.reportLines.map((line) => line.replace(/elapsed=[0-9.]+s/, "elapsed=Xs")),
     };
+    const { rankingMeasurement: _ranking, ...originalResult } = normalizedResult;
+    const originalFingerprint = createHash("sha256").update(serializeCanonical(originalResult)).digest("hex");
     const fingerprint = createHash("sha256").update(serializeCanonical(normalizedResult)).digest("hex");
     const metrics = {
         label: args.label,
@@ -375,8 +382,10 @@ async function main(): Promise<void> {
         peakHeapBytes: peakHeap,
         peakExternalBytes: peakExternal,
         fingerprint,
+        originalFingerprint,
+        ranking: args.ranking,
         mode: args.mode,
-        targetReads: args.mode === "asset_switch" ? targetReads : null,
+        targetReads,
         stopLatencyMs: stopRequestedAt === null ? null : performance.now() - stopRequestedAt,
         switchDetailRows: result.assetSwitch?.trades?.length ?? 0,
         switchDetailBytes: result.assetSwitch?.trades ? Buffer.byteLength(JSON.stringify(result.assetSwitch.trades)) : 0,

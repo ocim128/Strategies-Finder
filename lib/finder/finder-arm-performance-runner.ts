@@ -1,3 +1,4 @@
+import { compactRankingMeasurement } from "../batch-backtest/open-score-replay/types";
 import { randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -224,6 +225,11 @@ function buildCandidateResult(args: {
     const { plan, candidateId, status, result, input, failedPairDetails } = args;
     const replayMode = input.options.armPerformance?.replayMode ?? "horizon";
     const resolved = resolveCandidateSettings(plan, input);
+    const rankingRequested = input.options.armPerformance?.measurement === "ranking_consistency";
+    const rankingMeasurement = compactRankingMeasurement(result.rankingMeasurement);
+    if (rankingRequested && (!rankingMeasurement || rankingMeasurement.horizonBars !== (replayMode === "horizon" ? input.options.armPerformance?.horizon : input.options.armPerformance?.rankingHorizon))) {
+        throw new Error("TOP_MEAN child completed without the required valid ranking measurement section.");
+    }
     const pairCount = input.enumeration.canonicalPairs.length;
     const failedPairs = status.failedPairs;
     const completedPairs = status.completedPairs;
@@ -268,6 +274,7 @@ function buildCandidateResult(args: {
             ...(plan.exitStrategyName ? { exitStrategyName: plan.exitStrategyName } : {}),
             ...(plan.exitStrategyParams ? { exitStrategyParams: { ...plan.exitStrategyParams } } : {}),
             pairCoverage,
+            ...(rankingMeasurement ? { rankingMeasurement } : {}),
             assetSwitchMetrics: switchMetrics,
             requestedEngineMode: input.useRustEnginePreference ? "rust" : "typescript",
             actualEngineMode: status.actualEngineMode,
@@ -331,6 +338,7 @@ function buildCandidateResult(args: {
         ...(plan.exitStrategyName ? { exitStrategyName: plan.exitStrategyName } : {}),
         ...(plan.exitStrategyParams ? { exitStrategyParams: { ...plan.exitStrategyParams } } : {}),
         pairCoverage,
+        ...(rankingMeasurement ? { rankingMeasurement } : {}),
         metrics: buildFinderArmPerformanceMetricsFromArms(armComparisons as never),
         ...(adjustedArmMetrics ? { metricsExTopContributor: adjustedArmMetrics } : {}),
         ...(contributorExclusions ? { contributorExclusions } : {}),
@@ -451,6 +459,7 @@ async function runFinderArmPerformanceCandidates(
             interval: input.interval,
             replayMode,
             ...(replayMode === "horizon" ? { horizons: [horizon!] } : {}),
+            ...(input.options.armPerformance?.measurement === "ranking_consistency" ? { rankingHorizon: replayMode === "horizon" ? horizon : input.options.armPerformance.rankingHorizon } : {}),
             pairListText: input.enumeration.canonicalPairs.join("\n"),
             resume: false,
             saveArchiveLog: false,

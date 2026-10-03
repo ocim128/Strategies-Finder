@@ -1,3 +1,4 @@
+import { RANKING_MEASUREMENT_SEMANTICS } from "../../batch-backtest/open-score-replay/types";
 /**
  * Finder copy/export payloads and the clipboard transport. Browser-only.
  * Builders assemble the exact JSON the Copy buttons put on the clipboard;
@@ -22,7 +23,7 @@ import type {
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 } from "../../types/finder";
-import { getFinderArmPerformanceMetric, type FinderArmPerformanceArm, type FinderArmPerformanceDisplayFilter, type FinderArmPerformanceScoringBasis } from "../finder-arm-performance-metrics";
+import { getFinderArmRankingMetric, getFinderArmPerformanceMetric, type FinderArmPerformanceArm, type FinderArmPerformanceDisplayFilter, type FinderArmPerformanceScoringBasis } from "../finder-arm-performance-metrics";
 import type { FinderPersistedUiState } from "./finder-settings";
 import type { BacktestSettings } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
@@ -208,11 +209,12 @@ export function buildArmPerformanceTopResultsPayload(args: {
 } {
 	const { results, runContext, inventoryComplete, selectedArm, scoringBasis = "raw", displayFilter = {} } = args;
 	const replayMode = results[0]?.replayMode ?? runContext?.replayMode ?? "horizon";
-	const effectiveBasis = scoringBasis;
+	const ranking = displayFilter.measurement === "ranking_consistency";
+	const effectiveBasis = ranking ? "raw" : scoringBasis;
 	const filteredResults = displayFilter.eventFilterEnabled
 		? results.filter((candidate) => {
 			const metric = getFinderArmPerformanceMetric(candidate, selectedArm, effectiveBasis);
-			const count = replayMode === "asset_switch"
+			const count = ranking ? getFinderArmRankingMetric(candidate, selectedArm, displayFilter)?.scoredEvents ?? 0 : replayMode === "asset_switch"
 				? (metric as { completedTrades?: number } | undefined)?.completedTrades ?? 0
 				: (metric as { events?: number } | undefined)?.events ?? 0;
 			return count >= (displayFilter.minEvents ?? 1)
@@ -226,11 +228,11 @@ export function buildArmPerformanceTopResultsPayload(args: {
 		scoringBasis: effectiveBasis,
 		...(replayMode === "asset_switch"
 			? {
-				completedTradeFilter: {
+				...(ranking ? {} : { completedTradeFilter: {
 					enabled: displayFilter.eventFilterEnabled === true,
 					minTrades: displayFilter.minEvents ?? 1,
 					maxTrades: displayFilter.maxEvents ?? null,
-				},
+				} }),
 				assetSwitchSemantics: {
 					semanticsVersion: "asset_switch.v1",
 					rankingMetric: "total_net_pnl_usd_including_open_mark",
@@ -240,20 +242,23 @@ export function buildArmPerformanceTopResultsPayload(args: {
 				},
 			}
 			: {
-				eventFilter: {
+				...(ranking ? {} : { eventFilter: {
 					enabled: displayFilter.eventFilterEnabled === true,
 					minEvents: displayFilter.minEvents ?? 1,
 					maxEvents: displayFilter.maxEvents ?? null,
-				},
+				} }),
 				selectionCooldownBars: runContext?.searchOptions?.armPerformance?.selectionCooldownEnabled
 					? runContext.searchOptions.armPerformance.selectionCooldownBars ?? 5
 					: 0,
 			}),
-		rankingMetric: replayMode === "asset_switch" ? 'totalNetPnlUsd' : 'topMean',
+		measurement: ranking ? "ranking_consistency" : "return",
+		rankingMetric: ranking ? (displayFilter.rankingSort === "selected_asset" ? "top1_superiority" : "mean_accuracy_ci_lower") : replayMode === "asset_switch" ? "totalNetPnlUsd" : "topMean",
+		...(ranking ? { rankingSort: displayFilter.rankingSort ?? "overall_ordering", rankingHorizon: results[0]?.rankingMeasurement?.horizonBars ?? runContext?.rankingHorizon ?? null, rankingSemantics: RANKING_MEASUREMENT_SEMANTICS, scoredEventFilter: { enabled: displayFilter.eventFilterEnabled === true, minEvents: displayFilter.minEvents ?? 1, maxEvents: displayFilter.maxEvents ?? null } } : {}),
 		runContext,
 		inventoryComplete,
 		results: filteredResults.map((candidate, index) => {
 			const candidateMode = candidate.replayMode ?? "horizon";
+			const selectedRanking = ranking ? getFinderArmRankingMetric(candidate, selectedArm, displayFilter) : undefined;
 			return {
 			rank: index + 1,
 			runId: runContext?.runId ?? null,
@@ -271,6 +276,14 @@ export function buildArmPerformanceTopResultsPayload(args: {
 			pairCoverage: candidate.pairCoverage,
 			selectedArm,
 			selectedArmMetric: getFinderArmPerformanceMetric(candidate, selectedArm, effectiveBasis) ?? null,
+			...(ranking ? {
+				selectedArmRanking: selectedRanking ?? null,
+				rankingAvailability: selectedRanking?.status ?? "rerun_required",
+				firstPlaceFrequencyAvailability: selectedRanking?.soleFirstPlaceCount !== undefined && selectedRanking?.sharedFirstPlaceCount !== undefined
+					? (selectedRanking.scoredEvents > 0 ? "available" : "no_events")
+					: "rerun_required",
+			} : {}),
+			rankingMeasurement: candidate.rankingMeasurement ?? null,
 			...(candidateMode === "horizon"
 				? {
 					excludedContributor: candidate.contributorExclusions?.[selectedArm] ?? null,

@@ -195,6 +195,108 @@ async function* fromArray<T>(items: T[]): AsyncIterable<T> {
     for (const item of items) yield item;
 }
 
+describe("ranking consistency alongside replay", () => {
+    const assets = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"];
+    function fixture(switchAt = 7) {
+        const pairs = assets.map((asset, index) => makeDirectMarket(asset, [
+            makeTrade("long", T0 + 1, T0 + 2, 1),
+            ...Array.from({ length: 6 - index }, () => makeTrade("long", T0 + 1000, T0 + (switchAt + 1) * 1000, 1)),
+            ...Array.from({ length: index + 1 }, () => makeTrade("long", T0 + (switchAt + 1) * 1000, null)),
+        ]));
+        const targets = assets.map((asset, index) => makeTarget(asset, 100, (bar) => 100 + (6 - index) * bar));
+        return { pairs, targets };
+    }
+    for (const mode of ["horizon", "asset_switch"] as const) {
+        it("preserves original " + mode + " return fields and uses 20-bar measurement regardless of switches", async () => {
+            for (const switchAt of [7, 50]) {
+                const { pairs, targets } = fixture(switchAt);
+                const options = { mode, interval: "1m", horizons: [20], sampleToSec: T0 + 90_000, evaluationCutoffSec: T0 + 100_000,
+                    loadTargetDataset: async (asset: string) => targets.find((target) => target.asset === asset)?.data ?? null };
+                const off = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, options);
+                const on = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, { ...options, rankingHorizon: 20 });
+                const { rankingMeasurement, ...original } = on;
+                expect({ ...original, reportLines: [] }).to.deep.equal({ ...off, reportLines: [] });
+                expect(rankingMeasurement?.horizonBars).to.equal(20);
+                expect(rankingMeasurement?.arms.topRaw.meanAccuracy).not.to.equal(null);
+                expect(rankingMeasurement?.arms.topRaw.eligibleEvents).to.equal(3);
+                expect(rankingMeasurement?.arms.topRaw.scoredEvents).to.equal(3);
+            }
+        });
+    }
+    it("measurement-only missing targets preserve switch trading status and P&L", async () => {
+        const { pairs, targets } = fixture();
+        const options = { mode: "asset_switch" as const, interval: "1m", sampleToSec: T0 + 90_000, evaluationCutoffSec: T0 + 100_000,
+            loadTargetDataset: async (asset: string) => asset === "CCC" ? null : targets.find((target) => target.asset === asset)?.data ?? null };
+        const off = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, options);
+        const on = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, { ...options, rankingHorizon: 20 });
+        expect(on.assetSwitch).to.deep.equal(off.assetSwitch);
+        expect(on.complete).to.equal(off.complete);
+        expect(on.rankingMeasurement?.arms.topRaw.skippedReasons.missing_target).to.be.greaterThan(0);
+    });
+    it("censors switch ranking at the frozen completed-candle cutoff while preserving current-open fills", async () => {
+        const { pairs, targets } = fixture();
+        const on = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, { mode: "asset_switch", interval: "1m", rankingHorizon: 20,
+            sampleToSec: T0 + 8_000, evaluationCutoffSec: T0 + 8_000,
+            loadTargetDataset: async (asset) => targets.find((target) => target.asset === asset)?.data ?? null });
+        expect(on.rankingMeasurement?.arms.topRaw.scoredEvents).to.equal(0);
+        expect(on.rankingMeasurement?.arms.topRaw.skippedReasons.right_censored).to.be.greaterThan(0);
+        expect(on.assetSwitch?.arms.topRaw.enteredCount).to.be.greaterThan(0);
+    });
+    it("shares horizon target requests and reports calendar misalignment without replacing frozen members", async () => {
+        const { pairs, targets } = fixture();
+        let loads = 0;
+        const on = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, { horizons: [20], rankingHorizon: 20,
+            loadTargetDataset: async (asset) => {
+                loads += 1;
+                const data = targets.find((target) => target.asset === asset)?.data ?? null;
+                return asset === "CCC" ? data!.map((bar) => ({ ...bar, time: (Number(bar.time) + 100) as Time })) : data;
+            } });
+        expect(loads).to.equal(6);
+        expect(on.rankingMeasurement?.arms.topRaw.skippedReasons.calendar_mismatch).to.be.greaterThan(0);
+        expect(on.rankingMeasurement?.arms.topRaw.meanAccuracy).to.equal(null);
+    });
+    it("does not promote cancelled switch measurements", async () => {
+        const { pairs, targets } = fixture();
+        let cancel = false;
+        const result = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, { mode: "asset_switch", interval: "1m", rankingHorizon: 20,
+            sampleToSec: T0 + 90_000, evaluationCutoffSec: T0 + 100_000, shouldStop: () => cancel,
+            onPhase(phase) { if (phase === "outcomes") cancel = true; },
+            loadTargetDataset: async (asset) => targets.find((target) => target.asset === asset)?.data ?? null });
+        expect(result.complete).to.equal(false);
+        expect(result.rankingMeasurement?.arms.topRaw.scoredEvents).to.equal(0);
+    });
+    it("measures normalized cost-adjusted returns across all supported time shapes", async () => {
+        const start = Date.parse("2024-01-01T00:00:00Z") / 1000;
+        const shape = (sec: number, format: string): Time => {
+            if (format === "milliseconds") return (sec * 1000) as Time;
+            if (format === "iso") return new Date(sec * 1000).toISOString() as Time;
+            if (format === "business_day") { const date = new Date(sec * 1000); return { year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, day: date.getUTCDate() } as Time; }
+            return sec as Time;
+        };
+        let reference: unknown;
+        for (const format of ["seconds", "milliseconds", "iso", "business_day"]) {
+            const pairs = assets.map((asset, index) => makeDirectMarket(asset, Array.from({ length: 6 - index }, () => ({
+                ...makeTrade("long", start, start + 86400, 1), entryTime: shape(start, format), exitTime: shape(start + 86400, format),
+            }))));
+            const targets = assets.map((asset, index) => ({ asset, symbol: asset, data: Array.from({ length: 10 }, (_, bar) => {
+                const price = 100 + (6 - index) * bar;
+                return { time: shape(start + bar * 86400, format), open: price, close: price, high: price, low: price, volume: 1 };
+            }) }));
+            const result = await runOpenScoreUsdReplay(() => fromArray(pairs), () => fromArray(targets), { horizons: [3], rankingHorizon: 3, commissionRate: 0.001, slippageRate: 0.002 });
+            if (reference === undefined) reference = result.rankingMeasurement;
+            expect(result.rankingMeasurement).to.deep.equal(reference);
+            expect(result.rankingMeasurement?.arms.topRaw.meanAccuracy).to.equal(1);
+        }
+    });
+    it("counts a forward data gap beyond the decision-window end as a ranking omission", async () => {
+        const { pairs, targets } = fixture();
+        targets[2]!.data = targets[2]!.data.map((bar, index) => index < 10 ? bar : { ...bar, time: (Number(bar.time) + 31 * 86400) as Time });
+        const result = await runOpenScoreUsdReplay(() => fromArray(pairs), () => fromArray(targets), { horizons: [20], rankingHorizon: 20, sampleToSec: T0 + 2_000 });
+        expect(result.rankingMeasurement?.arms.topRaw.skippedReasons.data_gap).to.be.greaterThan(0);
+        expect(result.rankingMeasurement?.arms.topRaw.scoredEvents).to.equal(0);
+    });
+});
+
 describe("batch-open-score-usd-replay-engine", () => {
     it("shrinks causal profit confidence for sparse or inconsistent realized pnl", () => {
         expect(computeProfitNowConfidenceWeight(1, 10, 10)).to.equal(0.5);
