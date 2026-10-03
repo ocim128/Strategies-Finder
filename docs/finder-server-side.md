@@ -213,11 +213,30 @@ version, process start time and replay implementation marker. Historical
 children without these fields report `null`; exporting later never assigns
 the exporter's code version to an earlier run. This helps distinguish stale
 server code from CPU, I/O and cache variability when CLI and live timings differ.
-The current marker is `bounded-ranking-sidecar-lru-v1`.
+The current marker is `bounded-ranking-daily-columns-v2`.
 `config.pairListHash` fingerprints the ordered canonical pair list without
 exporting thousands of symbols. Equal pair counts do not mean equal work:
 compare the hash, strategy parameters, window, cutoff and costs before treating
 two runs as a speed comparison.
+
+Daily IBKR targets retain compact source columns in a main-thread LRU with
+8,192 entries and an 8-million-candle limit (about 384 MB for six Float64
+columns). Every request still checks the CSV mtime; sync changes invalidate
+retained columns before use. Worker caches still reset between candidates.
+`parsedDailyCacheHits` and `parsedDailyCacheMisses` count these source-column
+reads during replay, including reuse across candidates; raw target loads can
+remain misses while the underlying disk read is avoided.
+
+For the 41-strategy daily switch-ranking snapshot (4,990 pairs, two-bar
+horizon, captured date range/cutoff), a controlled four-worker CLI comparison
+took 161.1 s before and 137.2 s after this cache change. Source-column reads
+recorded 195,611 hits and 2,798 misses; summed target-load time fell from
+157.1 s to 52.3 s. A four-strategy sample at the usual 28 workers took 17.9 s
+and 14.3 s with identical results. The full sweep differed slightly in one
+confidence-weighted ranking; the unchanged baseline also reproduced that
+variation in separate runs, so this is not a full bit-for-bit parity claim.
+These comparisons pin the captured pairs and parameters; live timings depend
+on worker count and host load.
 
 Causal switch picks share lazy tie digests within each decision timestamp.
 Ranking insertion computes the incoming candidate's digest at most once and

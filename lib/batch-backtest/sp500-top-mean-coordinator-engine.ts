@@ -48,6 +48,7 @@ import {
     type AssetSwitchReplaySummary,
 } from "./batch-open-score-usd-replay-engine";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
+import { getParsedIbkrDailyCacheStats } from "./server-ibkr-csv-loader";
 import { SyntheticLegCache } from "./synthetic-leg-cache";
 import { runParallelArtifactScan } from "./sp500-top-mean-scan-pool";
 import type { StageOutcome } from "./open-score-replay/internal-types";
@@ -903,7 +904,7 @@ export class TopMeanCoordinatorEngine {
             runtime: {
                 processId: process.pid, nodeVersion: process.version,
                 processStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
-                replayImplementation: "bounded-ranking-sidecar-lru-v1",
+                replayImplementation: "bounded-ranking-daily-columns-v2",
             },
             startedAt: new Date().toISOString(),
             totalMs: 0,
@@ -1300,6 +1301,7 @@ export class TopMeanCoordinatorEngine {
             const isAssetSwitchReplay = this._request.replayMode === "asset_switch";
 
             const targetPerformance = this.performanceDiagnostic;
+            const parsedDailyCacheBefore = getParsedIbkrDailyCacheStats();
             // Audit (unbounded-replay-cache finding): this used to be a plain
             // Map, so every loaded target dataset (~5–10 MB) stayed resident
             // for the WHOLE run — several GB at 500 targets alongside the
@@ -1787,6 +1789,9 @@ export class TopMeanCoordinatorEngine {
             }
 
             this.performanceDiagnostic.phases.replayMs = performance.now() - replayStartedAt;
+            const parsedDailyCacheAfter = getParsedIbkrDailyCacheStats();
+            this.performanceDiagnostic.replay.parsedDailyCacheHits = Math.max(0, parsedDailyCacheAfter.hits - parsedDailyCacheBefore.hits);
+            this.performanceDiagnostic.replay.parsedDailyCacheMisses = Math.max(0, parsedDailyCacheAfter.misses - parsedDailyCacheBefore.misses);
 
             // Save replay output json. Merges the historical replay fields
             // into the same result.json that already carries the snapshot

@@ -56,7 +56,13 @@ The server IBKR loader promotes validated binary-sidecar hits into its existing
 bounded parsed-column LRU, just as it does CSV parses. Repeated reads can reuse
 those columns; each request still checks the authoritative CSV mtime and sync
 changes invalidate the entry. Cache capacities and candle materialization stay
-unchanged.
+bounded. Main-thread daily targets have a separate 8,192-entry working set,
+also capped at 8 million candle points (six Float64 columns, about 384 MB).
+This retains short daily histories across causal scoring, fills, rankings and
+later Finder candidates without retaining their candle objects. Worker seed
+and main-thread 4h cache capacities keep their existing limits. Daily-column
+hits and misses appear separately as `parsedDailyCacheHits` and
+`parsedDailyCacheMisses` in replay diagnostics.
 
 ### Browser modules (`browser/`)
 

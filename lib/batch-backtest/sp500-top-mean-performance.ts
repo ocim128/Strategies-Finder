@@ -87,6 +87,9 @@ export interface TopMeanPerformanceDiagnostic {
          * TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES.
          */
         targetCachePeakEntries: number;
+        /** Main-thread daily IBKR column-cache reads during replay. */
+        parsedDailyCacheHits?: number;
+        parsedDailyCacheMisses?: number;
         /** Normalized switch prices use their own point-bounded cache. */
         switchSeriesCacheHits?: number;
         switchSeriesCacheMisses?: number;

@@ -40,6 +40,9 @@ const IBKR_HEADER = "time,open,high,low,close,volume";
  */
 const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
 const PARSED_4H_TARGET_CACHE_MAX_ENTRIES = 4_096;
+const PARSED_DAILY_TARGET_CACHE_MAX_ENTRIES = 8_192;
+// Six Float64 columns per candle: at most 384 MB of backing arrays.
+const PARSED_DAILY_TARGET_CACHE_MAX_POINTS = 8_000_000;
 
 interface ParsedSeedColumns {
     time: Float64Array;
@@ -113,11 +116,43 @@ function candlesFromColumnsTail(columns: ParsedSeedColumns, limitBars: number): 
 }
 
 type ParsedCsvCache = Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>;
+
+/** Entry recency is maintained by the shared cache helpers below. */
+class PointBoundedParsedCache extends Map<string, { mtimeMs: number; columns: ParsedSeedColumns }> {
+    points = 0;
+    constructor(private readonly maxPoints: number) { super(); }
+
+    override delete(key: string): boolean {
+        const previous = this.get(key);
+        if (!previous) return false;
+        this.points -= previous.columns.time.length;
+        return super.delete(key);
+    }
+
+    override set(key: string, value: { mtimeMs: number; columns: ParsedSeedColumns }): this {
+        this.delete(key);
+        super.set(key, value);
+        this.points += value.columns.time.length;
+        while (this.points > this.maxPoints) this.delete(this.keys().next().value!);
+        return this;
+    }
+
+    override clear(): void { super.clear(); this.points = 0; }
+}
+
 const parsedCsvCache: ParsedCsvCache = new Map();
 // The coordinator replays thousands of standalone 4h targets across annual
 // passes. Keep that main-thread target working set separate from the normal
 // cache so it cannot evict the 30m seed cache used by other server work.
 const parsed4hTargetCache: ParsedCsvCache = new Map();
+// Main-thread daily targets are revisited by causal scoring, switch fills,
+// ranking and later candidates. Keep compact columns, never candle objects.
+const parsedDailyTargetCache = new PointBoundedParsedCache(PARSED_DAILY_TARGET_CACHE_MAX_POINTS);
+const dailyCacheCounters = { hits: 0, misses: 0 };
+
+export function getParsedIbkrDailyCacheStats() {
+    return { ...dailyCacheCounters, entries: parsedDailyTargetCache.size, points: parsedDailyTargetCache.points };
+}
 
 interface CacheCheck {
     filePath: string;
@@ -127,14 +162,19 @@ interface CacheCheck {
 
 function checkParsedCsvCache(filePath: string, cache: ParsedCsvCache, mtimeMs: number): CacheCheck | null {
     const cached = cache.get(filePath);
-    if (!cached) return null;
+    if (!cached) {
+        if (cache === parsedDailyTargetCache) dailyCacheCounters.misses++;
+        return null;
+    }
     if (mtimeMs === cached.mtimeMs) {
+        if (cache === parsedDailyTargetCache) dailyCacheCounters.hits++;
         // Move-to-end for LRU recency.
         cache.delete(filePath);
         cache.set(filePath, cached);
         return { filePath, mtimeMs, columns: cached.columns };
     }
     cache.delete(filePath);
+    if (cache === parsedDailyTargetCache) dailyCacheCounters.misses++;
     return null;
 }
 
@@ -157,7 +197,11 @@ function storeParsedCsvColumns(
 export function clearParsedIbkrCsvCache(): void {
     parsedCsvCache.clear();
     parsed4hTargetCache.clear();
+    parsedDailyTargetCache.clear();
+    dailyCacheCounters.hits = dailyCacheCounters.misses = 0;
 }
+
+export const __testInternals = { PointBoundedParsedCache };
 
 // ============================================================================
 // Disk-backed parsed-seed sidecar
@@ -426,10 +470,14 @@ export async function loadFreshIbkrCandlesFromDisk(
     if (!isIbkrSymbol(symbol) || signal?.aborted) return null;
     const baseInterval = interval.trim().toLowerCase().split("@")[0]!;
     if (!/^[a-z0-9]+$/.test(baseInterval)) return null;
-    const parsedCache = isMainThread && baseInterval === "4h"
+    const parsedCache = isMainThread && baseInterval === "1d"
+        ? parsedDailyTargetCache
+        : isMainThread && baseInterval === "4h"
         ? parsed4hTargetCache
         : parsedCsvCache;
-    const parsedCacheMaxEntries = parsedCache === parsed4hTargetCache
+    const parsedCacheMaxEntries = parsedCache === parsedDailyTargetCache
+        ? PARSED_DAILY_TARGET_CACHE_MAX_ENTRIES
+        : parsedCache === parsed4hTargetCache
         ? PARSED_4H_TARGET_CACHE_MAX_ENTRIES
         : PARSED_CSV_CACHE_MAX_ENTRIES;
 

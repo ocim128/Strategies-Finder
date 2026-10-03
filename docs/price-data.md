@@ -95,10 +95,16 @@ automatically on the next stat — no explicit clear.
 - `limitBars` tail materialization works from sidecar columns exactly as it
   does from the in-memory parsed-seed cache.
 - The sidecar amortizes parsing ACROSS worker processes and runs: the
-  in-memory parsed-seed cache is per-process (512–4096 entries), which large
+  in-memory parsed-seed cache is per-process, which large
   TOP_MEAN runs exceed and then re-parse every seed. Sidecar files are
   regenerable data and safe to delete; set `IBKR_CSV_SEED_CACHE=0|false|off`
   to disable reads and writes.
+- Main-thread daily targets use a separate 8,192-entry LRU capped at 8 million
+  candle points (six Float64 columns, about 384 MB). The original 512-entry
+  seed cache and 4,096-entry main-thread 4h cache retain their own budgets.
+  Mtime validation, clear, and fresh candle-object materialization apply to
+  all three caches. A daily series larger than its point budget is returned
+  normally and evicted from retained columns.
 - Bump `SEED_SIDECAR_FORMAT_VERSION` in
   `lib/batch-backtest/server-ibkr-csv-loader.ts` whenever the CSV parse or
   TradFi normalization behavior changes; stale-format sidecars are ignored and

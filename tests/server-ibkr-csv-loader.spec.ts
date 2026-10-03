@@ -6,6 +6,8 @@ import {
     clearParsedIbkrCsvCache,
     loadFreshIbkrCandlesFromDisk,
     parseIbkrCsvPayload,
+    getParsedIbkrDailyCacheStats,
+    __testInternals,
 } from "../lib/batch-backtest/server-ibkr-csv-loader";
 import { resolveServerBatchCacheBudget } from "../lib/batch-backtest/server-batch-cache-budget";
 import { extractCandlesFromCsvPayload } from "../lib/candle-cache";
@@ -18,6 +20,24 @@ const CSV = [
 ].join("\n");
 
 async function main(): Promise<void> {
+    const pointCache = new __testInternals.PointBoundedParsedCache(5);
+    const entry = (n: number) => ({ mtimeMs: 1, columns: {
+        time: new Float64Array(n), open: new Float64Array(n), high: new Float64Array(n),
+        low: new Float64Array(n), close: new Float64Array(n), volume: new Float64Array(n),
+    } });
+    pointCache.set("A", entry(2)); pointCache.set("B", entry(2));
+    const recent = pointCache.get("A")!; pointCache.delete("A"); pointCache.set("A", recent);
+    pointCache.set("C", entry(2));
+    assert.deepEqual([...pointCache.keys()], ["A", "C"], "point pressure evicts least recently used columns");
+    assert.equal(pointCache.points, 4);
+    pointCache.set("A", entry(4));
+    assert.deepEqual([...pointCache.keys()], ["A"], "replacement subtracts previous points before eviction");
+    assert.equal(pointCache.points, 4);
+    pointCache.set("oversized", entry(6));
+    assert.equal(pointCache.points, 0, "one oversized series cannot exceed the memory budget");
+    assert.equal(pointCache.size, 0);
+    pointCache.set("A", entry(1)); pointCache.clear();
+    assert.equal(pointCache.points, 0, "clear resets point accounting");
     const parsed = parseIbkrCsvPayload(CSV);
     assert.equal(parsed.length, 2);
     assert.equal(parsed[0]!.open, 100);
@@ -47,6 +67,37 @@ async function main(): Promise<void> {
         legCacheMaxEntries: 128,
         pairCacheMaxEntries: 32,
     });
+
+    const dailyBaseDir = mkdtempSync(join(tmpdir(), "server-ibkr-daily-working-set-"));
+    const dailyCsv = CSV.replace("2025-01-02T14:30", "2025-01-02T00:00").replace("2025-01-02T15:00", "2025-01-03T00:00");
+    try {
+        const csvDir = join(dailyBaseDir, "price-data", "ibkr", "csv", "1d");
+        mkdirSync(csvDir, { recursive: true });
+        clearParsedIbkrCsvCache();
+        let firstDaily: Awaited<ReturnType<typeof loadFreshIbkrCandlesFromDisk>> = null;
+        for (let i = 0; i < 514; i++) {
+            const path = join(csvDir, `DAILY${i}.csv`);
+            writeFileSync(path, dailyCsv, "utf8"); utimesSync(path, 1800000000, 1800000000);
+            const data = await loadFreshIbkrCandlesFromDisk(`DAILY${i}\u2022`, "1d", undefined, dailyBaseDir);
+            if (i === 0) firstDaily = data;
+        }
+        const firstPath = join(csvDir, "DAILY0.csv");
+        writeFileSync(firstPath, dailyCsv.replace("100,102,99,101,1000", "900,902,899,901,1000"), "utf8");
+        utimesSync(firstPath, 1800000000, 1800000000);
+        rmSync(join(dailyBaseDir, "price-data", "ibkr", "seed-cache", "1d", "DAILY0.csv.bin"));
+        const warm = await loadFreshIbkrCandlesFromDisk("DAILY0\u2022", "1d", undefined, dailyBaseDir);
+        assert.deepEqual(warm, firstDaily, "daily targets retain a working set larger than the old 512-entry cache");
+        assert.equal(getParsedIbkrDailyCacheStats().hits, 1);
+        assert.equal(getParsedIbkrDailyCacheStats().misses, 514);
+        utimesSync(firstPath, 1800000001, 1800000001);
+        const fresh = await loadFreshIbkrCandlesFromDisk("DAILY0\u2022", "1d", undefined, dailyBaseDir);
+        assert.equal(fresh![0]!.open, 900, "CSV sync invalidates retained daily columns");
+        clearParsedIbkrCsvCache();
+        assert.equal(getParsedIbkrDailyCacheStats().points, 0);
+        assert.equal(getParsedIbkrDailyCacheStats().entries, 0);
+    } finally {
+        clearParsedIbkrCsvCache(); rmSync(dailyBaseDir, { recursive: true, force: true });
+    }
 
     // ---- parsed-CSV cache behavior ----
     // Intent: a 1000-pair Asset Opportunity run touches ~500 unique IBKR legs.
