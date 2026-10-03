@@ -4,6 +4,39 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Repair the preflight quote-overlap window and a spread-limit crash
+
+- **Evidence:** Running `npm run data:preflight` over the IBKR 30m tree
+  (verdict=BLOCK: 88 symbols, 2,378 WARN of 3,827) prompted a review of
+  `lib/market-data/data-integrity-scan.ts`. Its quote-overlap coverage
+  subtracted 180 days as `180 * 24 * 3600 * 1000` (milliseconds) from unix
+  SECONDS timestamps, so the documented "recent 180-day window" started
+  ~180,000 days back and coverage silently measured full history —
+  contradicting the function's own comment. The same block computed the quote
+  leg's last bar with `Math.max(...quoteTimestamps)`; NVDA's quote set is
+  already 75,822 rows and grows every sync, and Vite/Node engines throw
+  RangeError around ~125k call arguments, so the CLI would eventually crash.
+  No runtime consumer exists for the overlap numbers (CLI JSON only), which
+  bounded the impact but made both defects safe to fix.
+- **Change:** Expressed the window offset in seconds (`180 * 86_400`) and
+  replaced the spread with an explicit max loop. Added two regression tests:
+  deep-history bars outside the window must not dilute coverage (failed at 50%
+  vs the expected 100% pre-fix), and a 250k-timestamp quote set must score
+  correctly (RangeError pre-fix). Both confirmed red against the buggy code
+  and green after. The existing all-recent overlap test is unaffected.
+- **Checks:** `npm run test -- data-integrity-scan.spec.ts` (new tests verified
+  failing against the pre-fix module), `npm run typecheck`,
+  `npm run typecheck:tests`, `git diff --check`, full suite 257/257.
+- **Follow-up:** The BLOCK verdict has no runtime consumer: Finder Symbol
+  Universe, Scanner, and Batch research the same tree without excluding the 88
+  blocked symbols (empty files, non-monotonic timestamps, unparsable rows,
+  stale tails) — surfacing or excluding those at universe-build time is a
+  worthwhile but design-heavy improvement needing per-run cost handling
+  (full-tree parse is minutes; would need cached verdicts with mtime
+  invalidation). Also noted: `price-data/ibkr/csv/30m/` holds 3,264
+  `*.csv.bak` backups alongside the 3,827 live CSVs; the scanner ignores them,
+  but a cleanup/archive step could keep the tree lean.
+
 ## 2026-10-03 - Repair perf-commit fallout: doubled solver-failure diagnostic and stale cancellation pin
 
 - **Evidence:** A ground-truth full-suite run found 1 of 257 specs failing:

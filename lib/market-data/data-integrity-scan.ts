@@ -257,9 +257,16 @@ function createScan(
         if (!quoteTimestamps) continue;
         // Overlap is measured over the RECENT shared window only (last 180 days before
         // the earlier series end): full-history overlap penalizes deep-history symbols
-        // whose early timestamps predate the quote leg.
-        const quoteLastBarTimestamp = quoteTimestamps.size > 0 ? Math.max(...quoteTimestamps) : 0;
-        const recentWindowStart = Math.min(lastBarTimestamp ?? 0, quoteLastBarTimestamp) - 180 * 24 * 3600 * 1000;
+        // whose early timestamps predate the quote leg. All timestamps here are unix
+        // SECONDS, so the window offset is expressed in seconds too.
+        let quoteLastBarTimestamp = 0;
+        // Iterate instead of spreading into Math.max: quote sets exceed the engine's
+        // function-call argument limit long before disk space runs out (NVDA 30m
+        // already holds ~75k rows and grows with every sync).
+        for (const timestamp of quoteTimestamps) {
+            if (timestamp > quoteLastBarTimestamp) quoteLastBarTimestamp = timestamp;
+        }
+        const recentWindowStart = Math.min(lastBarTimestamp ?? 0, quoteLastBarTimestamp) - 180 * 86_400;
         let sharedTimestamps = 0;
         let recentOwnTimestamps = 0;
         for (const timestamp of ownTimestamps) {

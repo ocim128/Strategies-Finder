@@ -115,4 +115,28 @@ describe("data integrity scan", () => {
         assert.equal(lagging?.universeFreshnessSpreadDays, 3);
         assert.equal(lagging?.verdict, "WARN");
     });
+
+    it("measures quote overlap over the recent 180-day window, not full history", () => {
+        const recentTime = NOW - 1 * 86_400;
+        const oldTime = NOW - 400 * 86_400;
+        const quoteTimes = new Set(extractValidTimestampsFromCsvPayload(csv([row(recentTime)])));
+        const deepHistory = scanFixture("DEEP", csv([row(oldTime), row(recentTime)]), {
+            nowTimestamp: NOW,
+            quoteTimestampSets: new Map([["SPY", quoteTimes]]),
+        });
+        // The old bar predates the 180-day window that ends at the earlier
+        // series end, so it must not dilute the recent-window coverage.
+        assert.equal(deepHistory.overlapWithQuotes[0]?.coveragePercent, 100);
+    });
+
+    it("scores overlap against a quote set far beyond the function-call spread limit", () => {
+        const quoteTimes = new Set<number>();
+        for (let index = 0; index < 250_000; index += 1) quoteTimes.add(NOW - index * T30);
+        const scanned = scanFixture("BIGQUOTE", csv([row(NOW - T30)]), {
+            nowTimestamp: NOW,
+            quoteTimestampSets: new Map([["SPY", quoteTimes]]),
+        });
+        assert.equal(scanned.overlapWithQuotes[0]?.coveragePercent, 100);
+        assert.equal(scanned.verdict, "PASS");
+    });
 });
