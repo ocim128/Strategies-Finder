@@ -267,4 +267,20 @@ describe("Finder additional causal arms", () => {
         for (const field of CAUSAL_ARM_FIELDS) { assert.equal(result.horizons[0]![field]!.events, 0); assert.equal(result.rankingMeasurement!.arms[field]!.scoredEvents, 0); }
         assert.equal(result.causalArmDefinitions!.version, "finder-causal-arms-v1");
     });
+
+    it("attributes ranking work to aggregation in both replay modes with bounded arm progress", async () => {
+        const pairs = ["A", "B", "C", "D", "E", "F"].map((name) => pair(name, "Q", [trade(1500, 9999, "long", true)]));
+        for (const mode of ["horizon", "asset_switch"] as const) {
+            const progress: Array<{ phase: string; detail: string; completed: number; total: number }> = [];
+            const options = { mode, horizons: [2], rankingHorizon: 2, interval: "1m", sampleFromSec: 1500, sampleToSec: 1800,
+                evaluationCutoffSec: 5000, enableCausalArms: true, loadTargetDataset: async () => candles() };
+            const measured = await runOpenScoreUsdReplay(source(pairs), undefined, { ...options,
+                onPhase(phase, detail, completed, total) { progress.push({ phase, detail, completed, total }); } });
+            const rankingProgress = progress.filter(({ detail }) => detail.includes("ranking consistency"));
+            assert.equal(rankingProgress.length, 21);
+            assert.deepEqual(rankingProgress.map(({ completed }) => completed), Array.from({ length: 21 }, (_, i) => i));
+            assert.ok(rankingProgress.every(({ phase, total }) => phase === "aggregate" && total === 20));
+            assert.deepEqual(measured.rankingMeasurement, (await runOpenScoreUsdReplay(source(pairs), undefined, options)).rankingMeasurement);
+        }
+    });
 });

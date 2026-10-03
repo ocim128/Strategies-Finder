@@ -64,6 +64,15 @@ export interface FinderArmPerformanceDisplayFilter {
     maxEvents?: number | null;
 }
 
+/** Display requests take precedence over retained measurement provenance. */
+export function resolveFinderArmRankingHorizon(
+    filter: FinderArmPerformanceDisplayFilter,
+    measuredHorizon?: number,
+    context?: { rankingHorizon?: number; horizon?: number } | null,
+): number | null {
+    return filter.rankingHorizon ?? measuredHorizon ?? context?.rankingHorizon ?? context?.horizon ?? null;
+}
+
 export function getFinderArmRankingMetric(row: { rankingMeasurement?: RankingMeasurementSummary }, arm: FinderArmPerformanceArm, filter: FinderArmPerformanceDisplayFilter = {}): RankingArmSummary | undefined {
     const section = row.rankingMeasurement;
     if (section?.semanticsVersion !== RANKING_MEASUREMENT_SEMANTICS || (filter.rankingHorizon !== undefined && filter.rankingHorizon !== section.horizonBars)) return undefined;

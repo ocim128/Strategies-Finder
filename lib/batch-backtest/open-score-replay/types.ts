@@ -10,7 +10,7 @@
 import type { OHLCVData } from "../../types/strategies";
 import type { CandleGap } from "../../ibkr-data/candle-gap";
 import type { ActiveCapTiltWeight, CapTiltWeight } from "../cap-tilt-contract";
-import { REPLAY_ARM_FIELDS, LEGACY_REPLAY_ARM_FIELDS, isCausalArm, replayArmFields, type ReplayArmField } from "./arm-contract";
+import { REPLAY_ARM_FIELDS, isCausalArm, replayArmFields, type ReplayArmField } from "./arm-contract";
 import type { StageOutcome } from "./internal-types";
 import type { ArtifactScanResult } from "./artifact-scan";
 import { TOP_MEAN_HORIZONS_MAX_VALUE } from "../sp500-top-mean-request-limits";
@@ -313,76 +313,72 @@ export function createEmptyRankingMeasurement(horizonBars: number, enabled = fal
     }])) as RankingMeasurementSummary["arms"] };
 }
 
+/** Validate one arm without fabricating missing additive frequencies. */
+function compactRankingArm(value: unknown): RankingArmSummary | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const row = value as RankingArmSummary;
+    const target = { skippedReasons: {} } as RankingArmSummary;
+    const countKeys = ["eligibleEvents", "scoredEvents", "skippedEvents", "tiedComparisons", "comparisons", "blockCount"] as const;
+    const scoreKeys = ["meanAccuracy", "top1Superiority", "ciLower", "ciUpper"] as const;
+    const reasons: RankingSkipReason[] = ["small_pool", "unresolved_pick", "pick_changed", "missing_target", "missing_entry", "invalid_price", "data_gap", "right_censored", "calendar_mismatch"];
+    for (const key of countKeys) {
+        if (!Number.isSafeInteger(row[key]) || row[key] < 0) return undefined;
+        target[key] = row[key];
+    }
+    for (const key of scoreKeys) {
+        if (row[key] !== null && (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key]! < 0 || row[key]! > 1)) return undefined;
+        target[key] = row[key];
+    }
+    if (row.status !== "available" && row.status !== "insufficient_data" && row.status !== "no_events") return undefined;
+    if (row.scoredEvents !== row.eligibleEvents || row.comparisons !== row.scoredEvents * 10 || row.tiedComparisons > row.comparisons || row.blockCount > row.scoredEvents) return undefined;
+    for (const key of ["measurementWindowSec", "timeBlockWidthSec", "timeCoverageSec"] as const) {
+        if (row[key] !== null && (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key]! <= 0)) return undefined;
+        target[key] = row[key];
+    }
+    const hasCoverage = row.measurementWindowSec !== null && row.timeBlockWidthSec !== null && row.timeCoverageSec !== null;
+    if (hasCoverage ? row.blockCount < 1 || row.timeBlockWidthSec! < 2 * row.measurementWindowSec! || row.timeCoverageSec! < row.measurementWindowSec!
+        : row.blockCount !== 0 || row.measurementWindowSec !== null || row.timeBlockWidthSec !== null || row.timeCoverageSec !== null) return undefined;
+    if (row.scoredEvents === 0 && hasCoverage) return undefined;
+    if (row.scoredEvents === 0 ? row.meanAccuracy !== null || row.top1Superiority !== null : row.meanAccuracy === null || row.top1Superiority === null) return undefined;
+    target.status = row.scoredEvents >= 100 && row.blockCount >= 10 ? "available" : row.scoredEvents ? "insufficient_data" : "no_events";
+    if (row.status !== target.status) return undefined;
+    if (target.status !== "available") { target.ciLower = null; target.ciUpper = null; }
+    else if (row.ciLower === null || row.ciUpper === null || row.ciLower > row.ciUpper) return undefined;
+    if (!row.skippedReasons || typeof row.skippedReasons !== "object" || Array.isArray(row.skippedReasons)) return undefined;
+    for (const reason of reasons) {
+        const n = row.skippedReasons[reason];
+        if (n === undefined) continue;
+        if (!Number.isSafeInteger(n) || n < 0) return undefined;
+        target.skippedReasons[reason] = n;
+    }
+    if (Object.values(target.skippedReasons).reduce((sum, n) => sum + n, 0) !== row.skippedEvents) return undefined;
+    const sole = row.soleFirstPlaceCount, shared = row.sharedFirstPlaceCount;
+    if (typeof sole === "number" && Number.isSafeInteger(sole) && sole >= 0
+        && typeof shared === "number" && Number.isSafeInteger(shared) && shared >= 0 && sole + shared <= row.scoredEvents) {
+        const soleRate = row.scoredEvents ? sole / row.scoredEvents : null;
+        const sharedRate = row.scoredEvents ? shared / row.scoredEvents : null;
+        const matches = (actual: number | null | undefined, expected: number | null): boolean => actual === undefined || actual === expected
+            || (typeof actual === "number" && Number.isFinite(actual) && expected !== null && Math.abs(actual - expected) <= 1e-12);
+        if (matches(row.soleFirstPlaceRate, soleRate) && matches(row.sharedFirstPlaceRate, sharedRate)) {
+            target.soleFirstPlaceCount = sole; target.sharedFirstPlaceCount = shared;
+            target.soleFirstPlaceRate = soleRate; target.sharedFirstPlaceRate = sharedRate;
+        }
+    }
+    return target;
+}
+
 /** Explicit scalar serialization and tolerant additive-field recovery. Unknown semantics require rerun. */
 export function compactRankingMeasurement(value: unknown): RankingMeasurementSummary | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const section = value as RankingMeasurementSummary;
     if (section.semanticsVersion !== RANKING_MEASUREMENT_SEMANTICS || !Number.isInteger(section.horizonBars) || section.horizonBars < 1 || section.horizonBars > TOP_MEAN_HORIZONS_MAX_VALUE || !section.arms || typeof section.arms !== "object") return undefined;
-    const result = createEmptyRankingMeasurement(section.horizonBars);
-    const countKeys = ["eligibleEvents", "scoredEvents", "skippedEvents", "tiedComparisons", "comparisons", "blockCount"] as const;
-    const scoreKeys = ["meanAccuracy", "top1Superiority", "ciLower", "ciUpper"] as const;
-    const reasons: RankingSkipReason[] = ["small_pool", "unresolved_pick", "pick_changed", "missing_target", "missing_entry", "invalid_price", "data_gap", "right_censored", "calendar_mismatch"];
+    const arms = {} as RankingMeasurementSummary["arms"];
     for (const field of REPLAY_ARM_FIELDS) {
-        if (isCausalArm(field)) {
-            const row = section.arms[field];
-            if (row) {
-                const probe = { ...section, arms: Object.fromEntries(LEGACY_REPLAY_ARM_FIELDS.map((key) => [key, key === "topRaw" ? row : section.arms[key]])) };
-                const valid = compactRankingMeasurement(probe);
-                if (valid) result.arms[field] = valid.arms.topRaw;
-            }
-            continue;
-        }
-        const row = section.arms[field];
-        if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
-        const target = result.arms[field];
-        // Do not turn missing or malformed additive frequencies into zero wins.
-        delete target.soleFirstPlaceCount; delete target.sharedFirstPlaceCount;
-        delete target.soleFirstPlaceRate; delete target.sharedFirstPlaceRate;
-        for (const key of countKeys) {
-            if (!Number.isSafeInteger(row[key]) || row[key] < 0) return undefined;
-            target[key] = row[key];
-        }
-        for (const key of scoreKeys) {
-            if (row[key] !== null && (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key]! < 0 || row[key]! > 1)) return undefined;
-            target[key] = row[key];
-        }
-        if (row.status !== "available" && row.status !== "insufficient_data" && row.status !== "no_events") return undefined;
-        if (row.scoredEvents !== row.eligibleEvents || row.comparisons !== row.scoredEvents * 10 || row.tiedComparisons > row.comparisons || row.blockCount > row.scoredEvents) return undefined;
-        for (const key of ["measurementWindowSec", "timeBlockWidthSec", "timeCoverageSec"] as const) {
-            if (row[key] !== null && (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key]! <= 0)) return undefined;
-            target[key] = row[key];
-        }
-        const hasCoverage = row.measurementWindowSec !== null && row.timeBlockWidthSec !== null && row.timeCoverageSec !== null;
-        if (hasCoverage ? row.blockCount < 1 || row.timeBlockWidthSec! < 2 * row.measurementWindowSec! || row.timeCoverageSec! < row.measurementWindowSec!
-            : row.blockCount !== 0 || row.measurementWindowSec !== null || row.timeBlockWidthSec !== null || row.timeCoverageSec !== null) return undefined;
-        if (row.scoredEvents === 0 && hasCoverage) return undefined;
-        if (row.scoredEvents === 0 ? row.meanAccuracy !== null || row.top1Superiority !== null : row.meanAccuracy === null || row.top1Superiority === null) return undefined;
-        target.status = row.scoredEvents >= 100 && row.blockCount >= 10 ? "available" : row.scoredEvents ? "insufficient_data" : "no_events";
-        if (row.status !== target.status) return undefined;
-        if (target.status !== "available") { target.ciLower = null; target.ciUpper = null; }
-        else if (row.ciLower === null || row.ciUpper === null || row.ciLower > row.ciUpper) return undefined;
-        if (!row.skippedReasons || typeof row.skippedReasons !== "object" || Array.isArray(row.skippedReasons)) return undefined;
-        for (const reason of reasons) {
-            const n = row.skippedReasons[reason];
-            if (n === undefined) continue;
-            if (!Number.isSafeInteger(n) || n < 0) return undefined;
-            target.skippedReasons[reason] = n;
-        }
-        if (Object.values(target.skippedReasons).reduce((sum, n) => sum + n, 0) !== row.skippedEvents) return undefined;
-        const sole = row.soleFirstPlaceCount, shared = row.sharedFirstPlaceCount;
-        if (typeof sole === "number" && Number.isSafeInteger(sole) && sole >= 0
-            && typeof shared === "number" && Number.isSafeInteger(shared) && shared >= 0 && sole + shared <= row.scoredEvents) {
-            const soleRate = row.scoredEvents ? sole / row.scoredEvents : null;
-            const sharedRate = row.scoredEvents ? shared / row.scoredEvents : null;
-            const matches = (actual: number | null | undefined, expected: number | null): boolean => actual === undefined || actual === expected
-                || (typeof actual === "number" && Number.isFinite(actual) && expected !== null && Math.abs(actual - expected) <= 1e-12);
-            if (matches(row.soleFirstPlaceRate, soleRate) && matches(row.sharedFirstPlaceRate, sharedRate)) {
-                target.soleFirstPlaceCount = sole; target.sharedFirstPlaceCount = shared;
-                target.soleFirstPlaceRate = soleRate; target.sharedFirstPlaceRate = sharedRate;
-            }
-        }
+        const arm = compactRankingArm(section.arms[field]);
+        if (arm) arms[field] = arm;
+        else if (!isCausalArm(field)) return undefined;
     }
-    return result;
+    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars: section.horizonBars, arms };
 }
 
 export interface CausalArmDiagnostics {

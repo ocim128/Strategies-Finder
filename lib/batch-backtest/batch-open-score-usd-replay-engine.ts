@@ -119,7 +119,7 @@ import { scanArtifacts } from "./open-score-replay/artifact-scan";
 import { evaluateTargetOutcomes } from "./open-score-replay/target-outcomes";
 import { aggregateHorizonResults, aggregateRankingMeasurement } from "./open-score-replay/aggregation";
 import { sweepScoreEvents } from "./open-score-replay/event-sweep";
-import { buildAssetSwitchDecisions, buildCandidateViews, buildOutcomeRequests, selectAfterOutcomes, captureRankingEvent, RANKING_ARM_SPECS, insertRankingPick } from "./open-score-replay/candidate-selection";
+import { buildAssetSwitchDecisions, buildCandidateViews, buildOutcomeRequests, selectAfterOutcomes, captureRankingEvent, RANKING_ARM_SPEC_BY_FIELD, createRankingDigestCache, insertRankingPick } from "./open-score-replay/candidate-selection";
 import type { AssetSwitchCandidateStageResult, CandidateStageResult } from "./open-score-replay/candidate-selection";
 import type { DecisionEvent, RankingEvent } from "./open-score-replay/internal-types";
 import { buildReportLines } from "./open-score-replay/report";
@@ -387,7 +387,7 @@ export async function runOpenScoreUsdReplay(
                 poolSnapshots: undefined, candidateOutcomes: undefined, requestsByAsset, positiveRequestedAssets: new Set(requestsByAsset.keys()),
                 totalEventCount: records.length, eventTimeOf: (index) => records[index]!.timeSec, shouldStop, onPhase, pairCount, assetCount });
             if (!measurementOutcomes.ok) return emptyResult({ reportLines: [measurementOutcomes.earlyExit.reportLine] });
-            rankingMeasurement = await aggregateRankingMeasurement({ enabledArms, events: records, outcomes: measurementOutcomes.result, horizonBars: options.rankingHorizon, interval: options.interval, shouldStop });
+            rankingMeasurement = await aggregateRankingMeasurement({ enabledArms, events: records, outcomes: measurementOutcomes.result, horizonBars: options.rankingHorizon, interval: options.interval, shouldStop, onPhase });
             measurementOutcomes.result.returnsByView.length = 0;
             measurementOutcomes.result.rankingGapAssetsByView?.clear();
             measurementOutcomes.result.invalidRankingAssets?.clear();
@@ -546,14 +546,16 @@ export async function runOpenScoreUsdReplay(
 
     // Post-outcome selection (gap-filtered views, BOT_* picks, latest
     // selections): stage implementation ./open-score-replay/candidate-selection.ts.
+    const rankingDigestFor = createRankingDigestCache(assetNames);
     const postSelection = await selectAfterOutcomes({
         enableCausalArms: options.enableCausalArms,
         ...(options.rankingHorizon !== undefined ? { onRankingSelection: (time, field, pool, effectivePick) => {
             const event = rankingByTime.get(time);
             if (!event) return;
-            const spec = RANKING_ARM_SPECS.find((spec) => spec.field === field)!;
+            const spec = RANKING_ARM_SPEC_BY_FIELD.get(field)!;
             const row = { picks: [] as RankingEvent["arms"][typeof field]["picks"], reason: undefined as RankingEvent["arms"][typeof field]["reason"] };
-            for (const candidate of pool) insertRankingPick(row.picks, candidate, spec, time, assetNames);
+            const digestFor = (index: number): string => rankingDigestFor(time, index);
+            for (const candidate of pool) insertRankingPick(row.picks, candidate, spec, time, assetNames, digestFor);
             row.reason = row.picks.length < 5 ? "small_pool" : spec.unique && row.picks[0]!.key === row.picks[1]!.key && row.picks[0]!.secondary === row.picks[1]!.secondary ? "unresolved_pick"
                 : row.picks[0]!.assetIndex !== effectivePick ? "pick_changed" : undefined;
             event.arms[field] = row;
@@ -594,7 +596,7 @@ export async function runOpenScoreUsdReplay(
         views.forEach((view, index) => indexByTime.set(view.timeSec, index));
         profitOnlyEvents.forEach((event, index) => indexByTime.set(event.timeSec, views.length + index));
         rankingMeasurement = await aggregateRankingMeasurement({ enabledArms, events: rankingEvents, outcomes: outcomeStage, horizonBars: options.rankingHorizon,
-            interval: options.interval, horizonIndex: horizons.indexOf(options.rankingHorizon), outcomeIndexOf: (time) => indexByTime.get(time) ?? -1, shouldStop });
+            interval: options.interval, horizonIndex: horizons.indexOf(options.rankingHorizon), outcomeIndexOf: (time) => indexByTime.get(time) ?? -1, shouldStop, onPhase });
         rankingEvents.length = 0; rankingByTime.clear();
         outcomeStage.rankingGapAssetsByView?.clear();
         outcomeStage.invalidRankingAssets?.clear();

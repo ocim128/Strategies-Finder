@@ -37,6 +37,9 @@ candle's known open. Target timestamps are normalized before gap detection.
 Forward gaps beyond the decision-window end also invalidate frozen measurements.
 Cooldown capture uses original pools and the existing pre-update selection
 history; it never adds a second history or replaces failed members with #6.
+Cooldown top-five capture shares a lazy digest cache across arms at one event
+timestamp. The cache is cleared when the timestamp changes, preserving the
+existing digest and tie order without retaining a run-length cache.
 
 Replay, coordinator and both Finder candidate variants add a scalar-only
 `rankingMeasurement` section: `semanticsVersion: "top-five-ranking-v2"`,
@@ -83,6 +86,15 @@ remains authoritative on reload. No annual passes, pool snapshots, outcome
 archives, detailed ranking event rows, database migration or resume storage
 are introduced. The original v1 delivery plan has been retired; the current
 v2 rules are documented above.
+
+Scalar ranking recovery validates each of the twenty arm sections once. The
+fifteen legacy sections remain required; absent or malformed additional sections
+are omitted independently, without discarding valid legacy measurements.
+Ranking scoring and confidence bootstrap report the existing `aggregate` phase,
+with one start notification and one completion per enabled arm. The coordinator's
+existing progress throttle bounds wire updates, and ranking time is attributed
+to `aggregateMs` rather than target `outcomesMs`. Scores, bootstrap draws and
+cancellation checks are unchanged.
 
 Arm Performance is a server-owned Finder job registered at
 `POST /api/finder/arm-performance-run`. The browser sends the selected entry

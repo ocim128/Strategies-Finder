@@ -15,6 +15,8 @@ import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";
 import { finderManager } from "../lib/finder-manager";
 import { FinderUI } from "../lib/finder/finder-ui";
+import { normalizeFinderLatestResultsSnapshot } from "../lib/finder/finder-result-snapshot";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { createEmptyRankingMeasurement, type AssetSwitchArmSummary } from "../lib/batch-backtest/open-score-replay/types";
 import { clearDomElementCache } from "../lib/dom-utils";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
@@ -1512,6 +1514,46 @@ describe("Copy Diagnostics availability transitions", () => {
 // ---------------------------------------------------------------------------
 
 describe("FinderUI Arm Performance preview actions", () => {
+    it("renders absent persisted switch arms and retains independently available ranking data", () => {
+        const { horizon: _horizon, metrics, ...base } = makeArmCandidate(0, 1, 1);
+        const metric: AssetSwitchArmSummary = {
+            status: "complete", enteredCount: 1, completedTrades: 1,
+            realizedNetPnl: 5, openPositionNetPnl: 0, totalNetPnl: 5, partialRealizedNetPnl: 5,
+            completedHoldingDurationSec: 60, averageCompletedHoldingDurationSec: 60, totalCosts: 1,
+            openPosition: null, pendingOrder: null,
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        };
+        const rankingMeasurement = createEmptyRankingMeasurement(5, true);
+        for (const field of CAUSAL_ARM_FIELDS) {
+            Object.assign(rankingMeasurement.arms[field]!, { scoredEvents: 100, eligibleEvents: 100, comparisons: 1000,
+                meanAccuracy: 0.6, top1Superiority: 0.7, ciLower: 0.5, ciUpper: 0.8, blockCount: 10,
+                measurementWindowSec: 60, timeBlockWidthSec: 120, timeCoverageSec: 1200, status: "available" });
+        }
+        const restored = normalizeFinderLatestResultsSnapshot({ scope: "arm_performance", runContext: null, results: [{
+            ...base, replayMode: "asset_switch", rankingMeasurement,
+            assetSwitchMetrics: Object.fromEntries(Object.keys(metrics!).map((arm) => [arm, metric])),
+        }] });
+        if (restored?.scope !== "arm_performance") throw new Error("legacy switch snapshot was discarded");
+        const texts = (node: any): string[] => [node.textContent ?? "", ...(node.children ?? []).flatMap(texts)];
+        for (const field of CAUSAL_ARM_FIELDS) for (const measurement of ["return", "ranking_consistency"] as const) {
+            const ui = new FinderUI();
+            ui.renderArmPerformanceResults(restored.results, null, REPLAY_ARM_TO_FINDER_ARM[field], false, "raw", { measurement, rankingHorizon: 5 });
+            const rendered = texts(elsById.get("finderList"));
+            expect(rendered).to.include("Replay data: rerun required");
+            expect(rendered).to.include("Total net P&L --");
+            expect(rendered).to.include("Completed trades n/a · entries n/a");
+            if (measurement === "ranking_consistency") {
+                expect(rendered).to.include("Selected asset score 70.00%");
+                expect(rendered).to.include("Ordering CI lower 50.00%");
+                expect(rendered).to.include("Rank eligibility available");
+            }
+            const findApply = (node: any): any => node.className === "btn btn-secondary finder-apply" ? node
+                : (node.children ?? []).map(findApply).find(Boolean);
+            expect(findApply(elsById.get("finderList")).disabled).to.equal(false);
+            expect(restored.results[0]!.assetSwitchMetrics?.[REPLAY_ARM_TO_FINDER_ARM[field]]).to.equal(undefined);
+        }
+    });
+
     it("names the held asset in pending sales and the destination in pending buys", () => {
         const { horizon: _horizon, metrics: _metrics, ...base } = makeArmCandidate(0, 1, 1);
         const summary: AssetSwitchArmSummary = {
@@ -1581,7 +1623,10 @@ describe("FinderUI Arm Performance preview actions", () => {
         expect(texts(panel)).to.include("Mean accuracy CI95 [n/a, n/a]");
         expect(texts(panel).some((text) => text.includes("Scored events"))).to.equal(false);
         const primary = findNodes(elsById.get("finderList"), (node) => node.className === "finder-metrics")[0];
-        expect(primary.children.slice(0, 4).map((node: any) => node.textContent)).to.deep.equal([
+        expect(primary.children.slice(0, 2).map((node: any) => node.textContent)).to.deep.equal([
+            "Ordering CI lower n/a", "Rank eligibility insufficient confidence",
+        ]);
+        expect(primary.children.slice(2, 6).map((node: any) => node.textContent)).to.deep.equal([
             "Selected asset score 56.33%", "Best asset frequency 14.97%", "Shared first place 7.49%", "Overall ordering accuracy 53.61%",
         ]);
         expect(texts(primary)).to.include("Scored events 1336");
@@ -1602,6 +1647,24 @@ describe("FinderUI Arm Performance preview actions", () => {
         const legacy = { ...rankingMeasurement, semanticsVersion: "top-five-ranking-v1" } as unknown as typeof rankingMeasurement;
         ui.renderArmPerformanceResults([{ ...candidate, rankingMeasurement: legacy }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency" });
         expect(texts(elsById.get("finderList"))).to.include("Rerun required");
+        for (const rankingSort of ["overall_ordering", "selected_asset"] as const) {
+            ui.renderArmPerformanceResults([{ ...candidate, rankingMeasurement }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency", rankingHorizon: 6, rankingSort });
+            const mismatch = texts(elsById.get("finderList"));
+            expect(mismatch.some((text) => text.includes("Fixed horizon 6 bars"))).to.equal(true);
+            expect(mismatch).to.include("Stored ranking horizon 5 bars; requested 6 bars");
+            expect(mismatch).to.include("Rank eligibility rerun required");
+            expect(mismatch).to.include(rankingSort === "selected_asset" ? "Selected asset sort score n/a" : "Ordering CI lower n/a");
+        }
+        rankingMeasurement.arms.topRaw.blockCount = 10;
+        rankingMeasurement.arms.topRaw.status = "available";
+        rankingMeasurement.arms.topRaw.ciLower = 0.51;
+        rankingMeasurement.arms.topRaw.ciUpper = 0.57;
+        for (const rankingSort of ["overall_ordering", "selected_asset"] as const) {
+            ui.renderArmPerformanceResults([{ ...candidate, rankingMeasurement }], null, "TOP_RAW", false, "raw", { measurement: "ranking_consistency", rankingSort });
+            const renderedAvailable = texts(elsById.get("finderList"));
+            expect(renderedAvailable).to.include("Rank eligibility available");
+            expect(renderedAvailable).to.include(rankingSort === "selected_asset" ? "Selected asset sort score 56.33%" : "Ordering CI lower 51.00%");
+        }
     });
 
     it("renders horizon cards from contributor-excluded metrics and shows unavailable values", () => {

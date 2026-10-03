@@ -1,11 +1,11 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { captureRankingEvent, buildAssetSwitchDecisions, selectAfterOutcomes } from "../lib/batch-backtest/open-score-replay/candidate-selection";
+import { captureRankingEvent, buildAssetSwitchDecisions, selectAfterOutcomes, createRankingDigestCache, insertRankingPick, RANKING_ARM_SPECS } from "../lib/batch-backtest/open-score-replay/candidate-selection";
 import { aggregateRankingMeasurement, rankingPairCredit } from "../lib/batch-backtest/open-score-replay/aggregation";
 import { blockBootstrapMeanCi, buildRankingTimeBlocks } from "../lib/batch-backtest/open-score-replay/statistics";
 import { LEGACY_REPLAY_ARM_FIELDS as REPLAY_ARM_FIELDS } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { compactRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
-import type { Candidate, DecisionEvent, EventView, RankingEvent } from "../lib/batch-backtest/open-score-replay/internal-types";
+import type { Candidate, DecisionEvent, EventView, RankingEvent, RankingPick } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { TargetOutcomeStageResult, ViewOutcomeRecord } from "../lib/batch-backtest/open-score-replay/target-outcomes";
 
 const names = ["A", "B", "C", "D", "E", "F"];
@@ -23,6 +23,34 @@ async function measure(events: RankingEvent[], targets = outcomes(events), horiz
 }
 
 describe("top-five ranking consistency", () => {
+    it("preserves all arm memberships with shared event digests, including changed timestamps", () => {
+        const assetNames = Array.from({ length: 100 }, (_, i) => `ASSET${i}`);
+        const candidates: Candidate[] = assetNames.map((_, assetIndex) => ({ assetIndex, raw: 1, mean: 1, z: 1, adjusted: 1, activePairs: 1,
+            topCoverage: 1, topStableSupport: 1, topFreshSupport: 1, topPriceStrength: 1, topGraphStrength: 1 }));
+        const digestFor = createRankingDigestCache(assetNames);
+        // Returning to an earlier timestamp must not retain the intervening event's digests.
+        for (const time of [1700000000, 1700000060, 1700000000]) {
+            const expected = captureRankingEvent(time, { positives: candidates, profitPositives: candidates,
+                profitNowPositives: candidates, profitNowConfidencePositives: candidates }, assetNames, true);
+            for (const spec of RANKING_ARM_SPECS) {
+                const actual: RankingPick[] = [];
+                for (const candidate of candidates) insertRankingPick(actual, candidate, spec, time, assetNames, (index) => digestFor(time, index));
+                expect(actual).to.deep.equal(expected.arms[spec.field]!.picks);
+            }
+        }
+    });
+
+    it("reports ranking aggregation progress without changing summary values", async () => {
+        const events = [event(0), event(10)];
+        const progress: Array<[string, string, number, number]> = [];
+        const result = await aggregateRankingMeasurement({ events, outcomes: outcomes(events), horizonBars: 1, interval: "1s", shouldStop: () => false,
+            onPhase: (...args) => { progress.push(args); } });
+        expect(result).to.deep.equal(await measure(events));
+        expect(progress[0]).to.deep.equal(["aggregate", "measuring ranking consistency", 0, 15]);
+        expect(progress.slice(1).map(([, , completed, total]) => [completed, total])).to.deep.equal(REPLAY_ARM_FIELDS.map((_, index) => [index + 1, 15]));
+        expect(progress.every(([phase, detail]) => phase === "aggregate" && detail.includes("ranking consistency"))).to.equal(true);
+    });
+
     it("freezes all 15 arm pools and direction, retaining only five assets", async () => {
         const row = event(0);
         expect(Object.keys(row.arms)).to.deep.equal(REPLAY_ARM_FIELDS);

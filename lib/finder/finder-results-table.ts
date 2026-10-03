@@ -12,6 +12,10 @@ export function getFinderTableColumns(scope: FinderScope, metricTexts: readonly 
         case "strategy_quality": return columns("Med Exp", "PF", "PnL", "Trades", "Active", "Worst DD");
         case "arm_performance":
             if (metricTexts.some((text) => text.startsWith("Selected asset score "))) {
+                if (metricTexts.some((text) => text.startsWith("Ordering CI lower ") || text.startsWith("Selected asset sort score "))) {
+                    return columns(metricTexts.some((text) => text.startsWith("Ordering CI lower ")) ? "Ordering CI lower" : "Selected asset sort score",
+                        "Rank eligibility", "Selected asset score", "Overall ordering accuracy", "Best asset frequency", "Scored events");
+                }
                 return columns("Selected asset score", "Overall ordering accuracy", "Best asset frequency", "Scored events");
             }
             if (metricTexts.some((text) => text.startsWith("Total net P&L "))) {

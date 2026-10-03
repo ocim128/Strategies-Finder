@@ -354,6 +354,9 @@ independently, so a malformed additional metric does not erase valid old arms.
 Recovery never fabricates missing zero-event sections. Newly enabled child
 runs must provide all five sections, including genuinely calculated zero-event
 sections. No persistence-envelope or ranking-semantics version change is needed.
+Switch cards also tolerate an absent replay arm: P&L and trade counts stay
+unavailable, Apply remains available, and any independently valid ranking
+summary is still displayed.
 
 These fixed first-version choices are recorded, not automatically tuned or
 claimed optimal. Correct implementation does not establish transfer to a
@@ -394,8 +397,12 @@ return equality, including when predictor scores were tied. Predictor ties still
 receive half credit in accuracy and superiority; they do not prevent a sole
 realized first place. Zero scored events show unavailable rates.
 
-Ranking cards put **Selected asset score**, **Best asset frequency**, **Shared
-first place**, **Overall ordering accuracy**, and actual replay return/P&L first.
+Ranking cards and comparison tables lead with the active sort value
+(**Ordering CI lower** or **Selected asset sort score**) and **Rank eligibility**.
+The sort value uses the same confidence gate as the comparator; unavailable
+sort values never hide descriptive point scores. Cards then show **Selected
+asset score**, **Best asset frequency**, **Shared first place**, **Overall ordering
+accuracy**, and actual replay return/P&L.
 Scored events, holding, pending orders, incomplete replay status and Apply stay
 outside the measurement panel; completed replay status is omitted. The native
 **Measurement details** panel starts expanded and contains the mean-accuracy CI, skipped
@@ -403,6 +410,11 @@ counts/reasons, tied comparisons, populated time-block count, width and elapsed
 coverage, and existing replay metadata. Durations use readable units such as
 `22 days`. The mean-accuracy CI estimates overall ordering accuracy; selecting
 the superiority sort does not give that separate point score its own CI.
+
+Ranking notes and Copy Top Results report the requested display horizon,
+including when saved measurements use another horizon. Copy output records
+each candidate's `storedRankingHorizon` separately; a mismatch remains
+unavailable and requires a new run rather than reinterpreting saved scores.
 
 Mean accuracy remains visible with any scored events. Sortable confidence
 requires **at least 100 scored events AND at least ten populated time blocks**.

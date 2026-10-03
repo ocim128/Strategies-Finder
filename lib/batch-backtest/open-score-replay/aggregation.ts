@@ -50,12 +50,15 @@ export async function aggregateRankingMeasurement(args: {
     interval?: string;
     outcomeIndexOf?: (time: number, index: number) => number;
     shouldStop: () => boolean;
+    onPhase?: ReplayPhaseCallback;
 }): Promise<RankingMeasurementSummary> {
     const arms = {} as RankingMeasurementSummary["arms"];
     const hi = args.horizonIndex ?? 0;
+    const enabledArms = args.enabledArms ?? LEGACY_REPLAY_ARM_FIELDS;
+    args.onPhase?.("aggregate", "measuring ranking consistency", 0, enabledArms.length);
     // Sweep and candidate timelines are chronological; sorting also supports pure fixtures.
     const order = args.events.map((event, index) => ({ event, index })).sort((a, b) => a.event.timeSec - b.event.timeSec);
-    for (const field of args.enabledArms ?? LEGACY_REPLAY_ARM_FIELDS) {
+    for (const field of enabledArms) {
         const skippedReasons: Partial<Record<RankingSkipReason, number>> = {};
         const values: number[] = [], firstValues: number[] = [];
         const windows: RankingMeasurementWindow[] = [];
@@ -111,6 +114,7 @@ export async function aggregateRankingMeasurement(args: {
             sharedFirstPlaceRate: values.length ? sharedFirstPlaceCount / values.length : null,
             ciLower: ci.lower, ciUpper: ci.upper, blockCount: blocks.length, measurementWindowSec, timeBlockWidthSec, timeCoverageSec,
             status: ci.lower !== null && ci.upper !== null ? "available" : values.length ? "insufficient_data" : "no_events" };
+        args.onPhase?.("aggregate", `measured ranking consistency ${REPLAY_ARM_TO_FINDER_ARM[field]}`, Object.keys(arms).length, enabledArms.length);
     }
     return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars: args.horizonBars, arms };
 }

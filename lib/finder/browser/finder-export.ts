@@ -23,7 +23,7 @@ import type {
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 } from "../../types/finder";
-import { getFinderArmRankingMetric, getFinderArmPerformanceMetric, getFinderCausalAvailabilityDetails, type FinderArmPerformanceArm, type FinderArmPerformanceDisplayFilter, type FinderArmPerformanceScoringBasis } from "../finder-arm-performance-metrics";
+import { getFinderArmRankingMetric, getFinderArmPerformanceMetric, getFinderCausalAvailabilityDetails, resolveFinderArmRankingHorizon, type FinderArmPerformanceArm, type FinderArmPerformanceDisplayFilter, type FinderArmPerformanceScoringBasis } from "../finder-arm-performance-metrics";
 import type { FinderPersistedUiState } from "./finder-settings";
 import type { BacktestSettings } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
@@ -253,7 +253,7 @@ export function buildArmPerformanceTopResultsPayload(args: {
 			}),
 		measurement: ranking ? "ranking_consistency" : "return",
 		rankingMetric: ranking ? (displayFilter.rankingSort === "selected_asset" ? "top1_superiority" : "mean_accuracy_ci_lower") : replayMode === "asset_switch" ? "totalNetPnlUsd" : "topMean",
-		...(ranking ? { rankingSort: displayFilter.rankingSort ?? "overall_ordering", rankingHorizon: results[0]?.rankingMeasurement?.horizonBars ?? runContext?.rankingHorizon ?? null, rankingSemantics: RANKING_MEASUREMENT_SEMANTICS, scoredEventFilter: { enabled: displayFilter.eventFilterEnabled === true, minEvents: displayFilter.minEvents ?? 1, maxEvents: displayFilter.maxEvents ?? null } } : {}),
+		...(ranking ? { rankingSort: displayFilter.rankingSort ?? "overall_ordering", rankingHorizon: resolveFinderArmRankingHorizon(displayFilter, results[0]?.rankingMeasurement?.horizonBars, runContext), rankingSemantics: RANKING_MEASUREMENT_SEMANTICS, scoredEventFilter: { enabled: displayFilter.eventFilterEnabled === true, minEvents: displayFilter.minEvents ?? 1, maxEvents: displayFilter.maxEvents ?? null } } : {}),
 		runContext,
 		inventoryComplete,
 		results: filteredResults.map((candidate, index) => {
@@ -281,6 +281,7 @@ export function buildArmPerformanceTopResultsPayload(args: {
             causalArmDiagnostics: candidate.causalArmDiagnostics ?? null,
             unavailableScoreDetails: getFinderCausalAvailabilityDetails(candidate, selectedArm),
 			...(ranking ? {
+				storedRankingHorizon: candidate.rankingMeasurement?.horizonBars ?? null,
 				selectedArmRanking: selectedRanking ?? null,
 				rankingAvailability: selectedRanking?.status ?? "rerun_required",
 				firstPlaceFrequencyAvailability: selectedRanking?.soleFirstPlaceCount !== undefined && selectedRanking?.sharedFirstPlaceCount !== undefined

@@ -14,6 +14,10 @@ describe("Finder comparison table metrics", () => {
         assert.deepEqual(labels("arm_performance"), ["Mean", "Random", "DeltaMed", "Events"]);
         assert.deepEqual(labels("arm_performance", ["Total net P&L n/a"]), ["Total net P&L", "Realized", "Open", "Completed trades", "Costs"]);
         assert.deepEqual(labels("arm_performance", ["Total net P&L $2", "Selected asset score n/a"]), ["Selected asset score", "Overall ordering accuracy", "Best asset frequency", "Scored events"]);
+        for (const sortLabel of ["Ordering CI lower", "Selected asset sort score"]) {
+            assert.deepEqual(labels("arm_performance", [`${sortLabel} n/a`, "Rank eligibility insufficient confidence", "Selected asset score 90%"]),
+                [sortLabel, "Rank eligibility", "Selected asset score", "Overall ordering accuracy", "Best asset frequency", "Scored events"]);
+        }
     });
 
     it("retains unavailable, zero, signed and contributor-adjusted display values without inventing metrics", () => {

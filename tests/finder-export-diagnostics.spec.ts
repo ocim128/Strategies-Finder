@@ -235,8 +235,12 @@ describe("Finder metadata payload builders", () => {
         expect(payload.scoredEventFilter).to.deep.equal({ enabled: true, minEvents: 5, maxEvents: 5 });
         expect(payload).not.to.have.property("retainedEventFilter");
         const missing = buildArmPerformanceTopResultsPayload({ ...args, displayFilter: { ...args.displayFilter, eventFilterEnabled: false, rankingHorizon: 21 } });
+        expect(missing.rankingHorizon).to.equal(21);
+        expect(missing.results[0].storedRankingHorizon).to.equal(20);
         expect(missing.results[0].rankingAvailability).to.equal("rerun_required");
         expect(missing.results[0].selectedArmRanking).to.equal(null);
+        const empty = buildArmPerformanceTopResultsPayload({ ...args, results: [], displayFilter: { ...args.displayFilter, rankingHorizon: 21 } });
+        expect(empty.rankingHorizon).to.equal(21);
     });
 
     it("labels Arm rows with the selected arm, its metric, and the run id", () => {

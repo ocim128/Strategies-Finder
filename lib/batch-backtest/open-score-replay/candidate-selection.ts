@@ -63,6 +63,20 @@ export const RANKING_ARM_SPECS = REPLAY_ARM_FIELDS.map((field) => ({
     unique: field.endsWith("RawUnique"),
 }));
 
+export const RANKING_ARM_SPEC_BY_FIELD = new Map(RANKING_ARM_SPECS.map((spec) => [spec.field, spec]));
+
+/** One event's lazy tie digests shared across arms; no run-length cache growth. */
+export function createRankingDigestCache(names: readonly string[]): (time: number, index: number) => string {
+    let eventTime: number | undefined;
+    const digests = new Map<number, string>();
+    return (time, index) => {
+        if (eventTime !== time) { digests.clear(); eventTime = time; }
+        let digest = digests.get(index);
+        if (digest === undefined) { digest = tieBreakDigest(time, names[index]!); digests.set(index, digest); }
+        return digest;
+    };
+}
+
 /** Bounded insertion retains membership using the existing digest, never outcomes. */
 export function insertRankingPick(picks: RankingPick[], candidate: Candidate, spec: typeof RANKING_ARM_SPECS[number], time: number, names: readonly string[], digestFor?: (index: number) => string): void {
     if (isCausalArm(spec.field) && !Number.isFinite(candidate[spec.field])) return;
