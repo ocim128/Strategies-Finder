@@ -275,7 +275,10 @@ export function setupSettingsHandlers() {
                 return;
             }
             if (confirm(`Delete configuration "${name}"?`)) {
-                settingsManager.deleteStrategyConfig(name);
+                if (!settingsManager.deleteStrategyConfig(name)) {
+                    uiManager.showToast(`Failed to delete configuration "${name}"`, 'error');
+                    return;
+                }
                 updateConfigDropdown();
                 notifyStrategyConfigsChanged();
                 uiManager.showToast(`Configuration "${name}" deleted`, 'info');

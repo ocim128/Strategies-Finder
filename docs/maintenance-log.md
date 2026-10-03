@@ -4,6 +4,23 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Report saved-configuration deletion failures accurately
+
+- **Evidence:** Settings' Delete handler ignored `deleteStrategyConfig`'s
+  boolean result and announced success even when storage rejected the write.
+  New handler-level tests failed for quota errors, policy errors, and a
+  configuration removed before the click; cancellation already passed.
+- **Change:** Gate dropdown refresh, change notifications, success feedback,
+  and success logging on confirmed persistence. Report failure and retain
+  the selection for retry. Document the behavior in `docs/settings.md`.
+- **Checks:** All six focused specs passed: `settings-handlers.browser`,
+  `settings-workspace`, `settings-compat`, `strategy-panel-settings-registry`,
+  `feature-dom-contracts`, and `persisted-json`. The new spec covers both
+  storage failures followed by successful retry, cancellation, and a missing
+  configuration. Application and test typechecks and `git diff --check`
+  passed. Existing Finder ranking work was preserved in the temporary
+  worktree; the original checkout remains clean.
+
 ## 2026-10-03 - Enforce TOP_MEAN artifact retention at dev-server boot and document it
 
 - **Evidence:** `artifacts/sp500-top-mean` held 35 run dirs / 5.6 GB, which

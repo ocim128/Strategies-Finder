@@ -16,6 +16,8 @@ After saving or applying a named configuration, the menu tracks the effective st
 
 **Restore configuration** reapplies the tracked configuration using the existing serialized user configuration loader, including its chart symbol/timeframe and synthetic-pair regeneration. Selecting another configuration in the dropdown alone does not change the tracked setup. Saving again updates the tracked setup; deleting its saved configuration clears tracking. The tracking state resets on page reload. Autosave does not overwrite named configurations.
 
+Deletion reports success and refreshes configuration consumers only after the storage write succeeds. If browser storage rejects the write or the selected configuration is no longer saved, the menu reports a failure and keeps the selection available for retry. A failed storage write preserves the saved configuration and its tracking state.
+
 ## Owners and checks
 
 - Markup: `html-partials/tab-settings-*.html`; required workspace IDs: `lib/ui-manager-dom.ts`.
@@ -23,4 +25,4 @@ After saving or applying a named configuration, the menu tracks the effective st
 - Existing section/preset behavior: `lib/handlers/settings-ux-handlers.ts`, `lib/handlers/settings-section-handlers.ts`, and `lib/strategy-panel-settings-registry.ts`.
 - Persistence and configuration feedback: `lib/settings-manager.ts`; restore wiring: `lib/handlers/settings-handlers.ts`.
 
-Saved payloads continue through `lib/persisted-json.ts`; these UI features add no persisted fields or migrations. Validate with `npm run typecheck`, `npm run typecheck:tests`, focused `settings-workspace.spec.ts`, `settings-compat.spec.ts`, `strategy-panel-settings-registry.spec.ts`, and `feature-dom-contracts.spec.ts` tests, plus `npm run test:e2e` for navigation, configuration restore, save feedback, and responsive layout.
+Saved payloads continue through `lib/persisted-json.ts`; these UI features add no persisted fields or migrations. Validate with `npm run typecheck`, `npm run typecheck:tests`, focused `settings-handlers.browser.spec.ts`, `settings-workspace.spec.ts`, `settings-compat.spec.ts`, `strategy-panel-settings-registry.spec.ts`, and `feature-dom-contracts.spec.ts` tests, plus `npm run test:e2e` for navigation, configuration restore, save feedback, and responsive layout.
