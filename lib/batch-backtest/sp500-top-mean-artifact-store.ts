@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import type { CompactPairArtifact, TopMeanRunManifest, BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
@@ -501,6 +501,45 @@ export function cleanOldArtifacts(baseDir?: string, maxAgeMs = DEFAULT_RETENTION
     } catch {
         // Ignore root scan cleanup errors
     }
+}
+
+/**
+ * Non-blocking variant of {@link cleanOldArtifacts} for dev-server startup: a
+ * stale shard tree can hold multiple GB of files, and unlinking that
+ * synchronously would freeze the Vite event loop mid-boot (same rationale as
+ * the Mine-artifact release, audit Finding 4). Same semantics as the sync
+ * version otherwise: only directories past `maxAgeMs` are reclaimed, invalid
+ * entry names skip the parsed-shard cache eviction, and per-entry errors are
+ * swallowed. Returns the number of run directories removed.
+ */
+export async function cleanOldArtifactsAsync(baseDir?: string, maxAgeMs = DEFAULT_RETENTION_MS): Promise<number> {
+    const rootDir = getArtifactsRootDir(baseDir);
+    if (!existsSync(rootDir)) return 0;
+
+    let entries: string[];
+    try {
+        entries = await readdir(rootDir);
+    } catch {
+        return 0;
+    }
+    const now = Date.now();
+    let removed = 0;
+    for (const entry of entries) {
+        const entryPath = join(rootDir, entry);
+        try {
+            // `entryStats`, not `stat`: a local named `stat` would shadow the
+            // fs/promises import inside its own initializer (TDZ error).
+            const entryStats = await stat(entryPath);
+            if (entryStats.isDirectory() && now - entryStats.mtimeMs > maxAgeMs) {
+                await rm(entryPath, { recursive: true, force: true });
+                removed += 1;
+                if (isValidRunId(entry)) evictRunParsedShardCache(entry, baseDir);
+            }
+        } catch {
+            // Ignore per-entry cleanup errors
+        }
+    }
+    return removed;
 }
 
 export function reconcileInterruptedManifestsOnStartup(baseDir?: string): void {

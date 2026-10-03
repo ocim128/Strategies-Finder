@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { rmSync, writeFileSync, mkdtempSync, utimesSync } from "node:fs";
+import { existsSync, rmSync, writeFileSync, mkdtempSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
@@ -21,6 +21,7 @@ import {
     TopMeanShardReadError,
     evictRunParsedShardCache,
     cleanOldArtifacts,
+    cleanOldArtifactsAsync,
 } from "../lib/batch-backtest/sp500-top-mean-artifact-store";
 
 const testBaseDir = mkdtempSync(resolve(tmpdir(), "compact-pair-artifact-"));
@@ -312,6 +313,24 @@ async function runTests(): Promise<void> {
         cleanOldArtifacts(testBaseDir, -1);
         assert.equal(evictRunParsedShardCache(cacheRun, testBaseDir), 0, "retention already evicted deleted runs");
         assert.equal(evictRunParsedShardCache(neighborRun, testBaseDir), 0);
+
+        // The async startup sweep shares the sync retention semantics: only
+        // expired run dirs are reclaimed, the parsed-shard cache stays in
+        // lockstep, and fresh runs (and their warm cache entries) survive.
+        const sweepFreshRun = "spec_sweep_fresh";
+        const sweepStaleRun = "spec_sweep_stale";
+        writeShardArtifacts(sweepFreshRun, 0, compactArtifacts, testBaseDir);
+        writeShardArtifacts(sweepStaleRun, 0, compactArtifacts, testBaseDir);
+        await readShardArtifactsAsync(sweepFreshRun, 0, testBaseDir);
+        await readShardArtifactsAsync(sweepStaleRun, 0, testBaseDir);
+        const sweepStaleAt = new Date("2000-01-01T00:00:00Z");
+        utimesSync(getRunDir(sweepStaleRun, testBaseDir), sweepStaleAt, sweepStaleAt);
+        const removedCount = await cleanOldArtifactsAsync(testBaseDir, 24 * 60 * 60 * 1000);
+        assert.equal(removedCount, 1, "only the expired run dir is reclaimed");
+        assert.equal(existsSync(getRunDir(sweepStaleRun, testBaseDir)), false, "expired run dir removed");
+        assert.ok(existsSync(getRunDir(sweepFreshRun, testBaseDir)), "fresh run dir survives");
+        assert.equal(evictRunParsedShardCache(sweepStaleRun, testBaseDir), 0, "sweep already evicted the stale run");
+        assert.equal(evictRunParsedShardCache(sweepFreshRun, testBaseDir), 1, "fresh run keeps its warm cache entry");
         // Restore the fixture after retention for the remaining checks.
         saveManifest(readAheadManifest, testBaseDir);
         readAheadShards.forEach((rows, index) => writeShardArtifacts(readAheadRunId, index, rows, testBaseDir));

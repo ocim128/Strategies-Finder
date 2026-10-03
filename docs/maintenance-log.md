@@ -4,6 +4,44 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-03 - Enforce TOP_MEAN artifact retention at dev-server boot and document it
+
+- **Evidence:** `artifacts/sp500-top-mean` held 35 run dirs / 5.6 GB, which
+  initially looked like broken retention. Directory-mtime measurement
+  disproved that: every dir was 22-24h old, i.e. within the 24h
+  `DEFAULT_RETENTION_MS` window — run-start enforcement
+  (`cleanOldArtifacts` at coordinator start) had been pruning on each new
+  run. Two real gaps remained: (1) enforcement existed ONLY at new-run
+  start, so a machine that does not start another TOP_MEAN run keeps its
+  artifact disk occupied indefinitely (the sweep should follow the documented
+  retention semantics, not wait for the next run); (2) the 24h contract was
+  documented nowhere — the batch guide's "Artifact retention and TTL"
+  section covered only the 10-minute Mine-artifact TTL.
+- **Change:** Added `cleanOldArtifactsAsync` (fs/promises twin of
+  `cleanOldArtifacts`, returns removed count) and call it in the batch
+  plugin's `configureServer` and `configurePreviewServer`, right after the
+  manifest reconciliation, logging `batch.server.top_mean_artifacts_swept`
+  when dirs are reclaimed. Async because a multi-GB reclamation must not
+  block the Vite event loop at boot (same rationale as the Mine-artifact
+  release, audit Finding 4). Documented the TOP_MEAN 24h retention and both
+  enforcement points in the batch guide. Added a spec section covering the
+  async sweep's semantics (expired dir removed, fresh dir and its warm
+  parsed-shard-cache entry survive, sweep evicts stale cache entries).
+  Verified end-to-end: a planted 48h-old probe dir was reclaimed at dev
+  -server boot while the fresh run dirs stayed.
+- **Checks:** `npm run test -- compact-pair-artifact.spec.ts
+  sp500-top-mean-server-plugin.spec.ts sp500-top-mean-archive-log.spec.ts
+  vite-startup-watch.spec.ts`, `npm run typecheck`,
+  `npm run typecheck:tests`, `git diff --check`, full suite 257/257, and the
+  planted-probe boot verification above. Note: writing `const stat = await
+  stat(entryPath)` is a TDZ bug (the local shadows the fs/promises import in
+  its own initializer — esno surfaces it as "Cannot access 'stat2' before
+  initialization"); the local is named `entryStats` for that reason.
+- **Follow-up:** If TOP_MEAN runs keep averaging ~5.6 GB/day retained, a
+  smaller default retention or a user-facing disk-usage readout in the Batch
+  tab would be the next lever; needs a user complaint or an actual disk
+  squeeze first.
+
 ## 2026-10-03 - Verification sweep: no defect found, runtime data-defect exposure de-risked
 
 - **Evidence:** No code defect surfaced this run, so the worktree code is

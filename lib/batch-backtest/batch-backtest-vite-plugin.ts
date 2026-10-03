@@ -60,7 +60,7 @@ import { createEmptyBacktestResult } from "../strategies/backtest/position-stats
 import { parseOptionalReplayDateWindow } from "./top-mean-date-window";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
 import { getActiveTopMeanCoordinatorEngine } from "./sp500-top-mean-coordinator-engine";
-import { isValidRunId, reconcileInterruptedManifestsOnStartup } from "./sp500-top-mean-artifact-store";
+import { cleanOldArtifactsAsync, isValidRunId, reconcileInterruptedManifestsOnStartup } from "./sp500-top-mean-artifact-store";
 import { getV8HeapLimitMb, resolveServerHeapWarning } from "../server-heap-guard";
 
 /**
@@ -2100,11 +2100,27 @@ export function batchBacktestVitePlugin(): Plugin {
             // and small (one manifest per run dir), and failures are swallowed
             // inside.
             reconcileInterruptedManifestsOnStartup(server.config.root ?? process.cwd());
+            // Reclaim TOP_MEAN run dirs past the 24h retention at boot instead
+            // of waiting for the next run to start; otherwise multi-GB shard
+            // trees accumulate for as long as no run happens. Offloaded to
+            // fs/promises and best-effort like the Mine-dir sweep (audit
+            // Finding 4) so a large reclamation never blocks route
+            // registration.
+            void cleanOldArtifactsAsync(server.config.root ?? process.cwd())
+                .then((removed) => {
+                    if (removed > 0) debugLogger.info("batch.server.top_mean_artifacts_swept", { removed });
+                })
+                .catch(() => undefined);
             registerBatchRoutes(server.middlewares);
         },
         configurePreviewServer(server) {
             void sweepOrphanedMineArtifactDirs();
             reconcileInterruptedManifestsOnStartup(server.config.root ?? process.cwd());
+            void cleanOldArtifactsAsync(server.config.root ?? process.cwd())
+                .then((removed) => {
+                    if (removed > 0) debugLogger.info("batch.server.top_mean_artifacts_swept", { removed });
+                })
+                .catch(() => undefined);
             registerBatchRoutes(server.middlewares);
         },
     };

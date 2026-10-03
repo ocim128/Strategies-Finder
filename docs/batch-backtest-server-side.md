@@ -299,6 +299,16 @@ and dataset caches when an idle run expires.
 The TTL value is `DEFAULT_ARTIFACT_RETENTION_MS = 10 * 60 * 1000` in
 `lib/batch-backtest/batch-backtest-vite-plugin.ts`.
 
+TOP_MEAN run directories (`artifacts/sp500-top-mean/<runId>/shards/`) follow a
+separate, longer retention: they are reclaimed 24 hours after their last write
+(`DEFAULT_RETENTION_MS` in `sp500-top-mean-artifact-store.ts`), since OPEN_SCORE
+USD Replay may revisit a completed run much later than a Mine would. The sweep
+runs at two points: when a new TOP_MEAN run starts
+(`cleanOldArtifacts`, synchronous) and when the dev or preview server boots
+(`cleanOldArtifactsAsync`, offloaded to `fs/promises` so a multi-GB
+reclamation never blocks the Vite event loop). A machine that has not started
+the dev server keeps past-run artifacts on disk until the next boot.
+
 ## Copy summary parity
 
 In server-side mode, the `symbol` event still strips `data`, `signals`, and
