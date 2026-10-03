@@ -1,5 +1,6 @@
 import { expect } from "chai";
 import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
+import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { describe, it } from "node:test";
 import {
     FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
@@ -119,6 +120,7 @@ function makeSummary(): TopMeanResultSummary {
     );
     return {
         runId: "child",
+        causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
         completed: true,
         archiveComplete: false,
         counts: {} as TopMeanResultSummary["counts"],
@@ -147,6 +149,7 @@ function makeSwitchSummary(): TopMeanResultSummary {
     };
     return {
         runId: "child-switch",
+        causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
         replayMode: "asset_switch",
         completed: true,
         archiveComplete: false,
@@ -210,7 +213,7 @@ describe("Finder Arm Performance runner", () => {
             const input = makeInput();
             input.options.armPerformance = { replayMode: mode, horizon: 5, rankingHorizon: 20, measurement: "ranking_consistency", dateMode: "full" };
             const summary = mode === "asset_switch" ? makeSwitchSummary() : makeSummary();
-            summary.rankingMeasurement = createEmptyRankingMeasurement(mode === "horizon" ? 5 : 20);
+            summary.rankingMeasurement = createEmptyRankingMeasurement(mode === "horizon" ? 5 : 20, true);
             const order: string[] = [];
             const candidates = await runFinderArmPerformance(input, {
                 onProgress() {}, setActiveCoordinator() {},
@@ -242,6 +245,31 @@ describe("Finder Arm Performance runner", () => {
             expect(removed).to.equal(1);
             expect(collected).to.equal(0);
         });
+        for (const failure of ["missing_arm", "invalid_arm", "missing_definition"] as const) {
+            it(`rejects ${failure} on a newly enabled ${mode} child before collecting it`, async () => {
+                const input = makeInput();
+                input.options.armPerformance = { replayMode: mode, horizon: 5, rankingHorizon: 20, measurement: "return", dateMode: "full" };
+                const summary = mode === "asset_switch" ? makeSwitchSummary() : makeSummary();
+                if (failure === "missing_definition") delete summary.causalArmDefinitions;
+                else if (mode === "asset_switch") {
+                    if (failure === "missing_arm") delete summary.assetSwitch!.arms.topCoverage;
+                    else summary.assetSwitch!.arms.topCoverage = { ...summary.assetSwitch!.arms.topCoverage!, enteredCount: -1 };
+                } else {
+                    if (failure === "missing_arm") delete summary.horizons[0]!.armComparisons!.TOP_COVERAGE;
+                    else summary.horizons[0]!.armComparisons!.TOP_COVERAGE!.events = -1;
+                }
+                let removed = 0, collected = 0, error: unknown;
+                try {
+                    await runFinderArmPerformance(input, { onProgress() {}, setActiveCoordinator() {}, onCandidate() { collected++; } }, {
+                        createCoordinator(request) { return makeCoordinator(request, { result: summary }, async (emit) => { emit({ type: "done", result: summary }); }, []); },
+                        async removeChildArtifacts() { removed++; },
+                    });
+                } catch (caught) { error = caught; }
+                expect(error).to.be.instanceOf(FinderArmPerformanceChildError);
+                expect(removed).to.equal(1);
+                expect(collected).to.equal(0);
+            });
+        }
     }
     it("flushes compact success and failure diagnostics before deleting each child", async () => {
         const order: string[] = [];

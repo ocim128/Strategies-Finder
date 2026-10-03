@@ -1,4 +1,5 @@
-import { compactRankingMeasurement } from "../../batch-backtest/open-score-replay/types";
+import { compactCausalArmDefinitions } from "../../batch-backtest/open-score-replay/causal-arm-constants";
+import { compactRankingMeasurement, compactCausalArmDiagnostics } from "../../batch-backtest/open-score-replay/types";
 /**
  * Stream + status contract for the server-owned Finder Symbol Universe job.
  *
@@ -502,6 +503,8 @@ export function toScalarArmPerformanceCandidate(
 ): FinderArmPerformanceCandidate {
     const rankingMeasurement = compactRankingMeasurement(candidate.rankingMeasurement);
     const common = {
+        ...(compactCausalArmDefinitions(candidate.causalArmDefinitions) ? { causalArmDefinitions: compactCausalArmDefinitions(candidate.causalArmDefinitions) } : {}),
+        ...(compactCausalArmDiagnostics(candidate.causalArmDiagnostics) ? { causalArmDiagnostics: compactCausalArmDiagnostics(candidate.causalArmDiagnostics) } : {}),
         ...(rankingMeasurement ? { rankingMeasurement } : {}),
         candidateId: candidate.candidateId,
         candidateOrdinal: candidate.candidateOrdinal,

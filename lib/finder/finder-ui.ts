@@ -1,5 +1,5 @@
 import { RANKING_MEASUREMENT_SEMANTICS } from "../batch-backtest/open-score-replay/types";
-import { getFinderArmRankingMetric } from "./finder-arm-performance-metrics";
+import { getFinderArmRankingMetric, getFinderCausalAvailabilityDetails } from "./finder-arm-performance-metrics";
 import { getRequiredElement, setVisible } from "../dom-utils";
 import { escapeHtml } from "../html-escape";
 import {
@@ -819,6 +819,8 @@ export class FinderUI {
 			}
 
             const detailLines = [
+                    ...getFinderCausalAvailabilityDetails(item, arm),
+                    ...((item.replayMode === "asset_switch" ? !item.assetSwitchMetrics[arm] : !item.metrics[arm]) ? ["Rerun required: this saved result does not contain the selected arm."] : []),
                     `Pair failures ${item.pairCoverage.failedPairs} · replay target load failures ${item.pairCoverage.replayTargetLoadFailures}`,
 					...(selectedSwitchMetric?.openPosition
 						? [`Holding ${selectedSwitchMetric.openPosition.asset} since ${new Date(selectedSwitchMetric.openPosition.entryTimeSec * 1000).toISOString()} · current-path open P&L ${formatNullableCurrency(selectedSwitchMetric.openPosition.openNetPnl)}`]

@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { captureRankingEvent, buildAssetSwitchDecisions, selectAfterOutcomes } from "../lib/batch-backtest/open-score-replay/candidate-selection";
 import { aggregateRankingMeasurement, rankingPairCredit } from "../lib/batch-backtest/open-score-replay/aggregation";
 import { blockBootstrapMeanCi, buildRankingTimeBlocks } from "../lib/batch-backtest/open-score-replay/statistics";
-import { REPLAY_ARM_FIELDS } from "../lib/batch-backtest/open-score-replay/arm-contract";
+import { LEGACY_REPLAY_ARM_FIELDS as REPLAY_ARM_FIELDS } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { compactRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
 import type { Candidate, DecisionEvent, EventView, RankingEvent } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { TargetOutcomeStageResult, ViewOutcomeRecord } from "../lib/batch-backtest/open-score-replay/target-outcomes";

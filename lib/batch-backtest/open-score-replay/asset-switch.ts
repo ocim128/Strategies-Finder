@@ -18,7 +18,7 @@ import type {
 } from "./types";
 import type { AssetSwitchDecision, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { yieldLoop } from "./runtime";
-import { REPLAY_ARM_FIELDS } from "./arm-contract";
+import { replayArmFields } from "./arm-contract";
 
 const NOTIONAL_PER_ENTRY = 1_000;
 const MAX_DIAGNOSTIC_COUNT = 1_000_000_000;
@@ -147,7 +147,7 @@ export function createEmptyAssetSwitchSummary(
         : Math.floor(Date.now() / 1000);
     const requestedEndSec = Number.isFinite(options.sampleToSec) ? options.sampleToSec! : cutoffSec;
     const arms = {} as AssetSwitchReplaySummary["arms"];
-    for (const field of REPLAY_ARM_FIELDS) {
+    for (const field of replayArmFields(options.enableCausalArms)) {
         arms[field] = {
             status: "no_entry",
             enteredCount: 0,
@@ -658,9 +658,9 @@ export async function runAssetSwitchReplay(args: {
     if (!selectedAssets) {
         const scannedAssets = new Set<string>();
         for (const view of views) {
-            for (const arm of REPLAY_ARM_FIELDS) {
+            for (const arm of replayArmFields(options.enableCausalArms)) {
                 const selectedIndex = view.picks[arm];
-                if (selectedIndex !== null) scannedAssets.add(assetNames[selectedIndex] ?? "");
+                if (selectedIndex != null) scannedAssets.add(assetNames[selectedIndex] ?? "");
             }
         }
         options.prefetchTargetDatasets?.([...scannedAssets].filter(Boolean));
@@ -670,7 +670,7 @@ export async function runAssetSwitchReplay(args: {
 
     const retainTradeRows = options.includeEventDetails === true || typeof options.onAssetSwitchTrade === "function";
     const detailsByArm = options.includeEventDetails
-        ? new Map(REPLAY_ARM_FIELDS.map((field) => [field, new BoundedTradePreview(TRADE_DETAIL_LIMIT)] as const))
+        ? new Map(replayArmFields(options.enableCausalArms).map((field) => [field, new BoundedTradePreview(TRADE_DETAIL_LIMIT)] as const))
         : undefined;
     let tradeCount = 0;
     const onTradeOpened = (row: AssetSwitchTradeRecord): void => {
@@ -680,7 +680,7 @@ export async function runAssetSwitchReplay(args: {
     const onTradeFinalized = async (row: AssetSwitchTradeRecord): Promise<void> => {
         await options.onAssetSwitchTrade?.(row);
     };
-    const runtimes = REPLAY_ARM_FIELDS.map((field) => createArmRuntime({
+    const runtimes = replayArmFields(options.enableCausalArms).map((field) => createArmRuntime({
         field,
         lookup,
         assetNames,
@@ -705,7 +705,7 @@ export async function runAssetSwitchReplay(args: {
             const pendingWork = runtime.processPendingThrough(view.timeSec);
             if (pendingWork) await pendingWork;
             if (!runtime.state.failed) {
-                const scheduleWork = runtime.schedule(view.picks[runtime.field], view.timeSec);
+                const scheduleWork = runtime.schedule(view.picks[runtime.field] ?? null, view.timeSec);
                 if (scheduleWork) await scheduleWork;
             }
         }
@@ -855,7 +855,7 @@ export async function runAssetSwitchReplay(args: {
         } };
     }
     const details = detailsByArm
-        ? REPLAY_ARM_FIELDS.flatMap((field) => detailsByArm.get(field)!.values())
+        ? replayArmFields(options.enableCausalArms).flatMap((field) => detailsByArm.get(field)!.values())
         : undefined;
     onPhase("switch", "finished asset-switch replay", totalSteps, totalSteps);
     return {

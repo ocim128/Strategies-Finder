@@ -33,6 +33,8 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Records and Audits
 
+- [Finder causal arm definitions](finder.md#additional-causal-score-definitions) - coverage, stable support, fresh support, price strength and graph strength; execution and recovery are in [the server guide](finder-server-side.md#additional-causal-arms-execution-and-recovery).
+
 - [maintenance-log.md](maintenance-log.md) - concise log of completed repository maintenance improvements, evidence, checks, and follow-ups.
 - [top-mean-event-sweep-plan.md](top-mean-event-sweep-plan.md) - planned bounded replay sweeps, removal of temporary delta copies, and guarded linear exit-signal merging.
 

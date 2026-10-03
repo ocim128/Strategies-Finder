@@ -23,7 +23,7 @@ import type {
 	FinderStrategyQualityResult,
 	FinderUniverseCandidate,
 } from "../../types/finder";
-import { getFinderArmRankingMetric, getFinderArmPerformanceMetric, type FinderArmPerformanceArm, type FinderArmPerformanceDisplayFilter, type FinderArmPerformanceScoringBasis } from "../finder-arm-performance-metrics";
+import { getFinderArmRankingMetric, getFinderArmPerformanceMetric, getFinderCausalAvailabilityDetails, type FinderArmPerformanceArm, type FinderArmPerformanceDisplayFilter, type FinderArmPerformanceScoringBasis } from "../finder-arm-performance-metrics";
 import type { FinderPersistedUiState } from "./finder-settings";
 import type { BacktestSettings } from "../../types/strategies";
 import type { CapitalSettings } from "../../types/backtest";
@@ -276,6 +276,10 @@ export function buildArmPerformanceTopResultsPayload(args: {
 			pairCoverage: candidate.pairCoverage,
 			selectedArm,
 			selectedArmMetric: getFinderArmPerformanceMetric(candidate, selectedArm, effectiveBasis) ?? null,
+            returnAvailability: getFinderArmPerformanceMetric(candidate, selectedArm, effectiveBasis) ? "calculated" : "rerun_required",
+            causalArmDefinitions: candidate.causalArmDefinitions ?? null,
+            causalArmDiagnostics: candidate.causalArmDiagnostics ?? null,
+            unavailableScoreDetails: getFinderCausalAvailabilityDetails(candidate, selectedArm),
 			...(ranking ? {
 				selectedArmRanking: selectedRanking ?? null,
 				rankingAvailability: selectedRanking?.status ?? "rerun_required",

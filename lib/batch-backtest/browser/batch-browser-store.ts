@@ -8,7 +8,7 @@
  */
 import { readPersistedJson, writePersistedJson } from "../../persisted-json";
 import { debugLogger } from "../../debug-logger";
-import { REPLAY_ARM_FIELDS } from "../open-score-replay/arm-contract";
+import { LEGACY_REPLAY_ARM_FIELDS } from "../open-score-replay/arm-contract";
 import {
     compactBatchBacktestResultsSnapshot,
     normalizeBatchBacktestResultsSnapshot,
@@ -321,7 +321,7 @@ export function readLatestTopMeanResult(): TopMeanResultSummary | null {
             if (replayMode === "asset_switch") {
                 const section = source.assetSwitch;
                 if (!section || section.semanticsVersion !== "asset_switch.v1" || source.horizons.length !== 0) return null;
-                if (!section.arms || !REPLAY_ARM_FIELDS.every((arm) => arm in section.arms)) return null;
+                if (!section.arms || !LEGACY_REPLAY_ARM_FIELDS.every((arm) => arm in section.arms)) return null;
             }
             if (!source.horizons.every((horizon) =>
                 horizon

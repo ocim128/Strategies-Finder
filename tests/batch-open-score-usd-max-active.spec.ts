@@ -236,7 +236,7 @@ describe("batch-open-score-usd-replay-engine Phase 3 MAX_ACTIVE extensions", () 
         expect(h.topMeanExTopContrib.events).to.equal(h.topMean.events - topContribEvents);
         const replayHorizon = h as unknown as Record<string, any>;
         expect(Object.keys(replayHorizon.armExTopContributorComparisons)).to.have.length(15);
-        for (const field of Object.values(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS)) {
+        for (const field of Object.values(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).filter((field) => field in replayHorizon)) {
             const raw = replayHorizon[field];
             const adjusted = replayHorizon.armExTopContributorComparisons[field];
             const excludedEvents = replayHorizon.armTopContributorEvents[field] ?? 0;

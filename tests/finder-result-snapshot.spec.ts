@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
 import { REPLAY_ARM_FIELDS } from "../lib/batch-backtest/open-score-replay/arm-contract";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
+import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { describe, it } from "node:test";
 import {
     FINDER_RESULT_SNAPSHOT_LIMIT,
@@ -190,6 +192,39 @@ function makeSwitchArmSummary(status: AssetSwitchArmSummary["status"] = "complet
 }
 
 describe("Finder result snapshots", () => {
+    for (const mode of ["horizon", "asset_switch"] as const) {
+        it(`recovers legacy 15-arm and new 20-arm ${mode} snapshots independently`, () => {
+            const horizon = makeArmPerformanceCandidate(1);
+            const candidate = mode === "horizon" ? horizon : { ...horizon, replayMode: mode, metrics: undefined, horizon: undefined,
+                assetSwitchMetrics: Object.fromEntries(Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, makeSwitchArmSummary()])) } as FinderArmPerformanceCandidate;
+            candidate.rankingMeasurement = createEmptyRankingMeasurement(5, true);
+            candidate.causalArmDefinitions = { ...FINDER_CAUSAL_ARMS_V1 };
+            candidate.causalArmDiagnostics = { eligibleCandidates: { topCoverage: 7 }, unavailableDegree: 0, unavailableSupportHistory: 1, unavailablePriceHistory: 2, graphExcludedCandidates: 3, graphSolverFailures: 0 };
+            Object.assign(candidate.causalArmDefinitions, { candles: [1, 2] });
+            Object.assign(candidate.causalArmDiagnostics, { eventRows: [1, 2] });
+            const recover = (row: FinderArmPerformanceCandidate) => normalizeFinderLatestResultsSnapshot({ scope: "arm_performance", results: [row], runContext: null });
+            const current = recover(candidate); expect(current?.scope).to.equal("arm_performance");
+            if (current?.scope !== "arm_performance") throw new Error("missing current snapshot");
+            expect(Object.keys(current.results[0]!.metrics ?? current.results[0]!.assetSwitchMetrics!)).to.have.length(20);
+            expect(current.results[0]!.causalArmDefinitions).not.to.have.property("candles");
+            expect(current.results[0]!.causalArmDiagnostics).not.to.have.property("eventRows");
+            const old = structuredClone(candidate);
+            for (const field of CAUSAL_ARM_FIELDS) {
+                const arm = REPLAY_ARM_TO_FINDER_ARM[field];
+                delete (old.metrics ?? old.assetSwitchMetrics!)[arm]; delete old.rankingMeasurement!.arms[field];
+            }
+            delete old.causalArmDefinitions; delete old.causalArmDiagnostics;
+            const legacy = recover(old); expect(legacy?.scope).to.equal("arm_performance");
+            if (legacy?.scope !== "arm_performance") throw new Error("legacy data discarded");
+            expect(Object.keys(legacy.results[0]!.metrics ?? legacy.results[0]!.assetSwitchMetrics!)).to.have.length(15);
+            expect(legacy.results[0]!.rankingMeasurement!.arms.topCoverage).to.equal(undefined);
+            const malformed = structuredClone(candidate);
+            Object.assign((malformed.metrics ?? malformed.assetSwitchMetrics!) as object, { TOP_GRAPH_STRENGTH: { events: -1 } });
+            const partiallyValid = recover(malformed); expect(partiallyValid?.scope).to.equal("arm_performance");
+            if (partiallyValid?.scope !== "arm_performance") throw new Error("valid legacy rows discarded");
+            expect((partiallyValid.results[0]!.metrics ?? partiallyValid.results[0]!.assetSwitchMetrics!).TOP_GRAPH_STRENGTH).to.equal(undefined);
+        });
+    }
     it("keeps current-chart snapshots bounded and strips heavy backtest arrays", () => {
         const compact = compactFinderLatestResults({
             scope: "current_chart",

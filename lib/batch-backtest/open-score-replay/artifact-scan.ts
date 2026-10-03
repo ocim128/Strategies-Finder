@@ -28,6 +28,8 @@ export function compareDeltas(a: ScoreDelta, b: ScoreDelta): number {
 }
 
 export interface ArtifactScanResult {
+    validDegree?: Map<string, number>;
+    pairEndpoints?: Array<{ base: number; quote: number } | null>;
     assetIndexByName: Map<string, number>;
     assetNames: string[];
     /**
@@ -59,6 +61,7 @@ export interface ArtifactScanResult {
  * `assetIndex` and an inactive tilt.
  */
 export interface PairArtifactScanContext {
+    enableCausalArms?: boolean;
     assetIndex(name: string): number;
     capTiltWeight: ActiveCapTiltWeight | null;
     lookupMarketCap: ((symbol: string, timeSec: number) => number | null) | null;
@@ -220,6 +223,7 @@ export function scanPairArtifact(artifact: BatchSyntheticPairArtifact, ctx: Pair
         const profitNowConfidenceWeight = tradeProfitNowConfidenceWeight[tradeIdx]!;
         // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
         stream.push({
+            ...(ctx.enableCausalArms ? { entrySec } : {}),
             timeSec: entrySec,
             assetIndex: bi,
             delta: sign * baseWeight,
@@ -230,6 +234,7 @@ export function scanPairArtifact(artifact: BatchSyntheticPairArtifact, ctx: Pair
         });
         if (qi !== null) {
             stream.push({
+                ...(ctx.enableCausalArms ? { entrySec } : {}),
                 timeSec: entrySec,
                 assetIndex: qi,
                 delta: -sign * quoteWeight,
@@ -247,6 +252,7 @@ export function scanPairArtifact(artifact: BatchSyntheticPairArtifact, ctx: Pair
             const pnl = Number.isFinite(trade.pnl) ? trade.pnl : 0;
             const pnlShare = pnl / (qi !== null ? 2 : 1);
             stream.push({
+                ...(ctx.enableCausalArms ? { entrySec } : {}),
                 timeSec: exitSec,
                 assetIndex: bi,
                 delta: -sign * baseWeight,
@@ -257,6 +263,7 @@ export function scanPairArtifact(artifact: BatchSyntheticPairArtifact, ctx: Pair
             });
             if (qi !== null) {
                 stream.push({
+                    ...(ctx.enableCausalArms ? { entrySec } : {}),
                     timeSec: exitSec,
                     assetIndex: qi,
                     delta: sign * quoteWeight,
@@ -280,6 +287,7 @@ export function scanPairArtifact(artifact: BatchSyntheticPairArtifact, ctx: Pair
 }
 
 export async function scanArtifacts(args: {
+    enableCausalArms?: boolean;
     artifactLoader: () => AsyncIterable<BatchSyntheticPairArtifact>;
     shouldStop: () => boolean;
     onPhase: ReplayPhaseCallback;
@@ -337,7 +345,10 @@ export async function scanArtifacts(args: {
         }
         return idx;
     };
+    const validDegree = args.enableCausalArms ? new Map<string, number>() : undefined;
+    const pairEndpoints = args.enableCausalArms ? [] as Array<{ base: number; quote: number } | null> : undefined;
     const scanCtx: PairArtifactScanContext = {
+        enableCausalArms: args.enableCausalArms,
         assetIndex,
         capTiltWeight,
         lookupMarketCap,
@@ -361,6 +372,8 @@ export async function scanArtifacts(args: {
         if (outcome.quoteName && outcome.quoteName !== outcome.baseName) {
             staticDegree.set(outcome.quoteName, (staticDegree.get(outcome.quoteName) ?? 0) + 1);
         }
+        const validPair = !!outcome.baseName && !!outcome.quoteName && outcome.baseName !== outcome.quoteName;
+        if (validDegree && validPair) for (const name of [outcome.baseName, outcome.quoteName!]) validDegree.set(name, (validDegree.get(name) ?? 0) + 1);
         if (outcome.omitted) {
             omittedPairs += 1;
             continue;
@@ -371,7 +384,8 @@ export async function scanArtifacts(args: {
         outcome.deltas.sort(compareDeltas);
         // Only this pair's temporary rows survive the sort. Retaining objects
         // for four deltas per trade exhausts even a 16 GiB coordinator heap.
-        streams.push(ScoreDeltaBuffer.from(outcome.deltas));
+        streams.push(ScoreDeltaBuffer.from(outcome.deltas, args.enableCausalArms));
+        pairEndpoints?.push(validPair ? { base: assetIndexByName.get(outcome.baseName)!, quote: assetIndexByName.get(outcome.quoteName!)! } : null);
         // Profit-gated arms: a pair feeds the filtered accumulators only when its
         // full backtest netted strictly positive. Kept in lockstep with
         // `streams` (index i describes streams[i]).
@@ -388,6 +402,7 @@ export async function scanArtifacts(args: {
     return {
         ok: true,
         result: {
+            ...(validDegree ? { validDegree, pairEndpoints } : {}),
             assetIndexByName,
             assetNames,
             retainedDegree,

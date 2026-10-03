@@ -153,7 +153,7 @@ clean data (no target gaps) reuses the pre-computed selector winners instead
 of re-ranking every view. Standalone TOP_MEAN keeps the large cache, the
 shared annual outcome cache, and full diagnostics.
 
-Asset-switch replay has a dedicated selector pass: it resolves all 15 arm
+Asset-switch replay has a dedicated selector pass: it resolves all 20 arm
 picks in one pass over each event, retains only the event time and picks, and
 releases each score snapshot after use. Its position loop handles no-due-order
 and unchanged-pick decisions synchronously; it awaits only when a target-candle
@@ -170,8 +170,8 @@ while the sweep runs.
 
 Asset-switch replay normalizes target prices into a bounded LRU that retains
 up to 32 series and 8 million candle points (three `Float64Array` fields per
-point). This covers the possible held and replacement asset for each of the
-15 arms while keeping the normalized working set bounded; the coordinator's
+point). This retains the existing 32-series/8-million-point limit for the
+20 arms, allowing eviction and reload when needed while keeping the normalized working set bounded; the coordinator's
 raw target-data cache remains separately bounded by its prefetch window.
 Rust preference is forwarded to each child, and result rows record requested
 and actual engine modes.
@@ -189,12 +189,99 @@ inventory cannot be recovered, Re-Sort remains limited to the bounded browser
 preview. Apply and copy use the terminal context rather than current menu
 controls.
 
-The inventory holds compact metrics for all 15 replay arms per successfully
+The inventory holds compact metrics for all 20 replay arms per successfully
 evaluated configuration; it does not retain candles, trades, event details,
 pool snapshots, or candidate outcomes. Work scales as configurations × pairs,
 so keep the configuration budget small for 500–5,000-pair runs. Large
 server-side TOP_MEAN work should use
 `NODE_OPTIONS=--max-old-space-size=16384` or higher.
+
+
+### Additional causal arms: execution and recovery
+
+Only trusted coordinator `executionProfile: "finder_arm"` enables the internal
+`enableCausalArms` replay option. Every new Finder child computes the five
+additional arms for Return and Ranking consistency. Standalone Batch/TOP_MEAN
+runs use the legacy subset derived from the canonical mapping and do not
+allocate entry-time columns, load causal target histories or solve graphs.
+This is not a public request field, route, service or infrastructure change.
+Definitions, clocks and eligible pools are specified in
+[Additional causal score definitions](finder.md#additional-causal-score-definitions).
+
+The sequential scan and packed scan workers reconstruct valid pair endpoints,
+valid loaded degree and original entry timestamps on both delta legs, including
+exits. Tradeless valid pairs contribute degree without a stream. Legacy retained
+degree and artifact schemas are unchanged. Entry times add one optional
+Float64 column (8 bytes per delta) only for enabled scans; worker packing,
+transfer, global-index remapping and segment sorting carry it together.
+The parallel path keeps its existing sequential fallback.
+
+The event sweep processes every timestamp, including pre-window and exit-only
+buckets. Rolling step-function integrals and expiry queues maintain support
+without walking synthetic bars or every open trade at each decision. Graph
+edges use stream identity and one base-leg update per pair position. The pure
+sparse scorer uses deterministic asset/edge order and yields during bounded
+component/solver work so Stop remains responsive.
+
+Before selection, a separate target-history pass uses the supplied lazy loader
+and bounded prefetch queue. It consumes one asset's normalized closed candles
+at a time and accesses only the causal prefix; it never reads forward outcome
+arrays or uses their gap reranking to form a new-arm pick. Known missing
+targets are retained as a name set, filtering repeat loads and prefetches;
+`null` remains distinct from an empty array. The frozen cutoff and caller's
+cancellation behavior are preserved. The second bounded pass for outcomes
+does not enlarge either target LRU.
+
+Horizon mode transfers additional keys only into ordinary positive candidates.
+Switch mode retains at most five keys/picks and an eligible-pool count per arm
+and event while dense legacy snapshots remain available, then releases them
+before simulation. No additional dense price/asset/event matrix is retained.
+Eligibility counts survive with ranking disabled. Ranking capture still freezes
+membership before forward data inspection; future failures skip rather than
+replace new-arm picks. No-pick graph events use the existing hold-and-clear
+switch behavior.
+
+Coordinator summaries, wire serialization, Finder metrics, exports and local
+snapshots retain the five optional result keys plus whitelisted scalar
+`causalArmDefinitions` (`finder-causal-arms-v1`) and `causalArmDiagnostics`.
+New enabled children require every new section even when it has zero events;
+missing or invalid required sections are child contract errors before cleanup.
+Legacy recovery requires only the original fifteen arms, validates present
+additional data independently and leaves absent/malformed additions unavailable
+with **Rerun required**. It never invents zero-event recovery data. The existing
+`top-five-ranking-v2` and persistence envelope remain unchanged.
+
+For rollback, disable the trusted additional-arm option for new runs and show
+the legacy selector subset. Keep optional-field readers so previously saved
+twenty-arm runs remain readable. Ownership, authorization, admission limits,
+reattach, cancellation and owned-artifact cleanup are unchanged; Node worker
+imports stay outside browser-bound modules.
+
+Use `scripts/bench-finder-arm-replay.ts --causal-arms --interval 100s` with the
+same fixture/options as the baseline (omit `--causal-arms`). The fixture has
+100-second target bars; supplying that interval makes the causal clock match
+the data. `legacyArmFingerprint` covers all fifteen legacy comparisons,
+contributor exclusions, switch metrics and rankings, and must match between
+enabled/disabled runs. Reports include runtime, target reads, peak memory and
+Stop latency. `tests/open-score-replay-memory.spec.ts` exercises enabled scan,
+sweep and compact switch records on 600,000 trades under a 128 MiB JS heap cap.
+These checks establish implementation parity and bounded retention, not
+out-of-sample research performance.
+
+The 2026-10-03 deterministic fixture (60 pair artifacts, 2,000 decisions,
+100-second bars, five-bar horizon, ranking enabled) measured:
+
+| Replay | Legacy time | Enabled time | Legacy / enabled target reads | Legacy / enabled peak RSS |
+| --- | --- | --- | --- | --- |
+| Horizon | 1.39 s | 2.05 s | 67 / 127 | 321 / 341 MiB |
+| Asset switch | 1.07 s | 2.35 s | 1,895 / 3,492 | 241 / 299 MiB |
+
+Both legacy fingerprints matched. The enabled switch Stop fixture responded
+1.3 ms after cancellation was observed. The enabled 600,000-trade memory spec
+passed its 128 MiB heap cap. These are local single-run measurements, not a
+production latency guarantee. The final transfer research check still requires
+the original and untouched pair lists and one identical fixed configuration,
+interval, date window and horizon; it has not been performed on this fixture.
 
 ## Asset Opportunity
 

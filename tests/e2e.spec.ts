@@ -191,6 +191,7 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
                 };
             });
             manager.adoptArmPerformanceResults(rows, null, true, false);
+            manager.populateResortOptions();
             manager.renderLatestResults();
             if (manager.getLatestCandidate().candidateOrdinal !== 0) throw new Error('Overall ordering sort failed');
             const sort = document.getElementById('finderArmPerformanceRankingSort') as HTMLSelectElement;
@@ -218,6 +219,62 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
         await page.click(`${panel} summary`);
         const opened = await inspect();
         if (!opened.open || opened.panelHeight <= closed.panelHeight || !opened.applyEnabled) throw new Error('Measurement details expansion failed');
+        await page.evaluate(() => {
+            const selector = document.getElementById('finderResort') as HTMLSelectElement;
+            for (const arm of ['TOP_COVERAGE', 'TOP_STABLE_SUPPORT', 'TOP_FRESH_SUPPORT', 'TOP_PRICE_STRENGTH', 'TOP_GRAPH_STRENGTH']) {
+                if (!Array.from(selector.options).some((option) => option.value === arm)) throw new Error('Missing Finder arm ' + arm);
+                selector.value = arm; selector.dispatchEvent(new Event('change', { bubbles: true }));
+                if (!document.getElementById('finderList')!.textContent!.includes('Rerun required')) throw new Error('Legacy arm availability must require rerun: ' + arm);
+            }
+        });
+        await page.evaluate(async () => {
+            const managerPath = '/lib/finder-manager.ts', typesPath = '/lib/batch-backtest/open-score-replay/types.ts';
+            const contractPath = '/lib/batch-backtest/open-score-replay/arm-contract.ts';
+            const definitionsPath = '/lib/batch-backtest/open-score-replay/causal-arm-constants.ts';
+            const { finderManager: manager } = await import(managerPath);
+            const { createEmptyRankingMeasurement } = await import(typesPath);
+            const { REPLAY_ARM_TO_FINDER_ARM, CAUSAL_ARM_FIELDS } = await import(contractPath);
+            const { FINDER_CAUSAL_ARMS_V1 } = await import(definitionsPath);
+            const sourceRows = manager.resultStore.armPerformanceRunResults;
+            for (const mode of ['horizon', 'asset_switch']) {
+                const rows = sourceRows.map((row: any) => {
+                    const rankingMeasurement = createEmptyRankingMeasurement(20, true);
+                    for (const field of Object.keys(REPLAY_ARM_TO_FINDER_ARM)) rankingMeasurement.arms[field] = { ...row.rankingMeasurement.arms.topRawProfitNow };
+                    const metrics = Object.fromEntries(Object.values(REPLAY_ARM_TO_FINDER_ARM).map((arm) => [arm, {
+                        events: 100, topMean: 0.01 + row.candidateOrdinal * 0.01, randomMean: 0, delta: 0.01,
+                        topMedian: 0.01, ciLower: 0, ciUpper: 0.02, positiveBlocks: 10, totalBlocks: 10,
+                    }]));
+                    const assetSwitchMetrics = Object.fromEntries(Object.values(REPLAY_ARM_TO_FINDER_ARM).map((arm) => [arm, {
+                        status: 'complete', enteredCount: 100, completedTrades: 100, realizedNetPnl: 10 + row.candidateOrdinal,
+                        totalNetPnl: 10 + row.candidateOrdinal, openPositionNetPnl: 0, partialRealizedNetPnl: 10,
+                        completedHoldingDurationSec: 1000, averageCompletedHoldingDurationSec: 10, totalCosts: 1,
+                        openPosition: null, pendingOrder: null,
+                        diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+                    }]));
+                    return { ...row, replayMode: mode, horizon: mode === 'horizon' ? 20 : undefined,
+                        metrics: mode === 'horizon' ? metrics : undefined, assetSwitchMetrics: mode === 'asset_switch' ? assetSwitchMetrics : undefined,
+                        rankingMeasurement, causalArmDefinitions: FINDER_CAUSAL_ARMS_V1,
+                        causalArmDiagnostics: { eligibleCandidates: Object.fromEntries(CAUSAL_ARM_FIELDS.map((field: string) => [field, 600])),
+                            unavailableDegree: 0, unavailableSupportHistory: 1, unavailablePriceHistory: 2, graphExcludedCandidates: 3, graphSolverFailures: 0,
+                            priceUnavailableReasons: { insufficient_history: 2 } },
+                    };
+                });
+                manager.adoptArmPerformanceResults(rows, null, true, false);
+                manager.populateResortOptions();
+                for (const measurement of ['return', 'ranking_consistency']) {
+                    const control = document.getElementById('finderArmPerformanceMeasurement') as HTMLSelectElement;
+                    control.value = measurement; control.dispatchEvent(new Event('change', { bubbles: true }));
+                    for (const field of CAUSAL_ARM_FIELDS) {
+                        const selector = document.getElementById('finderResort') as HTMLSelectElement;
+                        selector.value = REPLAY_ARM_TO_FINDER_ARM[field]; selector.dispatchEvent(new Event('change', { bubbles: true }));
+                        const list = document.getElementById('finderList')!;
+                        if (!list.textContent!.includes('Eligible candidate observations: 600') || list.textContent!.includes('Rerun required')) throw new Error('Missing calculated arm details: ' + mode + '/' + measurement + '/' + field);
+                        if (manager.getLatestCandidate().candidateOrdinal !== 1) throw new Error('New arms must sort the complete inventory locally');
+                        if ((list.querySelector('.finder-apply') as HTMLButtonElement).disabled) throw new Error('New-arm Apply unavailable');
+                    }
+                }
+            }
+        });
         if (replayRequests !== 0) throw new Error('Local ranking sort launched a replay');
         console.log('Ranking card expansion and local sorting passed.');
     } finally {

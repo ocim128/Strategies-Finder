@@ -10,7 +10,7 @@
 import type { OHLCVData } from "../../types/strategies";
 import type { CandleGap } from "../../ibkr-data/candle-gap";
 import type { ActiveCapTiltWeight, CapTiltWeight } from "../cap-tilt-contract";
-import { REPLAY_ARM_FIELDS, type ReplayArmField } from "./arm-contract";
+import { REPLAY_ARM_FIELDS, LEGACY_REPLAY_ARM_FIELDS, isCausalArm, replayArmFields, type ReplayArmField } from "./arm-contract";
 import type { StageOutcome } from "./internal-types";
 import type { ArtifactScanResult } from "./artifact-scan";
 import { TOP_MEAN_HORIZONS_MAX_VALUE } from "../sp500-top-mean-request-limits";
@@ -128,7 +128,12 @@ export type OpenScoreUsdLatestSelectorName =
     | "BOT_MEAN_RAW_UNIQUE"
     | "BOT_RAW_PROFIT_NOW"
     | "BOT_MEAN_PROFIT_NOW"
-    | "BOT_Z";
+    | "BOT_Z"
+    | "TOP_COVERAGE"
+    | "TOP_STABLE_SUPPORT"
+    | "TOP_FRESH_SUPPORT"
+    | "TOP_PRICE_STRENGTH"
+    | "TOP_GRAPH_STRENGTH";
 
 export interface OpenScoreUsdLatestSelectionCandidate {
     asset: string;
@@ -186,7 +191,12 @@ export type OpenScoreUsdEventDetailSelector =
     | "BOT_MEAN_RAW_UNIQUE"
     | "BOT_RAW_PROFIT_NOW"
     | "BOT_MEAN_PROFIT_NOW"
-    | "BOT_Z";
+    | "BOT_Z"
+    | "TOP_COVERAGE"
+    | "TOP_STABLE_SUPPORT"
+    | "TOP_FRESH_SUPPORT"
+    | "TOP_PRICE_STRENGTH"
+    | "TOP_GRAPH_STRENGTH";
 
 export interface OpenScoreUsdEventDetail {
     decisionTime: number;
@@ -290,11 +300,11 @@ export interface RankingArmSummary {
 export interface RankingMeasurementSummary {
     semanticsVersion: typeof RANKING_MEASUREMENT_SEMANTICS;
     horizonBars: number;
-    arms: Record<ReplayArmField, RankingArmSummary>;
+    arms: import("./arm-contract").ReplayArmResults<RankingArmSummary>;
 }
 
-export function createEmptyRankingMeasurement(horizonBars: number): RankingMeasurementSummary {
-    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars, arms: Object.fromEntries(REPLAY_ARM_FIELDS.map((field) => [field, {
+export function createEmptyRankingMeasurement(horizonBars: number, enabled = false): RankingMeasurementSummary {
+    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars, arms: Object.fromEntries(replayArmFields(enabled).map((field) => [field, {
         eligibleEvents: 0, scoredEvents: 0, skippedEvents: 0, skippedReasons: {}, tiedComparisons: 0, comparisons: 0,
         meanAccuracy: null, top1Superiority: null, soleFirstPlaceCount: 0, sharedFirstPlaceCount: 0, soleFirstPlaceRate: null, sharedFirstPlaceRate: null, ciLower: null, ciUpper: null, blockCount: 0, measurementWindowSec: null, timeBlockWidthSec: null, timeCoverageSec: null, status: "no_events",
     }])) as RankingMeasurementSummary["arms"] };
@@ -310,6 +320,15 @@ export function compactRankingMeasurement(value: unknown): RankingMeasurementSum
     const scoreKeys = ["meanAccuracy", "top1Superiority", "ciLower", "ciUpper"] as const;
     const reasons: RankingSkipReason[] = ["small_pool", "unresolved_pick", "pick_changed", "missing_target", "missing_entry", "invalid_price", "data_gap", "right_censored", "calendar_mismatch"];
     for (const field of REPLAY_ARM_FIELDS) {
+        if (isCausalArm(field)) {
+            const row = section.arms[field];
+            if (row) {
+                const probe = { ...section, arms: Object.fromEntries(LEGACY_REPLAY_ARM_FIELDS.map((key) => [key, key === "topRaw" ? row : section.arms[key]])) };
+                const valid = compactRankingMeasurement(probe);
+                if (valid) result.arms[field] = valid.arms.topRaw;
+            }
+            continue;
+        }
         const row = section.arms[field];
         if (!row || typeof row !== "object" || Array.isArray(row)) return undefined;
         const target = result.arms[field];
@@ -363,7 +382,42 @@ export function compactRankingMeasurement(value: unknown): RankingMeasurementSum
     return result;
 }
 
+export interface CausalArmDiagnostics {
+    eligibleCandidates: Partial<Record<import("./arm-contract").CausalArmField, number>>;
+    unavailableDegree: number;
+    unavailableSupportHistory: number;
+    unavailablePriceHistory: number;
+    priceUnavailableReasons?: Partial<Record<"missing_target" | "insufficient_history" | "invalid_timestamp" | "invalid_price" | "data_gap" | "stale_history", number>>;
+    graphExcludedCandidates: number;
+    graphSolverFailures: number;
+}
+
+export function compactCausalArmDiagnostics(value: unknown): CausalArmDiagnostics | undefined {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+    const row = value as CausalArmDiagnostics;
+    const result = { eligibleCandidates: {} } as CausalArmDiagnostics;
+    for (const key of ["unavailableDegree", "unavailableSupportHistory", "unavailablePriceHistory", "graphExcludedCandidates", "graphSolverFailures"] as const) {
+        if (!Number.isSafeInteger(row[key]) || row[key] < 0) return undefined;
+        result[key] = row[key];
+    }
+    if (!row.eligibleCandidates || typeof row.eligibleCandidates !== "object") return undefined;
+    for (const field of REPLAY_ARM_FIELDS) if (isCausalArm(field)) {
+        const count = row.eligibleCandidates[field];
+        if (count !== undefined && Number.isSafeInteger(count) && count >= 0) result.eligibleCandidates[field] = count;
+    }
+    if (row.priceUnavailableReasons && typeof row.priceUnavailableReasons === "object") {
+        result.priceUnavailableReasons = {};
+        for (const reason of ["missing_target", "insufficient_history", "invalid_timestamp", "invalid_price", "data_gap", "stale_history"] as const) {
+            const count = row.priceUnavailableReasons[reason];
+            if (count !== undefined && Number.isSafeInteger(count) && count >= 0) result.priceUnavailableReasons[reason] = count;
+        }
+    }
+    return result;
+}
+
 export interface OpenScoreUsdReplayResult {
+    causalArmDefinitions?: import("./causal-arm-constants").CausalArmDefinitions;
+    causalArmDiagnostics?: CausalArmDiagnostics;
     rankingMeasurement?: RankingMeasurementSummary;
     /** New results always include this discriminator; absent means legacy horizon data. */
     mode?: ReplayMode;
@@ -378,6 +432,11 @@ export interface OpenScoreUsdReplayResult {
     eligibleEvents: number;
     horizons: Array<{
         bars: number;
+        topCoverage?: ReplayComparison;
+        topStableSupport?: ReplayComparison;
+        topFreshSupport?: ReplayComparison;
+        topPriceStrength?: ReplayComparison;
+        topGraphStrength?: ReplayComparison;
         topRaw: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;
@@ -732,7 +791,7 @@ export interface AssetSwitchReplaySummary {
         missingAssets: number;
         invalidSeries: number;
     };
-    arms: Record<ReplayArmField, AssetSwitchArmSummary>;
+    arms: import("./arm-contract").ReplayArmResults<AssetSwitchArmSummary>;
     /** Optional, potentially large closed/open trade rows. */
     trades?: AssetSwitchTradeRecord[];
     tradeCount?: number;
@@ -742,6 +801,8 @@ export interface AssetSwitchReplaySummary {
 export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
 
 export interface RunOpenScoreUsdReplayOptions {
+    /** Trusted Finder coordinator only; never a public request setting. */
+    enableCausalArms?: boolean;
     /** Finder-only opt-in; independent of switch execution horizon. */
     rankingHorizon?: number;
     /** Required only for horizon mode. Omitted mode defaults to `horizon`. */

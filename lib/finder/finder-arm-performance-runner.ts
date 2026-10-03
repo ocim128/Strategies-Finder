@@ -22,6 +22,8 @@ import {
     buildFinderArmPerformanceMetricsFromArms,
     compactFinderArmComparison,
     FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
+    isFinderArmPerformanceMetric,
+    isFinderAssetSwitchMetric,
 } from "./finder-arm-performance-metrics";
 import {
     getArtifactsRootDir,
@@ -36,7 +38,7 @@ import {
     type TopMeanResultSummary,
     type TopMeanStatusResponse,
 } from "../batch-backtest/sp500-top-mean-coordinator-engine";
-import type { ReplayComparison } from "../batch-backtest/batch-open-score-usd-replay-engine";
+import { compactCausalArmDefinitions } from "../batch-backtest/open-score-replay/causal-arm-constants";
 import type { AssetSwitchArmSummary, ReplayArmField } from "../batch-backtest/open-score-replay/types";
 import { TopMeanWorkerPool, type TopMeanPairFailure } from "../batch-backtest/sp500-top-mean-worker-pool";
 import type { EnumerationResult } from "../batch-backtest/sp500-pair-enumerator";
@@ -223,11 +225,12 @@ function buildCandidateResult(args: {
     failedPairDetails: readonly TopMeanPairFailure[];
 }): FinderArmPerformanceCandidate {
     const { plan, candidateId, status, result, input, failedPairDetails } = args;
+    if (!compactCausalArmDefinitions(result.causalArmDefinitions)) throw new Error("TOP_MEAN child omitted the required finder-causal-arms-v1 definitions.");
     const replayMode = input.options.armPerformance?.replayMode ?? "horizon";
     const resolved = resolveCandidateSettings(plan, input);
     const rankingRequested = input.options.armPerformance?.measurement === "ranking_consistency";
     const rankingMeasurement = compactRankingMeasurement(result.rankingMeasurement);
-    if (rankingRequested && (!rankingMeasurement || rankingMeasurement.horizonBars !== (replayMode === "horizon" ? input.options.armPerformance?.horizon : input.options.armPerformance?.rankingHorizon))) {
+    if (rankingRequested && (!rankingMeasurement || Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).some((arm) => !rankingMeasurement.arms[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS]]) || rankingMeasurement.horizonBars !== (replayMode === "horizon" ? input.options.armPerformance?.horizon : input.options.armPerformance?.rankingHorizon))) {
         throw new Error("TOP_MEAN child completed without the required valid ranking measurement section.");
     }
     const pairCount = input.enumeration.canonicalPairs.length;
@@ -259,7 +262,7 @@ function buildCandidateResult(args: {
             ReplayArmField,
         ]>) {
             const metric = result.assetSwitch.arms[field];
-            if (!metric) throw new Error(`TOP_MEAN child omitted switch arm ${arm}.`);
+            if (!isFinderAssetSwitchMetric(metric)) throw new Error(`TOP_MEAN child omitted or returned invalid switch arm ${arm}.`);
             switchMetrics[arm] = metric;
         }
         return {
@@ -274,6 +277,7 @@ function buildCandidateResult(args: {
             ...(plan.exitStrategyName ? { exitStrategyName: plan.exitStrategyName } : {}),
             ...(plan.exitStrategyParams ? { exitStrategyParams: { ...plan.exitStrategyParams } } : {}),
             pairCoverage,
+            ...(result.causalArmDefinitions ? { causalArmDefinitions: result.causalArmDefinitions, causalArmDiagnostics: result.causalArmDiagnostics } : {}),
             ...(rankingMeasurement ? { rankingMeasurement } : {}),
             assetSwitchMetrics: switchMetrics,
             requestedEngineMode: input.useRustEnginePreference ? "rust" : "typescript",
@@ -281,25 +285,7 @@ function buildCandidateResult(args: {
         };
     }
     const horizon = result.horizons.find((item) => item.horizon === input.options.armPerformance?.horizon);
-    const emptyComparison: ReplayComparison = {
-        events: 0,
-        topMean: null,
-        randomMean: null,
-        delta: null,
-        topMedian: null,
-        blockMeans: [],
-        ciLower: null,
-        ciUpper: null,
-        positiveBlocks: 0,
-        totalBlocks: 0,
-    };
-    const armComparisons = horizon?.armComparisons ?? (
-        result.completed && result.horizons.length === 0
-            ? Object.fromEntries(
-                Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => [arm, emptyComparison]),
-            ) as Record<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, ReplayComparison>
-            : undefined
-    );
+    const armComparisons = horizon?.armComparisons;
     const adjustedArmMetrics = horizon?.armComparisonsExTopContributor
         ? Object.fromEntries(
             (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS>)
@@ -316,7 +302,7 @@ function buildCandidateResult(args: {
         ) as FinderArmPerformanceCandidate["contributorExclusions"]
         : undefined;
     const missingArms = (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS>)
-        .filter((arm) => !armComparisons?.[arm]);
+        .filter((arm) => !isFinderArmPerformanceMetric(armComparisons?.[arm]));
     if (missingArms.length > 0) {
         const returnedHorizons = result.horizons.map((item) => item.horizon).join(", ") || "none";
         throw new Error(
@@ -338,6 +324,7 @@ function buildCandidateResult(args: {
         ...(plan.exitStrategyName ? { exitStrategyName: plan.exitStrategyName } : {}),
         ...(plan.exitStrategyParams ? { exitStrategyParams: { ...plan.exitStrategyParams } } : {}),
         pairCoverage,
+        ...(result.causalArmDefinitions ? { causalArmDefinitions: result.causalArmDefinitions, causalArmDiagnostics: result.causalArmDiagnostics } : {}),
         ...(rankingMeasurement ? { rankingMeasurement } : {}),
         metrics: buildFinderArmPerformanceMetricsFromArms(armComparisons as never),
         ...(adjustedArmMetrics ? { metricsExTopContributor: adjustedArmMetrics } : {}),

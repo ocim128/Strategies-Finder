@@ -176,6 +176,8 @@ export interface TopMeanAnnualReplaySummary extends TopMeanAnnualReplayWindow {
 }
 
 export interface TopMeanResultSummary {
+    causalArmDefinitions?: OpenScoreUsdReplayResult["causalArmDefinitions"];
+    causalArmDiagnostics?: OpenScoreUsdReplayResult["causalArmDiagnostics"];
     rankingMeasurement?: import("./open-score-replay/types").RankingMeasurementSummary;
     runId: string;
     /** Completed run discriminator; absent old payloads mean horizon. */
@@ -246,7 +248,7 @@ export function buildTopMeanHorizonSummaries(
         for (const [arm, field] of Object.entries(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<
             [FinderArmPerformanceArm, FinderArmPerformanceReplayField]
         >) {
-            armComparisons[arm] = h[field];
+            if (h[field]) armComparisons[arm] = h[field]!;
         }
 
         return {
@@ -1478,6 +1480,7 @@ export class TopMeanCoordinatorEngine {
                 // on the fast path too.
                 replayOnPhase("scan", "scanning pair artifacts (parallel)", 0, 0);
                 const outcome = await runParallelArtifactScan({
+                    enableCausalArms: finderArmProfile,
                     runId: this._request.runId,
                     baseDir: this.baseDir,
                     shouldStop: () => this.isStopped,
@@ -1530,6 +1533,7 @@ export class TopMeanCoordinatorEngine {
                         // cache (annual-reload finding): the first (full-window)
                         // pass populates the cache; annual passes are served
                         // from it and load no target datasets.
+                        enableCausalArms: finderArmProfile,
                         loadTargetDataset,
                         prefetchTargetDatasets,
                         // finder_arm runs exactly ONE full-window pass, so a
@@ -1825,6 +1829,7 @@ export class TopMeanCoordinatorEngine {
                 archiveComplete: false,
                 counts: this.counts,
                 horizons: horizonSummaries,
+                ...(replayResult.causalArmDefinitions ? { causalArmDefinitions: replayResult.causalArmDefinitions, causalArmDiagnostics: replayResult.causalArmDiagnostics } : {}),
                 ...(replayResult.assetSwitch ? { assetSwitch: replayResult.assetSwitch } : {}),
                 ...(replayResult.rankingMeasurement ? { rankingMeasurement: replayResult.rankingMeasurement } : {}),
                 annualReports,

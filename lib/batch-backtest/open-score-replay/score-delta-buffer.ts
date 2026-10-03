@@ -1,8 +1,9 @@
 import type { ScoreDelta } from "./internal-types";
 
-/** Columnar delta storage: 37 bytes per delta, with no retained JS row objects.
+/** Columnar delta storage: 37 bytes per delta (45 with causal entry times), with no retained JS row objects.
  * Float64 preserves fractional timestamps, weighted votes and P&L exactly. */
 export class ScoreDeltaBuffer {
+    readonly entrySecs?: Float64Array;
     readonly timeSecs: Float64Array;
     readonly assetIndices: Uint32Array;
     readonly deltas: Float64Array;
@@ -17,13 +18,15 @@ export class ScoreDeltaBuffer {
      * caller owns column lifetimes; lengths must each be >= `length`.
      */
     constructor(readonly length: number, columns?: {
+        entrySecs?: Float64Array;
         timeSecs: Float64Array;
         assetIndices: Uint32Array;
         deltas: Float64Array;
         pnlShares: Float64Array;
         confidenceWeights: Float64Array;
         flags: Uint8Array;
-    }) {
+    }, causal = false) {
+        this.entrySecs = columns?.entrySecs ?? (causal ? new Float64Array(length) : undefined);
         this.timeSecs = columns?.timeSecs ?? new Float64Array(length);
         this.assetIndices = columns?.assetIndices ?? new Uint32Array(length);
         this.deltas = columns?.deltas ?? new Float64Array(length);
@@ -32,10 +35,11 @@ export class ScoreDeltaBuffer {
         this.flags = columns?.flags ?? new Uint8Array(length);
     }
 
-    static from(rows: readonly ScoreDelta[]): ScoreDeltaBuffer {
-        const buffer = new ScoreDeltaBuffer(rows.length);
+    static from(rows: readonly ScoreDelta[], causal = false): ScoreDeltaBuffer {
+        const buffer = new ScoreDeltaBuffer(rows.length, undefined, causal);
         for (let i = 0; i < rows.length; i += 1) {
             const row = rows[i]!;
+            if (buffer.entrySecs) buffer.entrySecs[i] = row.entrySec!;
             buffer.timeSecs[i] = row.timeSec;
             buffer.assetIndices[i] = row.assetIndex;
             buffer.deltas[i] = row.delta;
@@ -47,6 +51,7 @@ export class ScoreDeltaBuffer {
     }
 
     copyFrom(slot: number, source: ScoreDeltaBuffer, index: number): void {
+        if (this.entrySecs) this.entrySecs[slot] = source.entrySecs![index]!;
         this.timeSecs[slot] = source.timeSecs[index]!;
         this.assetIndices[slot] = source.assetIndices[index]!;
         this.deltas[slot] = source.deltas[index]!;

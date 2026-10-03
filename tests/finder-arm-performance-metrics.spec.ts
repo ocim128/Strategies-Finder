@@ -109,7 +109,7 @@ describe("Finder Arm Performance metrics", () => {
         const metrics = buildFinderArmPerformanceMetrics(horizon as never);
         value = -7;
         for (const [arm] of Object.entries(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS)) {
-            expect(metrics[arm as keyof typeof metrics].topMean).to.equal(value);
+            expect(metrics[arm as keyof typeof metrics]!.topMean).to.equal(value);
             value += 1;
         }
         expect(metrics.TOP_RAW_PROFIT_NOW).not.to.have.property("blockMeans");
@@ -122,7 +122,7 @@ describe("Finder Arm Performance metrics", () => {
         );
         const metrics = buildFinderArmPerformanceMetricsFromArms(comparisons as never);
         for (const [index, arm] of (Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS>).entries()) {
-            expect(metrics[arm].topMean).to.equal(index);
+            expect(metrics[arm]!.topMean).to.equal(index);
         }
     });
 

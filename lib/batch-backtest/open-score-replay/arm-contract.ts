@@ -15,6 +15,11 @@ export const REPLAY_ARM_TO_FINDER_ARM = {
     botRaw: "BOT_RAW",
     botMean: "BOT_MEAN",
     botMeanRawUnique: "BOT_MEAN_RAW_UNIQUE",
+    topCoverage: "TOP_COVERAGE",
+    topStableSupport: "TOP_STABLE_SUPPORT",
+    topFreshSupport: "TOP_FRESH_SUPPORT",
+    topPriceStrength: "TOP_PRICE_STRENGTH",
+    topGraphStrength: "TOP_GRAPH_STRENGTH",
 } as const;
 
 export type ReplayArmField = keyof typeof REPLAY_ARM_TO_FINDER_ARM;
@@ -23,6 +28,14 @@ export type FinderArmField = (typeof REPLAY_ARM_TO_FINDER_ARM)[ReplayArmField];
 export const REPLAY_ARM_FIELDS = Object.freeze(
     Object.keys(REPLAY_ARM_TO_FINDER_ARM) as ReplayArmField[],
 );
+
+export const CAUSAL_ARM_FIELDS = ["topCoverage", "topStableSupport", "topFreshSupport", "topPriceStrength", "topGraphStrength"] as const;
+export type CausalArmField = typeof CAUSAL_ARM_FIELDS[number];
+export type LegacyArmField = Exclude<ReplayArmField, CausalArmField>;
+export type ReplayArmResults<T> = Record<LegacyArmField, T> & Partial<Record<CausalArmField, T>>;
+export const LEGACY_REPLAY_ARM_FIELDS = REPLAY_ARM_FIELDS.filter((field): field is LegacyArmField => !CAUSAL_ARM_FIELDS.includes(field as CausalArmField));
+export const replayArmFields = (enabled?: boolean): readonly ReplayArmField[] => enabled ? REPLAY_ARM_FIELDS : LEGACY_REPLAY_ARM_FIELDS;
+export const isCausalArm = (field: ReplayArmField): field is CausalArmField => CAUSAL_ARM_FIELDS.includes(field as CausalArmField);
 
 /** Backward-compatible activity check for result summaries created before decisionCount was persisted. */
 export function hasAssetSwitchDecisionEvents(summary: {

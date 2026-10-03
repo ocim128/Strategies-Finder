@@ -43,9 +43,10 @@ function spawnScanWorker(
     runId: string,
     baseDir: string | undefined,
     shardIndexes: number[],
+    enableCausalArms?: boolean,
 ): { worker: Worker; done: Promise<WorkerResult> } {
     const worker = new Worker(workerPath, {
-        workerData: { runId, baseDir, shardIndexes } satisfies { runId: string; baseDir?: string; shardIndexes: number[] },
+        workerData: { runId, baseDir, shardIndexes, enableCausalArms },
     });
     const collected: TopMeanScanShardResult[] = [];
     let failed = false;
@@ -80,6 +81,7 @@ function ensureSegmentOrder(
     flags: Uint8Array,
     offset: number,
     length: number,
+    entrySecs?: Float64Array,
 ): void {
     let sorted = true;
     for (let i = 1; i < length; i += 1) {
@@ -106,6 +108,10 @@ function ensureSegmentOrder(
     const tempF64 = new Float64Array(length);
     const tempU32 = new Uint32Array(length);
     const tempU8 = new Uint8Array(length);
+    if (entrySecs) {
+        for (let i = 0; i < length; i++) tempF64[i] = entrySecs[offset + order[i]!]!;
+        for (let i = 0; i < length; i++) entrySecs[offset + i] = tempF64[i]!;
+    }
     for (let i = 0; i < length; i += 1) tempF64[i] = timeSecs[offset + order[i]!];
     for (let i = 0; i < length; i += 1) timeSecs[offset + i] = tempF64[i];
     for (let i = 0; i < length; i += 1) tempU32[i] = assetIndices[offset + order[i]!];
@@ -121,6 +127,7 @@ function ensureSegmentOrder(
 }
 
 export async function runParallelArtifactScan(args: {
+    enableCausalArms?: boolean;
     runId: string;
     baseDir?: string;
     shouldStop: () => boolean;
@@ -158,7 +165,7 @@ export async function runParallelArtifactScan(args: {
     });
 
     const spawned = assignments.map((shardIndexes) =>
-        spawnScanWorker(workerPath, args.runId, args.baseDir, shardIndexes));
+        spawnScanWorker(workerPath, args.runId, args.baseDir, shardIndexes, args.enableCausalArms));
     const terminateAll = (): void => {
         for (const { worker } of spawned) void worker.terminate();
     };
@@ -196,6 +203,8 @@ export async function runParallelArtifactScan(args: {
             }
             return idx;
         };
+        const validDegree = args.enableCausalArms ? new Map<string, number>() : undefined;
+        const pairEndpoints = args.enableCausalArms ? [] as Array<{ base: number; quote: number } | null> : undefined;
         const retainedDegree = new Map<string, number>();
         const streams: ScoreDeltaBuffer[] = [];
         const profitableStreams: boolean[] = [];
@@ -222,14 +231,18 @@ export async function runParallelArtifactScan(args: {
             const pnlShares = shard.pnlShares!;
             const confidenceWeights = shard.confidenceWeights!;
             const deltaFlags = shard.deltaFlags!;
+            if (args.enableCausalArms && (!shard.entrySecs || !shard.validDegree || !shard.pairEndpoints)) return { status: "fallback" };
             const lengths = shard.pairLengths!;
             const flags = shard.pairFlags!;
             let offset = 0;
             for (let pair = 0; pair < lengths.length; pair += 1) {
                 const length = lengths[pair]!;
                 const end = offset + length;
-                ensureSegmentOrder(timeSecs, assetIndices, deltas, pnlShares, confidenceWeights, deltaFlags, offset, length);
+                ensureSegmentOrder(timeSecs, assetIndices, deltas, pnlShares, confidenceWeights, deltaFlags, offset, length, shard.entrySecs);
+                const endpoints = shard.pairEndpoints?.[pair];
+                pairEndpoints?.push(endpoints ? { base: localToGlobal[endpoints.base]!, quote: localToGlobal[endpoints.quote]! } : null);
                 streams.push(new ScoreDeltaBuffer(length, {
+                    ...(shard.entrySecs ? { entrySecs: shard.entrySecs.subarray(offset, end) } : {}),
                     timeSecs: timeSecs.subarray(offset, end),
                     assetIndices: assetIndices.subarray(offset, end),
                     deltas: deltas.subarray(offset, end),
@@ -241,6 +254,7 @@ export async function runParallelArtifactScan(args: {
                 pnlKnownStreams.push((flags[pair]! & 2) === 2);
                 offset = end;
             }
+            for (const [name, count] of shard.validDegree ?? []) validDegree!.set(name, (validDegree!.get(name) ?? 0) + count);
             for (const [name, count] of shard.retainedDegree!) {
                 retainedDegree.set(name, (retainedDegree.get(name) ?? 0) + count);
             }
@@ -254,6 +268,7 @@ export async function runParallelArtifactScan(args: {
             status: "ok",
             tradelessPairs,
             result: {
+                ...(validDegree ? { validDegree, pairEndpoints } : {}),
                 assetIndexByName,
                 assetNames,
                 retainedDegree,

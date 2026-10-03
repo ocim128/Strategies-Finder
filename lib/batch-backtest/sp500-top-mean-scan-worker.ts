@@ -22,6 +22,7 @@ import { compareDeltas, scanPairArtifact, type PairArtifactScanContext } from ".
 import type { ScoreDelta } from "./open-score-replay/internal-types";
 
 export interface TopMeanScanWorkerData {
+    enableCausalArms?: boolean;
     runId: string;
     baseDir?: string;
     shardIndexes: number[];
@@ -31,6 +32,9 @@ export interface TopMeanScanWorkerData {
 export const TOP_MEAN_SCAN_NO_QUOTE_LEG = 0xffffffff;
 
 export interface TopMeanScanShardResult {
+    validDegree?: Array<[string, number]>;
+    pairEndpoints?: Array<{ base: number; quote: number } | null>;
+    entrySecs?: Float64Array;
     shardIndex: number;
     ok: boolean;
     /** Shard-local asset name table in first-encounter order (ok results). */
@@ -55,6 +59,8 @@ export interface TopMeanScanShardResult {
 }
 
 interface ShardScanAccumulator {
+    validDegree?: Map<string, number>;
+    pairEndpoints?: Array<{ base: number; quote: number } | null>;
     shardIndex: number;
     names: string[];
     retainedDegree: Map<string, number>;
@@ -67,10 +73,11 @@ interface ShardScanAccumulator {
     rowOffsets: number[];
 }
 
-function scanShard(shardIndex: number, artifacts: CompactPairArtifact[]): TopMeanScanShardResult {
+function scanShard(shardIndex: number, artifacts: CompactPairArtifact[], causal = false): TopMeanScanShardResult {
     const names: string[] = [];
     const localIndexByName = new Map<string, number>();
     const ctx: PairArtifactScanContext = {
+        enableCausalArms: causal,
         assetIndex: (name: string): number => {
             let idx = localIndexByName.get(name);
             if (idx === undefined) {
@@ -91,6 +98,7 @@ function scanShard(shardIndex: number, artifacts: CompactPairArtifact[]): TopMea
     };
     const retainedDegree = new Map<string, number>();
     const acc: ShardScanAccumulator = {
+        ...(causal ? { validDegree: new Map<string, number>(), pairEndpoints: [] } : {}),
         shardIndex,
         names,
         retainedDegree,
@@ -116,11 +124,14 @@ function scanShard(shardIndex: number, artifacts: CompactPairArtifact[]): TopMea
             retainedDegree.set(outcome.quoteName, (retainedDegree.get(outcome.quoteName) ?? 0) + 1);
         }
         if ((artifact.result?.trades ?? []).length === 0) acc.tradelessPairs += 1;
+        const valid = !!outcome.baseName && !!outcome.quoteName && outcome.baseName !== outcome.quoteName;
+        if (acc.validDegree && valid) for (const name of [outcome.baseName, outcome.quoteName!]) acc.validDegree.set(name, (acc.validDegree.get(name) ?? 0) + 1);
         if (outcome.omitted) {
             acc.omittedPairs += 1;
             continue;
         }
         outcome.deltas.sort(compareDeltas);
+        acc.pairEndpoints?.push(valid ? { base: localIndexByName.get(outcome.baseName)!, quote: localIndexByName.get(outcome.quoteName!)! } : null);
         acc.pairLengths.push(outcome.deltas.length);
         acc.pairFlags.push((outcome.profitable ? 1 : 0) | (outcome.pnlKnown ? 2 : 0));
         acc.rowOffsets.push(acc.rows.length);
@@ -131,6 +142,7 @@ function scanShard(shardIndex: number, artifacts: CompactPairArtifact[]): TopMea
 
 function packShard(acc: ShardScanAccumulator): TopMeanScanShardResult {
     const total = acc.rows.length;
+    const entrySecs = acc.validDegree ? new Float64Array(total) : undefined;
     const timeSecs = new Float64Array(total);
     const assetIndices = new Uint32Array(total);
     const deltas = new Float64Array(total);
@@ -139,6 +151,7 @@ function packShard(acc: ShardScanAccumulator): TopMeanScanShardResult {
     const deltaFlags = new Uint8Array(total);
     for (let i = 0; i < acc.rows.length; i += 1) {
         const row = acc.rows[i]!;
+        if (entrySecs) entrySecs[i] = row.entrySec!;
         timeSecs[i] = row.timeSec;
         assetIndices[i] = row.assetIndex;
         deltas[i] = row.delta;
@@ -147,6 +160,7 @@ function packShard(acc: ShardScanAccumulator): TopMeanScanShardResult {
         deltaFlags[i] = row.isEntry | (row.voteApplied ? 2 : 0);
     }
     return {
+        ...(acc.validDegree ? { validDegree: [...acc.validDegree], pairEndpoints: acc.pairEndpoints, entrySecs } : {}),
         shardIndex: acc.shardIndex,
         ok: true,
         names: acc.names,
@@ -172,7 +186,7 @@ async function main(): Promise<void> {
         try {
             const artifacts = await readShardArtifactsAsync(data.runId, shardIndex, data.baseDir);
             shards.push(artifacts
-                ? scanShard(shardIndex, artifacts)
+                ? scanShard(shardIndex, artifacts, data.enableCausalArms)
                 : { shardIndex, ok: false });
         } catch {
             shards.push({ shardIndex, ok: false });
@@ -182,7 +196,7 @@ async function main(): Promise<void> {
     const transfer = shards.flatMap((shard) => [
         shard.pairLengths?.buffer, shard.pairFlags?.buffer, shard.timeSecs?.buffer,
         shard.assetIndices?.buffer, shard.deltas?.buffer, shard.pnlShares?.buffer,
-        shard.confidenceWeights?.buffer, shard.deltaFlags?.buffer,
+        shard.confidenceWeights?.buffer, shard.deltaFlags?.buffer, shard.entrySecs?.buffer,
     ].filter((buf): buf is ArrayBufferLike => buf instanceof ArrayBuffer));
     parentPort.postMessage({ type: "topMeanScanResult", shards }, transfer);
 }

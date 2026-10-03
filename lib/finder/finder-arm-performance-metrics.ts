@@ -29,10 +29,28 @@ export interface FinderArmPerformanceMetric {
 export type FinderArmPerformanceMetrics = Partial<
     Record<FinderArmPerformanceArm, FinderArmPerformanceMetric>
 >;
-export type FinderArmPerformanceCompleteMetrics = Record<
-    FinderArmPerformanceArm,
-    FinderArmPerformanceMetric
->;
+export type FinderArmPerformanceArmResults<T> = Record<
+    Exclude<FinderArmPerformanceArm, (typeof REPLAY_ARM_TO_FINDER_ARM)[import("../batch-backtest/open-score-replay/arm-contract").CausalArmField]>,
+    T
+> & Partial<Record<FinderArmPerformanceArm, T>>;
+export type FinderArmPerformanceCompleteMetrics = FinderArmPerformanceArmResults<FinderArmPerformanceMetric>;
+
+/** Validate the compact scalar switch section independently of other arms. */
+export function isFinderAssetSwitchMetric(value: unknown): value is AssetSwitchArmSummary {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const row = value as Record<string, unknown>;
+    const counts = row.diagnosticCounts as Record<string, unknown> | undefined;
+    const exclusion = row.topContributorExclusion as Record<string, unknown> | undefined;
+    return ["complete", "no_entry", "incomplete"].includes(String(row.status))
+        && ["enteredCount", "completedTrades"].every((key) => Number.isSafeInteger(row[key]) && Number(row[key]) >= 0)
+        && ["realizedNetPnl", "openPositionNetPnl", "totalNetPnl", "averageCompletedHoldingDurationSec"].every((key) => row[key] === null || typeof row[key] === "number" && Number.isFinite(row[key]))
+        && ["partialRealizedNetPnl", "completedHoldingDurationSec", "totalCosts"].every((key) => typeof row[key] === "number" && Number.isFinite(row[key]))
+        && !!counts && typeof counts === "object" && !Array.isArray(counts)
+        && ["missingTarget", "invalidTimestamp", "invalidPrice", "dataGap", "staleMark", "unvaluedPosition"].every((key) => Number.isSafeInteger(counts[key]) && Number(counts[key]) >= 0)
+        && (exclusion === undefined || !!exclusion && typeof exclusion === "object" && !Array.isArray(exclusion)
+            && typeof exclusion.asset === "string" && exclusion.asset.length > 0
+            && ["contributionNetPnl", "adjustedTotalNetPnl", "adjustedRealizedNetPnl", "adjustedOpenPositionNetPnl"].every((key) => typeof exclusion[key] === "number" && Number.isFinite(exclusion[key])));
+}
 
 export type FinderArmPerformanceScoringBasis = "raw" | "exclude_top_contributor";
 export type FinderArmPerformanceRankingSort = "overall_ordering" | "selected_asset";
@@ -50,6 +68,17 @@ export function getFinderArmRankingMetric(row: { rankingMeasurement?: RankingMea
     const section = row.rankingMeasurement;
     if (section?.semanticsVersion !== RANKING_MEASUREMENT_SEMANTICS || (filter.rankingHorizon !== undefined && filter.rankingHorizon !== section.horizonBars)) return undefined;
     return section.arms[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]];
+}
+
+export function getFinderCausalAvailabilityDetails(row: { causalArmDiagnostics?: import("../batch-backtest/open-score-replay/types").CausalArmDiagnostics }, arm: FinderArmPerformanceArm): string[] {
+    const diagnostics = row.causalArmDiagnostics;
+    if (!diagnostics) return [];
+    const field = FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm];
+    const reasons = arm === "TOP_PRICE_STRENGTH" ? Object.entries(diagnostics.priceUnavailableReasons ?? {}).map(([reason, count]) => reason.replaceAll("_", " ") + ": " + count)
+        : arm === "TOP_GRAPH_STRENGTH" ? ["outside selected component: " + diagnostics.graphExcludedCandidates, "solver failures: " + diagnostics.graphSolverFailures]
+        : arm === "TOP_STABLE_SUPPORT" ? ["insufficient support history: " + diagnostics.unavailableSupportHistory, "zero available degree: " + diagnostics.unavailableDegree]
+        : arm === "TOP_COVERAGE" || arm === "TOP_FRESH_SUPPORT" ? ["zero available degree: " + diagnostics.unavailableDegree] : [];
+    return reasons.length ? ["Eligible candidate observations: " + (diagnostics.eligibleCandidates[field as import("../batch-backtest/open-score-replay/arm-contract").CausalArmField] ?? 0), ...reasons] : [];
 }
 
 function finiteOrNull(value: unknown): number | null {
@@ -75,6 +104,19 @@ export function compactFinderArmPerformanceMetric(
         positiveBlocks: nonNegativeInteger(metric.positiveBlocks),
         totalBlocks: nonNegativeInteger(metric.totalBlocks),
     };
+}
+
+/** Additional persisted fields are optional, but present fields must be complete. */
+export function isFinderArmPerformanceMetric(value: unknown): value is FinderArmPerformanceMetric {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    const row = value as FinderArmPerformanceMetric;
+    return ["events", "positiveBlocks", "totalBlocks"].every((key) => {
+        const count = row[key as "events" | "positiveBlocks" | "totalBlocks"];
+        return Number.isSafeInteger(count) && count >= 0;
+    }) && ["topMean", "randomMean", "delta", "topMedian", "ciLower", "ciUpper"].every((key) => {
+        const score = row[key as "topMean"];
+        return score === null || typeof score === "number" && Number.isFinite(score);
+    });
 }
 
 export function compactFinderArmComparison(comparison: ReplayComparison): FinderArmPerformanceMetric {
@@ -187,7 +229,7 @@ export function buildFinderArmPerformanceMetrics(
     for (const [arm, field] of Object.entries(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as Array<
         [FinderArmPerformanceArm, FinderArmPerformanceReplayField]
     >) {
-        metrics[arm] = compactFinderArmComparison(replayHorizon[field]);
+        if (replayHorizon[field]) metrics[arm] = compactFinderArmComparison(replayHorizon[field]);
     }
     return metrics;
 }
@@ -198,7 +240,7 @@ export function buildFinderArmPerformanceMetricsFromArms(
 ): FinderArmPerformanceCompleteMetrics {
     const metrics = {} as FinderArmPerformanceCompleteMetrics;
     for (const arm of Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS) as FinderArmPerformanceArm[]) {
-        metrics[arm] = compactFinderArmComparison(armComparisons[arm]);
+        if (armComparisons[arm]) metrics[arm] = compactFinderArmComparison(armComparisons[arm]);
     }
     return metrics;
 }

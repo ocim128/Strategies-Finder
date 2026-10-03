@@ -17,7 +17,7 @@ for one of five scopes:
   parameter discovery.
 - **Arm Performance** evaluates each generated configuration across the same
   supplied synthetic-pair universe, then lets the user re-sort the completed
-  configuration inventory by any of the 15 TOP_MEAN replay arms.
+  configuration inventory by any of the 20 TOP_MEAN replay arms.
 
 The menu is assembled from `html-partials/tab-finder.html`. Its structural DOM
 contract is `lib/finder/finder-manager-dom.ts`; do not rename an id in the
@@ -237,6 +237,98 @@ equity curves merely to implement a post-run sort.
 
 ### Arm Performance
 
+New Finder runs calculate **TOP_COVERAGE**, **TOP_STABLE_SUPPORT**,
+**TOP_FRESH_SUPPORT**, **TOP_PRICE_STRENGTH**, and **TOP_GRAPH_STRENGTH**
+alongside the original 15 arms, for both Return and Ranking consistency in
+both replay modes. Re-Sort lists all twenty through the existing arm selector;
+cards, filters, contributor exclusion, exports and Apply use the same inventory.
+There are no new search dimensions or settings controls.
+
+The five arms use only the ordinary positive pool (`rawScore > 0`), further
+restricted when their own required score is unavailable. A negative or zero
+additional score is still eligible. Profit gates never apply to these arms;
+price strength does not search the entire asset catalog.
+
+#### Additional causal score definitions
+
+Let `B = parseIntervalSeconds(interval)` and `W = 24 * B`. `D[a]` is the
+degree of successfully loaded, structurally valid two-leg pair identities
+incident to asset `a`, including pairs with no trades. Failed loads, missing
+legs and same-asset pairs do not count. Trusted enumeration and duplicate
+rules are unchanged. This frozen denominator differs from the active open
+position count and from the legacy retained-degree counter, which is unchanged.
+
+| Arm | Highest-first score |
+| --- | --- |
+| TOP_COVERAGE | `rawScore[a,t] / D[a]`. Zero degree is unavailable. Signed overlapping trade votes are preserved; coverage is not clamped to `[-1,1]`. |
+| TOP_STABLE_SUPPORT | `integral(C[a,s], s=t-W..t) / W`, where `C=rawScore/D` is a step function changed by every entry and exit. Requires a full elapsed window since the earliest processed score timestamp. |
+| TOP_FRESH_SUPPORT | `sum(sign * max(0, 1-(t-entrySec)/W)) / D[a]` over still-open positions. At age `W` a vote expires; its eventual exit cannot remove it twice. |
+| TOP_PRICE_STRENGTH | From the last 25 completed, finite, positive target closes, form 24 log returns `r`. Score is `sum(r)/(sqrt(24)*max(populationStdDev(r),1e-8))`. Flat closes score zero. |
+| TOP_GRAPH_STRENGTH | Least-squares strengths fitting `s[A]-s[B] = netSignedBaseVotes/openPositionCount` with one equally weighted edge per active retained pair identity. Strengths are centered within the selected component. |
+
+Stable and fresh support use **elapsed seconds**, including nights and
+weekends. They do not count decision events, synthetic empty bars or asset
+calendar bars. Pre-window entries and exit-only buckets warm up the state;
+only in-window pair-entry buckets emit decisions. Same-time entries and exits
+are all applied before scores are captured. Forced `end_of_data` liquidation
+keeps the existing interpretation that the vote remains open.
+
+Price strength uses actual completed target bars. A close is known only when
+`candleOpenSec + B <= decisionSec`, also bounded by the frozen evaluation
+cutoff. Insufficient history, invalid/nonmonotonic/duplicate timestamps,
+nonpositive or nonfinite required closes, stale history and lookback gaps make
+only that asset's price score unavailable. Gap and staleness checks use the
+existing candle-gap/calendar policy (the 30-day large-gap threshold); ordinary
+market closures are allowed. Supported time shapes are normalized with
+`timeToNumber`. Future closes and forward returns never form a price score or
+pick. Causal picks and their eligible pools are frozen before forward inspection;
+future failures omit the affected comparison instead of supplying another pick.
+
+The graph fit includes both positive and negative assets, but ranks only
+ordinary positive candidates in the selected active component. Inactive pairs
+provide no edges. Overlapping long and short positions are netted into the
+pair comparison, with opposite orientations reversed consistently. A zero-net
+active pair remains an edge. For disconnected graphs, use the component with
+the most vertices; size ties choose the lexicographically smallest sorted
+normalized asset-name list. Independently centered components are never
+compared. Excluded candidates are counted.
+
+The deterministic sparse Laplacian solver anchors the lexicographically first
+vertex, uses relative residual tolerance `1e-10` and at most 500 iterations,
+then centers and rounds final ranking keys to `1e-8`. A zero right-hand side
+is exactly zero. Solver nonconvergence or nonfinite output makes the graph
+score unavailable at that event, with an explicit failure count. It never
+falls back to TOP_RAW. In switch mode, a no-pick decision holds the current
+asset and clears pending orders under the existing execution rules.
+
+All five use the ordinary TOP digest tie break. Ranking stores the actual
+score key so numerical score ties retain half credit. The random control uses
+each arm's eligible pool and the existing leave-one-out rule. Cooldown applies
+before top-five capture, using the existing arm history. Five members are
+frozen before forward inspection, with no replacement after target failures.
+
+Scalar results include `causalArmDefinitions.version: "finder-causal-arms-v1"`
+and the fixed lengths, volatility floor, solver rules and clock definitions.
+`causalArmDiagnostics` reports eligible candidate observations, zero-degree
+and insufficient-support counts, price unavailability reasons, graph exclusions
+and solver failures. Existing card details and Copy Top Results expose these
+values; counts describe candidate observations rather than successful trades.
+
+Old fifteen-arm results remain readable with their Return/P&L and valid
+`top-five-ranking-v2` ranking summaries. Absent additional arms show
+**Rerun required**, never zero performance. Present additional data are validated
+independently, so a malformed additional metric does not erase valid old arms.
+Recovery never fabricates missing zero-event sections. Newly enabled child
+runs must provide all five sections, including genuinely calculated zero-event
+sections. No persistence-envelope or ranking-semantics version change is needed.
+
+These fixed first-version choices are recorded, not automatically tuned or
+claimed optimal. Correct implementation does not establish transfer to a
+different pair list. Compare identical fixed configurations on the original
+and a separately chosen untouched pair list before interpreting performance
+as transferable.
+
+
 **Measurement** defaults to **Return**. **Ranking consistency** opts into a
 fixed forward top-five comparison for every arm, alongside the original replay.
 Its **Ranking sort** defaults to **Overall ordering**, which ranks configurations
@@ -378,7 +470,7 @@ Unreadable completed backtest shards fail the run rather than silently
 reducing replay coverage.
 
 Each configuration runs through TOP_MEAN over the same ordered pairs and
-returns compact summaries for all 15 arms. There is no arm selector before the
+returns compact summaries for all 20 arms. There is no arm selector before the
 run. `Re-Sort` sorts the complete retained configuration inventory locally,
 then applies `Top Results`; it does not launch pair backtests or rank individual
 pairs. `Run Sort` restores the default `TOP_RAW_PROFIT_NOW` order. Equal values
@@ -436,7 +528,7 @@ saved strategy and backtest settings; replay scoring controls are not applied
 to the chart.
 
 **Replay mode** defaults to **Fixed horizon**. **Hold until asset changes**
-runs a separate, path-dependent simulation for each of the 15 arms. Each arm
+runs a separate, path-dependent simulation for each of the 20 arms. Each arm
 starts flat and holds one long target-asset position. BOT arms still choose
 from their existing bottom-ranked candidates; they do not open short trades.
 The first unique pick enters at the target's next open strictly after the

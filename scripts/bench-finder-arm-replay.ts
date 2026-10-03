@@ -29,6 +29,7 @@ import {
     type OpenScoreUsdTarget,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 import type { ReplayMode } from "../lib/batch-backtest/open-score-replay/types";
+import { LEGACY_REPLAY_ARM_FIELDS } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
 
@@ -36,6 +37,8 @@ const T0 = 1_700_000_000;
 const BAR_SEC = 100;
 
 interface BenchArgs {
+    causalArms: boolean;
+    interval: string;
     ranking: boolean;
     assets: number;
     events: number;
@@ -57,6 +60,8 @@ interface BenchArgs {
 
 function parseArgs(argv: readonly string[]): BenchArgs {
     const args: BenchArgs = {
+        causalArms: false,
+        interval: "4h",
         ranking: false,
         assets: 60,
         events: 2000,
@@ -84,6 +89,8 @@ function parseArgs(argv: readonly string[]): BenchArgs {
             return value;
         };
         switch (flag) {
+            case "--causal-arms": args.causalArms = true; break;
+            case "--interval": args.interval = take(); break;
             case "--ranking": args.ranking = true; break;
             case "--assets": args.assets = Number(take()); break;
             case "--events": args.events = Number(take()); break;
@@ -322,10 +329,11 @@ async function main(): Promise<void> {
         () => (async function* () { for (const pair of fixture.pairs) yield pair; })(),
         () => (async function* () { for (const t of fixture.targets) yield t; })(),
         {
+            enableCausalArms: args.causalArms,
             mode: args.mode,
             ...(args.ranking ? { rankingHorizon: fixture.horizons[0]! } : {}),
             ...(args.mode === "horizon" ? { horizons: fixture.horizons } : {}),
-            interval: "4h",
+            interval: args.interval,
             slippageRate: 0,
             commissionRate: 0,
             blockCount: fixture.blockCount,
@@ -373,6 +381,13 @@ async function main(): Promise<void> {
     };
     const { rankingMeasurement: _ranking, ...originalResult } = normalizedResult;
     const originalFingerprint = createHash("sha256").update(serializeCanonical(originalResult)).digest("hex");
+    const legacyArmFingerprint = createHash("sha256").update(serializeCanonical({
+        horizons: result.horizons.map((horizon) => Object.fromEntries(LEGACY_REPLAY_ARM_FIELDS.map((field) => [field, {
+            comparison: horizon[field], exclusion: horizon.armExTopContributorComparisons?.[field],
+        }]))),
+        switchArms: result.assetSwitch ? Object.fromEntries(LEGACY_REPLAY_ARM_FIELDS.map((field) => [field, result.assetSwitch!.arms[field]])) : null,
+        ranking: result.rankingMeasurement ? Object.fromEntries(LEGACY_REPLAY_ARM_FIELDS.map((field) => [field, result.rankingMeasurement!.arms[field]])) : null,
+    })).digest("hex");
     const fingerprint = createHash("sha256").update(serializeCanonical(normalizedResult)).digest("hex");
     const metrics = {
         label: args.label,
@@ -383,6 +398,9 @@ async function main(): Promise<void> {
         peakExternalBytes: peakExternal,
         fingerprint,
         originalFingerprint,
+        legacyArmFingerprint,
+        causalArms: args.causalArms,
+        interval: args.interval,
         ranking: args.ranking,
         mode: args.mode,
         targetReads,

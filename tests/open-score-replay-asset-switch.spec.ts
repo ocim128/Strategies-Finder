@@ -8,7 +8,7 @@ import { selectTopMeanReplayTargetWindow } from "../lib/batch-backtest/top-mean-
 
 const HOUR = 3_600;
 const ORIGIN = Math.floor(Date.parse("2024-01-01T00:00:00.000Z") / 1_000);
-const ARM_FIELDS: ReplayArmField[] = [
+const ARM_FIELDS: Exclude<ReplayArmField, import("../lib/batch-backtest/open-score-replay/arm-contract").CausalArmField>[] = [
     "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",
     "topRaw", "topMean", "topMeanRawUnique", "topRawProfit", "topMeanProfit",
     "botRawProfitNow", "botMeanProfitNow", "botZ", "botRaw", "botMean", "botMeanRawUnique",

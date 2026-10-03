@@ -100,6 +100,8 @@ function saveFixtureRun(baseDir: string, runId: string, shards: CompactPairArtif
 function bufferView(buffer: ArtifactScanResult): unknown {
     return {
         assetNames: buffer.assetNames,
+        validDegree: buffer.validDegree ? [...buffer.validDegree].sort((a, b) => a[0].localeCompare(b[0])) : undefined,
+        pairEndpoints: buffer.pairEndpoints,
         retainedDegree: [...buffer.retainedDegree.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
         pairCount: buffer.pairCount,
         omittedPairs: buffer.omittedPairs,
@@ -108,6 +110,7 @@ function bufferView(buffer: ArtifactScanResult): unknown {
         capTiltCoverage: buffer.capTiltCoverage,
         streams: buffer.streams.map((stream) => ({
             timeSecs: [...stream.timeSecs],
+            entrySecs: stream.entrySecs ? [...stream.entrySecs] : undefined,
             assetIndices: [...stream.assetIndices],
             deltas: [...stream.deltas],
             pnlShares: [...stream.pnlShares],
@@ -117,8 +120,9 @@ function bufferView(buffer: ArtifactScanResult): unknown {
     };
 }
 
-async function sequentialScan(runId: string, baseDir: string): Promise<ArtifactScanResult> {
+async function sequentialScan(runId: string, baseDir: string, enableCausalArms = false): Promise<ArtifactScanResult> {
     const outcome = await scanArtifacts({
+        enableCausalArms,
         // Same seam as the coordinator loader: the adapter's partial result
         // satisfies everything the scan consumes.
         artifactLoader: (() => iterateRunCompactArtifacts(runId, baseDir, { strict: true })) as unknown as () => AsyncIterable<BatchSyntheticPairArtifact>,
@@ -154,6 +158,13 @@ async function main(): Promise<void> {
             "parallel merge must reproduce the sequential scan result");
         assert.equal(parallel.status === "ok" ? parallel.tradelessPairs : -1, 1,
             "the loader's noTradePairs side count must be preserved");
+
+        const causal = await runParallelArtifactScan({ runId: "parallel_scan_spec_1", baseDir, shouldStop: () => false, workerCount: 2, enableCausalArms: true });
+        assert.equal(causal.status, "ok");
+        if (causal.status !== "ok") throw new Error("Expected causal parallel scan.");
+        assert.deepEqual(bufferView(causal.result), bufferView(await sequentialScan("parallel_scan_spec_1", baseDir, true)));
+        assert.equal(causal.result.validDegree!.get("TSLA"), undefined);
+        assert.equal(causal.result.validDegree!.get("WMT"), 1);
 
         // Single-worker path (same-process semantics) must match too.
         const single = await runParallelArtifactScan({

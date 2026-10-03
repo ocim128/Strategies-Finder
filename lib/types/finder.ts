@@ -4,8 +4,8 @@ import type { CapitalSettings } from "./backtest";
 import type { BacktestSettings } from "./strategies";
 import type { BacktestSettingsData } from "../settings-model";
 import type {
-    FinderArmPerformanceArm,
     FinderArmPerformanceCompleteMetrics,
+    FinderArmPerformanceArmResults,
 } from "../finder/finder-arm-performance-metrics";
 import type { ReplayMode, AssetSwitchArmSummary } from "../batch-backtest/open-score-replay/types";
 
@@ -174,6 +174,8 @@ export interface FinderArmPerformancePairCoverage {
 }
 
 interface FinderArmPerformanceCandidateBase {
+    causalArmDefinitions?: import("../batch-backtest/open-score-replay/causal-arm-constants").CausalArmDefinitions;
+    causalArmDiagnostics?: import("../batch-backtest/open-score-replay/types").CausalArmDiagnostics;
     rankingMeasurement?: import("../batch-backtest/open-score-replay/types").RankingMeasurementSummary;
     candidateId: string;
     candidateOrdinal: number;
@@ -187,7 +189,7 @@ interface FinderArmPerformanceCandidateBase {
     pairCoverage: FinderArmPerformancePairCoverage;
     metrics?: FinderArmPerformanceCompleteMetrics;
     /** Per-arm switch metrics; never converted into fixed-horizon comparisons. */
-    assetSwitchMetrics?: Record<FinderArmPerformanceArm, AssetSwitchArmSummary>;
+    assetSwitchMetrics?: FinderArmPerformanceArmResults<AssetSwitchArmSummary>;
     /** Contributor-excluded summaries are additive and absent on legacy results. */
     metricsExTopContributor?: Partial<FinderArmPerformanceCompleteMetrics>;
     contributorExclusions?: Partial<Record<keyof FinderArmPerformanceCompleteMetrics, {
@@ -200,7 +202,7 @@ interface FinderArmPerformanceCandidateBase {
 
 export type FinderArmPerformanceCandidate = FinderArmPerformanceCandidateBase & (
     | { replayMode: "horizon"; horizon: number; metrics: FinderArmPerformanceCompleteMetrics; assetSwitchMetrics?: never }
-    | { replayMode: "asset_switch"; horizon?: never; metrics?: never; assetSwitchMetrics: Record<FinderArmPerformanceArm, AssetSwitchArmSummary> }
+    | { replayMode: "asset_switch"; horizon?: never; metrics?: never; assetSwitchMetrics: FinderArmPerformanceArmResults<AssetSwitchArmSummary> }
 );
 
 export interface FinderOptions {

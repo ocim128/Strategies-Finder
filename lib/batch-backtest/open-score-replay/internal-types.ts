@@ -5,6 +5,11 @@
  * retention beyond the compact delta stream. Not exported through the engine
  * entry point.
  */
+import type { CausalArmField } from "./arm-contract";
+
+export type CausalScoreKeys = Partial<Record<CausalArmField, number>>;
+export type CausalCompactArms = Partial<Record<CausalArmField, { picks: RankingPick[]; eligibleCount: number }>>;
+
 import type { ReplayArmField, SelectorName } from "./types";
 
 /** Bounded phase callback shared by every replay stage. */
@@ -31,6 +36,7 @@ export interface ReplayEarlyExit {
 export type StageOutcome<T> = { ok: true; result: T } | { ok: false; earlyExit: ReplayEarlyExit };
 
 export interface ScoreDelta {
+    entrySec?: number;
     timeSec: number;
     assetIndex: number;
     delta: number;
@@ -59,6 +65,8 @@ export interface ScoreDelta {
 }
 
 export interface DecisionEvent {
+    causalScores?: Map<number, CausalScoreKeys>;
+    causalArms?: CausalCompactArms;
     timeSec: number;
     // Snapshots are Float64Array (not number[]) purely for retention: eight
     // asset-length plain arrays per event cost ~2.4x the typed-array payload
@@ -89,6 +97,11 @@ export interface DecisionEvent {
 
 /** One asset-pool member at a decision event. */
 export interface Candidate {
+    topCoverage?: number;
+    topStableSupport?: number;
+    topFreshSupport?: number;
+    topPriceStrength?: number;
+    topGraphStrength?: number;
     assetIndex: number;
     raw: number;
     adjusted: number;
@@ -104,9 +117,11 @@ export interface Candidate {
 
 /** Per-event candidate pools + pre-resolved picks (before gap filtering). */
 export interface EventView {
+    /** Causal selectors are frozen before target-outcome inspection. */
+    causalPicks?: Partial<Record<CausalArmField, number>>;
     timeSec: number;
     /** Unique-best switch picks calculated while building the candidate pools. */
-    assetSwitchPicks?: Readonly<Record<ReplayArmField, number | null>>;
+    assetSwitchPicks?: Readonly<import("./arm-contract").ReplayArmResults<number | null>>;
     positives: Candidate[];
     /**
      * Profit-gated positives: assets whose score, counted only from
@@ -158,8 +173,9 @@ export interface RankingEvent {
 
 /** Minimal event input needed by the path-dependent asset-switch simulator. */
 export interface AssetSwitchDecision {
+    eligiblePoolCounts?: Partial<Record<CausalArmField, number>>;
     timeSec: number;
-    picks: Readonly<Record<ReplayArmField, number | null>>;
+    picks: Readonly<import("./arm-contract").ReplayArmResults<number | null>>;
 }
 
 /**

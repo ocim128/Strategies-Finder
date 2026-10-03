@@ -1,4 +1,6 @@
-import { compactRankingMeasurement } from "../batch-backtest/open-score-replay/types";
+import { compactCausalArmDefinitions } from "../batch-backtest/open-score-replay/causal-arm-constants";
+import { isCausalArm } from "../batch-backtest/open-score-replay/arm-contract";
+import { compactRankingMeasurement, compactCausalArmDiagnostics } from "../batch-backtest/open-score-replay/types";
 import type {
     FinderArmPerformanceCandidate,
     FinderArmPerformanceRunContext,
@@ -13,6 +15,8 @@ import type {
 import type { BacktestResult, StrategyParams } from "../types/strategies";
 import {
     compactFinderArmPerformanceMetric,
+    isFinderArmPerformanceMetric,
+    isFinderAssetSwitchMetric,
     FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
     type FinderArmPerformanceArm,
 } from "./finder-arm-performance-metrics";
@@ -215,6 +219,8 @@ function compactStrategyQualityResult(result: FinderStrategyQualityResult): Find
 function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate): FinderArmPerformanceCandidate {
     const rankingMeasurement = compactRankingMeasurement(candidate.rankingMeasurement);
     const common = {
+        ...(compactCausalArmDefinitions(candidate.causalArmDefinitions) ? { causalArmDefinitions: compactCausalArmDefinitions(candidate.causalArmDefinitions) } : {}),
+        ...(compactCausalArmDiagnostics(candidate.causalArmDiagnostics) ? { causalArmDiagnostics: compactCausalArmDiagnostics(candidate.causalArmDiagnostics) } : {}),
         ...(rankingMeasurement ? { rankingMeasurement } : {}),
         candidateId: candidate.candidateId,
         candidateOrdinal: candidate.candidateOrdinal,
@@ -234,7 +240,8 @@ function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate
             ...common,
             replayMode: "asset_switch",
             assetSwitchMetrics: Object.fromEntries(
-                Object.entries(candidate.assetSwitchMetrics).map(([arm, metric]) => [arm, {
+                Object.entries(candidate.assetSwitchMetrics).filter(([arm, metric]) =>
+                    !isCausalArm(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as FinderArmPerformanceArm]) || isFinderAssetSwitchMetric(metric)).map(([arm, metric]) => [arm, {
                     ...metric,
                     diagnosticCounts: { ...metric.diagnosticCounts },
                     openPosition: metric.openPosition ? { ...metric.openPosition } : null,
@@ -253,14 +260,16 @@ function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate
         metrics: Object.fromEntries(
             Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => {
                 const metric = candidate.metrics[arm as FinderArmPerformanceArm];
-                return [arm, metric ? compactFinderArmPerformanceMetric(metric) : undefined];
+                const additional = isCausalArm(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as FinderArmPerformanceArm]);
+                return [arm, metric && (!additional || isFinderArmPerformanceMetric(metric)) ? compactFinderArmPerformanceMetric(metric) : undefined];
             }).filter(([, metric]) => metric !== undefined),
         ) as NonNullable<FinderArmPerformanceCandidate["metrics"]>,
         ...(candidate.metricsExTopContributor ? {
             metricsExTopContributor: Object.fromEntries(
                 Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).map((arm) => {
                     const metric = candidate.metricsExTopContributor?.[arm as FinderArmPerformanceArm];
-                    return [arm, metric ? compactFinderArmPerformanceMetric(metric) : undefined];
+                    const additional = isCausalArm(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as FinderArmPerformanceArm]);
+                    return [arm, metric && (!additional || isFinderArmPerformanceMetric(metric)) ? compactFinderArmPerformanceMetric(metric) : undefined];
                 }).filter(([, metric]) => metric !== undefined),
             ) as FinderArmPerformanceCandidate["metricsExTopContributor"],
         } : {}),
@@ -378,6 +387,7 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
                 const switchMetrics = item.assetSwitchMetrics as Record<string, unknown>;
                 const complete = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).every((arm) => {
                     const metric = switchMetrics[arm] as Record<string, unknown> | undefined;
+                    if (isCausalArm(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as FinderArmPerformanceArm])) return true;
                     const exclusion = metric?.topContributorExclusion as Record<string, unknown> | undefined;
                     const exclusionValid = exclusion === undefined || (
                         !!exclusion
@@ -406,6 +416,7 @@ export function normalizeFinderLatestResultsSnapshot(value: unknown): FinderLate
             const metrics = item.metrics as Record<string, unknown>;
             const metricsValid = Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).every((arm) => {
                 const metric = metrics[arm];
+                if (isCausalArm(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as FinderArmPerformanceArm])) return true;
                 return metric !== null && typeof metric === "object" && !Array.isArray(metric);
             });
             if (!metricsValid || !Number.isInteger(item.horizon)) return false;

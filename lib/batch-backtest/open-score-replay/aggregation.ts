@@ -27,9 +27,9 @@ import {
     degreeSummary,
 } from "./statistics";
 import { computeSelectorPnl, simulateTopMeanPortfolio } from "./pnl";
-import { pickUsableMaxByAssetNames, pickUsableMinByAssetNames } from "./candidate-selection";
+import { pickUsableMaxByAssetNames, pickUsableMinByAssetNames, causalCandidatePool } from "./candidate-selection";
 import { yieldLoop } from "./runtime";
-import { REPLAY_ARM_FIELDS } from "./arm-contract";
+import { LEGACY_REPLAY_ARM_FIELDS, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, type CausalArmField } from "./arm-contract";
 import { REPLAY_ARM_TO_FINDER_ARM } from "./arm-contract";
 import { RANKING_MEASUREMENT_SEMANTICS, type RankingMeasurementSummary, type RankingSkipReason } from "./types";
 import type { RankingEvent, RankingPick } from "./internal-types";
@@ -42,6 +42,7 @@ export function rankingPairCredit(a: RankingPick, b: RankingPick, aReturn: numbe
 }
 
 export async function aggregateRankingMeasurement(args: {
+    enabledArms?: readonly ReplayArmField[];
     events: readonly RankingEvent[];
     outcomes: TargetOutcomeStageResult;
     horizonBars: number;
@@ -54,7 +55,7 @@ export async function aggregateRankingMeasurement(args: {
     const hi = args.horizonIndex ?? 0;
     // Sweep and candidate timelines are chronological; sorting also supports pure fixtures.
     const order = args.events.map((event, index) => ({ event, index })).sort((a, b) => a.event.timeSec - b.event.timeSec);
-    for (const field of REPLAY_ARM_FIELDS) {
+    for (const field of args.enabledArms ?? LEGACY_REPLAY_ARM_FIELDS) {
         const skippedReasons: Partial<Record<RankingSkipReason, number>> = {};
         const values: number[] = [], firstValues: number[] = [];
         const windows: RankingMeasurementWindow[] = [];
@@ -144,6 +145,7 @@ function cooldownSourcePool(
     view: EventView | null,
     profitOnly: ProfitOnlyEvent | null,
 ): readonly Candidate[] {
+    if (isCausalArm(field)) return causalCandidatePool(view?.positives ?? [], field);
     if (field === "topRaw" || field === "topMean" || field === "topMeanRawUnique"
         || field === "botRaw" || field === "botMean" || field === "botMeanRawUnique") {
         return view?.positives ?? [];
@@ -198,10 +200,10 @@ async function aggregateCooldownSelection(
     ].sort((left, right) => left.timeSec - right.timeSec);
 
     for (let hIdx = 0; hIdx < horizons.length; hIdx += 1) {
-        const seriesByArm = Object.fromEntries(REPLAY_ARM_FIELDS.map((field) => [field, emptyCooldownArmSeries()])) as Record<ReplayArmField, CooldownArmSeries>;
+        const seriesByArm = Object.fromEntries(replayArmFields(options.enableCausalArms).map((field) => [field, emptyCooldownArmSeries()])) as Record<ReplayArmField, CooldownArmSeries>;
         const portfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
         const lastSelectedBoundaryByArm = new Map<ReplayArmField, Map<number, number>>(
-            REPLAY_ARM_FIELDS.map((field) => [field, new Map<number, number>()]),
+            replayArmFields(options.enableCausalArms).map((field) => [field, new Map<number, number>()]),
         );
         const activeCountsAtEvents: number[] = [];
         const topRawSelectionCounts = new Map<string, number>();
@@ -235,11 +237,11 @@ async function aggregateCooldownSelection(
                     }
                 }
             }
-            for (const field of REPLAY_ARM_FIELDS) {
+            for (const field of replayArmFields(options.enableCausalArms)) {
                 const selection = selections[field];
                 if (!selection) continue;
                 const previous = lastSelectedBoundaryByArm.get(field)!;
-                const sourcePool = cooldownSourcePool(field, sourceView, sourceProfitOnly);
+                const sourcePool = cooldownSourcePool(field, isCausalArm(field) && event.kind === "view" ? views[event.index]! : sourceView, sourceProfitOnly);
                 const eligiblePool: Candidate[] = [];
                 for (const candidate of sourcePool) {
                     const boundary = boundaryByAsset?.get(candidate.assetIndex);
@@ -364,7 +366,7 @@ async function aggregateCooldownSelection(
         const contributorEvents: Partial<Record<ReplayArmField, number>> = {};
         let topRawDominant: string | null = null;
         let topMeanDominant: string | null = null;
-        for (const field of REPLAY_ARM_FIELDS) {
+        for (const field of replayArmFields(options.enableCausalArms)) {
             const armSeries = seriesByArm[field];
             const build = (deltas: number[], returns: number[], times: number[]) =>
                 buildReplayComparison(deltas, returns, times, blockCount, bootstrapSamples);
@@ -374,7 +376,7 @@ async function aggregateCooldownSelection(
             const breakdown = buildAssetSelectionBreakdown(armSeries.selectedCounts, armSeries.samplesByAsset).byAsset;
             const baseField = replayArmBaseField(field);
             (horizon as Record<string, unknown>)[baseField] = comparison;
-            (horizon as Record<string, unknown>)[`${baseField}ByAsset`] = breakdown;
+            if (!isCausalArm(field)) (horizon as Record<string, unknown>)[`${baseField}ByAsset`] = breakdown;
             const dominantAsset = breakdown[0]?.asset ?? null;
             if (field === "topRaw") topRawDominant = dominantAsset;
             if (field === "topMean") topMeanDominant = dominantAsset;
@@ -383,7 +385,7 @@ async function aggregateCooldownSelection(
             if (field === "topRaw") {
                 (horizon as Record<string, unknown>).topRawExDominant = exDominant;
                 (horizon as Record<string, unknown>).dominantAsset = dominantAsset;
-            } else {
+            } else if (!isCausalArm(field)) {
                 (horizon as Record<string, unknown>)[`${baseField}ExDominant`] = exDominant;
                 (horizon as Record<string, unknown>)[`${baseField}DominantAsset`] = dominantAsset;
             }
@@ -560,6 +562,10 @@ export async function aggregateHorizonResults(args: {
         const topMeanProfitNow = createSeries();
         const topRawProfitNowConf = createSeries();
         const topZ = createSeries();
+        const causalSeries = Object.fromEntries((options.enableCausalArms ? CAUSAL_ARM_FIELDS : []).map((field) => [field, createSeries()])) as Record<CausalArmField, SelectorSeries>;
+        const causalCounts = new Map<CausalArmField, Map<string, number>>();
+        const causalSamples = new Map<CausalArmField, Map<string, { returns: number[]; deltas: number[] }>>();
+        if (options.enableCausalArms) for (const field of CAUSAL_ARM_FIELDS) { causalCounts.set(field, new Map()); causalSamples.set(field, new Map()); }
         const topMeanPortfolioOpportunities: TopMeanPortfolioOpportunity[] = [];
         // Phase 3 MAX_ACTIVE tie counters per selector.
         const tieCounts: Record<SelectorName, number> = { RAW: 0, MEAN: 0 };
@@ -831,6 +837,12 @@ export async function aggregateHorizonResults(args: {
             // One evaluation per (event, horizon, pool), shared by every
             // appender call over that pool: profitNowPositives is evaluated
             // once for its four causal callers.
+            if (options.enableCausalArms) for (const field of CAUSAL_ARM_FIELDS) {
+                const original = views[v]!;
+                const pool = causalCandidatePool(original.positives, field);
+                appendSingleCausalArm(view.timeSec, perAsset, pool, original.causalPicks?.[field] ?? -1,
+                    causalSeries[field], ARM_EVENT_DETAIL_SELECTORS[field], causalCounts.get(field)!, causalSamples.get(field)!, evaluatePool(pool, perAsset));
+            }
             const profitEvaluation = evaluatePool(view.profitPositives, perAsset);
             const profitNowEvaluation = evaluatePool(view.profitNowPositives, perAsset);
             const confidenceEvaluation = evaluatePool(view.profitNowConfidencePositives, perAsset);
@@ -1446,7 +1458,8 @@ export async function aggregateHorizonResults(args: {
         const topMeanExTopContrib = topMeanTopContribAsset === topMeanDominantAsset
             ? { ...topMeanExDominant, blockMeans: [...topMeanExDominant.blockMeans] }
             : buildExDominantComparison(topMean, topMeanTopContribAsset, buildComparison);
-        const armSeries: Record<import("./types").ReplayArmField, SelectorSeries> = {
+        const armSeries = {
+            ...causalSeries,
             topRawProfitNow,
             topMeanProfitNow,
             topRawProfitNowConf,
@@ -1502,6 +1515,7 @@ export async function aggregateHorizonResults(args: {
         const randomPnl = computeSelectorPnl(randomPnlReturns, topMean.times);
         const topMeanPortfolio = simulateTopMeanPortfolio(topMeanPortfolioOpportunities);
         horizonResults.push({
+            ...(options.enableCausalArms ? Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [field, buildComparison(causalSeries[field].deltas, causalSeries[field].returns, causalSeries[field].times)])) : {}),
             bars: horizons[hIdx]!,
             topRaw: buildComparison(topRaw.deltas, topRaw.returns, topRaw.times),
             topMean: buildComparison(topMean.deltas, topMean.returns, topMean.times),

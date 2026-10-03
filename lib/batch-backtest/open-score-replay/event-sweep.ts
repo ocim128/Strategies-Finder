@@ -10,14 +10,30 @@ import type { DecisionEvent, ReplayPhaseCallback, StageOutcome } from "./interna
 import { ScoreDeltaBuffer } from "./score-delta-buffer";
 import { yieldLoop } from "./runtime";
 
+import { parseIntervalSeconds } from "../../interval-utils";
+import { TemporalSupport } from "./temporal-support";
+import { scoreGraphStrength } from "./graph-strength";
+import { CAUSAL_ARM_FIELDS } from "./arm-contract";
+import { FINDER_CAUSAL_ARMS_V1 } from "./causal-arm-constants";
+import { insertRankingPick, RANKING_ARM_SPECS } from "./candidate-selection";
+import type { CausalScoreKeys, CausalCompactArms } from "./internal-types";
+import type { CausalArmDiagnostics } from "./types";
+
 const SWEEP_CHUNK_SIZE = 2_000;
 
 export interface EventSweepResult {
     /** Decision events in ascending timeSec order (entry buckets only). */
     events: DecisionEvent[];
+    causalArmDiagnostics?: CausalArmDiagnostics;
 }
 
 export async function sweepScoreEvents(args: {
+    enableCausalArms?: boolean;
+    interval?: string;
+    mode?: "horizon" | "asset_switch";
+    assetNames?: readonly string[];
+    validDegree?: Map<string, number>;
+    pairEndpoints?: Array<{ base: number; quote: number } | null>;
     streams: ScoreDeltaBuffer[];
     profitableStreams: readonly boolean[];
     sampleFromSec: number | undefined;
@@ -118,7 +134,7 @@ export async function sweepScoreEvents(args: {
     }
     // 3. Place deltas into the flat, time-ordered array. Iterating streams in
     // stream-index order makes within-bucket order deterministic.
-    const flatDeltas = new ScoreDeltaBuffer(totalDeltas);
+    const flatDeltas = new ScoreDeltaBuffer(totalDeltas, undefined, args.enableCausalArms);
     const flatStreamIdx = new Uint32Array(totalDeltas);
     const placementCursor = bucketStart.slice();
     let placedDeltas = 0;
@@ -189,11 +205,18 @@ export async function sweepScoreEvents(args: {
             return lo < bucketStart.length ? (bucketStart[lo] ?? totalDeltas) : totalDeltas;
         })();
 
+    const interval = parseIntervalSeconds(args.interval ?? "");
+    if (args.enableCausalArms && (!interval || !args.validDegree || !args.pairEndpoints || !args.assetNames)) throw new Error("Causal arms require interval and valid scan metadata.");
+    const support = args.enableCausalArms ? new TemporalSupport(interval! * FINDER_CAUSAL_ARMS_V1.supportIntervals, bucketTimes[0]!) : null;
+    const pairVotes = support ? new Float64Array(profitableStreams.length) : null;
+    const pairCounts = support ? new Float64Array(profitableStreams.length) : null;
+    const diagnostics: CausalArmDiagnostics | undefined = support ? { eligibleCandidates: {}, unavailableDegree: 0, unavailableSupportHistory: 0, unavailablePriceHistory: 0, graphExcludedCandidates: 0, graphSolverFailures: 0 } : undefined;
     let popped = 0;
     for (let b = 0; b < bucketTimes.length; b += 1) {
         if (shouldStop()) return cancelled();
         const t = bucketTimes[b]!;
         if (sampleTo !== undefined && t > sampleTo) break;
+        support?.advance(t);
         let hasEntry = false;
         // Apply ALL deltas at this timestamp before forming candidates.
         const bucketEnd = bucketStart[b + 1]!;
@@ -204,6 +227,11 @@ export async function sweepScoreEvents(args: {
             const isEntry = flatDeltas.flags[i]! & 1;
             const streamIdx = flatStreamIdx[i]!;
             rawScore[assetIndex]! += delta;
+            if (support) {
+                support.update(assetIndex, t, flatDeltas.entrySecs![i]!, delta, isEntry === 1, rawScore[assetIndex]!);
+                const endpoints = args.pairEndpoints![streamIdx];
+                if (endpoints && endpoints.base === assetIndex) { pairVotes![streamIdx] += delta; pairCounts![streamIdx] += isEntry === 1 ? 1 : -1; }
+            }
             // activePairCount tracks currently-open pairs on this asset: an
             // entry adds a vote, an exit removes it (clamped at 0). Using
             // abs(delta) here was wrong because it incremented on BOTH entry
@@ -272,7 +300,40 @@ export async function sweepScoreEvents(args: {
         // Exit-only score changes do not create a decision event.
         if (hasEntry) {
             if ((sampleFrom === undefined || t >= sampleFrom) && (sampleTo === undefined || t <= sampleTo)) {
+                let causalScores: Map<number, CausalScoreKeys> | undefined;
+                let causalArms: CausalCompactArms | undefined;
+                if (support) {
+                    const graph = await scoreGraphStrength(args.assetNames!, args.pairEndpoints!.flatMap((endpoint, index) => endpoint && pairCounts![index]! > 0 ? [{ ...endpoint, vote: pairVotes![index]!, count: pairCounts![index]! }] : []), shouldStop);
+                    if (graph.failed) diagnostics!.graphSolverFailures++;
+                    if (args.mode === "asset_switch") causalArms = Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [field, { picks: [], eligibleCount: 0 }]));
+                    else causalScores = new Map();
+                    for (let a = 0; a < assetCount; a++) {
+                        if (a > 0 && a % 2000 === 0) { await yieldLoop(); if (shouldStop()) return cancelled(); }
+                        if (rawScore[a]! <= 0) continue;
+                        const keys: CausalScoreKeys = {};
+                        const degree = args.validDegree!.get(args.assetNames![a]!) ?? 0;
+                        if (degree > 0) {
+                            keys.topCoverage = rawScore[a]! / degree;
+                            const temporal = support.scores(a, t, degree);
+                            keys.topFreshSupport = temporal.fresh;
+                            if (temporal.stable !== undefined) keys.topStableSupport = temporal.stable;
+                            else diagnostics!.unavailableSupportHistory++;
+                        } else diagnostics!.unavailableDegree++;
+                        if (graph.scores.has(a)) keys.topGraphStrength = graph.scores.get(a)!;
+                        else if (!graph.component.has(a)) diagnostics!.graphExcludedCandidates++;
+                        for (const field of CAUSAL_ARM_FIELDS) if (keys[field] !== undefined) {
+                            diagnostics!.eligibleCandidates[field] = (diagnostics!.eligibleCandidates[field] ?? 0) + 1;
+                            if (causalArms) {
+                                const row = causalArms[field]!; row.eligibleCount++;
+                                insertRankingPick(row.picks, { assetIndex: a, raw: rawScore[a]!, adjusted: 0, mean: 0, activePairs: activePairCount[a]!, ...keys }, RANKING_ARM_SPECS.find((spec) => spec.field === field)!, t, args.assetNames!);
+                            }
+                        }
+                        causalScores?.set(a, keys);
+                    }
+                }
                 events.push({
+                    ...(causalScores ? { causalScores } : {}),
+                    ...(causalArms ? { causalArms } : {}),
                     timeSec: t,
                     rawScore: Float64Array.from(rawScore),
                     activePairCount: Float64Array.from(activePairCount),
@@ -286,5 +347,5 @@ export async function sweepScoreEvents(args: {
             }
         }
     }
-    return { ok: true, result: { events } };
+    return { ok: true, result: { events, ...(diagnostics ? { causalArmDiagnostics: diagnostics } : {}) } };
 }

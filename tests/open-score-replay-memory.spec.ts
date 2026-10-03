@@ -42,6 +42,7 @@ async function main(): Promise<void> {
                     assert.equal(snapshot.snapshot.openPositions, 600);
                     assert.equal(snapshot.snapshot.winners[0].asset, "A");
                     const scanned = await scanArtifacts({
+                        enableCausalArms: true,
                         artifactLoader: () => (async function* () {
                             for await (const artifact of raw()) yield toBatchSyntheticPairAdapter(artifact);
                         })(),
@@ -54,6 +55,8 @@ async function main(): Promise<void> {
                     const deltas = scan.streams.reduce((sum, stream) => sum + stream.length, 0);
                     assert.equal(deltas, 600 * 3998);
                     const swept = await sweepScoreEvents({
+                        enableCausalArms: true, interval: "1m", mode: "asset_switch",
+                        assetNames: scan.assetNames, validDegree: scan.validDegree, pairEndpoints: scan.pairEndpoints,
                         streams: scan.streams, profitableStreams: scan.profitableStreams,
                         pairCount: 600, assetCount: 2,
                         shouldStop: () => false, onPhase: () => {},
@@ -62,6 +65,8 @@ async function main(): Promise<void> {
                     assert.equal(swept.ok, true);
                     assert.equal(swept.result.events.length, 1000);
                     const last = swept.result.events.at(-1);
+                    assert.equal(last.causalScores, undefined);
+                    assert.ok(last.causalArms.topCoverage.picks.length <= 5);
                     assert.equal(last.rawScore[0], 600);
                     assert.equal(last.rawScoreProfitNow[0], 600);
                     assert.equal(last.activePairCount[0], 600);
