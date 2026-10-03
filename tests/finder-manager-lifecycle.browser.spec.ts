@@ -759,10 +759,12 @@ describe("Finder facade terminal adoption (integration)", () => {
 
         let copiedDiagnostics = "";
         manager().copyTextToClipboard = async (text: string) => { copiedDiagnostics = text; };
-        await manager().copyFinderDiagnostics();
+        const copy = manager().copyFinderDiagnostics();
+        mockFetch.resolveFirst({ ok: false }, 404);
+        await copy;
         const copied = JSON.parse(copiedDiagnostics);
         expect(copied.scope).to.equal("arm_performance");
-        expect(copied.runContext.failedPairs).to.deep.equal(context.failedPairs);
+        expect(copied.pairFailures.examples).to.deep.equal(context.failedPairs);
 
         manager().getDom().finderResort.value = "TOP_RAW";
         manager().applyResort();
@@ -877,10 +879,31 @@ describe("Finder facade terminal adoption (integration)", () => {
 
         let copiedDiagnostics = "";
         manager().copyTextToClipboard = async (text: string) => { copiedDiagnostics = text; };
-        await manager().copyFinderDiagnostics();
+        const copy = manager().copyFinderDiagnostics();
+        mockFetch.resolveFirst({ ok: false }, 404);
+        await copy;
         const copied = JSON.parse(copiedDiagnostics);
-        expect(copied.runContext.failedPairs).to.deep.equal(context.failedPairs);
+        expect(copied.pairFailures.examples).to.deep.equal(context.failedPairs);
         expect(copied.results).to.deep.equal([]);
+    });
+
+    it("copies live Arm timing diagnostics after reload before any candidate completes", async () => {
+        const m = manager();
+        m.controls.uiState.scope = "arm_performance";
+        m.session.activeRunId = "live-arm";
+        m.getDom().finderCopyDiagnostics.disabled = true;
+        m.resetForServerRunAdoption();
+        expect(m.getDom().finderCopyDiagnostics.disabled).to.equal(false);
+        expect(m.resultStore.armPerformanceRunResults).to.have.length(0);
+        let copied = "";
+        m.copyTextToClipboard = async (text: string) => { copied = text; };
+        const copy = m.copyFinderDiagnostics();
+        expect(mockFetch.requests[0]!.url).to.equal("/api/finder/arm-performance-diagnostics?runId=live-arm");
+        mockFetch.resolveFirst({ schema: "finder.arm-speed.v1", scope: "arm_performance",
+            run: { id: "live-arm", phase: "evaluating" }, current: { performance: { totalMs: 1200 } } });
+        await copy;
+        expect(JSON.parse(copied).current.performance.totalMs).to.equal(1200);
+        expect(copied.split("\n").length).to.be.lessThan(10);
     });
 
     it("keeps the incomplete Arm Performance preview when its retained server run is gone", async () => {

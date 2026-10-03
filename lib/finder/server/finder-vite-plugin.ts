@@ -46,7 +46,8 @@
 
 import type { Plugin } from "vite";
 import { getHeapStatistics } from "node:v8";
-import { totalmem } from "node:os";
+import { cpus, totalmem } from "node:os";
+import { FinderArmDiagnosticSummary, buildFinderArmSpeedReport, buildFinderArmPerformanceCandidateDiagnostic } from "../finder-arm-performance-diagnostics";
 import path from "node:path";
 import { debugLogger } from "../../debug-logger";
 import {
@@ -513,7 +514,7 @@ let runOwnerGen = 0;
 
 let runState: FinderRunSnapshot | null = null;
 let abortController: AbortController | null = null;
-let activeArmPerformanceCoordinator: { stop(): void } | null = null;
+let activeArmPerformanceCoordinator: import("../finder-arm-performance-runner").FinderArmPerformanceCoordinator | null = null;
 
 /**
  * Stop-before-ownership race closer. When Stop arrives BEFORE the matching
@@ -611,6 +612,7 @@ export type FinderRunSnapshot = {
     batch?: FinderBatchStatus;
     armPerformanceResults?: FinderArmPerformanceCandidate[];
     armPerformanceRunContext?: FinderArmPerformanceRunContext;
+    armDiagnosticSummary?: FinderArmDiagnosticSummary;
     armPerformance?: FinderRunStatusSnapshot["armPerformance"];
 };
 
@@ -3356,6 +3358,7 @@ async function handleArmPerformanceRunRequest(
         candidates: [],
         armPerformanceResults: [],
         armPerformanceRunContext: context,
+        armDiagnosticSummary: new FinderArmDiagnosticSummary(),
         armPerformance: {
             plannedCandidates: prepared.plans.length,
             completedCandidates: 0,
@@ -3473,6 +3476,7 @@ async function handleArmPerformanceRunRequest(
                             }
                         },
                         onCandidateDiagnostic: async (diagnostic) => {
+                            runState!.armDiagnosticSummary!.record(diagnostic);
                             const event = diagnostic.outcome === "completed"
                                 ? "arm_candidate_complete" : `arm_candidate_${diagnostic.outcome}`;
                             runLog(event, { ...diagnostic });
@@ -3742,6 +3746,30 @@ function handleStatusRequest(runIdFilter: string | null): FinderRunStatusSnapsho
     // Unscoped form: legacy `curl` introspection. Only meaningful when there
     // is an active/last run; the browser reattach path must pass a runId.
     return buildStatusSnapshot();
+}
+
+function handleArmDiagnosticsRequest(runId: string | null) {
+    const state = runState;
+    if (!runId || !state || state.runId !== runId || state.jobKind !== "arm_performance" || !state.armPerformanceRunContext) {
+        return { ok: false as const, error: "No matching Arm Performance run available." };
+    }
+    const status = activeArmPerformanceCoordinator?.getStatus();
+    const arm = state.armPerformance;
+    const ordinal = arm?.currentCandidateOrdinal;
+    const current = status && ordinal != null ? buildFinderArmPerformanceCandidateDiagnostic({
+        candidateId: `${runId}:candidate-${ordinal}`, childRunId: status.runId,
+        candidateOrdinal: ordinal, strategyKey: arm?.currentStrategyKey ?? "", outcome: "running",
+    }, status) : null;
+    const memory = process.memoryUsage();
+    const mb = (bytes: number) => bytes / 1024 / 1024;
+    return buildFinderArmSpeedReport({
+        context: state.armPerformanceRunContext, summary: state.armDiagnosticSummary ?? new FinderArmDiagnosticSummary(),
+        phase: state.phase, finishedAt: state.finishedAt, progressPercent: state.progressPercent,
+        completedCandidates: arm?.completedCandidates ?? 0, current, childPhase: arm?.childPhase ?? null,
+        memory: { rssMb: mb(memory.rss), heapUsedMb: mb(memory.heapUsed),
+            heapLimitMb: mb(getHeapStatistics().heap_size_limit), systemRamMb: mb(totalmem()), cpuCount: cpus().length },
+        error: state.error,
+    });
 }
 
 function buildStatusSnapshot(): FinderRunStatusSnapshot {
@@ -4107,6 +4135,15 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string, batchOwnerL
         },
     });
 
+    registerLocalJsonRoute(middlewares, "/api/finder/arm-performance-diagnostics", {
+        methods: ["GET"],
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: ({ res, url }) => {
+            const report = handleArmDiagnosticsRequest(url.searchParams.get("runId"));
+            sendJson(res, "ok" in report && report.ok === false ? 404 : 200, report);
+        },
+    });
+
     registerLocalJsonRoute(middlewares, "/api/finder/invalidate-cache", {
         methods: ["POST"],
         unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
@@ -4131,6 +4168,7 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string, batchOwnerL
 export const __testInternals = {
     handleStopRequest,
     handleStatusRequest,
+    handleArmDiagnosticsRequest,
     resolveAssetOpportunityChunkWorkerCount,
     clearServerFinderDatasetCaches,
     registerFinderRoutesForTests: registerFinderRoutes,

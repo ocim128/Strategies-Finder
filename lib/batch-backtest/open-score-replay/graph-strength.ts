@@ -84,14 +84,18 @@ export async function scoreGraphStrength(
     const selected = edges.filter((edge) => component.has(edge.a)).map((edge) => ({ a: local.get(edge.a)!, b: local.get(edge.b)!, y: edge.y }));
     if (selected.some((edge) => !Number.isFinite(edge.y))) return failure();
     const n = vertices.length;
+    // The CG loop visits these same edges up to 500 times. Pack endpoints
+    // once, preserving sorted edge order and every floating-point operation.
+    const edgeA = new Uint32Array(selected.length), edgeB = new Uint32Array(selected.length);
+    for (let i = 0; i < selected.length; i++) { edgeA[i] = selected[i]!.a; edgeB[i] = selected[i]!.b; }
     const rhs = new Float64Array(n), diagonal = new Float64Array(n);
     for (const edge of selected) { rhs[edge.a] += edge.y; rhs[edge.b] -= edge.y; diagonal[edge.a]++; diagonal[edge.b]++; }
     rhs[0] = 0; // Lexicographically first vertex anchored at zero.
     const multiply = (out: Float64Array, vec: Float64Array): void => {
         out.fill(0);
-        for (let i = 0; i < selected.length; i++) {
-            const edge = selected[i]!, d = vec[edge.a]! - vec[edge.b]!;
-            out[edge.a] += d; out[edge.b] -= d;
+        for (let i = 0; i < edgeA.length; i++) {
+            const a = edgeA[i]!, b = edgeB[i]!, d = vec[a]! - vec[b]!;
+            out[a] += d; out[b] -= d;
         }
         out[0] = 0; return;
     };

@@ -20,6 +20,7 @@ import {
     buildFinderTopResultsPayload,
     buildFinderRunConfigurationPayload,
     buildArmPerformanceDiagnosticsPayload,
+    getArmPerformanceDiagnosticsText,
     copyTextToClipboard,
 } from "../lib/finder/browser/finder-export";
 import {
@@ -541,7 +542,7 @@ describe("Finder diagnostics builders", () => {
         expect(resolveDiagnosticsEngineMode({ mode: "grid" } as any)).to.equal("typescript");
     });
 
-    it("shapes Arm diagnostics payloads with pair coverage and metrics only", () => {
+    it("bounds Arm fallback diagnostics and excludes score tables", () => {
         const candidate = {
             candidateId: "c0",
             candidateOrdinal: 0,
@@ -558,6 +559,25 @@ describe("Finder diagnostics builders", () => {
         expect(payload.inventoryComplete).to.equal(false);
         expect(payload.results[0].pairCoverage.requestedPairs).to.equal(1);
         expect(payload.results[0].strategyName).to.equal(undefined);
+        expect(payload.results[0].metrics).to.equal(undefined);
+        expect(payload.note).to.include("Server timing measurements unavailable");
+    });
+
+    it("rejects another run's timing report and copies the browser fallback", async () => {
+        const savedFetch = globalThis.fetch;
+        globalThis.fetch = (async () => ({
+            ok: true, json: async () => ({ schema: "finder.arm-speed.v1", run: { id: "other" }, secret: "wrong run" }),
+        })) as unknown as typeof fetch;
+        try {
+            const text = await getArmPerformanceDiagnosticsText({
+                runId: "expected", runContext: null, inventoryComplete: false, results: [],
+            });
+            expect(JSON.parse(text).note).to.include("unavailable");
+            expect(JSON.parse(text).run.id).to.equal("expected");
+            expect(text).not.to.contain("wrong run");
+        } finally {
+            globalThis.fetch = savedFetch;
+        }
     });
 });
 

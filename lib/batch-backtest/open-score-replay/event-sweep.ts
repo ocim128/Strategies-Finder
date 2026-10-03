@@ -15,7 +15,7 @@ import { TemporalSupport } from "./temporal-support";
 import { buildNameRanks, scoreGraphStrength } from "./graph-strength";
 import { CAUSAL_ARM_FIELDS } from "./arm-contract";
 import { FINDER_CAUSAL_ARMS_V1 } from "./causal-arm-constants";
-import { insertRankingPick, RANKING_ARM_SPECS } from "./candidate-selection";
+import { createRankingDigestCache, insertRankingPick, RANKING_ARM_SPEC_BY_FIELD } from "./candidate-selection";
 import type { CausalScoreKeys, CausalCompactArms } from "./internal-types";
 import type { CausalArmDiagnostics } from "./types";
 
@@ -182,6 +182,7 @@ export async function sweepScoreEvents(args: {
     // post-group apply below needs no per-stream state; the apply replays the
     // flat bucket range directly (event-sweep plan phase 3).
     let events: DecisionEvent[] = [];
+    const digestForEvent = args.assetNames ? createRankingDigestCache(args.assetNames) : undefined;
     const sampleFrom = sampleFromSec;
     const sampleTo = sampleToSec;
     // Sweep bound (event-sweep plan phase 2): buckets are ascending, so once
@@ -355,6 +356,7 @@ export async function sweepScoreEvents(args: {
                     if (graph.failed) diagnostics!.graphSolverFailures++;
                     if (args.mode === "asset_switch") causalArms = Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [field, { picks: [], eligibleCount: 0 }]));
                     else causalScores = new Map();
+                    const digestFor = (index: number): string => digestForEvent!(t, index);
                     for (let a = 0; a < assetCount; a++) {
                         if (a > 0 && a % 2000 === 0) { await yieldLoop(); if (shouldStop()) return cancelled(); }
                         if (rawScore[a]! <= 0) continue;
@@ -373,7 +375,7 @@ export async function sweepScoreEvents(args: {
                             diagnostics!.eligibleCandidates[field] = (diagnostics!.eligibleCandidates[field] ?? 0) + 1;
                             if (causalArms) {
                                 const row = causalArms[field]!; row.eligibleCount++;
-                                insertRankingPick(row.picks, { assetIndex: a, raw: rawScore[a]!, adjusted: 0, mean: 0, activePairs: activePairCount[a]!, ...keys }, RANKING_ARM_SPECS.find((spec) => spec.field === field)!, t, args.assetNames!);
+                                insertRankingPick(row.picks, { assetIndex: a, raw: rawScore[a]!, adjusted: 0, mean: 0, activePairs: activePairCount[a]!, ...keys }, RANKING_ARM_SPEC_BY_FIELD.get(field)!, t, args.assetNames!, digestFor);
                             }
                         }
                         causalScores?.set(a, keys);

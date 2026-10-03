@@ -511,6 +511,14 @@ be scored; the run stops with the pair failures available in Copy Diagnostics.
 Completed, failed, and stopped candidate timing diagnostics are also retained
 in the server's per-run JSONL log before child artifacts are deleted; see
 [Arm Performance server diagnostics](finder-server-side.md#arm-performance).
+**Copy Diagnostics** is available as soon as an Arm run is submitted, including
+before its first completed candidate and after browser reattachment. It copies
+a compact speed report: frozen configuration counts, progress, server memory,
+phase/worker/cache totals, the current child, and at most five slow candidates.
+It omits the full pair list and arm result tables. Live timings can be partial;
+the report labels summed worker time, overlapping replay time, and sampled
+engine phases. If the server is unavailable, copying still returns a bounded
+browser snapshot with a message that server timings are unavailable.
 Unreadable completed backtest shards fail the run rather than silently
 reducing replay coverage.
 

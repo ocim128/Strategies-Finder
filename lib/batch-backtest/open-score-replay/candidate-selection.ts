@@ -80,17 +80,28 @@ export function createRankingDigestCache(names: readonly string[]): (time: numbe
 /** Bounded insertion retains membership using the existing digest, never outcomes. */
 export function insertRankingPick(picks: RankingPick[], candidate: Candidate, spec: typeof RANKING_ARM_SPECS[number], time: number, names: readonly string[], digestFor?: (index: number) => string): void {
     if (isCausalArm(spec.field) && !Number.isFinite(candidate[spec.field])) return;
-    const row = { assetIndex: candidate.assetIndex, key: spec.key === "z" ? candidate.z ?? 0 : candidate[spec.key]!, secondary: spec.unique ? candidate.raw : 0 };
-    const compare = (a: RankingPick, b: RankingPick): number => {
-        const score = spec.direction * (a.key - b.key || a.secondary - b.secondary);
-        if (score) return score;
-        const ad = digestFor?.(a.assetIndex) ?? tieBreakDigest(time, names[a.assetIndex]!);
-        const bd = digestFor?.(b.assetIndex) ?? tieBreakDigest(time, names[b.assetIndex]!);
-        return ad.localeCompare(bd) || names[a.assetIndex]!.localeCompare(names[b.assetIndex]!);
-    };
+    const assetIndex = candidate.assetIndex;
+    const key = spec.key === "z" ? candidate.z ?? 0 : candidate[spec.key]!;
+    const secondary = spec.unique ? candidate.raw : 0;
+    let rowDigest: string | undefined;
+    // This runs for every eligible asset and arm. Avoid a comparator closure
+    // and allocate a retained row only when it enters the bounded top five.
     let index = 0;
-    while (index < picks.length && compare(picks[index]!, row) <= 0) index += 1;
-    if (index < 5) { picks.splice(index, 0, row); if (picks.length > 5) picks.pop(); }
+    while (index < picks.length) {
+        const a = picks[index]!;
+        let comparison = spec.direction * (a.key - key || a.secondary - secondary);
+        if (comparison) {
+            if (comparison > 0) break;
+            index += 1;
+            continue;
+        }
+        const ad = digestFor?.(a.assetIndex) ?? tieBreakDigest(time, names[a.assetIndex]!);
+        const bd = rowDigest ??= digestFor?.(assetIndex) ?? tieBreakDigest(time, names[assetIndex]!);
+        comparison = ad.localeCompare(bd) || names[a.assetIndex]!.localeCompare(names[assetIndex]!);
+        if (!(comparison <= 0)) break;
+        index += 1;
+    }
+    if (index < 5) { picks.splice(index, 0, { assetIndex, key, secondary }); if (picks.length > 5) picks.pop(); }
 }
 
 export function captureRankingEvent(timeSec: number, pools: Partial<Record<typeof RANKING_ARM_SPECS[number]["pool"], readonly Candidate[]>>, assetNames: readonly string[], enabled = false): RankingEvent {
@@ -590,6 +601,8 @@ export async function buildAssetSwitchDecisions(args: {
     const zWelfordM2 = new Float64Array(assetCount);
     const zWelfordCount = new Float64Array(assetCount);
     let candidateComparisonEvents = 0;
+    const rankingSpecsByPool = new Map(RANKING_ARM_SPECS.filter((spec) => !isCausalArm(spec.field))
+        .map((spec) => [spec.pool, RANKING_ARM_SPECS.filter((other) => !isCausalArm(other.field) && other.pool === spec.pool)]));
 
     const zSurprise = (assetIndex: number, score: number): number => {
         const n = zWelfordCount[assetIndex]!;
@@ -621,7 +634,7 @@ export async function buildAssetSwitchDecisions(args: {
         const considerRanking = (pool: typeof RANKING_ARM_SPECS[number]["pool"], raw: number, count: number, assetIndex: number, z?: number): void => {
             if (!ranking || raw <= 0) return;
             const candidate: Candidate = { assetIndex, raw, mean: count > 0 ? raw / count : raw, activePairs: count, adjusted: raw, z };
-            for (const spec of RANKING_ARM_SPECS) if (!isCausalArm(spec.field) && spec.pool === pool) insertRankingPick(ranking.arms[spec.field].picks, candidate, spec, event.timeSec, assetNames, digestFor);
+            for (const spec of rankingSpecsByPool.get(pool) ?? []) insertRankingPick(ranking.arms[spec.field].picks, candidate, spec, event.timeSec, assetNames, digestFor);
         };
         let digestCache: Map<number, string> | null = null;
         const digestFor = (assetIndex: number): string => {

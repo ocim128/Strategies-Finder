@@ -23,9 +23,10 @@ import { replayArmFields } from "./arm-contract";
 const NOTIONAL_PER_ENTRY = 1_000;
 const MAX_DIAGNOSTIC_COUNT = 1_000_000_000;
 const PRICE_LOOKUP_CACHE_LIMIT = 8_192;
-// Asset-switch replay has up to 15 independent arms. During a simultaneous
-// switch they can reference one held and one replacement series each.
-const SERIES_META_CACHE_LIMIT = 32;
+// Daily universes have thousands of short series: a 32-entry cache repeatedly
+// reloaded targets across decisions. Retain short series within the existing
+// point budget, with a separate bound for empty/invalid entries.
+const SERIES_META_CACHE_LIMIT = 8_192;
 // Each valid series retains three Float64 arrays (time/open/close): cap those
 // arrays at about 192 MB (183 MiB) in addition to the entry bound above.
 const SERIES_META_CACHE_MAX_POINTS = 8_000_000;
@@ -214,7 +215,7 @@ function cappedLookup(map: Map<string, LookupResult>, key: string, value: Lookup
 }
 
 /** Normalize once per lazy read and keep only a bounded set of compact results. */
-class SwitchTargetLookup {
+export class SwitchTargetLookup {
     private readonly seriesMeta = new Map<string, SeriesMeta>();
     /** Validation and gap data outlive the bounded full-price cache. */
     private readonly gapMeta = new Map<string, Pick<SeriesMeta, "status" | "gaps">>();
@@ -224,11 +225,16 @@ class SwitchTargetLookup {
     private readonly missing = new Set<string>();
     private readonly invalid = new Set<string>();
     private seriesMetaPoints = 0;
+    private seriesHits = 0;
+    private seriesMisses = 0;
+    private seriesEvictions = 0;
+    private seriesPeakPoints = 0;
 
     constructor(
         private readonly load: (asset: string) => Promise<OHLCVData[] | null>,
         private readonly endSec: number,
         private readonly intervalSec: number,
+        private readonly cacheLimits = { entries: SERIES_META_CACHE_LIMIT, points: SERIES_META_CACHE_MAX_POINTS },
     ) {}
 
     private rememberSeriesMeta(asset: string, meta: SeriesMeta): void {
@@ -239,14 +245,21 @@ class SwitchTargetLookup {
         }
         this.seriesMeta.set(asset, meta);
         this.seriesMetaPoints += seriesPointCount(meta);
-        while (this.seriesMeta.size > SERIES_META_CACHE_LIMIT
-            || this.seriesMetaPoints > SERIES_META_CACHE_MAX_POINTS) {
+        while (this.seriesMeta.size > this.cacheLimits.entries
+            || this.seriesMetaPoints > this.cacheLimits.points) {
             const oldestAsset = this.seriesMeta.keys().next().value;
             if (oldestAsset === undefined) break;
             const oldest = this.seriesMeta.get(oldestAsset);
             this.seriesMeta.delete(oldestAsset);
             this.seriesMetaPoints -= seriesPointCount(oldest);
+            this.seriesEvictions++;
         }
+        this.seriesPeakPoints = Math.max(this.seriesPeakPoints, this.seriesMetaPoints);
+    }
+
+    get cacheStats() {
+        return { hits: this.seriesHits, misses: this.seriesMisses, evictions: this.seriesEvictions,
+            entries: this.seriesMeta.size, points: this.seriesMetaPoints, peakPoints: this.seriesPeakPoints };
     }
 
     get coverage(): AssetSwitchReplaySummary["coverage"] {
@@ -261,11 +274,13 @@ class SwitchTargetLookup {
     private async loadMeta(asset: string): Promise<SeriesMeta> {
         const cached = this.seriesMeta.get(asset);
         if (cached) {
+            this.seriesHits++;
             this.seriesMeta.delete(asset);
             this.seriesMeta.set(asset, cached);
             return cached;
         }
         this.requested.add(asset);
+        this.seriesMisses++;
         let data: OHLCVData[] | null;
         try {
             data = await this.load(asset);
@@ -858,6 +873,7 @@ export async function runAssetSwitchReplay(args: {
         ? replayArmFields(options.enableCausalArms).flatMap((field) => detailsByArm.get(field)!.values())
         : undefined;
     onPhase("switch", "finished asset-switch replay", totalSteps, totalSteps);
+    options.onAssetSwitchCacheStats?.(lookup.cacheStats);
     return {
         ok: true,
         result: {

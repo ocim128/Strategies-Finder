@@ -844,6 +844,8 @@ export interface RunOpenScoreUsdReplayOptions {
     onAssetSwitchTrade?: (row: AssetSwitchTradeRecord) => void | Promise<void>;
     /** Retain exact per-asset P&L totals for Finder's post-run contributor exclusion. */
     includeAssetSwitchContributorSummary?: boolean;
+    /** Internal cache telemetry; never changes replay result/score contracts. */
+    onAssetSwitchCacheStats?: (stats: { hits: number; misses: number; evictions: number; entries: number; points: number; peakPoints: number }) => void;
     /** Phase transition + bounded-chunk progress. */
     onPhase?: (phase: "scan" | "events" | "targets" | "outcomes" | "aggregate" | "switch", detail: string, completed: number, total: number) => void;
     /** Polled between bounded chunks; return true to stop early (cancellation). */

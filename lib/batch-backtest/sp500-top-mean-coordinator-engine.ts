@@ -900,6 +900,11 @@ export class TopMeanCoordinatorEngine {
         this.performanceStartedAtMs = performance.now();
         this.performanceDiagnostic = {
             schema: "sp500_top_mean_performance.v1",
+            runtime: {
+                processId: process.pid, nodeVersion: process.version,
+                processStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
+                replayImplementation: "bounded-ranking-sidecar-lru-v1",
+            },
             startedAt: new Date().toISOString(),
             totalMs: 0,
             pairCount: 0,
@@ -1568,6 +1573,12 @@ export class TopMeanCoordinatorEngine {
                         // false. Standalone keeps them for the details UI.
                         includeEventDetails: !finderArmProfile,
                         includeAssetSwitchContributorSummary: finderArmProfile,
+                        onAssetSwitchCacheStats: (stats) => {
+                            Object.assign(targetPerformance.replay, {
+                                switchSeriesCacheHits: stats.hits, switchSeriesCacheMisses: stats.misses,
+                                switchSeriesCacheEvictions: stats.evictions, switchSeriesCachePeakPoints: stats.peakPoints,
+                            });
+                        },
                         ...(tradeWriter ? {
                             onAssetSwitchTrade: async (row) => {
                                 if (phase0bWriterFailed) return;

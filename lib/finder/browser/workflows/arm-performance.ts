@@ -61,6 +61,7 @@ export async function runArmPerformanceFinder(args: ArmPerformanceWorkflowArgs):
 	const exitStrategyCandidates = await args.resolveExitStrategyCandidates(options, selectedStrategies);
 	const runId = session.generateRunId();
 	session.activeRunId = runId;
+	host.showDiagnosticsAvailability(true);
 	writeFinderActiveServerRun({ runId, scope: 'arm_performance', startedAt: startTime });
 	store.armPerformanceDisplayLimit = Math.max(1, options.topN);
 	store.initializeArmPerformanceDisplayFilter({

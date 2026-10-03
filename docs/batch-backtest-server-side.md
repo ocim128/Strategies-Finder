@@ -46,6 +46,18 @@ full-result SHA-256 fingerprint (ordinary/`--ties`/`--gaps`/
 `--missing-targets`/`--interleave`/`--sparse` fixtures). Any refactor that
 changes a fingerprint is a behavior change — investigate, don't re-bless.
 
+Top-five ranking compares score, secondary key, tie digest and asset name in
+the existing order, using an inline bounded insertion loop. It allocates a
+retained row only when a candidate enters the five picks, and causal sweeps
+reuse one digest callback per event. `open-score-ranking-consistency.spec.ts`
+also checks every arm against an independent full sort with ties.
+
+The server IBKR loader promotes validated binary-sidecar hits into its existing
+bounded parsed-column LRU, just as it does CSV parses. Repeated reads can reuse
+those columns; each request still checks the authoritative CSV mtime and sync
+changes invalidate the entry. Cache capacities and candle materialization stay
+unchanged.
+
 ### Browser modules (`browser/`)
 
 `BatchBacktestService` remains the composition root and public facade: it
@@ -179,6 +191,13 @@ OPEN_SCORE USD checks Stop while forming candidate selections in both replay
 modes. The candidate stage checks at event boundaries, yields about every
 1,000 events, and exits before loading target datasets when cancellation is
 requested; partial candidate results are discarded.
+
+Asset-switch target prices use an LRU bounded by 8,192 series and 8 million
+candle points (about 192 MB in its three price/time arrays). This retains short
+daily series across decisions without raising the point-memory limit. Performance
+diagnostics expose switch-series hits, misses, evictions and peak points separately
+from the raw target-loader cache. Tie-digest reuse and packed graph endpoints
+preserve the existing twenty-arm selection and solver semantics.
 
 The event sweep also checks Stop and yields every 2,000 deltas while indexing
 decision times, counting bucket sizes, placing deltas, and applying the final

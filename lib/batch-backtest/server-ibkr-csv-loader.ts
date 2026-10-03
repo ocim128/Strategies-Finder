@@ -464,6 +464,9 @@ export async function loadFreshIbkrCandlesFromDisk(
                 if (!isSeedSidecarDisabled()) {
                     const sidecar = await readSeedSidecar(filePath, csvStat.mtimeMs, csvStat.size, signal);
                     if (sidecar) {
+                        // Sidecar hits must enter the same bounded parsed LRU as
+                        // text parses, or repeated leg/target loads reread disk.
+                        storeParsedCsvColumns(filePath, csvStat.mtimeMs, sidecar.columns, parsedCache, parsedCacheMaxEntries);
                         return limitBars !== undefined
                             ? candlesFromColumnsTail(sidecar.columns, limitBars)
                             : candlesFromColumns(sidecar.columns);

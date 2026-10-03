@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { runAssetSwitchReplay } from "../lib/batch-backtest/open-score-replay/asset-switch";
+import { runAssetSwitchReplay, SwitchTargetLookup } from "../lib/batch-backtest/open-score-replay/asset-switch";
 import type { AssetSwitchDecision, Candidate, EventView } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { AssetSwitchReplaySummary, ReplayArmField, RunOpenScoreUsdReplayOptions } from "../lib/batch-backtest/open-score-replay/types";
 import type { OHLCVData } from "../lib/types/strategies";
@@ -572,9 +572,9 @@ describe("OPEN_SCORE asset-switch replay", () => {
         expect(result.trades?.some((row) => row.arm === "topMean"), "TOP_MEAN details remain available").to.equal(true);
     });
 
-    it("keeps the 15-arm switch working set cached while replaying 30 assets", async () => {
-        const assetNames = Array.from({ length: 30 }, (_, index) => `ASSET${index}`);
-        const decisionCount = 60;
+    it("loads each short target once when the switch universe exceeds 32 assets", async () => {
+        const assetNames = Array.from({ length: 100 }, (_, index) => `ASSET${index}`);
+        const decisionCount = 200;
         const views: AssetSwitchDecision[] = Array.from({ length: decisionCount }, (_, eventIndex) => ({
             timeSec: ORIGIN + eventIndex * HOUR,
             picks: Object.fromEntries(ARM_FIELDS.map((arm, armIndex) => [
@@ -608,5 +608,34 @@ describe("OPEN_SCORE asset-switch replay", () => {
             shouldStop: () => stopped,
         });
         expect(result.ok).to.equal(false);
+    });
+
+    it("evicts least-recently-used target prices when the point budget is reached", async () => {
+        const data = candles([[ORIGIN, 100, 101], [ORIGIN + HOUR, 102, 103]]);
+        const reads: string[] = [];
+        const lookup = new SwitchTargetLookup(async (asset) => { reads.push(asset); return data; },
+            ORIGIN + 5 * HOUR, HOUR, { entries: 100, points: 4 });
+        await lookup.next("A", ORIGIN - 1, true);
+        await lookup.next("B", ORIGIN - 1, true);
+        await lookup.next("A", ORIGIN, false); // Refresh A; evict B next.
+        await lookup.next("C", ORIGIN - 1, true);
+        expect(lookup.cacheStats.points).to.equal(4);
+        expect(lookup.cacheStats.peakPoints).to.equal(4);
+        expect(lookup.cacheStats.evictions).to.equal(1);
+        expect(lookup.cacheStats.hits).to.equal(1);
+        await lookup.next("B", ORIGIN, false);
+        expect(reads).to.deep.equal(["A", "B", "C", "B"]);
+        expect(lookup.cacheStats.points).to.equal(4);
+    });
+
+    it("bounds missing-target metadata independently of retained price points", async () => {
+        let loads = 0;
+        const lookup = new SwitchTargetLookup(async () => { loads++; return null; },
+            ORIGIN + HOUR, HOUR, { entries: 2, points: 4 });
+        for (const asset of ["A", "B", "C"]) await lookup.next(asset, ORIGIN, true);
+        expect(lookup.cacheStats.entries).to.equal(2);
+        expect(lookup.cacheStats.points).to.equal(0);
+        await lookup.next("A", ORIGIN + 1, true);
+        expect(loads).to.equal(4);
     });
 });

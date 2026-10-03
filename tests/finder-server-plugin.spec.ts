@@ -1988,6 +1988,7 @@ describe("finder server plugin route-level authorization (audit Finding 1)", () 
         { path: "/api/finder/arm-performance-run", method: "POST" },
         { path: "/api/finder/stop", method: "POST" },
         { path: "/api/finder/status", method: "GET" },
+        { path: "/api/finder/arm-performance-diagnostics", method: "GET" },
         { path: "/api/finder/invalidate-cache", method: "POST" },
     ];
 

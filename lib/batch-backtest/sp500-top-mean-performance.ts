@@ -48,6 +48,8 @@ export interface TopMeanWorkerPoolPerformance extends TopMeanWorkerTiming {
 
 export interface TopMeanPerformanceDiagnostic {
     schema: "sp500_top_mean_performance.v1";
+    /** Captured by the executing coordinator, rather than the later exporter. */
+    runtime?: { processId: number; nodeVersion: string; processStartedAt: string; replayImplementation: string };
     startedAt: string;
     completedAt?: string;
     totalMs: number;
@@ -85,6 +87,11 @@ export interface TopMeanPerformanceDiagnostic {
          * TOP_MEAN_REPLAY_TARGET_CACHE_MAX_ENTRIES.
          */
         targetCachePeakEntries: number;
+        /** Normalized switch prices use their own point-bounded cache. */
+        switchSeriesCacheHits?: number;
+        switchSeriesCacheMisses?: number;
+        switchSeriesCacheEvictions?: number;
+        switchSeriesCachePeakPoints?: number;
     };
     worker?: TopMeanWorkerPoolPerformance;
 }

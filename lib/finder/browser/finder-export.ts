@@ -13,6 +13,8 @@ import { captureTradeFilter } from "../finder-config-capture";
 import { buildAssetOpportunityMetadataPayload } from "../finder-asset-opportunity-metadata";
 import { buildFinderArmPerformanceRunConfiguration } from "../finder-config-capture";
 import { buildCompactFinderDiagnostics } from "../finder-diagnostics";
+import { formatFinderArmSpeedReport } from "../finder-arm-performance-diagnostics";
+import { createFinderStatusRequestSignal } from "./finder-server-session";
 import type {
 	FinderArmPerformanceCandidate,
 	FinderArmPerformanceRunContext,
@@ -388,18 +390,57 @@ export function buildArmPerformanceDiagnosticsPayload(args: {
 	inventoryComplete: boolean;
 	results: readonly FinderArmPerformanceCandidate[];
 }) {
+	const c = args.runContext;
 	return {
+		schema: "finder.arm-speed.v1",
 		scope: 'arm_performance' as const,
-		runContext: args.runContext,
+		run: { id: c?.runId ?? null, phase: args.inventoryComplete ? "terminal" : "running" },
+		note: "Server timing measurements unavailable; this is a bounded browser snapshot.",
+		config: c ? {
+			interval: c.interval, replayMode: c.replayMode, measurement: c.measurement,
+			horizon: c.rankingHorizon ?? c.horizon, dateMode: c.dateMode,
+			strategies: c.strategyKeys?.length ?? 0, pairs: c.pairs?.length ?? 0,
+			plannedCandidates: c.plannedCandidateCount, requestedEngine: c.requestedEngineMode,
+			actualEngines: c.actualEngineModes,
+		} : null,
 		inventoryComplete: args.inventoryComplete,
-		results: args.results.map((candidate) => ({
+		candidateCount: args.results.length,
+		pairFailures: { runtimeUnique: c?.failedPairs?.length ?? 0, preflightSkipped: c?.skippedPairs?.length ?? 0,
+			examples: c?.failedPairs?.slice(0, 3) ?? [] },
+		results: args.results.slice(-3).map((candidate) => ({
 			candidateId: candidate.candidateId,
 			candidateOrdinal: candidate.candidateOrdinal,
 			strategyKey: candidate.strategyKey,
 			pairCoverage: candidate.pairCoverage,
-			metrics: candidate.metrics,
 		})),
 	};
+}
+
+/** Fetch only bounded diagnostics, never the terminal inventory returned by /status. */
+export async function getArmPerformanceDiagnosticsText(args: Parameters<typeof buildArmPerformanceDiagnosticsPayload>[0] & {
+	runId: string | null;
+}): Promise<string> {
+	if (args.runId) {
+		const request = createFinderStatusRequestSignal(new AbortController().signal);
+		try {
+			const response = await fetch(`/api/finder/arm-performance-diagnostics?runId=${encodeURIComponent(args.runId)}`, {
+				cache: "no-store", signal: request.signal,
+			});
+			if (response.ok) {
+				const report = await response.json();
+				if (report.schema === "finder.arm-speed.v1" && report.run?.id === args.runId) {
+					return formatFinderArmSpeedReport(report);
+				}
+			}
+		} catch {
+			// A restarted/offline/older server must not prevent copying the local preview.
+		} finally {
+			request.cleanup();
+		}
+	}
+	const fallback = buildArmPerformanceDiagnosticsPayload(args);
+	fallback.run.id = args.runId ?? fallback.run.id;
+	return formatFinderArmSpeedReport(fallback);
 }
 
 export function buildAssetOpportunityDiagnosticsPayload(diagnostics: FinderDiagnostics['assetOpportunity']) {

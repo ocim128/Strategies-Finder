@@ -119,6 +119,12 @@ async function main(): Promise<void> {
         const fromSidecar = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
         assert.equal(fromSidecar![0]!.open, 100, "sidecar hit serves cached columns without re-parsing the CSV");
 
+        // Removing the regenerable sidecar must not force another text parse
+        // while unchanged CSV metadata still validates the warm memory entry.
+        rmSync(sidecarPath, { force: true });
+        const warmSidecar = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        assert.deepEqual(warmSidecar, fromSidecar, "sidecar hits populate the bounded parsed-column LRU");
+
         // mtime bump → sidecar invalid → re-parse picks up the new content.
         const sidecarFutureMs = Date.now() * 2;
         utimesSync(sidecarCsvPath, sidecarFutureMs / 1000, sidecarFutureMs / 1000);

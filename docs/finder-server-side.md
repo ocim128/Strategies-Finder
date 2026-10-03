@@ -154,6 +154,22 @@ log append before deleting child artifacts. Logging failures warn without
 failing the sweep. These measurements do not add candles, trades, or results
 to Finder's stream or status wire.
 
+The local-only, run-id-scoped
+`GET /api/finder/arm-performance-diagnostics?runId=...` supplies Copy Diagnostics
+with a bounded `finder.arm-speed.v1` JSON report while running or after completion.
+It uses existing child measurements without rerunning backtests or replay.
+The parent accumulates numeric totals and retains only five slow candidates
+plus the last diagnostic; the current child's snapshot is separate from totals.
+The route includes configuration counts, progress, server-process RSS (including
+threads), main-thread heap use/limit, system RAM and CPU count, cache counters,
+and bounded pair-failure examples. No pair inventory, candle/trade arrays, or
+arm score tables are returned. Normal status polls remain unchanged.
+Reports use one JSON line per section. Finished-candidate phases use child wall
+time; worker durations sum concurrent work, replay subphases can overlap, and
+engine phase times are sampled. Live phase counters may update only at phase
+completion. Reports are retained with the in-memory job and are unavailable
+after a server restart or replacement by another run; durable JSONL logs remain.
+
 Replay efficiency (replay-efficiency plan): the finder_arm child runs ONE
 full-window replay, so its target LRU is sized to the prefetch window (not
 the standalone 512-entry annual working set) and the cross-window shared
@@ -181,12 +197,53 @@ cutoff is not a market-data snapshot: files can still be corrected or replaced
 while the sweep runs.
 
 Asset-switch replay normalizes target prices into a bounded LRU that retains
-up to 32 series and 8 million candle points (three `Float64Array` fields per
-point). This retains the existing 32-series/8-million-point limit for the
-20 arms, allowing eviction and reload when needed while keeping the normalized working set bounded; the coordinator's
+up to 8,192 series and 8 million candle points (three `Float64Array` fields per
+point, about 192 MB at the point limit). Short daily histories can therefore
+stay cached across decisions in large universes; long histories still evict
+by candle count. Empty and invalid histories remain bounded by the entry limit.
+Copy Diagnostics exposes `switchSeriesCacheHits`, `switchSeriesCacheMisses`,
+`switchSeriesCacheEvictions`, and `switchSeriesCachePeakPoints` separately from
+the raw target-loader cache. The coordinator's
 raw target-data cache remains separately bounded by its prefetch window.
 Rust preference is forwarded to each child, and result rows record requested
 and actual engine modes.
+
+Speed diagnostics include the executing child's `runtime`: process id, Node
+version, process start time and replay implementation marker. Historical
+children without these fields report `null`; exporting later never assigns
+the exporter's code version to an earlier run. This helps distinguish stale
+server code from CPU, I/O and cache variability when CLI and live timings differ.
+The current marker is `bounded-ranking-sidecar-lru-v1`.
+`config.pairListHash` fingerprints the ordered canonical pair list without
+exporting thousands of symbols. Equal pair counts do not mean equal work:
+compare the hash, strategy parameters, window, cutoff and costs before treating
+two runs as a speed comparison.
+
+Causal switch picks share lazy tie digests within each decision timestamp.
+Ranking insertion computes the incoming candidate's digest at most once and
+visits only the applicable pool's arm specifications. Its bounded top-five
+loop creates neither a comparator closure nor a retained row for discarded
+candidates; causal sweeps share one digest callback per event. The graph solver packs
+sorted edge endpoints once for its repeated matrix multiplies. These changes
+preserve edge order, cold starts, arithmetic order, tie keys, solver tolerance,
+and all twenty arms.
+
+`scripts/bench-finder-arm-snapshot.ts <status.json> <label> [baseline.json]`
+reruns a completed `/api/finder/status?runId=...` snapshot as an isolated CLI
+job with the captured parameters, pairs, costs and cutoff. It writes timings
+and canonical result hashes under `artifacts/arm-replay-eff-bench/`; it fails
+when results differ from the captured inventory or supplied baseline.
+Use the usual 16 GB Node heap for large runs. Local candle files must remain
+unchanged, and this harness currently supports snapshots without exit overrides.
+The 4,989-pair, daily `true_range_skew_acceptance` / switch-ranking example
+reduced target loads from 13,796 to 7,249 with identical results. Local measured
+wall times were 63.4 s before and 28.5 s after (the original browser report was
+48.3 s); single-run timings vary with CPU and cache state.
+On the subsequent 4,990-pair snapshot, removing per-insertion closures and
+discarded rows reduced profiled CLI time from 30.2 s to 21.5 s; an unprofiled
+rerun took 19.9 s. Both reruns matched every captured result field. The user's
+server report for that snapshot was 45.0 s, so compare timings on the same
+host workload and cache state rather than treating CLI time as a guarantee.
 
 Finder streams each scalar candidate once and keeps live `/status` polling
 counts-only. The browser saves a bounded, rate-limited Arm Performance preview

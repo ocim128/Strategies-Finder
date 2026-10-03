@@ -42,7 +42,7 @@ import {
 } from "./finder/browser/workflows/asset-opportunity";
 import type { FinderRunHost } from "./finder/browser/workflows/finder-run-host";
 import {
-	buildArmPerformanceDiagnosticsPayload,
+	getArmPerformanceDiagnosticsText,
 	buildArmPerformanceRunConfigurationPayload,
 	buildAssetOpportunityDiagnosticsPayload,
 	buildCompactFinderDiagnosticsPayload,
@@ -444,6 +444,9 @@ export class FinderManager {
 			this.resultStore.setLatestResults(emptyFinderLatestResults(this.controls.uiState.scope), false);
 		}
 		this.renderLatestResults();
+		if (this.controls.uiState.scope === 'arm_performance' && this.session.activeRunId) {
+			this.getDom().finderCopyDiagnostics.disabled = false;
+		}
 	}
 
 	private setServerRunRunning(running: boolean): void {
@@ -880,11 +883,13 @@ export class FinderManager {
 	private async copyFinderDiagnostics(): Promise<void> {
 		if (this.resultStore.latestResults.scope === 'arm_performance') {
 			try {
-				await this.copyTextToClipboard(JSON.stringify(buildArmPerformanceDiagnosticsPayload({
+				const text = await getArmPerformanceDiagnosticsText({
+					runId: this.session.activeRunId ?? this.resultStore.armPerformanceRunContext?.runId ?? null,
 					runContext: this.resultStore.armPerformanceRunContext,
 					inventoryComplete: this.resultStore.armPerformanceInventoryComplete,
 					results: this.resultStore.armPerformanceRunResults,
-				}), null, 2));
+				});
+				await this.copyTextToClipboard(text);
 				uiManager.showToast('Arm Performance diagnostics copied', 'success');
 			} catch (error) {
 				debugLogger.error('finder.copy_diagnostics_failed', { error: error instanceof Error ? error.message : String(error) });

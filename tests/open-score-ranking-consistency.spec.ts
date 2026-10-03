@@ -7,6 +7,7 @@ import { LEGACY_REPLAY_ARM_FIELDS as REPLAY_ARM_FIELDS } from "../lib/batch-back
 import { compactRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
 import type { Candidate, DecisionEvent, EventView, RankingEvent, RankingPick } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { TargetOutcomeStageResult, ViewOutcomeRecord } from "../lib/batch-backtest/open-score-replay/target-outcomes";
+import { tieBreakDigest } from "../lib/batch-backtest/max-active-research-contract";
 
 const names = ["A", "B", "C", "D", "E", "F"];
 const pool: Candidate[] = names.map((_, assetIndex) => ({ assetIndex, raw: 6 - assetIndex, mean: 6 - assetIndex, z: 6 - assetIndex, activePairs: 1, adjusted: 6 - assetIndex }));
@@ -23,6 +24,28 @@ async function measure(events: RankingEvent[], targets = outcomes(events), horiz
 }
 
 describe("top-five ranking consistency", () => {
+    it("matches a full reference sort for every arm with score and secondary ties", () => {
+        const assetNames = Array.from({ length: 80 }, (_, index) => `ASSET${index}`);
+        const candidates: Candidate[] = assetNames.map((_, assetIndex) => ({ assetIndex,
+            raw: assetIndex % 7, mean: assetIndex % 3, z: assetIndex % 4, adjusted: 1, activePairs: 1,
+            topCoverage: assetIndex % 3, topStableSupport: assetIndex % 3, topFreshSupport: assetIndex % 3,
+            topPriceStrength: assetIndex % 3, topGraphStrength: assetIndex % 3 }));
+        for (const time of [1700000000, 1700000060]) {
+            for (const spec of RANKING_ARM_SPECS) {
+                const expected = candidates.map((candidate) => ({ assetIndex: candidate.assetIndex,
+                    key: spec.key === "z" ? candidate.z ?? 0 : candidate[spec.key]!, secondary: spec.unique ? candidate.raw : 0 }))
+                    .sort((a, b) => spec.direction * (a.key - b.key || a.secondary - b.secondary)
+                        || tieBreakDigest(time, assetNames[a.assetIndex]!).localeCompare(tieBreakDigest(time, assetNames[b.assetIndex]!))
+                        || assetNames[a.assetIndex]!.localeCompare(assetNames[b.assetIndex]!)).slice(0, 5);
+                for (const ordered of [candidates, [...candidates].reverse()]) {
+                    const actual: RankingPick[] = [];
+                    for (const candidate of ordered) insertRankingPick(actual, candidate, spec, time, assetNames);
+                    expect(actual).to.deep.equal(expected);
+                }
+            }
+        }
+    });
+
     it("preserves all arm memberships with shared event digests, including changed timestamps", () => {
         const assetNames = Array.from({ length: 100 }, (_, i) => `ASSET${i}`);
         const candidates: Candidate[] = assetNames.map((_, assetIndex) => ({ assetIndex, raw: 1, mean: 1, z: 1, adjusted: 1, activePairs: 1,
