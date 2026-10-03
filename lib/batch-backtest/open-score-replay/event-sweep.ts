@@ -12,7 +12,7 @@ import { yieldLoop } from "./runtime";
 
 import { parseIntervalSeconds } from "../../interval-utils";
 import { TemporalSupport } from "./temporal-support";
-import { scoreGraphStrength } from "./graph-strength";
+import { buildNameRanks, scoreGraphStrength } from "./graph-strength";
 import { CAUSAL_ARM_FIELDS } from "./arm-contract";
 import { FINDER_CAUSAL_ARMS_V1 } from "./causal-arm-constants";
 import { insertRankingPick, RANKING_ARM_SPECS } from "./candidate-selection";
@@ -208,8 +208,19 @@ export async function sweepScoreEvents(args: {
     const interval = parseIntervalSeconds(args.interval ?? "");
     if (args.enableCausalArms && (!interval || !args.validDegree || !args.pairEndpoints || !args.assetNames)) throw new Error("Causal arms require interval and valid scan metadata.");
     const support = args.enableCausalArms ? new TemporalSupport(interval! * FINDER_CAUSAL_ARMS_V1.supportIntervals, bucketTimes[0]!) : null;
+    // Integer name ranks replace per-comparison `localeCompare` inside the
+    // graph solve; built once, they reproduce the identical ordering.
+    const nameRanks = support ? buildNameRanks(args.assetNames!) : null;
     const pairVotes = support ? new Float64Array(profitableStreams.length) : null;
     const pairCounts = support ? new Float64Array(profitableStreams.length) : null;
+    // Incremental open-pair list: the graph solve used to flatMap over ALL
+    // pair endpoints on every entry bucket (O(pairs) scans + object spreads
+    // per bucket). pairCounts only transitions 0 <-> positive on a pair's own
+    // base-leg deltas, so maintain the open set as a swap-remove list here and
+    // hand the solver exactly the open edges.
+    const openPairList: number[] = [];
+    const openPairPos = support ? new Int32Array(profitableStreams.length).fill(-1) : null;
+    const graphEdgePool: Array<{ base: number; quote: number; vote: number; count: number }> = [];
     const diagnostics: CausalArmDiagnostics | undefined = support ? { eligibleCandidates: {}, unavailableDegree: 0, unavailableSupportHistory: 0, unavailablePriceHistory: 0, graphExcludedCandidates: 0, graphSolverFailures: 0 } : undefined;
     let popped = 0;
     for (let b = 0; b < bucketTimes.length; b += 1) {
@@ -230,7 +241,24 @@ export async function sweepScoreEvents(args: {
             if (support) {
                 support.update(assetIndex, t, flatDeltas.entrySecs![i]!, delta, isEntry === 1, rawScore[assetIndex]!);
                 const endpoints = args.pairEndpoints![streamIdx];
-                if (endpoints && endpoints.base === assetIndex) { pairVotes![streamIdx] += delta; pairCounts![streamIdx] += isEntry === 1 ? 1 : -1; }
+                if (endpoints && endpoints.base === assetIndex) {
+                    pairVotes![streamIdx] += delta;
+                    const before = pairCounts![streamIdx]!;
+                    const after = before + (isEntry === 1 ? 1 : -1);
+                    pairCounts![streamIdx] = after;
+                    if (after > 0 && before <= 0) {
+                        openPairPos![streamIdx] = openPairList.length;
+                        openPairList.push(streamIdx);
+                    } else if (after <= 0 && before > 0) {
+                        const position = openPairPos![streamIdx]!;
+                        const moved = openPairList.pop()!;
+                        if (position < openPairList.length) {
+                            openPairList[position] = moved;
+                            openPairPos![moved] = position;
+                        }
+                        openPairPos![streamIdx] = -1;
+                    }
+                }
             }
             // activePairCount tracks currently-open pairs on this asset: an
             // entry adds a vote, an exit removes it (clamped at 0). Using
@@ -303,7 +331,28 @@ export async function sweepScoreEvents(args: {
                 let causalScores: Map<number, CausalScoreKeys> | undefined;
                 let causalArms: CausalCompactArms | undefined;
                 if (support) {
-                    const graph = await scoreGraphStrength(args.assetNames!, args.pairEndpoints!.flatMap((endpoint, index) => endpoint && pairCounts![index]! > 0 ? [{ ...endpoint, vote: pairVotes![index]!, count: pairCounts![index]! }] : []), shouldStop);
+                    // Packed open edges from the incremental list: no per-bucket
+                    // scan of every pair endpoint and no per-edge object spread.
+                    let edgeCount = 0;
+                    for (const streamIdx of openPairList) {
+                        const endpoints = args.pairEndpoints![streamIdx];
+                        if (!endpoints) continue;
+                        let edge = graphEdgePool[edgeCount];
+                        if (!edge) edge = graphEdgePool[edgeCount] = { base: 0, quote: 0, vote: 0, count: 0 };
+                        edge.base = endpoints.base;
+                        edge.quote = endpoints.quote;
+                        edge.vote = pairVotes![streamIdx]!;
+                        edge.count = pairCounts![streamIdx]!;
+                        edgeCount += 1;
+                    }
+                    const graph = await scoreGraphStrength(
+                        args.assetNames!,
+                        edgeCount === graphEdgePool.length ? graphEdgePool : graphEdgePool.slice(0, edgeCount),
+                        shouldStop,
+                        undefined,
+                        nameRanks!,
+                    );
+                    if (graph.failed) diagnostics!.graphSolverFailures++;
                     if (graph.failed) diagnostics!.graphSolverFailures++;
                     if (args.mode === "asset_switch") causalArms = Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [field, { picks: [], eligibleCount: 0 }]));
                     else causalScores = new Map();

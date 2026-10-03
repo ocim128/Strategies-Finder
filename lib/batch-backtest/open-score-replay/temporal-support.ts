@@ -6,7 +6,12 @@ export class TemporalSupport {
     private fresh = new Map<number, { time: number; value: number; total: number }>();
     private expiry: Array<{ time: number; asset: number; entry: number }> = [];
     private expiryHead = 0;
-    private remaining = new Map<string, number>();
+    /**
+     * Open-vote ledger keyed (asset -> entry time -> weighted remaining). Two
+     * Map hops replace the former `${asset}:${entry}` string keys, which
+     * allocated on every one of the ~135M per-delta updates.
+     */
+    private remaining = new Map<number, Map<number, number>>();
     constructor(private readonly window: number, private readonly start: number) {}
     private state(asset: number, time: number) {
         let state = this.fresh.get(asset);
@@ -15,10 +20,12 @@ export class TemporalSupport {
     }
     advance(time: number): void {
         while (this.expiryHead < this.expiry.length && this.expiry[this.expiryHead]!.time <= time) {
-            const item = this.expiry[this.expiryHead++]!, key = `${item.asset}:${item.entry}`;
-            const sign = this.remaining.get(key) ?? 0;
+            const item = this.expiry[this.expiryHead++]!;
+            const inner = this.remaining.get(item.asset);
+            const sign = inner?.get(item.entry) ?? 0;
             const state = this.state(item.asset, item.time); state.total -= sign;
-            this.remaining.delete(key);
+            inner?.delete(item.entry);
+            if (inner && inner.size === 0) this.remaining.delete(item.asset);
         }
         if (this.expiryHead > 4096 && this.expiryHead * 2 > this.expiry.length) { this.expiry = this.expiry.slice(this.expiryHead); this.expiryHead = 0; }
     }
@@ -31,9 +38,11 @@ export class TemporalSupport {
         else { history.times.push(time); history.integrals.push(integral); history.values.push(raw); }
         this.trim(history, time - this.window);
         if (time - entry >= this.window) return; // Expired votes cannot be removed twice.
-        const state = this.state(asset, time), key = `${asset}:${entry}`;
-        if (isEntry && !this.remaining.has(key)) this.expiry.push({ asset, entry, time: entry + this.window });
-        this.remaining.set(key, (this.remaining.get(key) ?? 0) + delta);
+        const state = this.state(asset, time);
+        let inner = this.remaining.get(asset);
+        if (!inner) this.remaining.set(asset, inner = new Map());
+        if (isEntry && !inner.has(entry)) this.expiry.push({ asset, entry, time: entry + this.window });
+        inner.set(entry, (inner.get(entry) ?? 0) + delta);
         state.value += delta * (this.window - (time - entry)); state.total += delta;
     }
     private trim(history: { times: number[]; integrals: number[]; values: number[]; head: number }, from: number): void {
