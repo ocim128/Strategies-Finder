@@ -37,6 +37,30 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from '../lib/strategy-defaults';
 import { builtInStrategyKeys } from '../lib/strategies/manifest-keys';
 
 describe('Backtest settings compatibility', () => {
+    it('reports failed autosave writes and recovers after storage becomes available', () => {
+        const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+        const originalRead = settingsManager.getCurrentSettings;
+        const statuses: string[] = [];
+        const unsubscribe = settingsManager.subscribeFeedback(() => statuses.push(settingsManager.getWorkspaceFeedback().saveStatus));
+        let fail = true;
+        Object.defineProperty(globalThis, 'localStorage', {
+            configurable: true,
+            value: { setItem() { if (fail) throw new DOMException('Storage quota exceeded', 'QuotaExceededError'); } },
+        });
+        settingsManager.getCurrentSettings = () => settingsManager.getDefaultAppSettings();
+        try {
+            settingsManager.saveSettings();
+            expect(settingsManager.getWorkspaceFeedback().saveStatus).to.equal('error');
+            fail = false;
+            settingsManager.saveSettings();
+            expect(statuses).to.deep.equal(['error', 'saved']);
+        } finally {
+            unsubscribe();
+            settingsManager.getCurrentSettings = originalRead;
+            if (originalDescriptor) Object.defineProperty(globalThis, 'localStorage', originalDescriptor);
+            else delete (globalThis as { localStorage?: Storage }).localStorage;
+        }
+    });
     it('falls back when browser policy denies access to saved settings and configurations', () => {
         const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
         Object.defineProperty(globalThis, 'localStorage', {

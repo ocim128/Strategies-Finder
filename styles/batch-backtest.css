@@ -909,6 +909,201 @@
     box-shadow: var(--shadow-xs);
 }
 
+/* Replay arms share the available panel width, including inside annual reports. */
+.batch-report-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr));
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.batch-report-grid > .batch-report-card {
+    min-width: 0;
+    margin-bottom: 0;
+    overflow-wrap: anywhere;
+}
+
+.batch-report-grid > .batch-report-card > .batch-report-note:last-child {
+    margin-bottom: 0;
+}
+
+.batch-replay-report [hidden] {
+    display: none !important;
+}
+
+.batch-replay-heading,
+.batch-replay-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+
+.batch-replay-heading > .batch-report-subheading,
+.batch-replay-card-header > .batch-report-title {
+    margin: 0;
+}
+
+.batch-replay-view-controls {
+    display: flex;
+    gap: var(--space-1);
+}
+
+.batch-replay-view-controls [aria-pressed="true"] {
+    background: var(--accent-soft);
+    border-color: var(--accent-color);
+    color: var(--accent-color);
+}
+
+.batch-replay-group > .batch-report-subheading {
+    margin-bottom: var(--space-2);
+}
+
+.batch-replay-status {
+    font-size: var(--font-size-2xs);
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.batch-replay-total {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    margin-bottom: var(--space-3);
+}
+
+.batch-replay-total strong {
+    font-size: var(--font-size-xl);
+    font-variant-numeric: tabular-nums;
+    color: var(--text-primary);
+}
+
+.batch-replay-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-2) var(--space-3);
+    margin: 0 0 var(--space-3);
+    font-size: var(--font-size-xs);
+}
+
+.batch-replay-metrics dt {
+    color: var(--text-tertiary);
+    margin-bottom: var(--space-1);
+}
+
+.batch-replay-metrics dd {
+    margin: 0;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+}
+
+.batch-replay-group--research {
+    border-top: 1px solid hsl(var(--hsl-warning) / 0.4);
+    margin-top: var(--space-3);
+    padding-top: var(--space-2);
+}
+
+.batch-replay-group--research > .batch-report-subheading,
+.batch-replay-research-label {
+    color: var(--warning);
+}
+
+.batch-replay-research-label {
+    font-size: var(--font-size-2xs);
+    margin-bottom: var(--space-2);
+}
+
+.batch-replay-table-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    margin-bottom: var(--space-3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+}
+
+.batch-replay-table {
+    margin: 0;
+    min-width: 1080px;
+    border-collapse: collapse;
+}
+
+.batch-replay-table caption {
+    text-align: left;
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-secondary);
+}
+
+.batch-replay-table th,
+.batch-replay-table td {
+    padding: var(--space-1-5) var(--space-3);
+    vertical-align: top;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.batch-replay-table thead th {
+    text-align: left;
+}
+
+.batch-replay-table thead th[aria-sort] {
+    text-align: right;
+}
+
+.batch-replay-table tbody tr:hover {
+    background: hsl(var(--hsl-surface-3) / 0.35);
+}
+
+.batch-replay-table .batch-report-note {
+    margin: 0;
+    font-size: var(--font-size-2xs);
+    white-space: nowrap;
+}
+
+.batch-replay-table tbody tr:last-child > * {
+    border-bottom: 0;
+}
+
+.batch-replay-table tbody th {
+    text-align: left;
+    font-weight: var(--font-weight-normal);
+    min-width: 220px;
+}
+
+.batch-replay-table td[data-batch-replay-metric] {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.batch-replay-sort {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    white-space: nowrap;
+    cursor: pointer;
+}
+
+.batch-replay-table th[aria-sort="ascending"],
+.batch-replay-table th[aria-sort="descending"] {
+    color: var(--accent-color);
+}
+
+.batch-replay-sort:focus-visible,
+.batch-replay-table-wrap:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
 .batch-report-title {
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-semibold);

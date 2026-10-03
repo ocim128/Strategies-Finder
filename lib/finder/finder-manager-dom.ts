@@ -1,6 +1,13 @@
 import { getRequiredElement } from "../dom-utils";
 
 export const FINDER_MANAGER_REQUIRED_IDS = [
+    "finderTab",
+    "finderWorkspace",
+    "finderConfiguration",
+    "finderExecutionBar",
+    "finderResultsPanel",
+    "finderViewCards",
+    "finderViewTable",
     "finderScope",
     "runFinder",
     "stopFinder",
@@ -99,6 +106,13 @@ export const FINDER_MANAGER_REQUIRED_IDS = [
 
 export function createFinderManagerDom() {
     return {
+        finderTab: getRequiredElement("finderTab"),
+        finderWorkspace: getRequiredElement("finderWorkspace"),
+        finderConfiguration: getRequiredElement("finderConfiguration"),
+        finderExecutionBar: getRequiredElement("finderExecutionBar"),
+        finderResultsPanel: getRequiredElement("finderResultsPanel"),
+        finderViewCards: getRequiredElement<HTMLButtonElement>("finderViewCards"),
+        finderViewTable: getRequiredElement<HTMLButtonElement>("finderViewTable"),
         finderScope: getRequiredElement<HTMLSelectElement>("finderScope"),
         runFinder: getRequiredElement<HTMLButtonElement>("runFinder"),
         stopFinder: getRequiredElement<HTMLButtonElement>("stopFinder"),

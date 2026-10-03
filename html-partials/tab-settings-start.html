@@ -1,5 +1,14 @@
 <!-- Settings Tab -->
 <div id="settingsTab" data-preset="standard">
+    <div class="settings-toolbar" id="settingsToolbar">
+        <div class="settings-toolbar-top">
+            <label class="settings-search-label" for="settingsSearch">Find a setting</label>
+            <span class="settings-save-status" id="settingsSaveStatus" role="status" aria-live="polite">Autosave ready</span>
+        </div>
+        <input class="param-input" id="settingsSearch" type="search" placeholder="Search take profit, slippage, sizing…" autocomplete="off" aria-controls="settingsSearchResults">
+        <div class="settings-search-results" id="settingsSearchResults" hidden></div>
+        <nav class="settings-quick-nav" id="settingsQuickNav" aria-label="Settings sections"></nav>
+    </div>
     <div class="strategy-workspace">
         <div class="strategy-workspace-header" id="strategyWorkspaceHeader">
             <div id="strategyWorkspaceToggle" data-target="strategyWorkspaceBody" hidden></div>
@@ -60,6 +69,11 @@
 
                 <section class="strategy-workspace-card strategy-workspace-card--config">
                     <div class="strategy-workspace-card-label">Saved configurations</div>
+                    <div class="settings-config-feedback">
+                        <span id="settingsConfigStatus" role="status" aria-live="polite">No configuration loaded</span>
+                        <button class="btn btn-secondary btn-compact" id="restoreSettingsConfigBtn" type="button" disabled>Restore configuration</button>
+                    </div>
+                    <div class="param-hint">Save a configuration to keep strategy parameters. Autosave keeps general settings in this browser.</div>
                     <div class="config-actions">
                         <div class="config-input-row">
                             <input type="text" class="param-input config-name-input" id="configNameInput"

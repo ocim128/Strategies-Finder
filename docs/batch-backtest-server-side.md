@@ -62,6 +62,7 @@ internals. Do not pass the whole service into a child module.
 | `top-mean-controller.ts` | TOP_MEAN run/stop/reattach, diagnostic ring + debounces + durable log, latest result/arm, copy/download | lifecycle spec, `sp500-top-mean-*.spec.ts` |
 | `open-score-controller.ts` | Standalone replay request/stream, analysis lock + stale-cancel, copy | lifecycle spec |
 | `top-mean-results-view.ts` | Current-snapshot banner, latest-arm card, display tie-breaks, copy text | lifecycle spec |
+| `asset-switch-results-view.ts` | Replay card/table presentation, numeric table sorting, separate look-ahead research groups | `asset-switch-results-view.spec.ts`, E2E Batch smoke |
 | `top-mean-event-details-view.ts` | Details sections, year filter, ONGOING rows, truncation notices | lifecycle spec |
 | `batch-browser-store.ts` | Storage keys/versions/migrations for settings, active-run markers, compact snapshots (data only; no DOM) | `batch-backtest-snapshot.spec.ts` |
 | `balanced-pair-list-controls.ts` | Generate-and-apply, copy, applied-list provenance | `batch-balanced-pair-list-generator.spec.ts` |
@@ -74,6 +75,26 @@ controller's `dispose()` (TOP_MEAN clears its run id before resolving poll
 delays so the loop cannot reschedule).
 
 ## Batch menu interaction contracts
+
+Asset-Switch Replay performance cards use a responsive grid in both the
+full-window report and expanded independent calendar-year reports. Columns
+adapt to the available panel width with a 380px minimum card width, falling
+back to a single column in narrower panels. All arm metrics, open positions,
+and pending orders remain visible within each card.
+
+Each replay report defaults to Cards and has a Table toggle. Cards emphasize
+Total P&L above aligned, labeled metrics. Table column buttons sort Total P&L,
+Realized, Open, Closed trades, Entries, and Costs numerically; the first click
+sorts descending and another click reverses it. Missing or non-finite values
+remain last in either direction, and ties retain canonical arm order. Tables
+scroll horizontally inside their own region on narrow screens. Open-position
+and pending-order context is available in both views.
+
+The future-profit `topRawProfit` and `topMeanProfit` arms appear in a separate
+Look-ahead research group in both views; sorting never mixes them with the
+other selectors. View and sort controls act locally on their report/table,
+preserving keyboard focus, annual disclosures, and the separate details panel.
+These display choices reset on a new or restored result and are not saved.
 
 Pair-list editing (Pairs, Template, Use Current, Clear, and Generate & Apply)
 is locked by the same busy predicate as Run, including strategy preflight,

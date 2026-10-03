@@ -5,6 +5,35 @@
         <p class="research-tab-subtitle">Search strategy parameters on charts, symbol universes, asset opportunities, or synthetic-pair arm performance.</p>
     </header>
 
+    <section class="finder-execution-bar" id="finderExecutionBar" aria-label="Finder execution">
+    <div class="finder-actions">
+        <button class="btn btn-primary run-btn" id="runFinder">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M8 5v14l11-7z" />
+            </svg>
+            Run Finder
+        </button>
+        <button class="btn btn-danger stop-btn" id="stopFinder" style="display:none" type="button">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M6 6h12v12H6z" />
+            </svg>
+            Stop
+        </button>
+        <button class="btn btn-secondary" id="resetFinderSettings" type="button">Reset Settings</button>
+    </div>
+
+    <div class="progress-container" id="finderProgress">
+        <div class="progress-bar">
+            <div class="progress-fill" id="finderProgressFill"></div>
+        </div>
+        <div class="progress-text" id="finderProgressText">Ready</div>
+    </div>
+
+    <div class="finder-status" id="finderStatus">Idle</div>
+    </section>
+
+    <div class="finder-workspace" id="finderWorkspace">
+    <div class="finder-configuration" id="finderConfiguration" aria-label="Finder configuration">
     <section class="research-tab-section finder-setup-section" aria-label="Finder setup">
     <div class="param-row">
         <div class="param-group">
@@ -304,7 +333,8 @@
         <div id="finderQualitySettings" style="display:none;">
             <div class="param-hint">Runs each selected strategy library once per symbol using its normalized default parameters. Results are for baseline quality review, not parameter discovery; OOS is informational and never filters a library.</div>
         </div>
-        <div id="finderUniverseFilters">
+        <details id="finderUniverseFilters" class="research-disclosure finder-settings-disclosure">
+            <summary>Universe filters <span data-finder-setting-summary="universe"></span></summary>
         <div class="param-row" style="margin-top: 12px;">
             <div class="param-group">
                 <label class="param-label" for="finderUniverseMinActiveSymbols">Min Active Symbols</label>
@@ -321,9 +351,11 @@
                 <input type="number" class="param-input" id="finderUniverseMinProfitableActiveRatio" value="0.5" min="0" max="1" step="0.05">
             </div>
         </div>
-        </div>
+        </details>
     </div>
 
+    <details class="research-disclosure finder-settings-disclosure">
+        <summary>Risk management <span data-finder-setting-summary="risk"></span></summary>
     <div class="section-header">
         <div class="section-title">Risk Management</div>
         <label class="section-toggle" aria-label="Freeze Finder risk management">
@@ -342,6 +374,10 @@
         <div class="param-hint">When Path-Dependent Exits are enabled, Finder varies the numeric controls for the selected path-exit mode and applies them with the result. Works even when risk settings are frozen — only path-exit controls are varied; other risk settings stay fixed.</div>
     </div>
 
+    </details>
+
+    <details class="research-disclosure finder-settings-disclosure">
+        <summary>Exit strategy override <span data-finder-setting-summary="exit"></span></summary>
     <div class="section-header">
         <div class="section-title">Exit Strategy Override</div>
         <label class="section-toggle" aria-label="Vary Exit Strategy Override params in Finder">
@@ -352,6 +388,8 @@
     <div class="section-body">
         <div class="param-hint">Requires Disable Exit Signal + Exit Strategy Override. Finder samples exit strategies from the checked list and varies their params with entry params; Apply writes both back to settings.</div>
     </div>
+
+    </details>
 
     <div class="section-header">
         <div class="section-title">Strategies</div>
@@ -379,7 +417,8 @@
         <!-- Strategies will be injected here -->
     </div>
 
-    <div id="finderTradeFilterSection">
+    <details id="finderTradeFilterSection" class="research-disclosure finder-settings-disclosure">
+        <summary>Trade count filter <span data-finder-setting-summary="trades"></span></summary>
         <div class="section-header">
             <div class="section-title">Trade Count Filter</div>
             <label class="section-toggle" aria-label="Toggle trade count filter">
@@ -399,7 +438,7 @@
                 </div>
             </div>
         </div>
-    </div>
+    </details>
 
     <!-- Block mode indicator - shown when a date block is active -->
     <div class="finder-block-badge" id="finderBlockBadge" style="display:none">
@@ -410,30 +449,8 @@
         Block Mode Active - Finder will use selected date range only
     </div>
 
-    <div class="finder-actions">
-        <button class="btn btn-primary run-btn" id="runFinder">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M8 5v14l11-7z" />
-            </svg>
-            Run Finder
-        </button>
-        <button class="btn btn-danger stop-btn" id="stopFinder" style="display:none" type="button">
-            <svg viewBox="0 0 24 24" fill="currentColor">
-                <path d="M6 6h12v12H6z" />
-            </svg>
-            Stop
-        </button>
-        <button class="btn btn-secondary" id="resetFinderSettings" type="button">Reset Settings</button>
     </div>
-
-    <div class="progress-container" id="finderProgress">
-        <div class="progress-bar">
-            <div class="progress-fill" id="finderProgressFill"></div>
-        </div>
-        <div class="progress-text" id="finderProgressText">Ready</div>
-    </div>
-
-    <div class="finder-status" id="finderStatus">Idle</div>
+    <section class="finder-results-panel" id="finderResultsPanel" aria-label="Finder results">
     <div class="finder-benchmark" id="finderBenchmark" style="display:none;">
         <div class="finder-benchmark-title">Random Benchmark</div>
         <div class="finder-benchmark-body" id="finderBenchmarkBody"></div>
@@ -442,6 +459,10 @@
     <div class="finder-results">
         <div class="research-results-heading">
             <h3>Finder results</h3>
+            <div class="finder-view-controls" role="group" aria-label="Finder results view">
+                <button class="btn btn-secondary btn-compact" id="finderViewCards" type="button" aria-pressed="true">Cards</button>
+                <button class="btn btn-secondary btn-compact" id="finderViewTable" type="button" aria-pressed="false">Table</button>
+            </div>
         </div>
         <div class="finder-actions-bar">
             <button class="btn btn-secondary btn-compact" id="finderCopyTopResults" type="button"
@@ -496,5 +517,7 @@
         </div>
         <div class="finder-list" id="finderList">
         </div>
+    </div>
+    </section>
     </div>
 </div>

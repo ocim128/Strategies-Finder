@@ -3,6 +3,7 @@ import { getOptionalElement } from "../dom-utils";
 export function createSettingsHandlersDom() {
     return {
         resetSettingsBtn: getOptionalElement<HTMLButtonElement>("resetSettingsBtn"),
+        restoreSettingsConfigBtn: getOptionalElement<HTMLButtonElement>("restoreSettingsConfigBtn"),
         saveConfigBtn: getOptionalElement<HTMLButtonElement>("saveConfigBtn"),
         configNameInput: getOptionalElement<HTMLInputElement>("configNameInput"),
         loadConfigBtn: getOptionalElement<HTMLButtonElement>("loadConfigBtn"),

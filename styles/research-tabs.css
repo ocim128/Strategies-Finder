@@ -280,6 +280,167 @@
     min-width: 0;
 }
 
+/* Finder's execution bar sticks within the strategy panel's existing scroll area. */
+.finder-execution-bar {
+    position: sticky;
+    top: calc(-1 * var(--panel-content-padding));
+    z-index: var(--z-sticky);
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: var(--bg-secondary);
+    box-shadow: var(--shadow-xs);
+}
+
+#finderTab .finder-execution-bar .finder-actions {
+    flex-direction: row;
+    width: auto;
+}
+
+#finderTab .finder-execution-bar .finder-actions > .btn {
+    width: auto;
+}
+
+#finderTab .finder-execution-bar .progress-container {
+    flex: 1 1 200px;
+    margin: 0;
+}
+
+#finderTab .finder-execution-bar .finder-status {
+    min-height: 0;
+}
+
+.finder-workspace {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-items: start;
+    gap: var(--space-4);
+    min-width: 0;
+}
+
+.finder-configuration,
+.finder-results-panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.finder-configuration {
+    container-type: inline-size;
+}
+
+.finder-settings-disclosure > summary {
+    flex-wrap: wrap;
+    padding: var(--space-2) var(--space-3);
+}
+
+.finder-settings-disclosure [data-finder-setting-summary] {
+    font-weight: var(--font-weight-normal);
+    color: var(--text-tertiary);
+    letter-spacing: normal;
+    margin-left: auto;
+    overflow-wrap: anywhere;
+}
+
+.finder-settings-disclosure > .section-body {
+    padding-bottom: var(--space-3);
+}
+
+.finder-settings-disclosure > .section-header {
+    margin: 0 var(--space-3);
+}
+
+.finder-settings-disclosure > .param-row {
+    margin: 0 var(--space-3) var(--space-3);
+}
+
+.finder-view-controls {
+    display: flex;
+    gap: var(--space-1);
+}
+
+.finder-view-controls [aria-pressed="true"] {
+    color: var(--accent-color);
+    border-color: var(--accent-color);
+    background: var(--accent-soft);
+}
+
+.finder-comparison-wrap {
+    max-width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+}
+
+.finder-results--table .finder-header {
+    display: none;
+}
+
+.finder-comparison-wrap:focus-visible {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 2px;
+}
+
+.finder-comparison-table {
+    width: 100%;
+    min-width: 600px;
+    border-collapse: collapse;
+    font-size: var(--font-size-xs);
+}
+
+.finder-comparison-table caption {
+    text-align: left;
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-secondary);
+}
+
+.finder-comparison-table th,
+.finder-comparison-table td {
+    padding: var(--space-2);
+    vertical-align: top;
+    text-align: left;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.finder-comparison-table th[scope="row"] {
+    min-width: 180px;
+    font-weight: var(--font-weight-normal);
+}
+
+.finder-comparison-table tbody tr:hover {
+    background: hsl(var(--hsl-surface-3) / 0.3);
+}
+
+.finder-comparison-table .finder-comparison-metric {
+    text-align: right;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.finder-table-details > summary {
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding-top: var(--space-1);
+}
+
+.finder-table-details .finder-main {
+    margin-top: var(--space-2);
+    max-width: 460px;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+@container (min-width: 1040px) {
+    .finder-workspace {
+        grid-template-columns: minmax(360px, 400px) minmax(0, 1fr);
+    }
+}
+
 @container (max-width: 360px) {
     .research-tab .param-row {
         grid-template-columns: 1fr;

@@ -36,6 +36,7 @@ import {
 import { createSettingsManagerDom, type SettingsManagerDom } from "./settings-manager-dom";
 import { readPersistedJson, writePersistedJson } from "./persisted-json";
 import { debounce } from "./debounce";
+import { settingsSnapshotKey } from "./settings-workspace-model";
 
 export {
     DEFAULT_APP_SETTINGS,
@@ -94,6 +95,9 @@ const STRATEGY_CONFIGS_STORAGE = {
 // ============================================================================
 
 class SettingsManager {
+    private saveStatus: "ready" | "pending" | "saved" | "error" = "ready";
+    private readonly feedbackListeners = new Set<() => void>();
+    private activeConfiguration: { config: StrategyConfig; snapshot: string } | null = null;
     private autoSaveSuppressionDepth = 0;
     private autoSaveDirty = false;
     private autoSaveListenersAttached = false;
@@ -103,6 +107,41 @@ class SettingsManager {
 
     private getDom(): SettingsManagerDom {
         return this.dom ??= createSettingsManagerDom();
+    }
+
+    public subscribeFeedback(listener: () => void): () => void {
+        this.feedbackListeners.add(listener);
+        return () => { this.feedbackListeners.delete(listener); };
+    }
+
+    private notifyFeedback(): void {
+        this.feedbackListeners.forEach(listener => listener());
+    }
+
+    private getConfigurationSnapshot(): string {
+        const strategy = strategyRegistry.get(state.currentStrategyKey);
+        return settingsSnapshotKey({
+            strategyKey: state.currentStrategyKey,
+            strategyParams: strategy ? paramManager.getValues(strategy) : {},
+            backtestSettings: this.getBacktestSettings(),
+        });
+    }
+
+    public getWorkspaceFeedback() {
+        return {
+            saveStatus: this.saveStatus,
+            configurationName: this.activeConfiguration?.config.name ?? null,
+            modified: this.activeConfiguration !== null && this.getConfigurationSnapshot() !== this.activeConfiguration.snapshot,
+        };
+    }
+
+    public getActiveConfiguration(): StrategyConfig | null {
+        return this.activeConfiguration ? structuredClone(this.activeConfiguration.config) : null;
+    }
+
+    private trackConfiguration(config: StrategyConfig): void {
+        this.activeConfiguration = { config: structuredClone(config), snapshot: this.getConfigurationSnapshot() };
+        this.notifyFeedback();
     }
 
     // ========================================================================
@@ -156,9 +195,13 @@ class SettingsManager {
         if (saved) {
             debugLogger.event('settings.saved', { strategy: settings.currentStrategyKey });
         }
+        this.saveStatus = saved ? "saved" : "error";
+        this.notifyFeedback();
     }
 
     public saveSettingsDebounced(): void {
+        this.saveStatus = "pending";
+        this.notifyFeedback();
         if (this.autoSaveSuppressionDepth > 0) {
             this.autoSaveDirty = true;
             return;
@@ -183,7 +226,7 @@ class SettingsManager {
         this.autoSaveSuppressionDepth = Math.max(0, this.autoSaveSuppressionDepth - 1);
         if (this.autoSaveSuppressionDepth === 0 && this.autoSaveDirty) {
             this.autoSaveDirty = false;
-            this.debouncedSaveSettings();
+            this.saveSettingsDebounced();
         }
     }
 
@@ -285,6 +328,7 @@ class SettingsManager {
         };
 
         const persisted = this.upsertStrategyConfig(config);
+        this.trackConfiguration(persisted);
         debugLogger.event('settings.config.saved', { name, strategy: state.currentStrategyKey });
         return persisted;
     }
@@ -380,6 +424,7 @@ class SettingsManager {
             if (targetStrategy) {
                 await uiManager.updateStrategyParams(config.strategyKey);
                 paramManager.setValues(targetStrategy, config.strategyParams);
+                this.trackConfiguration(config);
             }
 
             debugLogger.event('settings.config.applied', { name: config.name, strategy: config.strategyKey });
@@ -421,6 +466,10 @@ class SettingsManager {
                 },
             });
             if (saved) {
+                if (this.activeConfiguration?.config.name === name) {
+                    this.activeConfiguration = null;
+                    this.notifyFeedback();
+                }
                 debugLogger.event('settings.config.deleted', { name });
                 return true;
             }
@@ -446,7 +495,7 @@ class SettingsManager {
         const { settingsTab } = this.getDom();
         this.autoSaveListenersAttached = true;
         const shouldAutoSave = (event: Event): boolean => {
-            return !(event.target instanceof HTMLElement && event.target.closest('#strategyParams'));
+            return event.target instanceof HTMLElement && Boolean(event.target.closest('#strategyWorkspaceSections'));
         };
         settingsTab.addEventListener('change', (event) => {
             if (shouldAutoSave(event)) this.saveSettingsDebounced();

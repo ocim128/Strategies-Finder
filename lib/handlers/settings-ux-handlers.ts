@@ -8,6 +8,7 @@
 import { debugLogger } from '../debug-logger';
 import { bindFormAccessibility } from '../form-accessibility';
 import { createSettingsWorkspaceDom } from '../ui-manager-dom';
+import { initSettingsWorkspace } from './settings-workspace';
 import {
     STRATEGY_PANEL_SETTINGS_SECTIONS,
     type SettingsPresetMode,
@@ -196,4 +197,5 @@ export function initSettingsUX(): void {
     initAccordion();
     initPresets();
     bindFormAccessibility(document);
+    initSettingsWorkspace(createSettingsWorkspaceDom());
 }

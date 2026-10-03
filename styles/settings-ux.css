@@ -2,7 +2,7 @@
    Settings UX Enhancements
    - Strategy workspace (flattened, no outer accordion)
    - Collapsible accordion sections
-   - Info-icon tooltips (replacing inline .param-hint)
+   - Live section summaries, search, configuration and autosave feedback
    - Preset mode selector (Simple / Standard)
    ============================================================================ */
 
@@ -10,11 +10,143 @@
    1. Strategy Workspace
    -------------------------------------------------------------------------- */
 
+#settingsTab {
+    container-type: inline-size;
+    container-name: settings;
+}
+
 .strategy-workspace {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-3);
     container-type: inline-size;
+}
+
+.strategy-workspace-header,
+.strategy-workspace-sections,
+#strategyWorkspaceBody {
+    min-width: 0;
+}
+
+.settings-toolbar {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.settings-toolbar-top,
+.settings-config-feedback {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+}
+
+.settings-search-label {
+    font-weight: var(--font-weight-semibold);
+}
+
+.settings-save-status[data-state="saved"] {
+    color: var(--green);
+}
+
+.settings-save-status[data-state="error"] {
+    color: var(--red);
+}
+
+#settingsConfigStatus {
+    overflow-wrap: anywhere;
+}
+
+#settingsConfigStatus[data-state="modified"] {
+    color: var(--warning);
+}
+
+.settings-quick-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-1);
+}
+
+.settings-search-results {
+    max-height: 240px;
+    overflow-y: auto;
+    border: 1px solid var(--card-border);
+    border-radius: var(--radius-m);
+    background: var(--card-bg);
+    padding: var(--space-2);
+}
+
+.settings-search-count {
+    font-size: var(--font-size-xs);
+    color: var(--text-tertiary);
+    padding-bottom: var(--space-1);
+}
+
+.settings-search-result {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: var(--space-2);
+    min-height: 36px;
+    border: 0;
+    border-radius: var(--radius-s);
+    background: transparent;
+    color: var(--text-primary);
+    font: inherit;
+    font-size: var(--font-size-sm);
+    cursor: pointer;
+}
+
+.settings-search-result:hover,
+.settings-search-result:focus-visible {
+    background: var(--field-bg-hover);
+}
+
+#settingsTab .section-heading-group {
+    display: grid;
+    grid-template-columns: 12px minmax(0, 1fr);
+    gap: 4px var(--space-2);
+}
+
+#settingsTab .section-chevron {
+    margin-right: 0;
+    min-width: 12px;
+}
+
+#settingsTab .section-chevron svg {
+    flex-shrink: 0;
+}
+
+.settings-section-summary {
+    grid-column: 2;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-normal);
+    color: var(--text-tertiary);
+    overflow-wrap: anywhere;
+}
+
+.settings-search-match {
+    outline: 2px solid var(--accent-color);
+    outline-offset: 4px;
+    border-radius: var(--radius-s);
+}
+
+#settingsTab .settings-section,
+#settingsTab .param-group {
+    scroll-margin-block: var(--space-3);
+}
+
+@container settings (min-width: 960px) {
+    .strategy-workspace {
+        grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+        align-items: start;
+        gap: var(--space-4);
+    }
 }
 
 .strategy-workspace-header {
@@ -441,8 +573,7 @@
     }
 }
 
-/* Saved Configurations is a compact secondary surface beneath the strategy
-   card, never a sibling column that competes with the strategy selector. */
+/* Saved configurations stays beneath the strategy card in the left column. */
 @container (min-width: 560px) {
     .strategy-workspace-card {
         gap: var(--space-3);

@@ -1,4 +1,5 @@
 import { RANKING_MEASUREMENT_SEMANTICS } from "../batch-backtest/open-score-replay/types";
+import { appendFinderResultsTable } from "./finder-results-table";
 import { getFinderArmRankingMetric, getFinderCausalAvailabilityDetails } from "./finder-arm-performance-metrics";
 import { getRequiredElement, setVisible } from "../dom-utils";
 import { escapeHtml } from "../html-escape";
@@ -36,6 +37,13 @@ export function getFinderDisplayResult(item: FinderResult): BacktestResult {
 }
 
 export class FinderUI {
+    private resultsView: "cards" | "table" = "cards";
+
+    public setResultsView(view: "cards" | "table"): void {
+        this.resultsView = view;
+        this.getListElement().closest(".finder-results")?.classList.toggle("finder-results--table", view === "table");
+    }
+
     private listElement: HTMLElement | null = null;
     private copyButton: HTMLButtonElement | null = null;
     private progressContainer: HTMLElement | null = null;
@@ -163,7 +171,8 @@ export class FinderUI {
                 metrics,
             }));
         });
-        list.appendChild(fragment);
+        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "current_chart");
+        else list.appendChild(fragment);
     }
 
     public renderUniverseResults(results: FinderUniverseCandidate[]): void {
@@ -318,7 +327,8 @@ export class FinderUI {
                 detailLines: this.formatUniverseExitStrategyDetail(item),
             }));
         });
-        list.appendChild(fragment);
+        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "symbol_universe");
+        else list.appendChild(fragment);
     }
 
     public renderAssetOpportunityResults(results: FinderAssetOpportunityResult[]): void {
@@ -546,7 +556,8 @@ export class FinderUI {
                 details,
             }));
         });
-        list.appendChild(fragment);
+        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "asset_opportunity");
+        else list.appendChild(fragment);
     }
 
     public renderStrategyQualityResults(results: FinderStrategyQualityResult[]): void {
@@ -647,7 +658,8 @@ export class FinderUI {
                 showApply: false,
             }));
         });
-        list.appendChild(fragment);
+        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "strategy_quality");
+        else list.appendChild(fragment);
     }
 
     public renderArmPerformanceResults(
@@ -861,7 +873,8 @@ export class FinderUI {
                 metrics,
             }));
         });
-        list.appendChild(fragment);
+        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "arm_performance");
+        else list.appendChild(fragment);
     }
 
     /**

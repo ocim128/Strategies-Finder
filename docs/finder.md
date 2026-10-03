@@ -44,6 +44,34 @@ defaults and normalization.
 
 ## Shared controls
 
+### Workspace layout and result views
+
+Run Finder, Stop, progress, and status share a sticky execution bar within the
+strategy panel's scroll area. At panel widths of at least 1,040px, configuration
+and results appear side by side; narrower panels stack them. Layout follows
+the actual panel width, including when the chart is visible or the panel is resized.
+
+Risk management, exit strategy override, trade-count filters, and universe
+filters use collapsed disclosures. Their summaries show the selected options
+and bounds and update after edits and Reset Settings. Collapsing a section
+does not disable its settings or change the saved settings contract.
+
+Cards/Table selects how the current result inventory is displayed. Table
+columns follow the scope: chart performance, universe aggregates, fresh-entry
+support, baseline quality, or the selected arm's return/P&L/ranking measurement.
+Tables reuse the formatted card metrics, preserving unavailable values and
+contributor-exclusion basis. Parameters, all remaining metrics, and existing
+lazy symbol/measurement breakdowns are available under Parameters & details.
+OOS verdict badges and incomplete replay status remain visible in the table.
+
+Apply uses the same candidate index and guards in both views; quality audits
+remain read only, and cached-preview Apply restrictions remain in place.
+Re-Sort continues to rank the retained inventory before Top Results limits
+the rendered rows. Table mode does not add a second sorting path or start a
+run. On narrow screens only the table's region scrolls horizontally. View
+and disclosure choices last for the mounted Finder session and are not saved;
+search settings retain their existing persistence behavior.
+
 ### Search controls
 
 | Control | Meaning |

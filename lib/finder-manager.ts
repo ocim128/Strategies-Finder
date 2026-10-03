@@ -10,6 +10,7 @@ import { formatCapturedConfiguration } from "./finder/finder-config-capture";
 import type { FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
+import { refreshFinderSettingsSummaries } from "./finder/browser/finder-workspace";
 import {
 	ASSET_OPPORTUNITY_ALL_SORTS,
 	deduplicateAssetOpportunityResultsBySymbol,
@@ -192,7 +193,18 @@ export class FinderManager {
 
 		dom.resetFinderSettings.addEventListener('click', () => {
 			this.controls.resetFinderSettings();
+			refreshFinderSettingsSummaries(dom);
 		});
+		for (const [button, view] of [[dom.finderViewCards, "cards"], [dom.finderViewTable, "table"]] as const) {
+			button.addEventListener("click", () => {
+				this.ui.setResultsView(view);
+				dom.finderViewCards.setAttribute("aria-pressed", String(view === "cards"));
+				dom.finderViewTable.setAttribute("aria-pressed", String(view === "table"));
+				this.renderLatestResults();
+			});
+		}
+		dom.finderConfiguration.addEventListener("input", () => refreshFinderSettingsSummaries(dom));
+		dom.finderConfiguration.addEventListener("change", () => refreshFinderSettingsSummaries(dom));
 
 		const copyTopButton = dom.finderCopyTopResults;
 		copyTopButton.disabled = true;
@@ -266,6 +278,7 @@ export class FinderManager {
 			element.addEventListener("change", () => this.applyArmPerformanceDisplaySettings());
 		}
 		this.controls.applyScopeUi();
+		refreshFinderSettingsSummaries(dom);
 		this.loadPersistedLatestResults();
 		this.populateResortOptions();
 		if (this.resultStore.latestResults.scope === "arm_performance") {

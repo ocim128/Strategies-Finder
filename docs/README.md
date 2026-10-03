@@ -9,6 +9,8 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Core Guides
 
+- [settings.md](settings.md) - Settings layout, search, live summaries, autosave feedback, and named configuration restore.
+
 - [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, and prepared execution.
 - [backtest-endpoint.md](backtest-endpoint.md) - local HTTP endpoint request/response contract.
 - [backtest-engines-typescript-rust.md](backtest-engines-typescript-rust.md) - TypeScript/Rust engine split, engine-selection fences, capability handshake, and wire contracts.

@@ -2,6 +2,13 @@ import { getRequiredElement } from "./dom-utils";
 
 export const SETTINGS_WORKSPACE_REQUIRED_IDS = [
     "settingsTab",
+    "settingsToolbar",
+    "settingsSearch",
+    "settingsSearchResults",
+    "settingsQuickNav",
+    "settingsSaveStatus",
+    "settingsConfigStatus",
+    "restoreSettingsConfigBtn",
     "strategyWorkspaceHeader",
     "strategyWorkspaceToggle",
     "strategyWorkspaceBody",
@@ -15,6 +22,13 @@ export const SETTINGS_WORKSPACE_REQUIRED_IDS = [
 export function createSettingsWorkspaceDom() {
     return {
         settingsTab: getRequiredElement("settingsTab"),
+        settingsToolbar: getRequiredElement("settingsToolbar"),
+        settingsSearch: getRequiredElement<HTMLInputElement>("settingsSearch"),
+        settingsSearchResults: getRequiredElement("settingsSearchResults"),
+        settingsQuickNav: getRequiredElement("settingsQuickNav"),
+        settingsSaveStatus: getRequiredElement("settingsSaveStatus"),
+        settingsConfigStatus: getRequiredElement("settingsConfigStatus"),
+        restoreSettingsConfigBtn: getRequiredElement<HTMLButtonElement>("restoreSettingsConfigBtn"),
         strategyWorkspaceHeader: getRequiredElement("strategyWorkspaceHeader"),
         strategyWorkspaceToggle: getRequiredElement("strategyWorkspaceToggle"),
         strategyWorkspaceBody: getRequiredElement("strategyWorkspaceBody"),

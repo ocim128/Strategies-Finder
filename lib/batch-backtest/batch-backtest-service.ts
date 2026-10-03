@@ -34,6 +34,7 @@ import {
     type BatchResultsView,
 } from "./browser/batch-results-view";
 import { LATEST_ARM_SELECTOR_ID } from "./browser/top-mean-results-view";
+import { handleAssetSwitchResultsClick } from "./browser/asset-switch-results-view";
 
 export { formatTopMeanCompletionMessage } from "./browser/top-mean-results-view";
 
@@ -281,6 +282,9 @@ export class BatchBacktestService {
         this.listen(dom.batchBacktestSp500TopMeanDetailsSelector, "change", () => this.topMean.refreshTopMeanDetails());
         this.listen(dom.batchBacktestSp500TopMeanDetailsYear, "change", () => this.topMean.refreshTopMeanDetails());
         this.listen(dom.batchBacktestSp500TopMeanTieBreak, "change", () => this.topMean.refreshTopMeanDisplay(dom));
+        this.listen(dom.batchBacktestSp500TopMeanResults, "click", (event) => {
+            handleAssetSwitchResultsClick(dom.batchBacktestSp500TopMeanResults, event);
+        });
         // Delegate changes from the generated arm picker. Display updates keep
         // the picker mounted, and a new result replaces the card.
         this.listen(dom.batchBacktestSp500TopMeanResults, "change", (event) => {

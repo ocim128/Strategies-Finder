@@ -146,6 +146,86 @@ const verifyLayout = async (page: Page): Promise<string[]> => {
     });
 };
 
+const verifySettingsWorkspace = async (page: Page): Promise<void> => {
+    await page.click('.panel-tab[data-tab="settings"]');
+    await page.waitForSelector('#settingsSearch', { visible: true });
+    await page.evaluate(() => {
+        const header = document.getElementById('strategyWorkspaceHeader')!;
+        const sections = document.getElementById('strategyWorkspaceSections')!;
+        if (sections.getBoundingClientRect().left < header.getBoundingClientRect().right) throw new Error('Wide Settings panel did not split into columns');
+        if (document.querySelectorAll('#strategyWorkspaceSections > .settings-section').length !== 6) throw new Error('Settings sections escaped their container');
+        if (!document.getElementById('settingsConfigStatus')!.textContent!.includes('TestConfig · Matches saved setup')) throw new Error('Saved configuration was not tracked');
+        (document.querySelector('[data-preset="simple"]') as HTMLButtonElement).click();
+    });
+    await page.type('#settingsSearch', 'slippage');
+    await page.evaluate(() => {
+        if (document.querySelector('#settingsSearchResults button')!.textContent!.includes('inactive')) throw new Error('A collapsed control was marked inactive');
+    });
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.activeElement?.id === 'slippageBps');
+    await page.evaluate(() => {
+        if (document.getElementById('settingsTab')!.dataset.preset !== 'standard') throw new Error('Search did not reveal a Standard section');
+        const header = document.querySelector('[data-target="realismBody"]')!;
+        if (header.getAttribute('aria-expanded') !== 'true') throw new Error('Search did not open the execution accordion');
+        (document.getElementById('slippageBps') as HTMLInputElement).value = '17';
+        document.getElementById('slippageBps')!.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.getElementById('settingsSaveStatus')!.dataset.state === 'pending');
+    await page.waitForFunction(() => document.getElementById('settingsSaveStatus')!.dataset.state === 'saved');
+    await page.evaluate(() => {
+        if (!document.querySelector('[data-settings-summary="realism"]')!.textContent!.includes('17 bps')) throw new Error('Live section summary missed slippage edit');
+        if (!document.getElementById('settingsConfigStatus')!.textContent!.includes('Modified')) throw new Error('Configuration drift was not shown');
+        const saved = JSON.parse(localStorage.getItem('playground_strategy_configs')!).data.find((config: any) => config.name === 'TestConfig');
+        if (saved.backtestSettings.slippageBps === 17) throw new Error('Autosave overwrote the named configuration');
+        (document.getElementById('slippageBps') as HTMLInputElement).value = String(saved.backtestSettings.slippageBps);
+        document.getElementById('slippageBps')!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.getElementById('settingsConfigStatus')!.textContent!.includes('Matches saved setup'));
+    await page.evaluate(() => {
+        const input = document.querySelector<HTMLInputElement>('#strategyParams input[type="number"]')!;
+        input.value = String(Number(input.value) + 1);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+        (document.getElementById('configSelect') as HTMLSelectElement).value = '';
+    });
+    await page.waitForFunction(() => !((document.getElementById('restoreSettingsConfigBtn') as HTMLButtonElement).disabled));
+    await page.click('#restoreSettingsConfigBtn');
+    await page.waitForFunction(() => document.getElementById('settingsConfigStatus')!.textContent!.includes('Matches saved setup'));
+    await page.waitForFunction(() => document.getElementById('settingsSaveStatus')!.dataset.state === 'saved');
+    await page.evaluate(() => {
+        const manager = (window as any).__settingsManager;
+        const saved = manager.loadStrategyConfig('TestConfig');
+        for (const [key, value] of Object.entries(saved.strategyParams)) {
+            const control = document.getElementById(`param_${key}`) as HTMLInputElement;
+            if (Number(control.value) !== value) throw new Error(`Restore missed strategy parameter ${key}`);
+        }
+        if (manager.getBacktestSettings().slippageBps !== saved.backtestSettings.slippageBps) throw new Error('Restore missed execution settings');
+        (document.getElementById('riskSettingsToggle') as HTMLInputElement).checked = false;
+        document.getElementById('riskSettingsToggle')!.dispatchEvent(new Event('change', { bubbles: true }));
+        const search = document.getElementById('settingsSearch') as HTMLInputElement;
+        search.value = 'ATR Period'; search.dispatchEvent(new Event('input', { bubbles: true }));
+        document.querySelector<HTMLButtonElement>('#settingsSearchResults button')!.click();
+        if ((document.getElementById('riskSettingsToggle') as HTMLInputElement).checked) throw new Error('Searching enabled a risk feature');
+        if (document.activeElement !== document.querySelector('[data-target="riskSectionBody"]')) throw new Error('Inactive result did not focus its section');
+        search.value = ''; search.dispatchEvent(new Event('input', { bubbles: true }));
+        const panel = document.querySelector<HTMLElement>('.panel-content')!;
+        panel.scrollTop = 0;
+    });
+    await page.waitForFunction(() => document.getElementById('settingsSaveStatus')!.dataset.state === 'saved');
+    await page.screenshot({ path: 'artifacts/settings-workspace-desktop.png', fullPage: true });
+    await page.setViewport({ width: 390, height: 844 });
+    await page.evaluate(() => {
+        const workspace = document.querySelector<HTMLElement>('#settingsTab .strategy-workspace')!;
+        const panel = document.querySelector<HTMLElement>('.panel-content')!;
+        if (getComputedStyle(workspace).gridTemplateColumns.split(' ').length !== 1) throw new Error('Narrow Settings panel did not stack');
+        if (panel.scrollWidth > panel.clientWidth) throw new Error('Narrow Settings panel overflowed horizontally');
+        (document.querySelector('#settingsQuickNav button[aria-controls="directionBody"]') as HTMLButtonElement).click();
+        if (document.querySelector('[data-target="directionBody"]')!.getAttribute('aria-expanded') !== 'true') throw new Error('Quick navigation did not open Direction');
+    });
+    await page.setViewport({ width: 1440, height: 1000 });
+    await page.evaluate(() => { document.querySelector<HTMLElement>('.panel-content')!.scrollTop = 0; });
+    console.log('Settings layout, search, autosave feedback, configuration drift and restore passed.');
+};
+
 const verifyRankingCards = async (page: Page): Promise<void> => {
     let replayRequests = 0;
     const observe = (request: { url(): string }) => {
@@ -282,6 +362,117 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
     }
 };
 
+const verifyFinderWorkspace = async (page: Page): Promise<void> => {
+    await page.evaluate(async () => {
+        const managerPath = '/lib/finder-manager.ts';
+        const { finderManager: manager } = await import(managerPath);
+        const tableButton = document.getElementById('finderViewTable') as HTMLButtonElement;
+        tableButton.focus(); tableButton.click();
+        if (document.activeElement !== tableButton || tableButton.getAttribute('aria-pressed') !== 'true') throw new Error('Finder view lost focus or active state');
+        if (!document.querySelector('.finder-comparison-table') || document.querySelector('#finderList .finder-row')) throw new Error('Finder table view did not replace cards');
+        const rankingSort = document.getElementById('finderArmPerformanceRankingSort') as HTMLSelectElement;
+        rankingSort.value = 'overall_ordering'; rankingSort.dispatchEvent(new Event('change', { bubbles: true }));
+        if (manager.getLatestCandidate().candidateOrdinal !== 0) throw new Error('Table ranking did not restore overall ordering');
+        rankingSort.value = 'selected_asset'; rankingSort.dispatchEvent(new Event('change', { bubbles: true }));
+        if (manager.getLatestCandidate().candidateOrdinal !== 1 || manager.resultStore.armPerformanceRunResults.length !== 2) throw new Error('Table ranking truncated the source inventory');
+        if (!document.querySelector('.finder-comparison-table tbody')!.textContent!.includes('Ranking fixture 1')) throw new Error('Table did not follow Re-Sort');
+        const apply = document.querySelector<HTMLButtonElement>('.finder-comparison-table .finder-apply')!;
+        if (apply.disabled || apply.dataset.index !== '0') throw new Error('Table Apply index/availability drifted');
+        const originalApply = manager.resultActions.applyArmPerformanceCandidate;
+        const originalGuard = manager.resultActions.runFinderApply;
+        let applied: any;
+        try {
+            manager.resultActions.runFinderApply = (action: () => Promise<void>) => action();
+            manager.resultActions.applyArmPerformanceCandidate = async (candidate: any) => { applied = candidate; };
+            apply.click();
+            if (applied?.candidateOrdinal !== 1) throw new Error('Table Apply selected the wrong candidate');
+        } finally {
+            manager.resultActions.applyArmPerformanceCandidate = originalApply;
+            manager.resultActions.runFinderApply = originalGuard;
+        }
+        const risk = document.getElementById('finderFreezeRiskManagementToggle') as HTMLInputElement;
+        const riskDetails = risk.closest('details')!;
+        if (riskDetails.open) throw new Error('Advanced settings should start collapsed');
+        riskDetails.open = true;
+        const previous = risk.checked;
+        risk.checked = true; risk.dispatchEvent(new Event('change', { bubbles: true }));
+        riskDetails.open = false;
+        if (!riskDetails.querySelector('summary')!.textContent!.includes('Risk settings fixed')) throw new Error('Collapsed summary missed an enabled option');
+        risk.checked = previous; risk.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    const wide = await page.evaluate(() => {
+        const config = document.getElementById('finderConfiguration')!.getBoundingClientRect();
+        const results = document.getElementById('finderResultsPanel')!.getBoundingClientRect();
+        return results.left >= config.right;
+    });
+    if (!wide) throw new Error('Wide Finder panel did not split configuration and results');
+    await page.screenshot({ path: 'artifacts/finder-workspace-desktop.png', fullPage: true });
+    const sticky = await page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>('.panel-content')!;
+        panel.scrollTop = 500;
+        const panelRect = panel.getBoundingClientRect();
+        const bar = document.getElementById('finderExecutionBar')!.getBoundingClientRect();
+        return bar.top >= panelRect.top - 2 && bar.top < panelRect.top + 24;
+    });
+    if (!sticky) throw new Error('Finder execution bar did not remain visible while scrolling');
+    await page.setViewport({ width: 390, height: 844 });
+    const narrow = await page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>('.panel-content')!;
+        panel.scrollTop = 0;
+        return {
+            columns: getComputedStyle(document.getElementById('finderWorkspace')!).gridTemplateColumns.split(' ').length,
+            overflow: panel.scrollWidth > panel.clientWidth,
+            tableScrollable: document.querySelector('.finder-comparison-wrap')!.scrollWidth > document.querySelector('.finder-comparison-wrap')!.clientWidth,
+        };
+    });
+    if (narrow.columns !== 1 || narrow.overflow || !narrow.tableScrollable) throw new Error('Narrow Finder layout failed: ' + JSON.stringify(narrow));
+    await page.screenshot({ path: 'artifacts/finder-workspace-mobile.png', fullPage: true });
+    await page.setViewport({ width: 1440, height: 1000 });
+    await page.evaluate(async () => {
+        const uiPath = '/lib/finder/finder-ui.ts';
+        const statsPath = '/lib/strategies/backtest/position-stats.ts';
+        const universePath = '/lib/finder/finder-universe-metrics.ts';
+        const { FinderUI } = await import(uiPath);
+        const { createEmptyBacktestResult } = await import(statsPath);
+        const { buildFinderUniverseCandidate } = await import(universePath);
+        const ui = new FinderUI(); ui.setResultsView('table');
+        const result = { ...createEmptyBacktestResult(), netProfit: 123, profitFactor: 2, expectancy: 4, totalTrades: 50, sharpeRatio: 1 };
+        const checker = { check(metric: string, readOnly = false) {
+            const row = document.querySelector('.finder-comparison-table tbody tr')!;
+            if (!row || !row.textContent!.includes(metric)) throw new Error('Scope table lost metric: ' + metric);
+            if (Boolean(row.querySelector('.finder-apply')) === readOnly) throw new Error('Scope table Apply contract failed');
+            if (!row.querySelector('details.finder-table-details')) throw new Error('Scope table lost details');
+        } };
+        ui.renderResults([{ key: 'fixture', name: 'Current Chart fixture', params: { period: 12 }, result, selectionResult: result,
+            oosResult: result, oosVerdict: 'pass' }]);
+        checker.check('$123');
+        if (!document.querySelector('.finder-comparison-table th[scope="row"] > .finder-oos-pass')) throw new Error('Table hid the OOS verdict');
+        const candidate = buildFinderUniverseCandidate({ strategyKey: 'fixture', strategyName: 'Universe fixture', params: {},
+            symbols: [{ symbol: 'AAA', status: 'profitable', barCount: 100, result }] });
+        ui.renderUniverseResults([candidate]); checker.check('4.00');
+        const symbolDetails = document.querySelector<HTMLDetailsElement>('.finder-table-details .finder-main > details')!;
+        if (symbolDetails.querySelector('.finder-symbol-row')) throw new Error('Table eagerly populated symbol details');
+        symbolDetails.open = true;
+        await new Promise(resolve => setTimeout(resolve, 0));
+        if (!symbolDetails.querySelector('.finder-symbol-row')) throw new Error('Table lost lazy breakdown listeners');
+        ui.renderAssetOpportunityResults([{ symbol: 'AAA', strategyKey: 'fixture', strategyName: 'Asset fixture', params: {},
+            historicalRank: 1, totalCandidatesEvaluated: 5, freshStatus: 'fresh', direction: 'long', latestSignalTime: null,
+            signalAgeBars: 0, fillTiming: 'signal_close', selectionResult: result, grade: 'select',
+            support: { freshSameDirection: 2, poolSize: 3, directionAgreementRatio: 2 / 3 } }]);
+        checker.check('2/3');
+        ui.renderStrategyQualityResults([{ strategyKey: 'fixture', strategyName: 'Audit fixture', params: {}, symbols: [],
+            requestedSymbols: 1, loadedSymbols: 1, failedSymbols: 0, activeSymbols: 1, profitableSymbols: 1,
+            losingSymbols: 0, noTradeSymbols: 0, totalTrades: 50, totalNetProfit: 123, averageExpectancy: 4,
+            medianExpectancy: 4, averageProfitFactor: 2, profitFactor: 2, averageSharpe: 1, sharpeAvailableSymbols: 1,
+            weightedWinRate: 50, worstMaxDrawdownPercent: 2 }]);
+        checker.check('$123', true);
+        document.getElementById('finderViewCards')!.click();
+        if (document.querySelector('.finder-comparison-table')) throw new Error('Finder cards did not restore');
+        document.querySelector<HTMLElement>('.panel-content')!.scrollTop = 0;
+    });
+    console.log('Finder split layout, sticky execution, all scope tables, Apply and collapsed summaries passed.');
+};
+
 const verifyBatchCausalArms = async (page: Page): Promise<void> => {
     await page.click('.panel-tab[data-tab="batchbacktest"]');
     await page.waitForSelector('#batchBacktestSp500TopMeanDetailsSelector', { visible: true });
@@ -318,9 +509,18 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
                     entryTimeSec: 1_700_000_060, entryPrice: 100, exitTimeSec: 1_700_000_360, exitPrice: 101, holdingDurationSec: 300,
                     netPnl: 10, entryCost: 0, exitCost: 0, status: 'closed' }));
                 summary.assetSwitch.tradeCount = 5;
+                for (const [field, value] of [['topRaw', 10], ['topMean', 2], ['topZ', 100]] as const) {
+                    Object.assign(summary.assetSwitch.arms[field], { status: 'complete', totalNetPnl: value,
+                        realizedNetPnl: value, openPositionNetPnl: value, completedTrades: value, enteredCount: value, totalCosts: value });
+                }
+                summary.assetSwitch.arms.topRaw.totalNetPnl = -10;
+                summary.assetSwitch.arms.topRawProfit.totalNetPnl = 10_000;
             }
             summary.annualReports = mode === 'horizon' ? [{ year: 2023, sampleFromSec: 1_700_000_000, sampleToSec: 1_700_001_000,
-                horizons: [], warnings: [], reportLines: ['annual report retained during display changes'] }] : [];
+                horizons: [], warnings: [], reportLines: ['annual report retained during display changes'] }]
+                : [{ year: 2023, sampleFromSec: 1_700_000_000, sampleToSec: 1_700_001_000,
+                    assetSwitch: { ...summary.assetSwitch, windowStartSec: 1_700_000_000, windowEndSec: 1_700_001_000 },
+                    horizons: [], warnings: [], reportLines: [] }];
             service.latestTopMeanResult = summary;
             service.renderTopMeanResults(service.dom, summary);
             service.topMean.syncTopMeanOpenScoreDetailsControl(service.dom, summary);
@@ -346,6 +546,40 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
                     const text = document.getElementById('batchBacktestSp500TopMeanResults')!.textContent!;
                     if (!text.includes(field) || !text.includes('Arm score: -0.25') || text.includes('Rerun required')) throw new Error('Missing calculated Batch latest pick ' + arm);
                 }
+            }
+            if (mode === 'asset_switch') {
+                const results = document.getElementById('batchBacktestSp500TopMeanResults')!;
+                const report = results.querySelector<HTMLElement>('[data-batch-replay-report]')!;
+                const annual = results.querySelector<HTMLDetailsElement>('.batch-report-details')!;
+                annual.open = true;
+                const details = document.getElementById('batchBacktestSp500TopMeanDetails')!;
+                const detailsBefore = details.innerHTML;
+                const tableButton = report.querySelector<HTMLButtonElement>('[data-batch-replay-view="table"]')!;
+                tableButton.focus(); tableButton.click();
+                if (document.activeElement !== tableButton || tableButton.getAttribute('aria-pressed') !== 'true') throw new Error('Replay view lost focus or active state');
+                if (!report.querySelector<HTMLElement>('[data-batch-replay-panel="cards"]')!.hidden || report.querySelector<HTMLElement>('[data-batch-replay-panel="table"]')!.hidden) throw new Error('Replay view did not switch');
+                const table = report.querySelector<HTMLTableElement>('.batch-replay-table')!;
+                if ([...table.tBodies[0].rows].some(row => row.textContent!.includes('LOOK-AHEAD RESEARCH'))) throw new Error('Look-ahead arms mixed into selector table');
+                for (const key of ['totalNetPnl', 'realizedNetPnl', 'openPositionNetPnl', 'completedTrades', 'enteredCount', 'totalCosts']) {
+                    const sortButton = table.querySelector<HTMLButtonElement>(`[data-batch-replay-sort="${key}"]`)!;
+                    sortButton.focus(); sortButton.click();
+                    if (!table.tBodies[0].rows[0].textContent!.includes('topZ')) throw new Error('Replay table did not sort numerically: ' + key);
+                    if (document.activeElement !== sortButton || sortButton.closest('th')!.getAttribute('aria-sort') !== 'descending') throw new Error('Replay sort lost focus or accessible direction');
+                    sortButton.click();
+                    if (sortButton.closest('th')!.getAttribute('aria-sort') !== 'ascending') throw new Error('Replay sort did not reverse');
+                    if (key === 'totalNetPnl' && !table.tBodies[0].rows[0].textContent!.includes('topRaw')) throw new Error('Replay loss sorted incorrectly');
+                    if (key.includes('Pnl')) {
+                        const last = table.tBodies[0].rows[table.tBodies[0].rows.length - 1];
+                        if (last.querySelector<HTMLElement>(`[data-batch-replay-metric="${key}"]`)!.dataset.value !== '') throw new Error('Unavailable replay values must stay last');
+                    }
+                }
+                const annualReport = annual.querySelector<HTMLElement>('[data-batch-replay-report]')!;
+                if (annualReport.querySelector<HTMLElement>('[data-batch-replay-panel="cards"]')!.hidden) throw new Error('Full-window view changed annual view');
+                annualReport.querySelector<HTMLButtonElement>('[data-batch-replay-view="table"]')!.click();
+                annualReport.querySelector<HTMLButtonElement>('[data-batch-replay-sort="totalNetPnl"]')!.click();
+                if (!annual.isConnected || !annual.open || details.hidden || details.innerHTML !== detailsBefore) throw new Error('Replay controls reset annual disclosure or details');
+                report.querySelector<HTMLButtonElement>('[data-batch-replay-view="cards"]')!.click();
+                if (report.querySelector<HTMLElement>('[data-batch-replay-panel="cards"]')!.hidden || !report.querySelector<HTMLElement>('[data-batch-replay-panel="table"]')!.hidden) throw new Error('Replay cards did not restore');
             }
             persistLatestTopMeanResult(summary);
             const recovered = readLatestTopMeanResult();
@@ -675,7 +909,9 @@ async function runTest() {
             );
             console.log('Configuration saved successfully.');
 
+            await verifySettingsWorkspace(page);
             await verifyRankingCards(page);
+            await verifyFinderWorkspace(page);
             await verifyBatchCausalArms(page);
 
             console.log('Performing layout verification...');

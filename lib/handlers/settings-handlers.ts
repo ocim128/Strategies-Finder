@@ -159,6 +159,23 @@ export async function applySavedStrategyConfig(name: string): Promise<boolean> {
 
 export function setupSettingsHandlers() {
     const dom = createSettingsHandlersDom();
+    dom.restoreSettingsConfigBtn?.addEventListener('click', async () => {
+        const config = settingsManager.getActiveConfiguration();
+        if (!config || !dom.restoreSettingsConfigBtn) return;
+        const button = dom.restoreSettingsConfigBtn;
+        button.dataset.restoring = 'true';
+        button.disabled = true;
+        try {
+            await applyUserStrategyConfig(config);
+            uiManager.showToast(`Configuration "${config.name}" restored`, 'success');
+        } catch (error) {
+            debugLogger.error('ui.config.restore_failed', { name: config.name, error: String(error) });
+            uiManager.showToast(`Failed to restore configuration "${config.name}"`, 'error');
+        } finally {
+            delete button.dataset.restoring;
+            button.disabled = !settingsManager.getWorkspaceFeedback().modified;
+        }
+    });
     // Reset to Default button
     const resetBtn = dom.resetSettingsBtn;
     if (resetBtn) {
