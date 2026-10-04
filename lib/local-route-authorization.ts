@@ -10,9 +10,7 @@
  * plugins all gate their mutation routes through this leaf. Audit Finding 2
  * factored the policy out of the per-plugin copies so every route gets the
  * same loopback/bearer check without drift. The strategy-library admin plugin
- * (`isAllowedStrategyAdminCaller`) still implements its own inline copy; its
- * call sites are stable and a follow-up can migrate it if the duplication
- * becomes a maintenance burden.
+ * (`isAllowedStrategyAdminCaller`) delegates to the same gate.
  *
  * Policy:
  *   1. A same-origin browser caller (Origin/Referer on a loopback host) is

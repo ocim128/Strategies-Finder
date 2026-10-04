@@ -54,7 +54,7 @@ import {
     isIbkrSymbol,
     stripIbkrMarker,
 } from "../local-daily-datasets";
-import { fetchLocalApi } from "../local-api-transport";
+import { fetchLocalApiWithBody } from "../local-api-transport";
 import { getCryptoCsvMtimeMs } from "./server-crypto-csv-loader";
 import type { SyntheticPairDiskCacheArgs } from "./batch-dataset-loader-core";
 
@@ -259,7 +259,7 @@ async function binanceBackedSegment(symbol: string, sourceInterval: string): Pro
 }
 
 /**
- * Test seam: replace the series_meta fetcher. Production uses `fetchLocalApi`
+ * Test seam: replace the series_meta fetcher. Production uses `fetchLocalApiWithBody`
  * via `loadSeriesMeta`; tests inject a stub that returns a canned response
  * without needing the dev server running. Set to `null` to restore default.
  */
@@ -282,15 +282,16 @@ async function loadSeriesMeta(symbol: string, interval: string): Promise<SeriesM
     }
     const query = new URLSearchParams({ symbol, interval });
     try {
-        const response = await fetchLocalApi(
+        return await fetchLocalApiWithBody(
             `/api/sqlite/series-meta?${query.toString()}`,
             { method: "GET" },
             SERIES_META_TIMEOUT_MS,
+            async response => {
+                if (!response.ok) return null;
+                const payload = await response.json() as SeriesMetaResponse;
+                return payload?.ok ? payload : null;
+            },
         );
-        if (!response.ok) return null;
-        const payload = (await response.json()) as SeriesMetaResponse;
-        if (!payload?.ok) return null;
-        return payload;
     } catch {
         return null;
     }

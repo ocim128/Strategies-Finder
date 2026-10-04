@@ -22,7 +22,7 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
       - run: npm ci
-      - run: npm run verify
+      - run: npm run ci
       - name: Show failed spec logs
         if: failure()
         shell: bash
@@ -34,7 +34,9 @@ jobs:
             const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf8'));
             for (const result of summary.results.filter(result => result.status === 'FAIL')) {
               console.log(`::group::${result.file}`);
-              console.log(fs.readFileSync(result.logFile, 'utf8'));
+              if (result.logError) console.log(`Log unavailable or incomplete: ${result.logError}`);
+              if (fs.existsSync(result.logFile)) console.log(fs.readFileSync(result.logFile, 'utf8'));
+              else console.log('No log file available. See the runner output above.');
               console.log('::endgroup::');
             }
           }

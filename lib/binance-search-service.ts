@@ -5,7 +5,7 @@
 
 import type { BinanceMarketType } from "./binance-market";
 import { debugLogger } from "./debug-logger";
-import { fetchWithTimeoutAndRetry } from "./dataProviders/fetch-helpers";
+import { fetchAndConsumeWithTimeoutAndRetry } from "./dataProviders/fetch-helpers";
 
 export interface BinanceSymbol {
     symbol: string;          // e.g., "ETHUSDT"
@@ -78,9 +78,13 @@ class BinanceSearchService {
             // exchangeInfo request can't hold loadingPromise indefinitely
             // (every concurrent caller reuses it). 8s × 2 attempts recovers
             // from one transient 429/5xx without an unbounded hang.
-            const response = await fetchWithTimeoutAndRetry(
+            const data = await fetchAndConsumeWithTimeoutAndRetry(
                 this.EXCHANGE_INFO_URLS[marketType],
                 {},
+                async response => {
+                    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+                    return await response.json() as BinanceExchangeInfoResponse;
+                },
                 {
                     timeoutMs: 8_000,
                     maxAttempts: 2,
@@ -88,12 +92,6 @@ class BinanceSearchService {
                     baseDelayMs: 250,
                 },
             );
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-
-            const data: BinanceExchangeInfoResponse = await response.json();
-
             return data.symbols
                 .filter(s => s.status === 'TRADING')
                 .map(s => ({

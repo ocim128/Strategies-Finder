@@ -200,6 +200,10 @@ describe("Strategy library admin plugin", () => {
 // server — the route wiring above calls this exact function before any work.
 describe("isAllowedStrategyAdminCaller", () => {
     const ORIGINAL_TOKEN = process.env.LOCAL_PROXY_TOKEN;
+    const localCaller = (headers: Record<string, string>) => ({
+        socket: { remoteAddress: "127.0.0.1" },
+        headers: { host: "localhost:5173", ...headers },
+    });
 
     afterEach(() => {
         if (ORIGINAL_TOKEN === undefined) {
@@ -211,21 +215,38 @@ describe("isAllowedStrategyAdminCaller", () => {
 
     it("allows same-origin localhost and 127.0.0.1 Origin/Referer without a token", () => {
         delete process.env.LOCAL_PROXY_TOKEN;
-        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://localhost:5173" } })).to.equal(true);
-        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://127.0.0.1:5173" } })).to.equal(true);
-        expect(isAllowedStrategyAdminCaller({ headers: { referer: "http://localhost:5173/" } })).to.equal(true);
-        expect(isAllowedStrategyAdminCaller({ headers: { referer: "http://127.0.0.1:5173/" } })).to.equal(true);
+        expect(isAllowedStrategyAdminCaller(localCaller({ origin: "http://localhost:5173" }))).to.equal(true);
+        expect(isAllowedStrategyAdminCaller(localCaller({ origin: "http://127.0.0.1:5173" }))).to.equal(true);
+        expect(isAllowedStrategyAdminCaller(localCaller({ referer: "http://localhost:5173/" }))).to.equal(true);
+        expect(isAllowedStrategyAdminCaller(localCaller({ referer: "http://127.0.0.1:5173/" }))).to.equal(true);
     });
 
     it("allows bracketed IPv6 loopback origin (Finding 5 parity)", () => {
         delete process.env.LOCAL_PROXY_TOKEN;
-        expect(isAllowedStrategyAdminCaller({ headers: { origin: "http://[::1]:5173" } })).to.equal(true);
+        expect(isAllowedStrategyAdminCaller({ socket: { remoteAddress: "::1" }, headers: { host: "[::1]:5173", origin: "http://[::1]:5173" } })).to.equal(true);
     });
 
     it("rejects a cross-origin caller with no token (the CSRF vector)", () => {
         delete process.env.LOCAL_PROXY_TOKEN;
-        expect(isAllowedStrategyAdminCaller({ headers: { origin: "https://evil.test" } })).to.equal(false);
-        expect(isAllowedStrategyAdminCaller({ headers: { referer: "https://evil.test/csrf" } })).to.equal(false);
+        expect(isAllowedStrategyAdminCaller(localCaller({ origin: "https://evil.test" }))).to.equal(false);
+        expect(isAllowedStrategyAdminCaller(localCaller({ referer: "https://evil.test/csrf" }))).to.equal(false);
+    });
+
+    it("rejects forged loopback headers from a remote peer", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        for (const header of ["origin", "referer"]) {
+            expect(isAllowedStrategyAdminCaller({
+                socket: { remoteAddress: "192.0.2.1" },
+                headers: { host: "localhost:5173", [header]: "http://localhost:5173/" },
+            })).to.equal(false);
+        }
+        expect(isAllowedStrategyAdminCaller(localCaller({ host: "tunnel.example", origin: "http://localhost:5173" }))).to.equal(false);
+    });
+
+    it("allows internal loopback calls and rejects conflicting browser headers", () => {
+        delete process.env.LOCAL_PROXY_TOKEN;
+        expect(isAllowedStrategyAdminCaller(localCaller({}))).to.equal(true);
+        expect(isAllowedStrategyAdminCaller(localCaller({ origin: "https://evil.test", referer: "http://localhost:5173/" }))).to.equal(false);
     });
 
     it("rejects a request with no Origin/Referer when no token is configured", () => {

@@ -7,7 +7,7 @@ import {
     type StrategyModuleDefinition,
 } from "../scripts/strategy-manifest-generator";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
-import { isLoopbackHost } from "./local-api-transport";
+import { isAllowedLocalRequest, type AuthorizedRequest } from "./local-route-authorization";
 import { sendJson } from "./http-response-utils";
 import { readJsonBody, sendCaughtErrorJson } from "./vite-http-utils";
 
@@ -460,8 +460,8 @@ export function archiveAndDeleteBuiltInStrategy(
 
 /**
  * Loopback/same-origin gate for the destructive strategy-admin mutation
- * routes. A same-origin browser caller (Origin/Referer on a loopback host) is
- * trusted without a token; any other caller must present the shared
+ * routes. Tokenless callers must pass the shared socket, Host, and browser
+ * header checks; any other caller must present the shared
  * `LOCAL_PROXY_TOKEN` bearer (the same secret the Cloudflare Tunnel
  * candle-proxy workflow uses).
  *
@@ -469,36 +469,12 @@ export function archiveAndDeleteBuiltInStrategy(
  * request — a cross-origin `fetch(..., {mode:"no-cors"})` with a `text/plain`
  * body bypassed the CORS preflight and silently deleted repo source files.
  *
- * Loopback host parsing goes through `isLoopbackHost` (IPv6-aware). Returns
+ * Authorization goes through `isAllowedLocalRequest` (IPv6-aware). Returns
  * true when the caller is allowed; the route sends the 403 itself so the
  * response shape matches the rest of the handler.
  */
-export function isAllowedStrategyAdminCaller(req: { headers?: Record<string, unknown> }): boolean {
-    const origin = String(req.headers?.origin ?? "");
-    const referer = String(req.headers?.referer ?? "");
-    if (isLoopbackUrl(origin) || isLoopbackUrl(referer)) return true;
-    // Non-local caller: require the documented shared secret.
-    const token = process.env.LOCAL_PROXY_TOKEN?.trim();
-    if (!token) return false;
-    const auth = String(req.headers?.authorization ?? "");
-    return auth === `Bearer ${token}`;
-}
-
-/**
- * True if `url` (an absolute `http(s)://host[:port]/...` string) points at a
- * loopback origin. Empty or non-absolute values are not loopback. Uses
- * `isLoopbackHost` for the authority check so bracketed IPv6
- * (`http://[::1]:5173`) is recognized.
- */
-function isLoopbackUrl(url: string): boolean {
-    if (!url) return false;
-    let parsed: URL;
-    try {
-        parsed = new URL(url);
-    } catch {
-        return false;
-    }
-    return parsed.protocol === "http:" && isLoopbackHost(parsed.host);
+export function isAllowedStrategyAdminCaller(req: AuthorizedRequest): boolean {
+    return isAllowedLocalRequest(req);
 }
 
 const STRATEGY_ADMIN_MAX_BODY_BYTES = 1024 * 1024;
@@ -538,7 +514,7 @@ export function strategyLibraryAdminPlugin(): Plugin {
                 // Finding 1: gate destructive routes before any work. A 403 here
                 // means a cross-origin / unauthenticated caller (e.g. a CSRF
                 // no-cors fetch) never reaches the deletion handlers.
-                if (!isAllowedStrategyAdminCaller(req as { headers?: Record<string, unknown> })) {
+                if (!isAllowedStrategyAdminCaller(req)) {
                     sendJson(res, 403, {
                         ok: false,
                         error: "Forbidden: strategy-library admin routes allow same-origin loopback callers or a valid LOCAL_PROXY_TOKEN bearer only.",

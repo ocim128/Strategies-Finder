@@ -4,6 +4,8 @@ import path from "node:path";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import type { Writable } from "node:stream";
+import { finished } from "node:stream/promises";
 import { build as buildWithEsbuild } from "esbuild";
 
 export type TestRunStatus = "PASS" | "FAIL" | "SKIP";
@@ -34,6 +36,7 @@ type TestRunResult = {
      */
     tailLines: string[];
     skipReason?: string;
+    logError?: string;
 };
 
 type OutputMode = "compact" | "verbose" | "silent";
@@ -59,6 +62,7 @@ type TestRunSummary = {
         timedOut: boolean;
         logFile: string;
         skipReason?: string;
+        logError?: string;
     }>;
 };
 
@@ -179,6 +183,27 @@ function openTestLog(file: string): fs.WriteStream {
     return fs.createWriteStream(logFile, { encoding: "utf8" });
 }
 
+/** Observe open/write errors immediately, even before the child test starts. */
+export function createTestLogWriter(stream: Writable): {
+    write: (text: string) => void;
+    finish: () => Promise<string | undefined>;
+} {
+    let logError: string | undefined;
+    const completion = finished(stream, { cleanup: true }).catch((error: unknown) => {
+        logError = error instanceof Error ? error.message : String(error);
+    });
+    return {
+        write: text => {
+            if (!stream.destroyed && !stream.writableEnded) stream.write(text);
+        },
+        finish: async () => {
+            if (!stream.destroyed && !stream.writableEnded) stream.end();
+            await completion;
+            return logError;
+        },
+    };
+}
+
 function ensureLatestLogsDir(): void {
     fs.mkdirSync(logsBaseDir, { recursive: true });
     fs.rmSync(latestLogsDir, { recursive: true, force: true });
@@ -264,6 +289,9 @@ function resolveTestLogPath(file: string): string {
 }
 
 function printTestResult(result: TestRunResult, outputMode: OutputMode): void {
+    if (result.logError && outputMode !== "silent") {
+        console.log(`LOG ERROR ${result.file}: ${result.logError}`);
+    }
     if (outputMode === "verbose") {
         // Verbose output is streamed live to the console during the run (see
         // `runSingleTest`); only the status line is emitted post-completion.
@@ -294,7 +322,7 @@ async function runSingleTest(
 ): Promise<TestRunResult> {
     const startedAt = Date.now();
     const logPath = resolveTestLogPath(file);
-    const log = openTestLog(file);
+    const log = createTestLogWriter(openTestLog(file));
     const tail = new LineRingBuffer(FAILURE_TAIL_LINE_COUNT);
     let capturedBytes = 0;
     let outputTruncated = false;
@@ -382,17 +410,9 @@ async function runSingleTest(
         writeRunnerMessage(runErrorText);
     }
 
-    // End the log stream and wait for it to flush so the file is complete
-    // before the summary points at it. Without the 'error' listener, a
-    // mid-stream write failure (disk full, EPERM) would emit an unhandled
-    // 'error' event, crashing the runner and losing every concurrent result.
-    // Resolving on error too — the test outcome is decided by exit code, not
-    // log integrity; a missing log is reported via the "No captured output"
-    // fallback in printTestResult.
-    await new Promise<void>((resolve) => {
-        log.on("error", () => resolve());
-        log.end(() => resolve());
-    });
+    // The completion promise already observes errors from open through flush.
+    // Logging failures are reported separately from the child's test outcome.
+    const logError = await log.finish();
 
     const durationMs = Date.now() - startedAt;
     const status = classifyTestRunStatus(exitCode, Boolean(spawnError), outputTruncated, timedOut, skipReason);
@@ -407,6 +427,7 @@ async function runSingleTest(
         logFile: logPath,
         tailLines: status === "FAIL" ? tail.flush() : [],
         ...(skipReason ? { skipReason } : {}),
+        ...(logError ? { logError } : {}),
     };
 }
 
@@ -571,6 +592,7 @@ async function main(): Promise<void> {
             timedOut: result.timedOut,
             logFile: result.logFile,
             ...(result.skipReason ? { skipReason: result.skipReason } : {}),
+            ...(result.logError ? { logError: result.logError } : {}),
         })),
     };
 

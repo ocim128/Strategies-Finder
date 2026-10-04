@@ -342,6 +342,10 @@ export function localSqlitePlugin(): Plugin {
                                 nowSec
                             );
                         }
+                        // Any upsert can change a synthetic-pair fingerprint,
+                        // including ordinary stream writes without a summary.
+                        // Rebuild lazily on the next metadata read (or below).
+                        getPreparedStatement('DELETE FROM series_meta WHERE symbol = ? AND interval = ?').run(symbol, interval);
                         db.exec('COMMIT');
                     } catch (error) {
                         db.exec('ROLLBACK');

@@ -139,6 +139,13 @@ Set worker secrets:
 
 Then send `notifyTelegram: true` in request body.
 
+## Browser Request Deadlines
+
+The browser alert client applies its 10-second request deadline through JSON
+or text body consumption, including `/health`. A stalled body reports a timeout
+even after successful headers. Mutations remain single-attempt because a
+timed-out response does not establish whether the Worker committed the change.
+
 ## Worker API Token (Optional)
 
 Set `WORKER_API_TOKEN` to require `Authorization: Bearer <token>` on all non-health endpoints.

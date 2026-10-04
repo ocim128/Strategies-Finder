@@ -91,6 +91,9 @@ Bybit, and local asset catalogs) or `fetchLocalApiWithBody` (seed CSV/JSON
 and SQLite JSON/binary transfers). These helpers keep the deadline and caller
 abort signal active until the body consumer resolves. The response-returning
 helpers remain available for callers that only need headers/status.
+Binance exchange-info and synthetic-pair SQLite metadata reads also consume
+their JSON bodies inside the deadline, so a stalled body cannot hold a shared
+catalog load or fingerprint lookup indefinitely.
 
 The shared provider helper retries its own deadline failures within the
 configured attempt budget, preserving `TimeoutError` even when fetch reports
@@ -105,6 +108,17 @@ discarded rows do not inflate candle progress. The existing request ceiling
 still applies.
 Forward gap-fill pagination likewise validates its first/last timestamps and
 strictly advancing cursor before accepting a page or reporting progress.
+
+## SQLite metadata freshness
+
+Every successful candle upsert invalidates its series metadata inside the
+write transaction, including stream/default writes that omit `summary`.
+The next `/series-meta` read rebuilds count, first/last timestamps, and the
+update timestamp from committed candles; `summary=true` writes rebuild
+immediately. Other series remain cached. This keeps Binance synthetic-pair
+fingerprints fresh after appends and historical corrections without a full
+summary scan on every stream write. Update timestamps retain Unix-second
+precision, so corrections within the same second can share a fingerprint.
 
 ## SQLite authorization
 

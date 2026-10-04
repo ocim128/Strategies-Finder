@@ -294,10 +294,15 @@ npm run test:e2e
 ```
 
 `npm run test` uses a compact wrapper that discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec, and writes full per-spec logs to `artifacts/test-logs/latest`. `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
+
+Log open/write failures are reported as `LOG ERROR` and optional `logError`
+summary fields; they do not discard concurrent results or change test outcomes.
+
 `npm run verify` runs typecheck, staged test typecheck, and the compact test suite.
 
 GitHub Actions checks out this app at the repository root and installs from this
-directory's `package-lock.json` with `npm ci`. Its jobs run `npm run verify`,
+directory's `package-lock.json` with `npm ci`. Its jobs run `npm run ci`
+(verification plus the production build and entry-bundle budget),
 the Rust format/test/clippy checks under `rust-engine/`, and `npm run test:e2e`.
 The full spec suite runs on Windows x64 with Node 22.16.0 to match the immutable
 runtime fingerprints in `lib/pair-features/releases/v*.json`; feature generation

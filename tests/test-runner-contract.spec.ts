@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { Writable } from "node:stream";
 import {
     LineRingBuffer,
     classifyTestRunStatus,
+    createTestLogWriter,
     normalizeForMatch,
     parseExplicitJobCount,
     parseTimeoutMs,
@@ -11,6 +13,33 @@ import {
 } from "../scripts/run-tests";
 
 describe("test runner contracts", () => {
+    it("handles a log open error before the test finishes without hanging", async () => {
+        const stream = new Writable({ write: (_chunk, _encoding, callback) => callback() });
+        const log = createTestLogWriter(stream);
+        stream.destroy(new Error("Log open denied"));
+        await new Promise<void>(resolve => setImmediate(resolve));
+        log.write("output after the log failed");
+        assert.equal(await log.finish(), "Log open denied");
+    });
+
+    it("reports mid-stream write failures separately from test outcomes", async () => {
+        const stream = new Writable({ write: (_chunk, _encoding, callback) => callback(new Error("Disk full")) });
+        const log = createTestLogWriter(stream);
+        log.write("test output");
+        assert.equal(await log.finish(), "Disk full");
+        assert.equal(classifyTestRunStatus(0, false, false, false), "PASS");
+    });
+
+    it("waits for healthy logs to flush", async () => {
+        let output = "";
+        const stream = new Writable({ write: (chunk, _encoding, callback) => {
+            setImmediate(() => { output += String(chunk); callback(); });
+        } });
+        const log = createTestLogWriter(stream);
+        log.write("complete output");
+        assert.equal(await log.finish(), undefined);
+        assert.equal(output, "complete output");
+    });
     it("keeps bounded failure output while preserving partial lines", () => {
         const buffer = new LineRingBuffer(2);
         buffer.pushChunk("first\nsecond\nthird");

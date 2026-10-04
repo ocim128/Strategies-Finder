@@ -174,6 +174,14 @@ Rules:
 
 See [synthetic-pairs.md](synthetic-pairs.md) for generation and support details.
 
+## Library Administration
+
+The dev-only strategy-library deletion routes use the shared local API
+authorization gate: tokenless calls require a loopback socket peer and Host,
+plus the browser-header checks. A forged localhost Origin/Referer alone is
+insufficient; other callers require the configured `LOCAL_PROXY_TOKEN` bearer.
+The existing JSON content-type requirement and source backups still apply.
+
 ## Checklist Before You Stop
 
 - file exists in `lib/strategies/lib/*`

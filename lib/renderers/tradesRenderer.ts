@@ -57,7 +57,8 @@ if (trades.length === 0) {
         this.updateSummary(trades);
         this.renderBacktestDiagnostics(trades);
 
-        const reversed = trades.slice().reverse();
+        const totalTrades = trades.length;
+        const reversed = trades.slice(-TradesRenderer.MAX_TRADES).reverse();
         this.progressiveList.render({
             container,
             items: reversed,
@@ -66,7 +67,7 @@ if (trades.length === 0) {
             deferredBatchSize: TradesRenderer.DEFERRED_RENDER_BATCH_SIZE,
             renderChunk: (items, startIndex, endIndex) =>
                 this.renderTradeChunk(items, startIndex, endIndex, formatPrice, formatDate),
-            renderLimitNotice: (totalTrades) => totalTrades > TradesRenderer.MAX_TRADES
+            renderLimitNotice: () => totalTrades > TradesRenderer.MAX_TRADES
                 ? this.renderTradesLimitNotice(totalTrades)
                 : '',
         });

@@ -206,6 +206,29 @@ test("binance fingerprint uses series_meta.lastTime, barsCount, and updatedAt", 
     assert.ok(fp!.includes("binance:PAXGUSDT:1h:1782914400:65003:1778000000"));
 });
 
+test("a stalled SQLite metadata body stops fingerprint loading at its deadline", async t => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = async (_input, init) => {
+        calls++;
+        return new Response(new ReadableStream({
+            start(controller) {
+                init!.signal!.addEventListener("abort", () => controller.error(init!.signal!.reason), { once: true });
+            },
+        }), { headers: { "content-type": "application/json" } });
+    };
+    try {
+        const fingerprint = computeSeedFingerprint("SFDEADLINEBASEUSDT", "SFDEADLINEQUOTEUSDT", "1h");
+        await new Promise<void>(resolve => setImmediate(resolve));
+        t.mock.timers.tick(2000);
+        assert.equal(await fingerprint, null);
+        assert.equal(calls, 2);
+    } finally {
+        globalThis.fetch = originalFetch;
+    }
+});
+
 test("binance fingerprint folds updatedAt=0 when series_meta omits it (cold cache / older endpoint)", async () => {
     // updatedAt intentionally absent — every field on SeriesMetaResponse is
     // optional, so the bare object is a valid response.
@@ -629,4 +652,3 @@ test("a cache MISS does not refresh mtime (touch only fires on a validated hit)"
     const mtimeAfter = statSync(p).mtimeMs;
     assert.equal(mtimeAfter, mtimeBefore, "a miss must not refresh mtime");
 });
-

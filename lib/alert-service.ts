@@ -191,10 +191,18 @@ function truncateText(value: string, maxLen = 320): string {
     return `${trimmed.slice(0, Math.max(0, maxLen - 3))}...`;
 }
 
-async function fetchWithTimeout(input: string, options?: RequestInit): Promise<Response> {
+async function fetchWithTimeout(input: string, options?: RequestInit): Promise<{
+    res: Response;
+    body: Awaited<ReturnType<typeof readJsonOrText>>;
+}> {
     const timeout = createFetchTimeoutSignal(options?.signal ?? undefined, API_FETCH_TIMEOUT_MS);
     try {
-        return await fetch(input, { ...options, signal: timeout.signal });
+        const res = await fetch(input, { ...options, signal: timeout.signal });
+        const body = await readJsonOrText(res);
+        // Body sniffing tolerates malformed responses, but must not swallow
+        // deadline or caller cancellation errors from an aborted body read.
+        timeout.signal?.throwIfAborted();
+        return { res, body };
     } catch (error) {
         // createFetchTimeoutSignal aborts on timeout; distinguish a real timeout
         // from a caller-initiated abort so the error message stays informative.
@@ -211,7 +219,7 @@ async function fetchWithTimeout(input: string, options?: RequestInit): Promise<R
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     const base = requireUrl();
     const token = getWorkerToken();
-    const res = await fetchWithTimeout(`${base}${path}`, {
+    const { res, body } = await fetchWithTimeout(`${base}${path}`, {
         ...options,
         headers: {
             'content-type': 'application/json',
@@ -219,8 +227,6 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
             ...(options?.headers ?? {}),
         },
     });
-    const body = await readJsonOrText(res);
-
     if (!res.ok) {
         const message = extractApiError(body.json)
             ?? (body.text ? truncateText(body.text) : null)
@@ -244,8 +250,7 @@ export const alertService = {
     async healthCheck(): Promise<AlertWorkerHealth> {
         try {
             const base = requireUrl();
-            const res = await fetchWithTimeout(`${base}/health`);
-            const body = await readJsonOrText(res);
+            const { res, body } = await fetchWithTimeout(`${base}/health`);
             if (!res.ok) {
                 return {
                     ok: false,
