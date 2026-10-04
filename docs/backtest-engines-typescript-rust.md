@@ -195,9 +195,9 @@ take profit, entry-time filters). Baseline wall-clock/heap measurements for a
 three invocations), with the shared-simulation medians from the same machine
 shown against them:
 
-| Entrypoint | Baseline median ms | Shared-loop median ms | Peak heap Δ MB |
+| Entrypoint | Baseline median ms | Shared-loop median ms | Max post-run heapUsed Δ MB |
 | --- | --- | --- | --- |
-| `runBacktest` (full fallback, default analytics) | ~12.2 | ~12.0–12.3 | ~9–10 |
+| `runBacktest` (full fallback, default analytics) | ~12.2 | ~12.0–12.3 | ~1–10 |
 | `runBacktestCompact` (finder fallback) | ~6.7 | ~6.6–6.8 | ~1–3 |
 | compact + endpoint exclusion | ~7.3 | ~7.3–7.4 | ~2 |
 | compact + `equityOut` Float64Array | ~6.9 | ~6.6–7.1 | ~1–3 |
@@ -207,6 +207,17 @@ Run-to-run median jitter was ≤5%. The shared loop meets the recorded
 acceptance threshold: every entrypoint's median stayed within ~10% of its
 pre-change baseline and the deterministic trade counts (1699 capped / 1862
 unlimited) are unchanged.
+
+Memory measurement caveat: the heap column is the MAXIMUM POST-RUN delta of
+`process.memoryUsage().heapUsed` (after − before each measured run), not an
+allocation peak. It misses temporary allocation spikes between the two
+samples, depends on GC timing, and excludes the backing storage of typed
+arrays, which lives in external memory — the benchmark reports the
+arrayBuffers delta next to it for that reason. These columns are diagnostic
+context only and carry no acceptance threshold; establishing peak-memory
+parity between two implementations requires comparing them in isolated
+processes via peak RSS, which this script does not do. The recorded
+acceptance threshold is timing plus the deterministic trade counts.
 
 ## Rust engine
 

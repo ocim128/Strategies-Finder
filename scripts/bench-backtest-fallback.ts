@@ -9,8 +9,17 @@
  *
  * Method: fixed deterministic dataset and signals (seeded PRNG), identical
  * settings/runtime per entrypoint, warmup runs discarded, then N measured
- * runs; report median/min/max wall time and the heapUsed delta around each
- * measured run. Timing diagnostics inside results are NOT used as fixtures.
+ * runs; report median/min/max wall time plus POST-RUN memory deltas (see the
+ * caveat below). Timing diagnostics inside results are NOT used as fixtures.
+ *
+ * Memory caveat: the reported memory columns are max post-run deltas of
+ * `process.memoryUsage()` (heapUsed, and arrayBuffers separately). They are
+ * NOT allocation peaks: temporary garbage between the two samples is missed,
+ * the deltas depend on GC timing, and heapUsed excludes the backing storage
+ * of typed arrays (that is why arrayBuffers is reported next to it). These
+ * columns are diagnostic context only; the acceptance threshold in the engine
+ * guide is timing + trade counts. Establishing peak-memory parity requires
+ * comparing baseline and replacement code in isolated processes via peak RSS.
  *
  * Run: npm run bench:backtest-fallback  (or esno scripts/bench-backtest-fallback.ts)
  * Optional: --bars N --runs N --max-open N
@@ -82,7 +91,8 @@ interface Measurement {
     medianMs: number;
     minMs: number;
     maxMs: number;
-    heapDeltaMb: number;
+    maxPostRunHeapDeltaMb: number;
+    maxPostRunArrayBuffersDeltaMb: number;
     totalTrades: number;
 }
 
@@ -92,15 +102,19 @@ function measure(label: string, run: () => unknown): Measurement {
     if (globalThis.gc) globalThis.gc();
 
     const durations: number[] = [];
-    let heapDelta = 0;
+    let maxHeapDelta = 0;
+    let maxArrayBuffersDelta = 0;
     let totalTrades = 0;
     for (let i = 0; i < MEASURED_RUNS; i += 1) {
         if (globalThis.gc) globalThis.gc();
-        const heapBefore = process.memoryUsage().heapUsed;
+        const before = process.memoryUsage();
         const startedAt = performance.now();
         const result = run() as { totalTrades?: number };
         durations.push(performance.now() - startedAt);
-        heapDelta = Math.max(heapDelta, process.memoryUsage().heapUsed - heapBefore);
+        const after = process.memoryUsage();
+        // Post-run deltas only — see the header caveat: not allocation peaks.
+        maxHeapDelta = Math.max(maxHeapDelta, after.heapUsed - before.heapUsed);
+        maxArrayBuffersDelta = Math.max(maxArrayBuffersDelta, after.arrayBuffers - before.arrayBuffers);
         totalTrades = result?.totalTrades ?? 0;
     }
     durations.sort((a, b) => a - b);
@@ -110,19 +124,29 @@ function measure(label: string, run: () => unknown): Measurement {
         medianMs: Math.round(median * 100) / 100,
         minMs: Math.round(durations[0]! * 100) / 100,
         maxMs: Math.round(durations[durations.length - 1]! * 100) / 100,
-        heapDeltaMb: Math.round((heapDelta / (1024 * 1024)) * 100) / 100,
+        maxPostRunHeapDeltaMb: Math.round((maxHeapDelta / (1024 * 1024)) * 100) / 100,
+        maxPostRunArrayBuffersDeltaMb: Math.round((maxArrayBuffersDelta / (1024 * 1024)) * 100) / 100,
         totalTrades,
     };
 }
 
 function printTable(rows: Measurement[]): void {
-    const header = ["entrypoint", "median ms", "min ms", "max ms", "peak heap Δ MB", "trades"];
+    const header = [
+        "entrypoint",
+        "median ms",
+        "min ms",
+        "max ms",
+        "max post-run heapUsed Δ MB",
+        "max post-run arrayBuffers Δ MB",
+        "trades",
+    ];
     const lines = rows.map((row) => [
         row.label,
         row.medianMs.toFixed(2),
         row.minMs.toFixed(2),
         row.maxMs.toFixed(2),
-        row.heapDeltaMb.toFixed(2),
+        row.maxPostRunHeapDeltaMb.toFixed(2),
+        row.maxPostRunArrayBuffersDeltaMb.toFixed(2),
         String(row.totalTrades),
     ]);
     const widths = header.map((name, column) => Math.max(name.length, ...lines.map((cells) => cells[column]!.length)));
@@ -185,6 +209,9 @@ function main(): void {
     console.info("- re-run this script several times on an idle machine; the replacement must keep every");
     console.info("  entrypoint's median within ~10% of its pre-change baseline (2x the observed run-to-run");
     console.info("  jitter), with no entrypoint regressing while another improves.");
+    console.info("- the memory columns are post-run deltas, NOT allocation peaks (see the header caveat);");
+    console.info("  they carry no acceptance threshold. Peak-memory parity requires isolated-process");
+    console.info("  baseline-vs-replacement RSS comparison.");
 }
 
 main();
