@@ -821,7 +821,7 @@ mutable state of its own beyond the retained run context
 | Result inventories, display limits, re-sort and Run Sort restoration, Arm run/apply context | `lib/finder/browser/finder-result-store.ts` | `tests/finder-result-store.spec.ts`, `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-all-resorts.spec.ts` |
 | Candidate Apply flows, apply-in-flight guard, backtest-settings merge | `lib/finder/browser/finder-result-actions.ts` | `tests/finder-selection-apply.browser.spec.ts`, `tests/finder-arm-performance-settings.spec.ts`, `tests/finder-freeze-randomize-path-exit.spec.ts` |
 | Strategy selection sets, toggle maps, filter/range/bulk selection | `lib/finder/browser/finder-strategy-selection.ts` | `tests/finder-selection-apply.browser.spec.ts` |
-| Server run ownership, scoped Stop, reattach/recovery polling | `lib/finder/browser/finder-server-session.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |
+| Server run ownership, scoped Stop, one shared owned-run poll loop (reattach + recovery) | `lib/finder/browser/finder-server-session.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |
 | Scope workflows (current chart, universe, asset single/batch, arm, quality) | `lib/finder/browser/workflows/*` | `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-stream.spec.ts` |
 | Form binding/capture, `readOptions`, scope visibility, sorting controls, reset | `lib/finder/browser/finder-controls.ts` | `tests/feature-dom-contracts.spec.ts`, `tests/finder-settings-persistence.spec.ts` |
 | Browser run lifecycle flags, `runFinder` dispatch, Run/Stop wiring | `lib/finder/browser/finder-run-controller.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |

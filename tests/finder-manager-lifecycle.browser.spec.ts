@@ -106,9 +106,12 @@ type PendingRequest = {
 
 class MockFetch {
     requests: PendingRequest[] = [];
+    /** Total fetch calls made; `requests` shifts entries away when settled. */
+    count = 0;
 
     fetch = (url: string, init?: PendingRequest["init"]): Promise<unknown> =>
         new Promise((resolve, reject) => {
+            this.count += 1;
             const request: PendingRequest = { url: String(url), init, resolve, reject };
             this.requests.push(request);
             const signal = init?.signal;
@@ -133,6 +136,12 @@ class MockFetch {
             ? payload
             : makeResponse(payload, status);
         request.resolve(response);
+    }
+
+    rejectFirst(error: unknown): void {
+        const request = this.requests.shift();
+        if (!request) throw new Error("No pending fetch request to reject");
+        request.reject(error);
     }
 }
 
@@ -461,6 +470,33 @@ function makeRecordingSessionHost(): RecordingSessionHost {
     };
 }
 
+/**
+ * Poll a condition on real timers with a bounded deadline; used to observe
+ * asynchronous adoption/poll progress in session lifecycle tests.
+ */
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+        if (Date.now() > deadline) throw new Error("waitFor: condition not met within timeout");
+        await new Promise((resolve) => setTimeout(resolve, 2));
+    }
+}
+
+/**
+ * Shorten every poll delay so Stop-during-sleep, backoff, and retry
+ * exhaustion cases finish instantly. Timing policy itself is covered by the
+ * production defaults staying untouched.
+ */
+function fastTiming(session: FinderServerSession): void {
+    session.timing = {
+        pollIntervalMs: 4,
+        longPollIntervalMs: 4,
+        fastPollCount: 2,
+        failureBackoffMs: [4],
+        maxConsecutiveFailures: 2,
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Recording run host for workflow/controller tests
 // ---------------------------------------------------------------------------
@@ -717,6 +753,187 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         expect(host.calls.interpretTerminal[0]!.snapshot.terminalCandidates).to.have.length(1);
         expect(session.activeRunId).to.equal(null);
         expect(readFinderActiveServerRun()).to.equal(null);
+    });
+
+    it("adopts a terminal snapshot that first arrives on a later poll", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        fastTiming(session);
+        persistActiveServerRun("poll-done");
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst(runningSnapshot("poll-done"));
+        await waitFor(() => session.activeRunId === "poll-done");
+        await waitFor(() => mockFetch.requests.length >= 1); // first poll after the initial wait
+        mockFetch.resolveFirst(terminalDoneSnapshot("poll-done", [makeCandidate()]));
+        await reattach;
+
+        expect(host.calls.interpretTerminal).to.have.length(1);
+        expect(host.calls.interpretTerminal[0]!.snapshot.terminalCandidates).to.have.length(1);
+        expect(readFinderActiveServerRun()).to.equal(null);
+        expect(session.activeRunId).to.equal(null);
+        expect(host.calls.setRunning[host.calls.setRunning.length - 1]).to.equal(false);
+    });
+
+    it("maps later-poll 404 and rejected snapshots to record-clearing statuses", async () => {
+        // 404: the job is gone (e.g. dev-server restart) — clear + report.
+        {
+            const session = new FinderServerSession();
+            const host = makeRecordingSessionHost();
+            fastTiming(session);
+            persistActiveServerRun("gone-later");
+            const reattach = session.reattachToActiveServerRun(host);
+            mockFetch.resolveFirst(runningSnapshot("gone-later"));
+            await waitFor(() => session.activeRunId === "gone-later");
+            await waitFor(() => mockFetch.requests.length >= 1);
+            mockFetch.resolveFirst(makeResponse({ ok: false }, 404));
+            await reattach;
+            expect(host.calls.status.some((text) => text.includes("dev server restarted"))).to.equal(true);
+            expect(readFinderActiveServerRun()).to.equal(null);
+            expect(host.calls.setRunning[host.calls.setRunning.length - 1]).to.equal(false);
+        }
+        // 200 with ok:false — the server rejected the run id; clear + report.
+        {
+            const session = new FinderServerSession();
+            const host = makeRecordingSessionHost();
+            fastTiming(session);
+            persistActiveServerRun("rejected-later");
+            const reattach = session.reattachToActiveServerRun(host);
+            mockFetch.resolveFirst(runningSnapshot("rejected-later"));
+            await waitFor(() => session.activeRunId === "rejected-later");
+            await waitFor(() => mockFetch.requests.length >= 1);
+            mockFetch.resolveFirst(makeResponse({ ok: false }));
+            await reattach;
+            expect(host.calls.status.some((text) => text.includes("no longer active"))).to.equal(true);
+            expect(readFinderActiveServerRun()).to.equal(null);
+        }
+    });
+
+    it("Stop during the reattach poll's normal sleep cancels promptly and reverts the run UI", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        // A long normal interval makes the Stop land inside the sleep for
+        // certain; only an abort-aware wait can finish the loop promptly.
+        session.timing = {
+            pollIntervalMs: 10_000,
+            longPollIntervalMs: 10_000,
+            fastPollCount: 2,
+            failureBackoffMs: [4],
+            maxConsecutiveFailures: 2,
+        };
+        persistActiveServerRun("sleepy-run");
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst(runningSnapshot("sleepy-run")); // probe adopted the run
+        await waitFor(() => session.activeRunId === "sleepy-run");
+        expect(mockFetch.count).to.equal(1); // probe only; the first poll waits out its interval
+
+        const stoppedAt = Date.now();
+        session.stopReattachPoll(); // Stop lands while the poll loop sleeps
+        await reattach;
+        expect(Date.now() - stoppedAt, "the abort-aware wait unblocked the sleep").to.be.lessThan(5_000);
+
+        expect(session.activeRunId).to.equal(null);
+        expect(host.calls.setRunning[host.calls.setRunning.length - 1]).to.equal(false);
+        expect(host.calls.setProgress[host.calls.setProgress.length - 1]).to.deep.equal([false, 0, ""]);
+        expect(host.calls.interpretTerminal).to.deep.equal([]);
+        // The server never confirmed this Stop, so the record stays reattachable.
+        expect(readFinderActiveServerRun()?.runId).to.equal("sleepy-run");
+        expect(mockFetch.count).to.equal(1); // no further status request after Stop
+    });
+
+    it("Stop during recovery's failure backoff cancels without another request", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        fastTiming(session);
+        session.timing = { ...session.timing, failureBackoffMs: [50] };
+        session.activeRunId = "run-a";
+        const recovery = session.recoverActiveServerRun("run-a", "symbol_universe", host);
+        await waitFor(() => mockFetch.requests.length >= 1);
+        mockFetch.rejectFirst(new Error("boom")); // failure #1, then a 50ms backoff
+        session.stopReattachPoll();               // lands inside the backoff sleep
+        const recovered = await recovery;
+
+        expect(recovered).to.equal(null);
+        expect(mockFetch.count).to.equal(1); // the aborted backoff never issued a retry
+        expect(host.calls.setProgress).to.deep.equal([]);
+    });
+
+    it("a status-request timeout counts as a retryable failure, not a cancellation", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        fastTiming(session);
+        session.statusRequestTimeoutMs = 10;
+        session.activeRunId = "run-a";
+        const recovery = session.recoverActiveServerRun("run-a", "symbol_universe", host);
+        await waitFor(() => mockFetch.requests.length >= 1);
+        const firstRequest = mockFetch.requests[0];
+        await waitFor(() => firstRequest?.init?.signal?.aborted === true); // timed out on its own
+        await waitFor(() => mockFetch.requests.length >= 2); // the loop retried: failure, not Stop
+        mockFetch.requests.shift(); // drop the settled timed-out request
+        mockFetch.resolveFirst(terminalDoneSnapshot("run-a", [makeCandidate()]));
+
+        const recovered = await recovery;
+        expect(recovered?.terminal).to.equal(true);
+        expect(session.activeRunId).to.equal("run-a"); // recovery never drops ownership
+    });
+
+    it("a newer run taking ownership during the reattach poll causes no stale UI or record writes", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        // Long interval: the loop is deterministically asleep when the newer
+        // run takes over and cancels it (as a new Run stops the poll first).
+        session.timing = {
+            pollIntervalMs: 10_000,
+            longPollIntervalMs: 10_000,
+            fastPollCount: 2,
+            failureBackoffMs: [4],
+            maxConsecutiveFailures: 2,
+        };
+        persistActiveServerRun("old-run");
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst(runningSnapshot("old-run")); // probe adopted old-run
+        await waitFor(() => session.activeRunId === "old-run");
+
+        // A newer run takes ownership while the old poll loop is sleeping.
+        session.activeRunId = "new-run";
+        persistActiveServerRun("new-run");
+        session.stopReattachPoll(); // what a new Run does before taking over
+        await reattach;
+
+        expect(host.calls.setRunning, "the stale teardown must not revert the newer run's UI")
+            .to.deep.equal([true]);
+        expect(host.calls.setProgress, "no stale progress clear after ownership was replaced").to.have.length(1);
+        expect(host.calls.interpretTerminal).to.deep.equal([]);
+        expect(readFinderActiveServerRun()?.runId).to.equal("new-run");
+        expect(mockFetch.count).to.equal(1); // the stale loop issued no further request
+    });
+
+    it("reports connection loss after exhausting the retry budget and retains the persisted record", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        session.timing = {
+            pollIntervalMs: 2,
+            longPollIntervalMs: 2,
+            fastPollCount: 2,
+            failureBackoffMs: [2],
+            maxConsecutiveFailures: 2,
+        };
+        persistActiveServerRun("flaky-run");
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst(runningSnapshot("flaky-run"));
+        await waitFor(() => session.activeRunId === "flaky-run");
+
+        // Three consecutive poll failures exhaust the >2 budget.
+        for (let round = 0; round < 3; round += 1) {
+            await waitFor(() => mockFetch.requests.length >= 1);
+            mockFetch.rejectFirst(new Error("boom"));
+        }
+        await reattach;
+
+        expect(host.calls.status.some((text) => text.includes("Server connection lost"))).to.equal(true);
+        // Transient failures retain the record so a reload can retry.
+        expect(readFinderActiveServerRun()?.runId).to.equal("flaky-run");
+        expect(session.activeRunId).to.equal(null);
+        expect(host.calls.setRunning[host.calls.setRunning.length - 1]).to.equal(false);
     });
 });
 

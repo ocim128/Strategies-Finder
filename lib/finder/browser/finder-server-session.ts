@@ -2,12 +2,19 @@
  * Finder server-run session: browser-side ownership of one server Finder job.
  * Owns the active run id (the ownership token every stream/poll callback
  * checks after an await), the scoped Stop call, status-request timeout
- * signals, and the reattach/recovery poll loops with their timer + abort
- * cleanup. Browser-only.
+ * signals, and the ONE owned-run status poll loop shared by stream recovery
+ * and reload reattach, with its abort cleanup. Browser-only.
  *
  * Terminal result interpretation is scope-specific and stays with the
  * workflows/facade through the `interpretTerminal` callback; this module only
  * guarantees that interpretation runs for the run that still owns the id.
+ *
+ * Polling structure: `pollOwnedServerRunStatus` is the single request/retry/
+ * wait mechanism for a run this session owns. Its callers —
+ * `recoverActiveServerRun` (interrupted NDJSON stream recovery) and
+ * `reattachToActiveServerRun` (reload adoption) — keep their distinct
+ * responsibilities: what to adopt, what to present, and whether the persisted
+ * active-run record may be cleared.
  */
 import { parseJsonPreservingNonFinite } from "../../json-utils";
 import { debugLogger } from "../../debug-logger";
@@ -25,15 +32,19 @@ export type FinderServerJobKind = FinderServerRunScope;
 
 /**
  * Bounded-lifetime abort signal for one status request: times out after
- * `FINDER_STATUS_REQUEST_TIMEOUT_MS` and aborts with the parent (Stop / new
- * run). The caller must invoke `cleanup()` when the request settles.
+ * `timeoutMs` and aborts with the parent (Stop / new run). The caller must
+ * invoke `cleanup()` when the request settles so the timeout timer and the
+ * parent listener never outlive the request.
  */
-export function createFinderStatusRequestSignal(parentSignal: AbortSignal): {
+export function createFinderStatusRequestSignal(
+	parentSignal: AbortSignal,
+	timeoutMs: number = FINDER_STATUS_REQUEST_TIMEOUT_MS,
+): {
 	signal: AbortSignal;
 	cleanup: () => void;
 } {
 	const controller = new AbortController();
-	const timer = setTimeout(() => controller.abort(), FINDER_STATUS_REQUEST_TIMEOUT_MS);
+	const timer = setTimeout(() => controller.abort(), timeoutMs);
 	const abortFromParent = () => controller.abort();
 	if (parentSignal.aborted) {
 		abortFromParent();
@@ -69,6 +80,46 @@ const FAST_POLL_COUNT = 150; // 5 min at 2s before stepping down
 const FAILURE_BACKOFF_MS = [2_000, 5_000, 10_000, 15_000] as const;
 const MAX_REATTACH_CONSECUTIVE_FAILURES = 20;
 
+/**
+ * Poll timing policy shared by both owned-run entrypoints. Production code
+ * never mutates this object; the browser lifecycle harness shortens the
+ * delays so Stop-during-sleep, backoff, and retry-exhaustion cases run
+ * instantly.
+ */
+interface FinderPollTiming {
+	/** Delay between two status requests while the job is running. */
+	pollIntervalMs: number;
+	/** Interval stepped down to after `fastPollCount` adopted-run polls. */
+	longPollIntervalMs: number;
+	fastPollCount: number;
+	/** Delay before retry `n` (clamped to the last entry). */
+	failureBackoffMs: readonly number[];
+	/** Loop terminates with connection lost when failures exceed this. */
+	maxConsecutiveFailures: number;
+}
+
+/**
+ * Outcome of one owned-run poll loop (`pollOwnedServerRunStatus`). The
+ * wrapper that started the loop owns every side effect: terminal adoption,
+ * presentation, and whether the persisted active-run record is cleared.
+ */
+type FinderOwnedRunPollOutcome =
+	| { kind: "terminal"; snapshot: FinderRunStatusSnapshot }
+	/** 404: the server has no such job (e.g. a dev-server restart). */
+	| { kind: "not_found" }
+	/** The server answered but rejected the run id (`ok: false`). */
+	| { kind: "rejected" }
+	/** Stop or a newer run took ownership; the loop must not touch anything. */
+	| { kind: "cancelled" }
+	/** More consecutive request failures than the budget allows. */
+	| { kind: "connection_lost" };
+
+function finderJobLabel(scope: FinderServerJobKind): string {
+	return scope === "asset_opportunity" || scope === "asset_opportunity_batch"
+		? "Asset Opportunity"
+		: scope === "arm_performance" ? "Arm Performance" : "Universe Finder";
+}
+
 export class FinderServerSession {
 	/**
 	 * Active server-run id for the server job currently in flight (or null).
@@ -87,17 +138,32 @@ export class FinderServerSession {
 		if (runId !== this.ownedRunId) this.ownershipVersion += 1;
 		this.ownedRunId = runId;
 	}
+
 	/**
-	 * Reattach poller state. `pollingStopped` is the cancel token;
-	 * `timerResolve` lets Stop / a new Run unblock a pending poll sleep
-	 * immediately. `abortController` aborts any in-flight `/api/finder/status`
-	 * fetch so Stop / a new Run cannot leave a hung status request pending
-	 * (and its late response adopting stale run state).
+	 * Cancel token for the pre-adoption phases (probe, detached Arm preview
+	 * recovery). Stop sets it before a newer run can exist, so a resolved
+	 * probe never adopts a run the user just stopped. Once a run is adopted,
+	 * `activeRunId` is the ownership signal: Stop and a new Run both clear it.
 	 */
 	pollingStopped = false;
-	timer: ReturnType<typeof setTimeout> | null = null;
-	timerResolve: (() => void) | null = null;
+
+	/**
+	 * Controller of the run currently issuing status requests (poll loop,
+	 * probe, or a detached Arm preview recovery). Stop / a new run aborts it
+	 * so no request outlives its owner; `releaseAbortController` drops only
+	 * the controller that invocation owns.
+	 */
 	abortController: AbortController | null = null;
+
+	/** Test seams: production code reads these, only the harness mutates them. */
+	timing: FinderPollTiming = {
+		pollIntervalMs: POLL_INTERVAL_MS,
+		longPollIntervalMs: LONG_POLL_INTERVAL_MS,
+		fastPollCount: FAST_POLL_COUNT,
+		failureBackoffMs: FAILURE_BACKOFF_MS,
+		maxConsecutiveFailures: MAX_REATTACH_CONSECUTIVE_FAILURES,
+	};
+	statusRequestTimeoutMs = FINDER_STATUS_REQUEST_TIMEOUT_MS;
 
 	isActive(runId: string): boolean {
 		return this.activeRunId === runId;
@@ -113,21 +179,14 @@ export class FinderServerSession {
 		return `finder-${Date.now().toString(36)}-${rand}`;
 	}
 
-	/** Cancel any in-flight reattach poll loop immediately. */
+	/** Cancel any in-flight reattach/recovery poll loop immediately. */
 	stopReattachPoll(): void {
 		this.pollingStopped = true;
-		// Abort a hung status fetch so the reattach/recovery loop cannot wait
-		// on a request that will never resolve while the UI is being stopped.
+		// Abort the owned status controller: a hung /status fetch rejects and
+		// every abort-aware wait unblocks, so the loop notices cancellation at
+		// its next check instead of waiting out a sleep.
 		this.abortController?.abort();
 		this.abortController = null;
-		if (this.timer) {
-			clearTimeout(this.timer);
-			this.timer = null;
-		}
-		if (this.timerResolve) {
-			this.timerResolve();
-			this.timerResolve = null;
-		}
 	}
 
 	releaseAbortController(controller: AbortController): void {
@@ -194,60 +253,30 @@ export class FinderServerSession {
 		jobKind: FinderServerJobKind,
 		host: Pick<FinderSessionHost, 'setProgress' | 'setStatus'>,
 	): Promise<FinderRunStatusSnapshot | null> {
-		let consecutiveFailures = 0;
-
 		const abortController = new AbortController();
 		this.abortController = abortController;
 		try {
-			while (this.activeRunId === runId) {
-				const statusRequest = createFinderStatusRequestSignal(abortController.signal);
-				try {
-					const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
-						cache: "no-store",
-						signal: statusRequest.signal,
-					});
-					if (response.status === 404) return null;
-					if (!response.ok) throw new Error(`status ${response.status}`);
-					const snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
-					// Ownership check after the await: a stale response that lands
-					// after a new run (or Stop) changed activeRunId must be
-					// discarded, never adopted.
-					if (this.activeRunId !== runId) return null;
-					if (!snapshot.ok) return null;
-					consecutiveFailures = 0;
-					if (snapshot.terminal) {
-						debugLogger.warn("finder.server.stream_recovered_via_status", {
-							runId,
-							phase: snapshot.phase,
-							candidates: snapshot.terminalCandidates?.length ?? 0,
-							assets: snapshot.terminalAssets?.length ?? 0,
-						});
-						return snapshot;
-					}
+			const label = finderJobLabel(jobKind);
+			const outcome = await this.pollOwnedServerRunStatus({
+				runId,
+				abortController,
+				logEvent: "finder.server.stream_recovery_poll_failed",
+				// Recovery's first request is immediate: the stream just died.
+				initialDelayMs: null,
+				nextRequestDelayMs: () => this.timing.pollIntervalMs,
+				onProgress: (snapshot) => {
 					host.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-					const label = jobKind === 'asset_opportunity' || jobKind === 'asset_opportunity_batch'
-						? 'Asset Opportunity'
-						: jobKind === 'arm_performance' ? 'Arm Performance' : 'Universe Finder';
 					host.setStatus(`${label}: ${snapshot.statusText}`);
-					await new Promise<void>((resolve) => setTimeout(resolve, 2_000));
-				} catch (error) {
-					// An abort (Stop / new run) is not a transient failure — bail
-					// out without counting it against the backoff budget.
-					if (this.activeRunId !== runId) return null;
-					consecutiveFailures += 1;
-					debugLogger.warn("finder.server.stream_recovery_poll_failed", {
-						runId,
-						consecutive: consecutiveFailures,
-						error: error instanceof Error ? error.message : String(error),
-					});
-					if (consecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) return null;
-					const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
-					await new Promise<void>((resolve) => setTimeout(resolve, FAILURE_BACKOFF_MS[backoffIndex]!));
-				} finally {
-					statusRequest.cleanup();
-				}
-			}
-			return null;
+				},
+			});
+			if (outcome.kind !== "terminal") return null;
+			debugLogger.warn("finder.server.stream_recovered_via_status", {
+				runId,
+				phase: outcome.snapshot.phase,
+				candidates: outcome.snapshot.terminalCandidates?.length ?? 0,
+				assets: outcome.snapshot.terminalAssets?.length ?? 0,
+			});
+			return outcome.snapshot;
 		} finally {
 			this.releaseAbortController(abortController);
 		}
@@ -258,11 +287,11 @@ export class FinderServerSession {
 	 * tab reload. Called from Finder init (Finder is lazy-loaded, so reattach
 	 * begins on first Finder activation — not at global startup). Reads the
 	 * persisted active run id; if the server still has a matching job,
-	 * restores progress + Stop state, then polls summary-only status at a
-	 * bounded interval until terminal. On terminal, delegates interpretation
-	 * to `host.interpretTerminal` (which re-checks ownership), persists
-	 * through the completed-results snapshot, and clears the active-run
-	 * record.
+	 * restores progress + Stop state, then polls summary-only status through
+	 * the shared owned-run loop until terminal. On terminal, delegates
+	 * interpretation to `host.interpretTerminal` (which re-checks ownership),
+	 * persists through the completed-results snapshot, and clears the
+	 * active-run record.
 	 *
 	 * Reattach only survives a browser reload while the same Vite process
 	 * remains alive; a Vite restart loses the in-memory job and the reattach
@@ -279,7 +308,7 @@ export class FinderServerSession {
 		// shared with stopReattachPoll so Stop can abort a hung probe.
 		const abortController = new AbortController();
 		this.abortController = abortController;
-		const initialRequest = createFinderStatusRequestSignal(abortController.signal);
+		const initialRequest = createFinderStatusRequestSignal(abortController.signal, this.statusRequestTimeoutMs);
 		let initial: FinderRunStatusSnapshot | null = null;
 		let confirmedMissing = false;
 		try {
@@ -307,7 +336,9 @@ export class FinderServerSession {
 		// Ownership check after the probe's await: a delayed response must not
 		// adopt an old run after a new Run has started (or Stop was pressed)
 		// while the probe was in flight — that would clobber the new run's
-		// activeRunId and make every later callback mis-scope.
+		// activeRunId and make every later callback mis-scope. `pollingStopped`
+		// is the only cancellation signal here: the run is not adopted yet, so
+		// activeRunId is still null even when Stop already fired.
 		if (this.pollingStopped || this.activeRunId !== null) {
 			this.releaseAbortController(abortController);
 			return;
@@ -342,15 +373,12 @@ export class FinderServerSession {
 		});
 
 		host.setProgress(true, initial.progressPercent, initial.statusText);
-		const jobLabel = persisted.scope === 'asset_opportunity' || persisted.scope === 'asset_opportunity_batch'
-			? 'Asset Opportunity'
-			: persisted.scope === 'arm_performance' ? 'Arm Performance' : 'Universe Finder';
+		const jobLabel = finderJobLabel(persisted.scope);
 		host.setStatus(`Reattached to ${jobLabel}: ${initial.statusText}`);
+
 		let clearPersistedRecord = false;
-		let terminalReached = false;
 		const applyTerminalSnapshot = (snapshot: FinderRunStatusSnapshot): void => {
 			if (!snapshot.terminal || this.activeRunId !== runId) return;
-			terminalReached = true;
 			clearPersistedRecord = true;
 			host.interpretTerminal(snapshot, persisted.scope);
 			this.setStatusHost(host, snapshot.error ?? snapshot.summary ?? snapshot.statusText);
@@ -364,85 +392,172 @@ export class FinderServerSession {
 		};
 		applyTerminalSnapshot(initial);
 
-		let consecutiveFailures = 0;
-
-		const sleep = (ms: number): Promise<void> => new Promise<void>((resolve) => {
-			this.timerResolve = resolve;
-			this.timer = setTimeout(resolve, ms);
-		});
-
-		for (let poll = 0; !terminalReached; poll += 1) {
-			if (this.pollingStopped || this.activeRunId !== runId) break;
-			const delay = poll >= FAST_POLL_COUNT ? LONG_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
-			await sleep(delay);
-			if (this.pollingStopped || this.activeRunId !== runId) break;
-
-			let snapshot: FinderRunStatusSnapshot | null = null;
-			const statusRequest = createFinderStatusRequestSignal(abortController.signal);
-			try {
-				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
-					cache: "no-store",
-					signal: statusRequest.signal,
-				});
-				if (!response.ok) {
-					// 404 means the server job is gone (restart). Stop polling
-					// and clear the record; don't claim completion.
-					if (response.status === 404) {
-						clearPersistedRecord = true;
-						this.setStatusHost(host, "Server Finder run lost (dev server restarted).");
-						break;
-					}
-					throw new Error(`status ${response.status}`);
-				}
-				snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
-			} catch (error) {
-				if (this.pollingStopped || this.activeRunId !== runId) break;
-				consecutiveFailures += 1;
-				debugLogger.warn("finder.server.reattach_poll_failed", {
-					runId,
-					consecutive: consecutiveFailures,
-					error: error instanceof Error ? error.message : String(error),
-				});
-				if (consecutiveFailures > MAX_REATTACH_CONSECUTIVE_FAILURES) {
+		if (!clearPersistedRecord) {
+			const outcome = await this.pollOwnedServerRunStatus({
+				runId,
+				abortController,
+				logEvent: "finder.server.reattach_poll_failed",
+				// Adopted reattach waits before subsequent requests, then
+				// steps down after `fastPollCount` polls.
+				initialDelayMs: this.timing.pollIntervalMs,
+				nextRequestDelayMs: (pollIndex) => pollIndex >= this.timing.fastPollCount
+					? this.timing.longPollIntervalMs
+					: this.timing.pollIntervalMs,
+				onProgress: (snapshot) => {
+					host.setProgress(true, snapshot.progressPercent, snapshot.statusText);
+					this.setStatusHost(host, `${jobLabel}: ${snapshot.statusText}`);
+				},
+			});
+			switch (outcome.kind) {
+				case "terminal":
+					applyTerminalSnapshot(outcome.snapshot);
+					break;
+				case "not_found":
+					// Server job is gone (restart). Stop polling and clear the
+					// record; don't claim completion.
+					clearPersistedRecord = true;
+					this.setStatusHost(host, "Server Finder run lost (dev server restarted).");
+					break;
+				case "rejected":
+					clearPersistedRecord = true;
+					this.setStatusHost(host, "Server Finder run no longer active.");
+					break;
+				case "connection_lost":
 					this.setStatusHost(host, "Server connection lost — reload to retry Universe Finder reattach.");
 					break;
-				}
-				const backoffIndex = Math.min(consecutiveFailures - 1, FAILURE_BACKOFF_MS.length - 1);
-				poll -= 1; // don't advance into long-poll step-down due to retries
-				await sleep(FAILURE_BACKOFF_MS[backoffIndex]!);
-				continue;
-			} finally {
-				statusRequest.cleanup();
+				case "cancelled":
+					// Stop / a newer run owns the session now; the teardown
+					// below decides what may still be touched.
+					break;
 			}
-
-			consecutiveFailures = 0;
-			if (!snapshot || !snapshot.ok) {
-				// Server no longer has this run id — stop and clear.
-				clearPersistedRecord = true;
-				this.setStatusHost(host, "Server Finder run no longer active.");
-				break;
-			}
-
-			// Update progress from the summary-only snapshot (no candidate
-			// payload while running).
-			host.setProgress(true, snapshot.progressPercent, snapshot.statusText);
-			this.setStatusHost(host, `${jobLabel}: ${snapshot.statusText}`);
-
-			applyTerminalSnapshot(snapshot);
 		}
 
-		// Teardown: only the reattach path that still owns the run id clears it.
-		if (this.activeRunId === runId) {
+		// Teardown. Only the path that still owns the run id clears ownership
+		// and the persisted record. The run UI is reverted only when no newer
+		// run owns it (that run's lifecycle owns its UI now); Stop leaves
+		// activeRunId null, so Stop still reverts the UI here.
+		const ownershipIntact = this.activeRunId === runId;
+		if (ownershipIntact) {
 			this.activeRunId = null;
 			if (clearPersistedRecord) {
 				clearFinderActiveServerRun();
 			}
 		}
-		this.timer = null;
-		this.timerResolve = null;
+		if (ownershipIntact || this.activeRunId === null) {
+			host.setRunning(false);
+			host.setProgress(false, 0, "");
+		}
 		this.releaseAbortController(abortController);
-		host.setRunning(false);
-		host.setProgress(false, 0, "");
+	}
+
+	/**
+	 * THE status poll loop for a run this session owns. Fetches and parses
+	 * the scoped summary snapshot, waits between requests (abort-aware, so
+	 * Stop / a new run unblock a pending sleep immediately), retries with the
+	 * failure backoff, and terminates on terminal / missing / cancellation /
+	 * connection exhaustion. It performs NO side effects beyond per-cycle
+	 * progress reporting: every adoption, terminal interpretation, status
+	 * message, and persisted-record decision belongs to the caller.
+	 *
+	 * Ownership (`activeRunId === runId`) is re-checked after every await and
+	 * before any progress update or terminal return, so a stale response can
+	 * never leak into a newer run's UI.
+	 */
+	private async pollOwnedServerRunStatus(args: {
+		runId: string;
+		abortController: AbortController;
+		/** debugLogger event name for a failed request cycle. */
+		logEvent: string;
+		/** Delay before the first request; null issues it immediately. */
+		initialDelayMs: number | null;
+		/** Delay before the request that follows the pollIndex-th cycle. */
+		nextRequestDelayMs: (pollIndex: number) => number;
+		onProgress: (snapshot: FinderRunStatusSnapshot) => void;
+	}): Promise<FinderOwnedRunPollOutcome> {
+		const { runId, abortController } = args;
+		// Once a run is adopted, Stop and a new Run both drop its run id, so
+		// the active id is the single ownership/cancellation signal here.
+		const owned = (): boolean => this.activeRunId === runId;
+
+		if (args.initialDelayMs !== null) {
+			if (!owned()) return { kind: "cancelled" };
+			if (!await this.waitWithAbort(args.initialDelayMs, abortController.signal)) {
+				return { kind: "cancelled" };
+			}
+		}
+		let consecutiveFailures = 0;
+		let pollIndex = 0;
+		for (;;) {
+			if (!owned()) return { kind: "cancelled" };
+			const statusRequest = createFinderStatusRequestSignal(abortController.signal, this.statusRequestTimeoutMs);
+			let snapshot: FinderRunStatusSnapshot | null = null;
+			try {
+				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
+					cache: "no-store",
+					signal: statusRequest.signal,
+				});
+				if (response.status === 404) return { kind: "not_found" };
+				if (!response.ok) throw new Error(`status ${response.status}`);
+				snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
+			} catch (error) {
+				// An abort from Stop / a new run is cancellation, not a
+				// transient failure — never count it against the backoff budget.
+				if (!owned()) return { kind: "cancelled" };
+				consecutiveFailures += 1;
+				debugLogger.warn(args.logEvent, {
+					runId,
+					consecutive: consecutiveFailures,
+					error: error instanceof Error ? error.message : String(error),
+				});
+				if (consecutiveFailures > this.timing.maxConsecutiveFailures) {
+					return { kind: "connection_lost" };
+				}
+				const backoffIndex = Math.min(consecutiveFailures - 1, this.timing.failureBackoffMs.length - 1);
+				if (!await this.waitWithAbort(this.timing.failureBackoffMs[backoffIndex]!, abortController.signal)) {
+					return { kind: "cancelled" };
+				}
+				// Retries never advance the interval step-down counter.
+				continue;
+			} finally {
+				// The request settled: drop its timeout timer and parent
+				// listener before any wait so nothing leaks across cycles.
+				statusRequest.cleanup();
+			}
+			// Ownership check after the await: a stale response that lands
+			// after a new run (or Stop) took over must be discarded, never
+			// adopted, and must not update progress.
+			if (!owned()) return { kind: "cancelled" };
+			if (!snapshot || !snapshot.ok) return { kind: "rejected" };
+			consecutiveFailures = 0;
+			if (snapshot.terminal) {
+				return { kind: "terminal", snapshot };
+			}
+			args.onProgress(snapshot);
+			if (!await this.waitWithAbort(args.nextRequestDelayMs(pollIndex), abortController.signal)) {
+				return { kind: "cancelled" };
+			}
+			pollIndex += 1;
+		}
+	}
+
+	/**
+	 * Abort-aware wait: resolves true after `ms`, false as soon as `signal`
+	 * aborts. Used for every poll interval and failure backoff so Stop / a
+	 * new run unblock a pending sleep immediately.
+	 */
+	private waitWithAbort(ms: number, signal: AbortSignal): Promise<boolean> {
+		if (signal.aborted) return Promise.resolve(false);
+		return new Promise<boolean>((resolve) => {
+			const onAbort = () => {
+				clearTimeout(timer);
+				resolve(false);
+			};
+			const timer = setTimeout(() => {
+				signal.removeEventListener("abort", onAbort);
+				resolve(true);
+			}, ms);
+			signal.addEventListener("abort", onAbort, { once: true });
+		});
 	}
 
 	private setStatusHost(host: { setStatus(text: string): void }, text: string): void {
