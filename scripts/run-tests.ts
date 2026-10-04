@@ -214,8 +214,14 @@ function toPosixPath(value: string): string {
     return value.replace(/\\/g, "/");
 }
 
-function discoverTestFiles(): string[] {
-    const testsRoot = path.join(repoRoot, TESTS_DIR_NAME);
+/**
+ * Discover every `*.spec.ts` file under the `tests` directory (recursively),
+ * excluding `tests/e2e.spec.ts`, returned as posix-separated root-relative
+ * paths. Defaults to the app root; the optional root argument exists for
+ * fixtures (validate-changes tooling).
+ */
+export function discoverTestFiles(root: string = repoRoot): string[] {
+    const testsRoot = path.join(root, TESTS_DIR_NAME);
     const files: string[] = [];
 
     function walk(dir: string): void {
@@ -232,7 +238,7 @@ function discoverTestFiles(): string[] {
                 continue;
             }
 
-            const relativePath = toPosixPath(path.relative(repoRoot, fullPath));
+            const relativePath = toPosixPath(path.relative(root, fullPath));
             if (!EXCLUDED_TEST_FILES.has(relativePath)) {
                 files.push(relativePath);
             }

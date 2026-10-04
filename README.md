@@ -291,6 +291,7 @@ npm run typecheck
 npm run typecheck:tests
 npm run test
 npm run test:e2e
+npm run validate:changes
 ```
 
 `npm run test` uses a compact wrapper that discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec, and writes full per-spec logs to `artifacts/test-logs/latest`. `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
@@ -299,6 +300,21 @@ Log open/write failures are reported as `LOG ERROR` and optional `logError`
 summary fields; they do not discard concurrent results or change test outcomes.
 
 `npm run verify` runs typecheck, staged test typecheck, and the compact test suite.
+
+`npm run validate:changes` maps the current Git changes to relevant guides, focused spec filters, and fixed checks, printing why each was selected:
+
+```bash
+npm run validate:changes                              # preview the plan (read-only)
+npm run validate:changes -- --base origin/main        # add committed changes from the merge base with <ref>
+npm run validate:changes -- --run                     # execute the planned checks sequentially
+npm run --silent validate:changes -- --run --json     # one JSON object on stdout, then execute
+```
+
+Default scope is staged, unstaged, and untracked non-ignored files. `--base <ref>` is resolved locally (nothing is fetched; the ref need not be `origin/main`). The preview writes no files; `--run` stops at the first failing check, marks the rest as not run, preserves child output in `artifacts/validation-logs/latest/`, and reports node/npm/cargo versions with the results. Documentation-only changes select no code checks and say so; unclassified files fall back to the full JS checks and are reported by path; a stale routing filter is an error, never a silently clean plan. Changing a spec schedules both typechecks and that spec; changing nothing reports a no-op.
+
+Windows note: PowerShell's `npm.ps1` can consume `--run`, `--json`, and `--base` as its own options and forward them through `npm_config_*` environment variables instead of argv. The command honors those forwarded values (explicit flags always win), and `npm.cmd run validate:changes -- --run` avoids the quirk entirely.
+
+Keep the limits in mind: the routing table in `scripts/validation-map.ts` is manually maintained and advisory — it widens shared modules with extra rules instead of an import graph, cannot prove semantic impact (settings migrations, long/short parity, and regression coverage still require inspection per [AGENTS.md](AGENTS.md)), never replaces full CI/E2E/Rust policy, and cannot see changes under the `debug/playground/` workspace outside this Git root. Run one validation at a time: executions replace `artifacts/validation-logs/latest/` and focused specs share the runner's `artifacts/test-logs/latest/`.
 
 GitHub Actions checks out this app at the repository root and installs from this
 directory's `package-lock.json` with `npm ci`. Its jobs run `npm run ci`

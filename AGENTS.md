@@ -1,6 +1,6 @@
 # Agent Guide
 
-Use this file as a short task router. Read the guide and tests for the feature you are changing; inspect its callers and current worktree before editing.
+Use this file as a short task router. Read the guide and tests for the feature you are changing; inspect its callers and current worktree before editing. Run **npm run validate:changes** to map the current Git changes to candidate guides and focused checks with reasons; it assists the routing below but cannot determine every semantic impact.
 
 ## Before editing
 
@@ -34,6 +34,8 @@ Use this file as a short task router. Read the guide and tests for the feature y
 
 ## Validation
 
+- **npm run validate:changes** previews a validation plan for the current Git changes (staged, unstaged, untracked, or `--base <ref>`), listing the guides, focused spec filters, and fixed checks each routing rule selects, with the reason. Add `--run` to execute the selected checks sequentially — it stops at the first failure, preserves output in `artifacts/validation-logs/latest/`, and reports tool versions with results. `--json` prints one machine-readable report (use `npm run --silent validate:changes -- --json` so npm's banner stays off stdout).
+- The routing table in `scripts/validation-map.ts` is manually maintained and advisory. Shared modules are widened by extra rules rather than an import graph, unclassified non-documentation files fall back to the full JS checks, and documentation-only changes select no code checks and say so. Selection never replaces the route table above, caller inspection, or the requirement to add semantic-impact tests; keep full CI, E2E, and Rust policy intact.
 - **npm run typecheck** checks application TypeScript.
 - **npm run test -- filter** (filename or path fragment) runs focused specs; for example, **npm run test -- feature-dom-contracts.spec.ts**.
 - **npm run typecheck:tests** checks test TypeScript. **npm run verify** runs the broad typecheck and test suite.
