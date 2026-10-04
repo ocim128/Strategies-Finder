@@ -408,27 +408,33 @@ export class FinderServerSession {
 					this.setStatusHost(host, `${jobLabel}: ${snapshot.statusText}`);
 				},
 			});
-			switch (outcome.kind) {
-				case "terminal":
-					applyTerminalSnapshot(outcome.snapshot);
-					break;
-				case "not_found":
-					// Server job is gone (restart). Stop polling and clear the
-					// record; don't claim completion.
-					clearPersistedRecord = true;
-					this.setStatusHost(host, "Server Finder run lost (dev server restarted).");
-					break;
-				case "rejected":
-					clearPersistedRecord = true;
-					this.setStatusHost(host, "Server Finder run no longer active.");
-					break;
-				case "connection_lost":
-					this.setStatusHost(host, "Server connection lost — reload to retry Universe Finder reattach.");
-					break;
-				case "cancelled":
-					// Stop / a newer run owns the session now; the teardown
-					// below decides what may still be touched.
-					break;
+			// Guard the outcome-driven writes on ownership: the loop checks
+			// after every await, but every caller-visible consequence (status
+			// messages, terminal adoption, record clearing) must also re-verify
+			// that this run still owns the session before touching anything.
+			if (this.activeRunId === runId) {
+				switch (outcome.kind) {
+					case "terminal":
+						applyTerminalSnapshot(outcome.snapshot);
+						break;
+					case "not_found":
+						// Server job is gone (restart). Stop polling and clear the
+						// record; don't claim completion.
+						clearPersistedRecord = true;
+						this.setStatusHost(host, "Server Finder run lost (dev server restarted).");
+						break;
+					case "rejected":
+						clearPersistedRecord = true;
+						this.setStatusHost(host, "Server Finder run no longer active.");
+						break;
+					case "connection_lost":
+						this.setStatusHost(host, "Server connection lost — reload to retry Universe Finder reattach.");
+						break;
+					case "cancelled":
+						// Stop / a newer run owns the session now; the teardown
+						// below decides what may still be touched.
+						break;
+				}
 			}
 		}
 
@@ -496,6 +502,12 @@ export class FinderServerSession {
 					cache: "no-store",
 					signal: statusRequest.signal,
 				});
+				// Ownership check immediately after the await, BEFORE reading the
+				// HTTP status: a stale response of any kind (404 included) that
+				// lands after a new run (or Stop) took over must be discarded as
+				// cancellation, never mapped to a missing-job outcome that the
+				// caller would report or persist.
+				if (!owned()) return { kind: "cancelled" };
 				if (response.status === 404) return { kind: "not_found" };
 				if (!response.ok) throw new Error(`status ${response.status}`);
 				snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
@@ -523,9 +535,9 @@ export class FinderServerSession {
 				// listener before any wait so nothing leaks across cycles.
 				statusRequest.cleanup();
 			}
-			// Ownership check after the await: a stale response that lands
-			// after a new run (or Stop) took over must be discarded, never
-			// adopted, and must not update progress.
+			// Belt-and-braces ownership re-check after the settle: the fetch
+			// path above already guards, so this only fires for future code
+			// added between them.
 			if (!owned()) return { kind: "cancelled" };
 			if (!snapshot || !snapshot.ok) return { kind: "rejected" };
 			consecutiveFailures = 0;

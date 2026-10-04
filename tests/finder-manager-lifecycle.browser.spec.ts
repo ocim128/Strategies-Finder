@@ -907,6 +907,35 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         expect(mockFetch.count).to.equal(1); // the stale loop issued no further request
     });
 
+    it("a stale 404 landing after a newer run takes ownership writes nothing to status, progress, controls, or storage", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        fastTiming(session);
+        persistActiveServerRun("old-run");
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst(runningSnapshot("old-run")); // probe adopted old-run
+        await waitFor(() => session.activeRunId === "old-run");
+        await waitFor(() => mockFetch.requests.length >= 1); // old run's poll fetch is in flight
+
+        // A newer run takes ownership while the stale request is pending, and
+        // THEN the stale request lands as HTTP 404. Before the post-await
+        // ownership guard, the not_found outcome overwrote the newer run's
+        // status with the old run's failure message.
+        session.activeRunId = "new-run";
+        persistActiveServerRun("new-run");
+        mockFetch.resolveFirst(makeResponse({ ok: false }, 404));
+        await reattach;
+
+        expect(host.calls.status.some((text) => text.includes("dev server restarted")),
+            "stale 404 must not overwrite the newer run's status").to.equal(false);
+        expect(host.calls.setProgress, "no stale progress write or clear").to.have.length(1);
+        expect(host.calls.setRunning, "run/stop controls untouched").to.deep.equal([true]);
+        expect(host.calls.interpretTerminal).to.deep.equal([]);
+        expect(readFinderActiveServerRun()?.runId, "persisted ownership stays with the newer run")
+            .to.equal("new-run");
+        expect(session.activeRunId).to.equal("new-run");
+    });
+
     it("reports connection loss after exhausting the retry budget and retains the persisted record", async () => {
         const session = new FinderServerSession();
         const host = makeRecordingSessionHost();
