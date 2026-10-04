@@ -1,7 +1,7 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { OHLCVData, Signal, Time } from '../lib/strategies/index';
-import { runBacktest, runBacktestCompact } from '../lib/strategies/index';
+import { MAX_OPEN_TRADES_UNLIMITED, runBacktest, runBacktestCompact } from '../lib/strategies/index';
 import { buildSelectionResult } from '../lib/finder/endpoint';
 
 describe('Finder endpoint selection across daily entry-filter paths', () => {
@@ -308,5 +308,453 @@ describe('Backtesting Engine - compact vs full parity', () => {
 
         expect(full.trades[1]?.exitReason).to.equal('path_exit');
         assertMetricsParity(full, compact, { netProfit: 1e-6 });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Fallback characterization (pre-extraction baseline).
+//
+// The single-position Finder fast path only engages when the run omits the
+// equity curve + Sharpe and passes every per-feature blocker; every other
+// configuration takes the per-wrapper FALLBACK simulation. These tests are
+// the semantic oracle for sharing that fallback between runBacktest and
+// runBacktestCompact: each case asserts diagnostics.fastPath.used === false,
+// locks deterministic expected trades/scalars, and records the CURRENT
+// wrapper differences (they characterize behavior; they do not endorse it):
+//
+//  - full always retains Trade objects; compact retains them only under
+//    options.requireTradeHistory, and under retention the trade arrays are
+//    deep-equal (ids, order, exit reasons, EOD liquidation included).
+//  - full's fallback IGNORES options.skipDrawdown (the loop always tracks
+//    peak/drawdown); compact zeroes the drawdown metrics under skipDrawdown.
+//  - full builds an object equityCurve where fast-forwarded bars are absent;
+//    compact fills its Float64Array equity across skipped ranges.
+//  - compact's fallback supports endpoint exclusion via
+//    options.endpointSelectionLastDataTime; full post-processes with
+//    buildSelectionResult instead.
+//  - compact skips ensureCleanData (caller contract); full drops null bars.
+// ---------------------------------------------------------------------------
+
+const FALLBACK_OPTIONS = { collectDiagnostics: true } as const;
+
+/** Finder-style compact options that keep diagnostics and history control. */
+const FINDER_FALLBACK_OPTIONS = {
+    omitEquityCurve: true,
+    includeSharpeRatio: false,
+    requireTradeHistory: true,
+    collectDiagnostics: true,
+} as const;
+
+function assertFallbackUsed(result: { diagnostics?: { fastPath?: { used: boolean } } }): void {
+    expect(result.diagnostics?.fastPath?.used, 'expected the fallback simulation, not the fast path')
+        .to.equal(false);
+}
+
+describe('Backtesting Engine - fallback characterization (full vs compact)', () => {
+    it('runs the fallback for capped overlap and matches retained trades exactly', () => {
+        const data = makeData(60);
+        const signals = buyEveryNSignal(data, 4);
+        const settings = {
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 3,
+            takeProfitEnabled: true,
+            takeProfitPercent: 6,
+            maxOpenTrades: 2,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0.1, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0.1, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        expect(full.totalTrades, 'overlap must actually open overlapping positions').to.be.greaterThan(0);
+        assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+        expect(compact.trades).to.deep.equal(full.trades);
+    });
+
+    it(`runs the fallback for unlimited overlap (${MAX_OPEN_TRADES_UNLIMITED}+) and matches retained trades exactly`, () => {
+        const data = makeData(50);
+        const signals = buyEveryNSignal(data, 3);
+        const settings = {
+            executionModel: 'signal_close' as const,
+            atrPeriod: 5,
+            stopLossAtr: 1.5,
+            takeProfitAtr: 3,
+            maxOpenTrades: MAX_OPEN_TRADES_UNLIMITED,
+        };
+
+        const full = runBacktest(data, signals, 10000, 50, 0.05, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const compact = runBacktestCompact(data, signals, 10000, 50, 0.05, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        expect(full.totalTrades).to.be.greaterThan(0);
+        assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+        expect(compact.trades).to.deep.equal(full.trades);
+    });
+
+    it('runs the fallback for trailing ATR exits and matches retained trades exactly', () => {
+        // Rally then reversal: the trail follows the extreme up, then the
+        // pullback crosses it, producing trailing_stop exits.
+        const data: OHLCVData[] = [];
+        let price = 100;
+        for (let i = 0; i < 60; i += 1) {
+            const close = price + (i < 40 ? 2 : -3);
+            data.push({
+                time: (1000 + i * 60) as Time,
+                open: price,
+                high: Math.max(price, close) + 0.5,
+                low: Math.min(price, close) - 0.5,
+                close,
+                volume: 1000,
+            });
+            price = close;
+        }
+        const signals = buyEveryNSignal(data, 8);
+        const settings = {
+            executionModel: 'signal_close' as const,
+            atrPeriod: 5,
+            trailingAtr: 1,
+            maxOpenTrades: 1,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        // The ATR trailing mechanism moves stopLossPrice; the exit itself is
+        // reported with the stop_loss reason (documented current behavior).
+        expect(full.trades.some((trade) => trade.exitReason === 'stop_loss'), 'trailing stop exits must occur')
+            .to.equal(true);
+        expect(full.trades.every((trade) => trade.stopLossPrice !== null), 'trail sets a stop price').to.equal(true);
+        assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+        expect(compact.trades).to.deep.equal(full.trades);
+    });
+
+    it('runs the fallback for adaptive take-profit and matches retained trades exactly', () => {
+        const data = makeData(60);
+        const signals = buyEveryNSignal(data, 5);
+        const settings = {
+            executionModel: 'signal_close' as const,
+            riskMode: 'percentage' as const,
+            takeProfitEnabled: true,
+            takeProfitPercent: 5,
+            takeProfitMode: 'mfe_bootstrap' as const,
+            maxOpenTrades: 1,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        expect(full.totalTrades).to.be.greaterThan(0);
+        assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+        expect(compact.trades).to.deep.equal(full.trades);
+    });
+
+    it('runs the fallback for entry-time filtering and matches retained trades exactly', () => {
+        const data = makeData(60).map((bar, index) => ({ ...bar, time: (1700000000 + index * 3600) as Time }));
+        const signals = buyEveryNSignal(data, 5);
+        const settings = {
+            executionModel: 'signal_close' as const,
+            maxOpenTrades: 1,
+            entryTimeFilterEnabled: true,
+            entryTimeFilter: 'day_close' as const,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        expect(full.totalTrades).to.be.greaterThan(0);
+        assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+        expect(compact.trades).to.deep.equal(full.trades);
+    });
+
+    it('runs the fallback for partial signal exits (sizeFraction) and matches retained trades exactly', () => {
+        const data = makeData(60);
+        const signals: Signal[] = [];
+        for (let i = 0; i < data.length - 6; i += 6) {
+            signals.push({ time: data[i]!.time, type: 'buy', price: data[i]!.close });
+            // Partial exit: half the position on the next signal bar.
+            signals.push({ time: data[i + 3]!.time, type: 'sell', price: data[i + 3]!.close, sizeFraction: 0.5 });
+        }
+        const settings = {
+            executionModel: 'signal_close' as const,
+            tradeDirection: 'both' as const,
+            maxOpenTrades: 2,
+        };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        expect(full.trades.some((trade) => trade.size < full.trades[0]!.size), 'partial exits must occur')
+            .to.equal(true);
+        assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+        expect(compact.trades).to.deep.equal(full.trades);
+    });
+
+    for (const tradeDirection of ['long', 'short', 'both'] as const) {
+        for (const executionModel of ['signal_close', 'next_open', 'next_close'] as const) {
+            it(`runs the fallback across ${tradeDirection}/${executionModel} with flips and EOD liquidation`, () => {
+                const data = makeData(48);
+                const signals = alternatingSignals(data, 4);
+                const settings = {
+                    executionModel,
+                    tradeDirection,
+                    maxOpenTrades: 2,
+                    riskMode: 'percentage' as const,
+                    stopLossEnabled: true,
+                    stopLossPercent: 4,
+                };
+
+                const full = runBacktest(data, signals, 10000, 100, 0.05, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+                const compact = runBacktestCompact(data, signals, 10000, 100, 0.05, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+                assertFallbackUsed(full);
+                assertFallbackUsed(compact);
+                expect(full.totalTrades).to.be.greaterThan(0);
+                assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+                expect(compact.trades).to.deep.equal(full.trades);
+            });
+
+            // A single never-closed entry must liquidate at the final close in
+            // every execution model and direction.
+            const entryType: Signal['type'] = tradeDirection === 'short' ? 'sell' : 'buy';
+            const entryIndex = 5;
+            it(`liquidates an open ${tradeDirection} position at the final close under ${executionModel}`, () => {
+                const data = makeData(30);
+                const signals: Signal[] = [
+                    { time: data[entryIndex]!.time, type: entryType, price: data[entryIndex]!.close },
+                ];
+                const settings = { executionModel, tradeDirection, maxOpenTrades: 2 };
+
+                const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+                const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+                assertFallbackUsed(full);
+                assertFallbackUsed(compact);
+                expect(full.trades).to.have.length(1);
+                expect(full.trades[0]!.exitReason).to.equal('end_of_data');
+                expect(full.trades[0]!.exitTime).to.equal(data[data.length - 1]!.time);
+                expect(compact.trades).to.deep.equal(full.trades);
+            });
+        }
+    }
+
+    it('matches combined books in the fallback for capped and unlimited overlap', () => {
+        const data = makeData(60);
+        const signals = alternatingSignals(data, 4);
+        for (const maxOpenTrades of [2, MAX_OPEN_TRADES_UNLIMITED]) {
+            const settings = {
+                executionModel: 'signal_close' as const,
+                tradeDirection: 'combined' as const,
+                maxOpenTrades,
+            };
+
+            const full = runBacktest(data, signals, 10000, 100, 0.05, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+            const compact = runBacktestCompact(data, signals, 10000, 100, 0.05, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+            // Combined delegates per side; with a blocked fast path the sides
+            // run their fallbacks and the merged fastPath flag stays false.
+            assertFallbackUsed(full);
+            assertFallbackUsed(compact);
+            expect(full.totalTrades).to.be.greaterThan(0);
+            assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
+            expect(compact.trades).to.deep.equal(full.trades);
+        }
+    });
+
+    it('liquidates an open position at the final close in both fallbacks', () => {
+        const data = makeData(30);
+        const signals: Signal[] = [{ time: data[5]!.time, type: 'buy', price: data[5]!.close }];
+        const settings = { executionModel: 'signal_close' as const, maxOpenTrades: 2 };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        expect(full.trades).to.have.length(1);
+        expect(full.trades[0]!.exitReason).to.equal('end_of_data');
+        expect(full.trades[0]!.exitTime).to.equal(data[data.length - 1]!.time);
+        expect(full.trades[0]!.exitPrice).to.equal(data[data.length - 1]!.close);
+        expect(compact.trades).to.deep.equal(full.trades);
+        // The forced close feeds the final capital into the reported metrics.
+        expect(full.netProfit).to.be.closeTo(compact.netProfit, 1e-9);
+        expect(full.diagnostics?.counts.forcedEndOfDataExits).to.equal(1);
+        expect(compact.diagnostics?.counts.forcedEndOfDataExits).to.equal(1);
+    });
+
+    it('handles empty signal inputs identically in both entrypoints', () => {
+        const data = makeData(20);
+        const settings = { maxOpenTrades: 2 };
+
+        const full = runBacktest(data, [], 10000, 100, 0, settings);
+        const compact = runBacktestCompact(data, [], 10000, 100, 0, settings);
+
+        expect(full.totalTrades).to.equal(0);
+        expect(full.netProfit).to.equal(0);
+        expect(full.trades).to.deep.equal([]);
+        expect(full.equityCurve).to.deep.equal([]);
+        expect(compact.totalTrades).to.equal(0);
+        expect(compact.netProfit).to.equal(0);
+        expect(compact.trades).to.deep.equal([]);
+    });
+
+    it('fills the caller Float64Array equity across fast-forwarded bars in the compact fallback', () => {
+        const data = makeData(80);
+        // Sparse signals force the omitEquityCurve bar-skip fast-forward.
+        const signals = buyEveryNSignal(data, 25);
+        const settings = { executionModel: 'signal_close' as const, maxOpenTrades: 2 };
+        const equityOut = new Float64Array(data.length);
+
+        const compact = runBacktestCompact(
+            data, signals, 10000, 100, 0, settings, undefined, undefined,
+            equityOut,
+            { omitEquityCurve: true, includeSharpeRatio: false, requireTradeHistory: false, collectDiagnostics: true },
+        );
+
+        assertFallbackUsed(compact);
+        let filled = 0;
+        for (let i = 0; i < equityOut.length; i += 1) {
+            if (equityOut[i] !== 0 || i === 0) filled += 1;
+        }
+        expect(filled, 'every bar must carry an equity value').to.equal(data.length);
+        expect(equityOut[data.length - 1]).to.be.closeTo(10000 + compact.netProfit, 1e-9);
+
+        // The full fallback's object equity curve records only scanned bars,
+        // so sparse entries leave fast-forwarded bars absent (documented
+        // wrapper difference).
+        const full = runBacktest(
+            data, signals, 10000, 100, 0, settings, undefined, undefined,
+            { omitEquityCurve: true, includeSharpeRatio: false, collectDiagnostics: true },
+        );
+        assertFallbackUsed(full);
+        expect(full.equityCurve.length).to.be.lessThan(data.length);
+        expect(full.netProfit).to.be.closeTo(compact.netProfit, 1e-6);
+    });
+
+    it('excludes endpoint trades in the compact fallback via the endpoint accumulator', () => {
+        const data = makeData(30);
+        const signals: Signal[] = [{ time: data[5]!.time, type: 'buy', price: data[5]!.close }];
+        const lastDataTime = data[data.length - 1]!.time;
+        const settings = { executionModel: 'signal_close' as const, maxOpenTrades: 2 };
+
+        const compact = runBacktestCompact(
+            data, signals, 10000, 100, 0, settings, undefined, undefined,
+            {
+                omitEquityCurve: true,
+                includeSharpeRatio: false,
+                requireTradeHistory: false,
+                collectDiagnostics: true,
+                endpointSelectionLastDataTime: lastDataTime,
+                endpointSelectionInitialCapital: 10000,
+            },
+        );
+
+        assertFallbackUsed(compact);
+        // The only trade is the EOD liquidation at the boundary: excluded.
+        expect(compact.endpointSelection?.adjusted).to.equal(true);
+        expect(compact.endpointSelection?.removedTrades).to.equal(1);
+        expect(compact.endpointSelection?.result.totalTrades).to.equal(0);
+        expect(compact.endpointSelection?.result.netProfit).to.equal(0);
+        expect(compact.trades).to.deep.equal([]);
+    });
+
+    it('diverges on skipDrawdown: compact zeroes drawdown while full still tracks it', () => {
+        const data = makeData(60);
+        const signals = buyEveryNSignal(data, 5);
+        const settings = {
+            executionModel: 'signal_close' as const,
+            maxOpenTrades: 2,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 5,
+        };
+        const options = { omitEquityCurve: true, includeSharpeRatio: false, skipDrawdown: true, collectDiagnostics: true };
+
+        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...options });
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...options });
+
+        assertFallbackUsed(full);
+        assertFallbackUsed(compact);
+        expect(full.maxDrawdownPercent, 'full fallback ignores skipDrawdown (current behavior)')
+            .to.be.greaterThan(0);
+        expect(compact.maxDrawdownPercent, 'compact fallback honors skipDrawdown').to.equal(0);
+        expect(compact.maxDrawdown).to.equal(0);
+        expect(full.netProfit).to.be.closeTo(compact.netProfit, 1e-6);
+    });
+
+    it('drops null bars through ensureCleanData only in the full entrypoint', () => {
+        const clean = makeData(30);
+        const dirty = [...clean];
+        (dirty as unknown[])[7] = null; // one corrupt bar the full path must drop
+        const signals = buyEveryNSignal(clean, 5);
+        const settings = { maxOpenTrades: 2 };
+
+        const fromClean = runBacktest(clean, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+        const fromDirty = runBacktest(dirty as OHLCVData[], signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+
+        assertFallbackUsed(fromClean);
+        assertFallbackUsed(fromDirty);
+        expect(fromDirty.totalTrades).to.equal(fromClean.totalTrades);
+        expect(fromDirty.netProfit).to.be.closeTo(fromClean.netProfit, 1e-9);
+        expect(fromDirty.trades).to.deep.equal(fromClean.trades);
+    });
+
+    it('throws the cancellation error from both fallback loops', () => {
+        const data = makeData(60);
+        const signals = buyEveryNSignal(data, 4);
+        const settings = { maxOpenTrades: 2 };
+        let calls = 0;
+        const isCancelled = (): boolean => {
+            calls += 1;
+            return calls > 2;
+        };
+
+        expect(() => runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined,
+            { ...FALLBACK_OPTIONS, isCancelled })).to.throw(/cancelled during TypeScript simulation/);
+
+        calls = 0;
+        expect(() => runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined,
+            { ...FINDER_FALLBACK_OPTIONS, requireTradeHistory: false, isCancelled })).to.throw(/cancelled during TypeScript simulation/);
+    });
+
+    it('computes compact fallback Sharpe from typed equity when requested and skips it when not', () => {
+        // Daily-collapsed Sharpe sampling needs multi-day coverage: 4h bars.
+        const data = makeData(96).map((bar, index) => ({ ...bar, time: (1700000000 + index * 4 * 3600) as Time }));
+        const signals = buyEveryNSignal(data, 6);
+        const settings = {
+            executionModel: 'signal_close' as const,
+            maxOpenTrades: 2,
+            riskMode: 'percentage' as const,
+            stopLossEnabled: true,
+            stopLossPercent: 4,
+            takeProfitEnabled: true,
+            takeProfitPercent: 8,
+        };
+
+        const withSharpe = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined,
+            { collectDiagnostics: true });
+        const withoutSharpe = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined,
+            { omitEquityCurve: true, includeSharpeRatio: false, requireTradeHistory: false, collectDiagnostics: true });
+        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
+
+        assertFallbackUsed(withSharpe);
+        assertFallbackUsed(withoutSharpe);
+        assertFallbackUsed(full);
+        expect(withSharpe.sharpeRatio).to.not.equal(0);
+        expect(withoutSharpe.sharpeRatio).to.equal(0);
+        // Sample-based (typed) and curve-based (object) Sharpe agree closely.
+        expect(withSharpe.sharpeRatio).to.be.closeTo(full.sharpeRatio, 1e-6);
+        assertMetricsParity(full, withSharpe, { netProfit: 1e-6, sharpeRatio: 1e-6 });
     });
 });

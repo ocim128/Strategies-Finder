@@ -149,6 +149,51 @@ This matrix is important for performance and parity: a Rust batch that returns
 only scalar metrics cannot replace a TypeScript call that needs a latest trade
 or an OOS trade history.
 
+### TypeScript fallback simulations
+
+The single-position Finder fast path only engages when the run omits the equity
+curve and Sharpe and passes every per-feature blocker (`maxOpenTrades === 1`,
+no trailing ATR, no adaptive percentage take profit, no entry-time filter, and
+the remaining eligibility fences). Every other configuration executes one of
+two per-wrapper fallback loops inside `backtest-engine.ts`: the loop in
+`runBacktest()` (standard) and the loop in `runBacktestCompact()` (compact).
+Both implement the same trading-state machine — pending adaptive exits at the
+open, `next_open` open-only exits + signal scan, backward position iteration,
+close-based exits, signal entries/exits with re-entry and cooldown rules,
+end-of-bar adaptive-history flushing, and end-of-data liquidation — but they
+materialize output differently. Characterized behavior (locked by
+`tests/backtesting-engine-compact-parity.spec.ts`, "fallback characterization"):
+
+| Aspect | Full fallback | Compact fallback |
+| --- | --- | --- |
+| Input cleaning | `ensureCleanData` drops null bars | Caller contract: data must already be clean |
+| Trade objects | Always built | Only under `options.requireTradeHistory`; then the trade array is deep-equal to the full run's |
+| Equity output | Object `equityCurve`; bars skipped by the sparse-signal fast-forward are absent | `Float64Array` (`options`-slot `equityOut`); skipped ranges are filled |
+| `skipDrawdown` | Ignored by the fallback loop — drawdown is always tracked | Honored — drawdown metrics are zeroed (equity is still tracked when Sharpe is requested) |
+| Sharpe | `calculateBacktestStats` from the object curve | `calculateSharpeRatioFromEquitySamples` from the typed array; `0` when `includeSharpeRatio === false` |
+| Endpoint exclusion | Not supported in-engine; callers post-process with `buildSelectionResult` | In-engine via `options.endpointSelectionLastDataTime` accumulator |
+| End-of-data liquidation | Inline trade at the final close; no finalize hooks (no adaptive-history queue, win-streak/sizing update, or cooldown arming) | Through `recordExit` — endpoint recorded, cooldown armed, position spliced; also no finalize hooks |
+| Cancellation | Throws `Backtest cancelled during TypeScript simulation.` from the bar and signal scans | Same, plus a no-progress guard in the forced-close loop |
+
+The fallback loops are the hottest TypeScript simulation path for Finder
+configurations that block the fast path (overlap, trailing exits, adaptive
+take profit, entry-time filters). Baseline wall-clock/heap measurements for a
+20,000-bar seeded dataset with ~4,000 signals and overlapping positions
+(`npm run bench:backtest-fallback`, October 2026, idle machine, medians of
+three invocations):
+
+| Entrypoint | Median ms | Peak heap Δ MB |
+| --- | --- | --- |
+| `runBacktest` (full fallback, default analytics) | ~12.2 | ~9 |
+| `runBacktestCompact` (finder fallback) | ~6.7 | ~3 |
+| compact + endpoint exclusion | ~7.3 | ~2 |
+| compact + `equityOut` Float64Array | ~6.9 | ~3 |
+| compact, unlimited overlap | ~6.9 | ~3 |
+
+Run-to-run median jitter was ≤5%. Any refactor of these loops must keep every
+entrypoint's median within ~10% of this baseline (twice the observed jitter)
+and must preserve the deterministic trade counts the benchmark prints.
+
 ## Rust engine
 
 ### Service and implementation

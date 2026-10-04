@@ -31,7 +31,8 @@
     "build:types": "tsc -p tsconfig.types.json",
     "build:check": "vite build && esno scripts/check-bundle-budget.ts",
     "dev": "vite",
-    "build": "vite build"
+    "build": "vite build",
+    "bench:backtest-fallback": "esno scripts/bench-backtest-fallback.ts"
   },
   "devDependencies": {
     "@types/chai": "^5.2.1",
