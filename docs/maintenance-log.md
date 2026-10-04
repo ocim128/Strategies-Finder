@@ -30,10 +30,11 @@ repeating the same investigation.
   workspace-root `typescript` devDependency to 5.9.x so local typecheck runs
   CI's compiler (both tsconfigs verified clean under 5.9.3, so blast radius
   is small; the change belongs to the workspace lockfile outside this
-  directory). CI stages after typecheck (`npm run test` on windows-latest,
-  `build:check` with the lockfile's vite) were never reached this month and
-  get their first look on the next push. The Sep 15-16 failures (12-14s) are
-  a separate, older failure mode, superseded by the current state.
+  directory). The Sep 15-16 failures (12-14s) are a separate, older failure
+  mode, superseded by the current state. CONFIRMED after push: the full CI
+  run went green end to end (typecheck + suite + build:check in 3m17s,
+  browser smoke, Rust checks) — the stages that had not executed all month
+  all pass.
 
 ## 2026-10-03 - Report saved-configuration deletion failures accurately
 
