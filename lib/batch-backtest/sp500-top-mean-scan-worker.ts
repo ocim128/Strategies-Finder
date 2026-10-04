@@ -193,11 +193,15 @@ async function main(): Promise<void> {
         }
     }
     if (!parentPort) throw new Error("top-mean scan worker requires a parent port");
+    // `instanceof ArrayBuffer` already excludes SharedArrayBuffer at runtime;
+    // the predicate must say `ArrayBuffer` (not `ArrayBufferLike`) so the
+    // postMessage transfer list matches `Transferable[]` under the CI
+    // toolchain's TS >= 5.7 lib typings.
     const transfer = shards.flatMap((shard) => [
         shard.pairLengths?.buffer, shard.pairFlags?.buffer, shard.timeSecs?.buffer,
         shard.assetIndices?.buffer, shard.deltas?.buffer, shard.pnlShares?.buffer,
         shard.confidenceWeights?.buffer, shard.deltaFlags?.buffer, shard.entrySecs?.buffer,
-    ].filter((buf): buf is ArrayBufferLike => buf instanceof ArrayBuffer));
+    ].filter((buf): buf is ArrayBuffer => buf instanceof ArrayBuffer));
     parentPort.postMessage({ type: "topMeanScanResult", shards }, transfer);
 }
 

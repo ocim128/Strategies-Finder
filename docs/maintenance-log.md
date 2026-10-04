@@ -4,6 +4,37 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-04 - Un-red the CI typecheck gate (TS-version drift hid the failure locally)
+
+- **Evidence:** `gh run list` showed every CI run on this branch failing since
+  at least Sep 15, including all three Oct 4 commits. The current blocker:
+  `lib/batch-backtest/sp500-top-mean-scan-worker.ts(201,67)` TS2769 — the
+  `postMessage` transfer list typed `ArrayBufferLike[]` vs `Transferable[]`.
+  CI installs the standalone lockfile (TypeScript 5.9.3) while the npm
+  workspace hoists TypeScript 5.5.4 into local `npm run typecheck` (@types/node
+  is 25.9.5 on both). Since TS 5.7's lib re-typing, `TypedArray.buffer` is
+  `ArrayBufferLike`, so the error only exists under CI's compiler — local
+  validation could never see it. Reproduced locally by running the exact
+  5.9.3 from a temp install against both tsconfigs.
+- **Change:** One-line fix: the filter predicate now narrows to `ArrayBuffer`
+  instead of `ArrayBufferLike`. Runtime-identical — `buf instanceof
+  ArrayBuffer` already excludes SharedArrayBuffer — and honest about it.
+  The `ArrayBufferLike` declaration was simply wider than what the runtime
+  check proves.
+- **Checks:** Both `tsc --noEmit` and `tsc -p tsconfig.tests.json` pass under
+  the exact CI TypeScript 5.9.3 (no additional latent errors were hiding
+  behind the blocker), local 5.5.4 typecheck passes, `npm run test --
+  sp500-top-mean-worker-pool.spec.ts` exercises the real worker-threads
+  transfer path, full suite 267/267, `git diff --check` clean.
+- **Follow-up:** The drift itself is the root cause worth closing: bump the
+  workspace-root `typescript` devDependency to 5.9.x so local typecheck runs
+  CI's compiler (both tsconfigs verified clean under 5.9.3, so blast radius
+  is small; the change belongs to the workspace lockfile outside this
+  directory). CI stages after typecheck (`npm run test` on windows-latest,
+  `build:check` with the lockfile's vite) were never reached this month and
+  get their first look on the next push. The Sep 15-16 failures (12-14s) are
+  a separate, older failure mode, superseded by the current state.
+
 ## 2026-10-03 - Report saved-configuration deletion failures accurately
 
 - **Evidence:** Settings' Delete handler ignored `deleteStrategyConfig`'s
