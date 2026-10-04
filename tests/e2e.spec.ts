@@ -276,7 +276,25 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
             if (manager.getLatestCandidate().candidateOrdinal !== 0) throw new Error('Overall ordering sort failed');
             const sort = document.getElementById('finderArmPerformanceRankingSort') as HTMLSelectElement;
             sort.value = 'selected_asset';
-            sort.dispatchEvent(new Event('change', { bubbles: true }));
+            const originalDisplayUpdate = manager.resultStore.setArmPerformanceDisplayFilter;
+            let displayUpdates = 0;
+            try {
+                manager.resultStore.setArmPerformanceDisplayFilter = (...args: any[]) => {
+                    displayUpdates += 1;
+                    return originalDisplayUpdate.apply(manager.resultStore, args);
+                };
+                sort.dispatchEvent(new Event('input', { bubbles: true }));
+                sort.dispatchEvent(new Event('change', { bubbles: true }));
+                await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+                if (displayUpdates !== 1) throw new Error('Duplicate Arm control events must coalesce into one display update');
+                sort.dispatchEvent(new Event('change', { bubbles: true }));
+                // Hide before the next frame: apply the pending view and flush its checkpoint.
+                window.dispatchEvent(new Event('pagehide'));
+                const saved = JSON.parse(localStorage.getItem('playground_finder_latest_results')!).data.results;
+                if (saved.results[0]?.candidateOrdinal !== 1) throw new Error('Pagehide lost the pending Arm display checkpoint');
+            } finally {
+                manager.resultStore.setArmPerformanceDisplayFilter = originalDisplayUpdate;
+            }
             if (manager.getLatestCandidate().candidateOrdinal !== 1 || manager.resultStore.armPerformanceRunResults.length !== 2) {
                 throw new Error('Selected asset sort must use the full inventory before Top Results');
             }
@@ -372,8 +390,10 @@ const verifyFinderWorkspace = async (page: Page): Promise<void> => {
         if (!document.querySelector('.finder-comparison-table') || document.querySelector('#finderList .finder-row')) throw new Error('Finder table view did not replace cards');
         const rankingSort = document.getElementById('finderArmPerformanceRankingSort') as HTMLSelectElement;
         rankingSort.value = 'overall_ordering'; rankingSort.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         if (manager.getLatestCandidate().candidateOrdinal !== 0) throw new Error('Table ranking did not restore overall ordering');
         rankingSort.value = 'selected_asset'; rankingSort.dispatchEvent(new Event('change', { bubbles: true }));
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
         if (manager.getLatestCandidate().candidateOrdinal !== 1 || manager.resultStore.armPerformanceRunResults.length !== 2) throw new Error('Table ranking truncated the source inventory');
         if (!document.querySelector('.finder-comparison-table tbody')!.textContent!.includes('Ranking fixture 1')) throw new Error('Table did not follow Re-Sort');
         const apply = document.querySelector<HTMLButtonElement>('.finder-comparison-table .finder-apply')!;

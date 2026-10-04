@@ -20,8 +20,10 @@ for one of five scopes:
   configuration inventory by any of the 20 TOP_MEAN replay arms.
 
 The menu is assembled from `html-partials/tab-finder.html`. Its structural DOM
-contract is `lib/finder/finder-manager-dom.ts`; do not rename an id in the
-partial without updating the contract and its tests.
+contracts are `lib/finder/finder-manager-dom.ts` for controls and
+`lib/finder/finder-ui-dom.ts` for result, progress, status, and benchmark
+elements. Do not rename an id in the partial without updating its contract
+and the feature DOM tests.
 
 ## User workflow
 
@@ -41,6 +43,15 @@ partial without updating the contract and its tests.
 preserving the current strategy selections. Finder settings are persisted in
 the browser, so changes to the settings schema require backward-compatible
 defaults and normalization.
+
+Follow and Reversion are curated presets. Their buttons show the number of
+matching strategies available in the current library; a preset with no matches
+is disabled and never clears the existing selection. None remains the explicit
+action for clearing selections.
+
+From/To edits, including clearing either date, use the same debounced settings
+save as other search inputs. Pending settings writes flush on pagehide, so a
+reload preserves date-only edits without requiring a run first.
 
 ## Shared controls
 
@@ -71,6 +82,13 @@ the rendered rows. Table mode does not add a second sorting path or start a
 run. On narrow screens only the table's region scrolls horizontally. View
 and disclosure choices last for the mounted Finder session and are not saved;
 search settings retain their existing persistence behavior.
+
+Arm Performance display edits coalesce into one update per animation frame.
+Duplicate events skip sorting and rendering when the inventory, display limit,
+selected arm, and filter are unchanged. The default arm reuses its sorted
+inventory. Display snapshots debounce for 300 ms and flush on pagehide;
+terminal results still persist immediately, and starting a new run discards
+pending checkpoints from the previous run.
 
 ### Search controls
 
@@ -727,6 +745,10 @@ stream does not imply cancellation; a reload may reattach while the same Vite
 process is alive. Stop is run-id scoped, including the Stop-before-ownership
 race.
 
+Stop responses are also scoped in the browser: confirmation clears only the
+matching persisted run record, and a delayed failure cannot replace a newer
+run's status, even after that newer run completes.
+
 ### Wire and retention rules
 
 - Finder server events and terminal candidates are scalar-only. Do not send
@@ -809,7 +831,7 @@ mutable state of its own beyond the retained run context
 | --- | --- |
 | Menu markup | `html-partials/tab-finder.html` |
 | Finder facade | `lib/finder-manager.ts` |
-| DOM ids and required-element contract | `lib/finder/finder-manager-dom.ts` |
+| DOM ids and required-element contracts | `lib/finder/finder-manager-dom.ts`, `lib/finder/finder-ui-dom.ts` |
 | Option normalization and data/OOS slices | `lib/finder/finder-manager-logic.ts` |
 | Browser UI rendering | `lib/finder/finder-ui.ts` |
 | Finder labels and metric inventories | `lib/finder/constants.ts` |

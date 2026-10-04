@@ -76,7 +76,17 @@ export class FinderServerSession {
 	 * `session.isActive(runId)` before mutating UI state so a stale tab cannot
 	 * clobber a newer run.
 	 */
-	activeRunId: string | null = null;
+	private ownedRunId: string | null = null;
+	private ownershipVersion = 0;
+
+	get activeRunId(): string | null {
+		return this.ownedRunId;
+	}
+
+	set activeRunId(runId: string | null) {
+		if (runId !== this.ownedRunId) this.ownershipVersion += 1;
+		this.ownedRunId = runId;
+	}
 	/**
 	 * Reattach poller state. `pollingStopped` is the cancel token;
 	 * `timerResolve` lets Stop / a new Run unblock a pending poll sleep
@@ -140,6 +150,7 @@ export class FinderServerSession {
 	 * confirms; on a network failure a reload can still reattach.
 	 */
 	async stopServerRun(runId: string, host: { setStatus(text: string): void }): Promise<void> {
+		const ownershipVersion = this.ownershipVersion;
 		try {
 			const response = await fetch('/api/finder/stop', {
 				method: 'POST',
@@ -154,13 +165,20 @@ export class FinderServerSession {
 				throw new Error('server rejected the stop request');
 			}
 			// The matching run was stopped or was already terminal.
-			clearFinderActiveServerRun();
+			if (readFinderActiveServerRun()?.runId === runId) {
+				clearFinderActiveServerRun();
+			}
 		} catch (error) {
 			debugLogger.warn('finder.server.stop_failed', {
 				runId,
 				error: error instanceof Error ? error.message : String(error),
 			});
-			host.setStatus('Finder Stop was rejected by the server; reload to reattach.');
+			const persistedRun = readFinderActiveServerRun();
+			if (this.ownershipVersion === ownershipVersion
+				&& (this.activeRunId === null || this.activeRunId === runId)
+				&& (!persistedRun || persistedRun.runId === runId)) {
+				host.setStatus('Finder Stop was rejected by the server; reload to reattach.');
+			}
 		}
 	}
 

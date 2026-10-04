@@ -12,6 +12,33 @@ import { strategyRegistry, getStrategyList, getStrategyKind, getStrategyKindTitl
 import type { FinderManagerDom } from "../finder-manager-dom";
 import type { FinderPersistedUiState } from "./finder-settings";
 
+export const FINDER_STRATEGY_PRESETS = [
+	{
+		label: "Follow",
+		button: "finderStrategySelectFollow",
+		keys: [
+			"decay_momentum_alignment",
+			"volatility_regime_median_alignment",
+			"initiative_pressure_acceleration_follow",
+			"volatility_breakout_follow",
+			"accumulation_persistence_streak_gate",
+		],
+	},
+	{
+		label: "Reversion",
+		button: "finderStrategySelectReversion",
+		keys: [
+			"decay_pressure_percentile_reversion",
+			"cumulative_return_zscore_reversion",
+			"cumulative_return_percentile_reversion",
+			"acceptance_deviation_median_reversion",
+			"negative_autocorrelation_median_reversion",
+			"range_expansion_exhaustion_reversion",
+			"probability_boundary_eigen_shift",
+		],
+	},
+] as const;
+
 export interface FinderStrategySelectionDeps {
 	getDom: () => FinderManagerDom;
 	getUiState: () => FinderPersistedUiState;
@@ -54,15 +81,20 @@ export class FinderStrategySelection {
 	}
 
 	syncStrategyToggleInputsFromState(): void {
+		const selected = this.getSelectedStrategyKeys();
 		this.strategyToggles.forEach((toggle, key) => {
-			toggle.checked = this.isStrategySelected(key);
+			toggle.checked = selected.has(key);
 		});
 	}
 
-	isStrategySelected(key: string): boolean {
+	private getSelectedStrategyKeys(): Set<string> {
 		return this.usesUniverseStrategySelection()
-			? this.getUniverseSelectedStrategyKeys().has(key)
-			: this.getCurrentChartSelectedStrategyKeys().has(key);
+			? this.getUniverseSelectedStrategyKeys()
+			: this.getCurrentChartSelectedStrategyKeys();
+	}
+
+	isStrategySelected(key: string): boolean {
+		return this.getSelectedStrategyKeys().has(key);
 	}
 
 	renderStrategySelection(): void {
@@ -75,6 +107,7 @@ export class FinderStrategySelection {
 
 		const strategies = strategyRegistry.getAll();
 		const allStrategies = getStrategyList();
+		const selected = this.getSelectedStrategyKeys();
 		const fragment = document.createDocumentFragment();
 
 		for (const { key, name } of allStrategies) {
@@ -91,7 +124,7 @@ export class FinderStrategySelection {
 			const checkbox = document.createElement('input');
 			checkbox.type = 'checkbox';
 			checkbox.id = `finder-strategy-${key}`;
-			checkbox.checked = this.isStrategySelected(key);
+			checkbox.checked = selected.has(key);
 			checkbox.dataset.strategyKey = key;
 
 			const label = document.createElement('label');
@@ -195,6 +228,8 @@ export class FinderStrategySelection {
 
 	replaceStrategySelection(strategyKeys: readonly string[]): void {
 		const availableKeys = strategyKeys.filter((key) => this.strategyToggles.has(key));
+		// An unavailable preset must never behave like the explicit None action.
+		if (availableKeys.length === 0) return;
 		this.setStrategySelection(this.strategyOrder, false, false);
 		this.setStrategySelection(availableKeys, true);
 	}
@@ -257,6 +292,15 @@ export class FinderStrategySelection {
 		dom.finderStrategiesToggleAll.indeterminate = selectedCount > 0 && selectedCount < totalCount;
 		dom.finderStrategySelectVisible.disabled = visibleKeys.length === 0;
 		dom.finderStrategyInvertVisible.disabled = visibleKeys.length === 0;
+		for (const preset of FINDER_STRATEGY_PRESETS) {
+			const count = preset.keys.filter((key) => this.strategyToggles.has(key)).length;
+			const button = dom[preset.button];
+			button.disabled = count === 0;
+			button.textContent = `${preset.label} (${count})`;
+			button.title = count === 0
+				? `No ${preset.label.toLowerCase()} preset strategies are available in this library.`
+				: `${count} of ${preset.keys.length} preset strategies available in this library.`;
+		}
 		dom.finderStrategySummary.textContent = hasFilter
 			? `${selectedCount} selected | ${visibleKeys.length} visible | ${visibleSelectedCount} visible selected`
 			: `${selectedCount} selected`;

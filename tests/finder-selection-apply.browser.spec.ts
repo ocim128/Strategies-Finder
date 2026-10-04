@@ -11,7 +11,8 @@
  */
 import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";
-import { FinderStrategySelection } from "../lib/finder/browser/finder-strategy-selection";
+import { FINDER_STRATEGY_PRESETS, FinderStrategySelection } from "../lib/finder/browser/finder-strategy-selection";
+import { builtInStrategyKeys } from "../lib/strategies/manifest-keys";
 import { FinderResultActions } from "../lib/finder/browser/finder-result-actions";
 import { FinderResultStore } from "../lib/finder/browser/finder-result-store";
 import { normalizeFinderUiState } from "../lib/finder/browser/finder-settings";
@@ -37,6 +38,7 @@ function makeDom(): FinderManagerDom {
     for (const id of [
         "finderStrategyList", "finderStrategySearch", "finderStrategiesToggleAll",
         "finderStrategySelectVisible", "finderStrategyInvertVisible", "finderStrategySummary",
+        "finderStrategySelectFollow", "finderStrategySelectReversion",
     ]) {
         dom[id] = createFakeFinderElement();
     }
@@ -135,6 +137,59 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("FinderStrategySelection scope restoration", () => {
+    it("renders saved selections and switches scope without stale membership", () => {
+        const harness = makeHarness();
+        const [chartKey, universeKey] = builtInStrategyKeys;
+        harness.uiState.currentChartSelectedStrategyKeys = [chartKey!];
+        harness.uiState.universeSelectedStrategyKeys = [universeKey!];
+        harness.selection.renderStrategySelection();
+        expect(harness.selection.strategyToggles.get(chartKey!)!.checked).to.equal(true);
+        expect(harness.selection.strategyToggles.get(universeKey!)!.checked).to.equal(false);
+        harness.universeScope.value = true;
+        harness.selection.syncStrategyToggleInputsFromState();
+        expect(harness.selection.strategyToggles.get(chartKey!)!.checked).to.equal(false);
+        expect(harness.selection.strategyToggles.get(universeKey!)!.checked).to.equal(true);
+        harness.selection.setStrategySelection([chartKey!], true);
+        harness.selection.syncStrategyToggleInputsFromState();
+        expect(harness.selection.strategyToggles.get(chartKey!)!.checked).to.equal(true);
+    });
+
+    it("reports preset availability against the built-in catalog and preserves empty-preset selections", () => {
+        const harness = makeHarness();
+        renderStrategies(harness, [...builtInStrategyKeys]);
+        const selectedKey = builtInStrategyKeys[0]!;
+        harness.selection.setStrategySelection([selectedKey], true);
+        for (const preset of FINDER_STRATEGY_PRESETS) {
+            const available = preset.keys.filter((key) => builtInStrategyKeys.includes(key));
+            const button = harness.dom[preset.button];
+            expect(button.disabled).to.equal(available.length === 0);
+            expect(button.textContent).to.equal(`${preset.label} (${available.length})`);
+            harness.selection.replaceStrategySelection(preset.keys);
+            expect(harness.uiState.currentChartSelectedStrategyKeys).to.deep.equal(
+                available.length > 0 ? available : [selectedKey],
+            );
+            harness.selection.setStrategySelection(harness.selection.strategyOrder, false);
+            harness.selection.setStrategySelection([selectedKey], true);
+        }
+        harness.selection.replaceStrategySelection(["unavailable_preset_strategy"]);
+        expect(harness.uiState.currentChartSelectedStrategyKeys).to.deep.equal([selectedKey]);
+        expect(harness.selection.strategyToggles.get(selectedKey)!.checked).to.equal(true);
+    });
+
+    it("re-enables a preset when its strategies become available", () => {
+        const harness = makeHarness();
+        renderStrategies(harness, ["existing"]);
+        harness.selection.syncStrategySelectionUi();
+        expect(harness.dom.finderStrategySelectFollow.disabled).to.equal(true);
+        const followKey = FINDER_STRATEGY_PRESETS[0].keys[0];
+        renderStrategies(harness, ["existing", followKey]);
+        harness.selection.syncStrategySelectionUi();
+        expect(harness.dom.finderStrategySelectFollow.disabled).to.equal(false);
+        expect(harness.dom.finderStrategySelectFollow.textContent).to.equal("Follow (1)");
+        harness.selection.replaceStrategySelection(FINDER_STRATEGY_PRESETS[0].keys);
+        expect(harness.uiState.currentChartSelectedStrategyKeys).to.deep.equal([followKey]);
+    });
+
     it("keeps independent selected-key lists per scope and restores checkboxes on scope switch", () => {
         const harness = makeHarness();
         renderStrategies(harness, ["alpha", "beta"]);

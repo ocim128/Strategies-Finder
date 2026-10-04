@@ -10,6 +10,7 @@ import { TRADES_RENDERER_REQUIRED_IDS } from "../lib/renderers/trades-renderer-d
 import { SETTINGS_MANAGER_REQUIRED_IDS } from "../lib/settings-manager-dom";
 import { LIVE_POSITIONS_REQUIRED_IDS } from "../lib/live-positions-dom";
 import { FINDER_MANAGER_REQUIRED_IDS } from "../lib/finder/finder-manager-dom";
+import { FINDER_UI_REQUIRED_IDS } from "../lib/finder/finder-ui-dom";
 import { BATCH_BACKTEST_REQUIRED_IDS } from "../lib/batch-backtest/batch-backtest-dom";
 import { RANK_PAIRS_REQUIRED_IDS } from "../lib/rank-pairs/rank-pairs-dom";
 import { WALK_FORWARD_SERVICE_REQUIRED_IDS } from "../lib/walk-forward-dom";
@@ -79,6 +80,7 @@ describe("Feature DOM contracts", () => {
 
         livePositions: [...LIVE_POSITIONS_REQUIRED_IDS],
         finderManager: [...FINDER_MANAGER_REQUIRED_IDS],
+        finderUi: [...FINDER_UI_REQUIRED_IDS],
         batchBacktest: [...BATCH_BACKTEST_REQUIRED_IDS],
         rankPairs: [...RANK_PAIRS_REQUIRED_IDS],
         walkForwardService: [...WALK_FORWARD_SERVICE_REQUIRED_IDS],

@@ -27,7 +27,7 @@ import { FinderResultStore } from "../lib/finder/browser/finder-result-store";
 import { FinderControls } from "../lib/finder/browser/finder-controls";
 import { FinderRunController, type FinderRunControllerDeps } from "../lib/finder/browser/finder-run-controller";
 import { normalizeFinderUiState } from "../lib/finder/browser/finder-settings";
-import { readFinderActiveServerRun } from "../lib/finder/browser/finder-persistence";
+import { clearFinderActiveServerRun, readFinderActiveServerRun } from "../lib/finder/browser/finder-persistence";
 import { runUniverseFinder } from "../lib/finder/browser/workflows/symbol-universe";
 import { runCurrentChartFinder } from "../lib/finder/browser/workflows/current-chart";
 import { runStrategyQualityFinder } from "../lib/finder/browser/workflows/strategy-quality";
@@ -547,7 +547,7 @@ function resetFacadeCollaborators(): void {
     m.resultStore = new FinderResultStore((results) => m.saveLatestResultsSnapshot(results));
     m.controls.uiState = normalizeFinderUiState(null);
     m.controls.uiState.topN = 10;
-    (m.ui as any).statusElement = null;
+    (m.ui as any).dom = null;
     (m.ui as any).lastStatusText = "";
 }
 
@@ -564,6 +564,52 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
+    it("does not clear a newer run's persisted record when an older Stop succeeds", async () => {
+        const session = new FinderServerSession();
+        persistActiveServerRun("old-run");
+        const stop = session.stopServerRun("old-run", { setStatus: () => {} });
+        session.activeRunId = "new-run";
+        persistActiveServerRun("new-run");
+        mockFetch.resolveFirst({ ok: true, stopped: true });
+        await stop;
+        expect(session.activeRunId).to.equal("new-run");
+        expect(readFinderActiveServerRun()?.runId).to.equal("new-run");
+    });
+
+    it("preserves another tab's persisted run when an older Stop succeeds", async () => {
+        const session = new FinderServerSession();
+        persistActiveServerRun("old-run");
+        const stop = session.stopServerRun("old-run", { setStatus: () => {} });
+        persistActiveServerRun("another-tab-run");
+        mockFetch.resolveFirst({ ok: true, stopped: true });
+        await stop;
+        expect(readFinderActiveServerRun()?.runId).to.equal("another-tab-run");
+    });
+
+    it("ignores delayed Stop failures even after a newer run has completed", async () => {
+        const session = new FinderServerSession();
+        const statuses: string[] = [];
+        persistActiveServerRun("old-run");
+        const stop = session.stopServerRun("old-run", { setStatus: (text) => statuses.push(text) });
+        session.activeRunId = "new-run";
+        persistActiveServerRun("new-run");
+        session.activeRunId = null;
+        clearFinderActiveServerRun();
+        mockFetch.resolveFirst({ ok: false, stopped: false });
+        await stop;
+        expect(statuses).to.deep.equal([]);
+        expect(readFinderActiveServerRun()).to.equal(null);
+    });
+
+    it("clears the matching record on a confirmed Stop", async () => {
+        const session = new FinderServerSession();
+        persistActiveServerRun("stopped-run");
+        const stop = session.stopServerRun("stopped-run", { setStatus: () => {} });
+        mockFetch.resolveFirst({ ok: true, stopped: true });
+        await stop;
+        expect(readFinderActiveServerRun()).to.equal(null);
+    });
+
     it("does not adopt a delayed initial probe when a new run started during the await", async () => {
         const session = new FinderServerSession();
         const host = makeRecordingSessionHost();
@@ -1170,6 +1216,44 @@ describe("FinderManager result persistence (audit Finding 4)", () => {
 });
 
 describe("Finder Arm Performance scope controls", () => {
+    it("persists date-only edits on pagehide and restores both bounds", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = new FinderControls({ getDom: () => dom } as any);
+        controls.applyPersistedUiStateToDom();
+        controls.initFinderSettingsPersistenceUI();
+        const savedWindow = (globalThis as any).window;
+        const page = createFakeFinderElement();
+        (globalThis as any).window = page;
+        try {
+            controls.bindPersistenceLifecycle();
+            controls.bindPersistenceLifecycle();
+            dom.finderDataRangeFrom.value = "2025-01-01";
+            dom.finderDataRangeFrom.dispatchEvent({ type: "input" });
+            dom.finderDataRangeTo.value = "2025-06-30";
+            dom.finderDataRangeTo.dispatchEvent({ type: "change" });
+            expect((globalThis as any).localStorage._writes.get("playground_finder_ui") ?? 0).to.equal(0);
+            page.dispatchEvent({ type: "pagehide" });
+            expect((globalThis as any).localStorage._writes.get("playground_finder_ui")).to.equal(1);
+            const restoredDom: any = createFakeFinderManagerDom();
+            const restored = new FinderControls({ getDom: () => restoredDom } as any);
+            restored.loadUiState();
+            restored.applyPersistedUiStateToDom();
+            expect(restoredDom.finderDataRangeFrom.value).to.equal("2025-01-01");
+            expect(restoredDom.finderDataRangeTo.value).to.equal("2025-06-30");
+            // Clearing a bound is a persisted edit too.
+            dom.finderDataRangeFrom.value = "";
+            dom.finderDataRangeFrom.dispatchEvent({ type: "change" });
+            page.dispatchEvent({ type: "pagehide" });
+            restored.loadUiState();
+            expect(restored.uiState.dataRangeFrom).to.equal("");
+            expect(restored.uiState.dataRangeTo).to.equal("2025-06-30");
+        } finally {
+            controls.flushPendingPersistence();
+            if (savedWindow === undefined) delete (globalThis as any).window;
+            else (globalThis as any).window = savedWindow;
+        }
+    });
+
     it("visibly constrains incompatible search and window options without an arm selector", () => {
         // `any` so the test can seed select `options` arrays (readonly on the
         // DOM types, plain arrays on the fake elements).

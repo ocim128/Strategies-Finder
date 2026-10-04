@@ -1,7 +1,8 @@
 import { RANKING_MEASUREMENT_SEMANTICS } from "../batch-backtest/open-score-replay/types";
 import { appendFinderResultsTable } from "./finder-results-table";
 import { getFinderArmRankingMetric, getFinderArmPerformanceRankValue, getFinderCausalAvailabilityDetails, resolveFinderArmRankingHorizon } from "./finder-arm-performance-metrics";
-import { getRequiredElement, setVisible } from "../dom-utils";
+import { setVisible } from "../dom-utils";
+import { createFinderUiDom, type FinderUiDom } from "./finder-ui-dom";
 import { escapeHtml } from "../html-escape";
 import {
     formatProfitFactor,
@@ -44,67 +45,42 @@ export class FinderUI {
         this.getListElement().closest(".finder-results")?.classList.toggle("finder-results--table", view === "table");
     }
 
-    private listElement: HTMLElement | null = null;
-    private copyButton: HTMLButtonElement | null = null;
-    private progressContainer: HTMLElement | null = null;
-    private progressFill: HTMLElement | null = null;
-    private progressLabel: HTMLElement | null = null;
-    private statusElement: HTMLElement | null = null;
-    private benchmarkContainer: HTMLElement | null = null;
-    private benchmarkBody: HTMLElement | null = null;
+    private dom: FinderUiDom | null = null;
     private lastProgressActive: boolean | null = null;
     private lastProgressPercent = -1;
     private lastProgressText = "";
     private lastStatusText = "";
 
+    private getDom(): FinderUiDom {
+        return this.dom ??= createFinderUiDom();
+    }
+
     private getListElement(): HTMLElement {
-        if (!this.listElement) {
-            this.listElement = getRequiredElement("finderList");
-        }
-        return this.listElement;
+        return this.getDom().finderList;
     }
 
     private getCopyButton(): HTMLButtonElement | null {
-        if (!this.copyButton) {
-            this.copyButton = getRequiredElement<HTMLButtonElement>("finderCopyTopResults");
-        }
-        return this.copyButton;
+        return this.getDom().finderCopyTopResults;
     }
 
     private getProgressElements(): { container: HTMLElement; fill: HTMLElement; label: HTMLElement } {
-        if (!this.progressContainer) {
-            this.progressContainer = getRequiredElement("finderProgress");
-        }
-        if (!this.progressFill) {
-            this.progressFill = getRequiredElement("finderProgressFill");
-        }
-        if (!this.progressLabel) {
-            this.progressLabel = getRequiredElement("finderProgressText");
-        }
+        const dom = this.getDom();
         return {
-            container: this.progressContainer,
-            fill: this.progressFill,
-            label: this.progressLabel
+            container: dom.finderProgress,
+            fill: dom.finderProgressFill,
+            label: dom.finderProgressText,
         };
     }
 
     private getStatusElement(): HTMLElement {
-        if (!this.statusElement) {
-            this.statusElement = getRequiredElement("finderStatus");
-        }
-        return this.statusElement;
+        return this.getDom().finderStatus;
     }
 
     private getBenchmarkElements(): { container: HTMLElement; body: HTMLElement } {
-        if (!this.benchmarkContainer) {
-            this.benchmarkContainer = getRequiredElement("finderBenchmark");
-        }
-        if (!this.benchmarkBody) {
-            this.benchmarkBody = getRequiredElement("finderBenchmarkBody");
-        }
+        const dom = this.getDom();
         return {
-            container: this.benchmarkContainer,
-            body: this.benchmarkBody
+            container: dom.finderBenchmark,
+            body: dom.finderBenchmarkBody,
         };
     }
 

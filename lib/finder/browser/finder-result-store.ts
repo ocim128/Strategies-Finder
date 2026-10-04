@@ -7,7 +7,8 @@
  * renders, fetches, or touches localStorage — persistence happens through
  * the `persistTerminalResults` callback the manager wires to the snapshot
  * writer. Arm Performance may persist rate-limited bounded previews while a
- * server run is active.
+ * server run is active. Local display changes use a debounced checkpoint;
+ * terminal adoption cancels it and persists immediately.
  */
 import {
 	FINDER_SORT_OPTIONS,
@@ -52,6 +53,7 @@ import {
 	type FinderArmPerformanceArm,
 } from "../finder-arm-performance-metrics";
 import { DEFAULT_FINDER_UI_STATE, UNIVERSE_SORT_OPTIONS } from "./finder-settings";
+import { debounce } from "../../debounce";
 import type {
 	FinderArmPerformanceCandidate,
 	FinderArmPerformanceRunContext,
@@ -87,6 +89,15 @@ export class FinderResultStore {
 	 * is reset to "Run Sort". Set on every run completion and cleared on start.
 	 */
 	originalLatestResults: FinderLatestResults | null = null;
+	private lastArmDisplayUpdate: {
+		inventory: readonly FinderArmPerformanceCandidate[];
+		results: FinderLatestResults;
+		key: string;
+	} | null = null;
+	private readonly persistDisplayResultsDebounced = debounce((results: FinderLatestResults) => {
+		// A terminal adoption or streamed update may have superseded this view.
+		if (this.latestResults === results) this.persistTerminalResults(results);
+	}, 300);
 
 	constructor(private readonly persistTerminalResults: (results: FinderLatestResults) => void) {}
 
@@ -99,8 +110,10 @@ export class FinderResultStore {
 	 * rate-limited Arm Performance previews during a long server run.
 	 */
 	setLatestResults(results: FinderLatestResults, persist = true): void {
+		this.lastArmDisplayUpdate = null;
 		this.latestResults = results;
 		if (persist) {
+			this.persistDisplayResultsDebounced.cancel();
 			this.persistTerminalResults(results);
 		}
 	}
@@ -179,6 +192,8 @@ export class FinderResultStore {
 
 	/** Clear retained inventories between runs; display limits are set separately. */
 	resetForNewRun(): void {
+		this.persistDisplayResultsDebounced.cancel();
+		this.lastArmDisplayUpdate = null;
 		this.originalLatestResults = null;
 		this.symbolUniverseRunResults = [];
 		this.assetOpportunityRunResults = [];
@@ -202,20 +217,38 @@ export class FinderResultStore {
 		this.armPerformanceDisplayFilter = { ...filter };
 	}
 
-	setArmPerformanceDisplayFilter(filter: FinderArmPerformanceDisplayFilter, arm?: FinderArmPerformanceArm): void {
+	/** Return false when duplicate control events describe the already rendered view. */
+	setArmPerformanceDisplayFilter(filter: FinderArmPerformanceDisplayFilter, arm?: FinderArmPerformanceArm): boolean {
+		const selectedArm = arm ?? "TOP_RAW_PROFIT_NOW";
+		const key = JSON.stringify([
+			selectedArm, this.armPerformanceDisplayLimit, filter.measurement, filter.rankingSort,
+			filter.rankingHorizon, filter.basis, filter.eventFilterEnabled, filter.minEvents, filter.maxEvents,
+		]);
+		if (this.lastArmDisplayUpdate?.inventory === this.armPerformanceRunResults
+			&& this.lastArmDisplayUpdate.results === this.latestResults
+			&& this.lastArmDisplayUpdate.key === key) return false;
 		this.armPerformanceDisplayFilter = { ...filter };
 		this.armPerformanceDefaultResults = sortFinderArmPerformanceResults(
 			this.armPerformanceRunResults,
 			"TOP_RAW_PROFIT_NOW",
 			this.armPerformanceDisplayFilter,
 		);
-		const selectedArm = arm ?? "TOP_RAW_PROFIT_NOW";
-		const sorted = sortFinderArmPerformanceResults(
-			this.armPerformanceRunResults,
-			selectedArm,
-			this.armPerformanceDisplayFilter,
-		);
-		this.setArmPerformanceLatestResults(sorted);
+		const sorted = selectedArm === "TOP_RAW_PROFIT_NOW"
+			? this.armPerformanceDefaultResults
+			: sortFinderArmPerformanceResults(
+				this.armPerformanceRunResults,
+				selectedArm,
+				this.armPerformanceDisplayFilter,
+			);
+		this.setArmPerformanceLatestResults(sorted, false);
+		this.lastArmDisplayUpdate = { inventory: this.armPerformanceRunResults, results: this.latestResults, key };
+		this.persistDisplayResultsDebounced(this.latestResults);
+		return true;
+	}
+
+	/** Flush the last display preference checkpoint before the page is hidden. */
+	flushPendingDisplayPersistence(): void {
+		this.persistDisplayResultsDebounced.flush();
 	}
 
 	/**

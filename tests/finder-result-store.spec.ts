@@ -149,6 +149,60 @@ function makeAssetRow(symbol: string, strategyKey: string, expectancy: number, e
 }
 
 describe("FinderResultStore", () => {
+    it("deduplicates identical Arm display edits and flushes one bounded checkpoint", () => {
+        const { store, writes } = makeStore();
+        const rows = [makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2), makeArmCandidate(2, 3, 12)];
+        store.armPerformanceDisplayLimit = 1;
+        store.adoptArmPerformanceResults(rows, null, true);
+        writes.length = 0;
+        const filter = { basis: "raw" as const, eventFilterEnabled: true, minEvents: 1, maxEvents: null };
+        expect(store.setArmPerformanceDisplayFilter(filter)).to.equal(true);
+        const firstDisplay = store.latestResults;
+        expect(store.setArmPerformanceDisplayFilter({ ...filter })).to.equal(false);
+        expect(store.latestResults).to.equal(firstDisplay, "duplicate events do not rebuild the view");
+        expect(writes).to.have.length(0);
+        expect(store.setArmPerformanceDisplayFilter(filter, "TOP_RAW")).to.equal(true);
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(2, "sort the full inventory before Top Results");
+        store.flushPendingDisplayPersistence();
+        expect(writes).to.deep.equal([store.latestResults]);
+        expect(writes[0]!.results).to.have.length(1);
+        expect(store.armPerformanceRunResults).to.deep.equal(rows);
+        store.restoreRunSort();
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1);
+    });
+
+    it("recomputes an unchanged display filter when the inventory or display limit changes", () => {
+        const { store } = makeStore();
+        store.armPerformanceDisplayLimit = 1;
+        store.adoptArmPerformanceResults([makeArmCandidate(0, 1, 8)], null, false);
+        const filter = { basis: "raw" as const };
+        store.setArmPerformanceDisplayFilter(filter);
+        store.armPerformanceRunResults = [...store.armPerformanceRunResults, makeArmCandidate(1, 9, 2)];
+        expect(store.setArmPerformanceDisplayFilter(filter)).to.equal(true);
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1);
+        expect(store.latestResults.scope === "arm_performance" && store.latestResults.inventoryComplete).to.equal(false);
+        store.armPerformanceDisplayLimit = 2;
+        expect(store.setArmPerformanceDisplayFilter(filter)).to.equal(true);
+        expect(store.latestResults.results).to.have.length(2);
+        store.flushPendingDisplayPersistence();
+    });
+
+    it("commits terminal results immediately and discards superseded display checkpoints", () => {
+        const { store, writes } = makeStore();
+        const rows = [makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2)];
+        store.adoptArmPerformanceResults(rows, null, false);
+        writes.length = 0;
+        store.setArmPerformanceDisplayFilter({ basis: "raw" }, "TOP_RAW");
+        store.adoptArmPerformanceResults(rows, null, true);
+        expect(writes).to.deep.equal([store.latestResults]);
+        store.flushPendingDisplayPersistence();
+        expect(writes).to.have.length(1, "terminal adoption cancels the pending display write");
+        store.setArmPerformanceDisplayFilter({ basis: "raw" }, "TOP_RAW");
+        store.resetForNewRun();
+        store.flushPendingDisplayPersistence();
+        expect(writes).to.have.length(1, "a new run discards old display writes");
+    });
+
     it("promotes an initially hidden Universe candidate and restores the Run Sort", () => {
         const { store, writes } = makeStore();
         store.symbolUniverseDisplayLimit = 1;

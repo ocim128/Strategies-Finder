@@ -35,6 +35,7 @@ import { FinderStrategySelection } from "./finder/browser/finder-strategy-select
 import { FinderResultActions } from "./finder/browser/finder-result-actions";
 import { FinderServerSession, createFinderStatusRequestSignal, type FinderSessionHost } from "./finder/browser/finder-server-session";
 import { FinderControls } from "./finder/browser/finder-controls";
+import { coalesceAnimationFrame } from "./render-scheduler";
 import { FinderRunController } from "./finder/browser/finder-run-controller";
 import {
 	runAssetOpportunityBatchFinderServer,
@@ -91,6 +92,10 @@ export class FinderManager {
 				?? "horizon"
 			: null,
 		requestRun: () => void this.controller.runFinder(),
+		flushResultPersistence: () => {
+			this.applyArmPerformanceDisplaySettings();
+			this.resultStore.flushPendingDisplayPersistence();
+		},
 		renderRandomBenchmark: (mode, payload) => this.ui.renderRandomBenchmark(mode, payload as never),
 		selection: this.selection,
 	});
@@ -111,6 +116,7 @@ export class FinderManager {
 			}
 		},
 		prepareRun: () => {
+			this.armDisplayUpdateFrame.cancel();
 			this.lastFinderRunBacktestSettings = null;
 			this.lastFinderOptions = null;
 			this.lastFinderEvaluationData = null;
@@ -152,6 +158,7 @@ export class FinderManager {
 	private lastFinderEvaluationData: { interval: string; data: OHLCVData[] } | null = null;
 	private readonly ui = new FinderUI();
 	private readonly paramSpace = new FinderParamSpace();
+	private readonly armDisplayUpdateFrame = coalesceAnimationFrame(() => this.applyArmPerformanceDisplaySettings());
 	private dom: FinderManagerDom | null = null;
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
@@ -274,8 +281,8 @@ export class FinderManager {
 			dom.finderArmPerformanceMinEvents,
 			dom.finderArmPerformanceMaxEvents,
 		]) {
-			element.addEventListener("input", () => this.applyArmPerformanceDisplaySettings());
-			element.addEventListener("change", () => this.applyArmPerformanceDisplaySettings());
+			element.addEventListener("input", () => this.armDisplayUpdateFrame.schedule());
+			element.addEventListener("change", () => this.armDisplayUpdateFrame.schedule());
 		}
 		this.controls.applyScopeUi();
 		refreshFinderSettingsSummaries(dom);
@@ -420,6 +427,7 @@ export class FinderManager {
 	}
 
 	private resetForServerRunAdoption(): void {
+		this.armDisplayUpdateFrame.cancel();
 		const activeRun = this.loadPersistedActiveServerRun();
 		const currentResults = this.resultStore.latestResults;
 		const armPreview = activeRun?.scope === 'arm_performance'
@@ -734,6 +742,7 @@ export class FinderManager {
 	}
 
 	private applyArmPerformanceDisplaySettings(): void {
+		this.armDisplayUpdateFrame.cancel();
 		if (this.resultStore.latestResults.scope !== "arm_performance") return;
 		const dom = this.getDom();
 		const minRaw = Number(dom.finderArmPerformanceMinEvents.value);
@@ -741,7 +750,7 @@ export class FinderManager {
 		const maxRaw = maxText === "" ? null : Number(maxText);
 		const selected = dom.finderResort.value;
 		const arm = (selected || "TOP_RAW_PROFIT_NOW") as FinderArmPerformanceArm;
-		this.resultStore.setArmPerformanceDisplayFilter({
+		const changed = this.resultStore.setArmPerformanceDisplayFilter({
 			rankingSort: dom.finderArmPerformanceRankingSort.value === "selected_asset" ? "selected_asset" : "overall_ordering",
 			measurement: dom.finderArmPerformanceMeasurement.value === "ranking_consistency" ? "ranking_consistency" : "return",
 			rankingHorizon: Number(dom.finderArmPerformanceHorizon.value),
@@ -750,7 +759,7 @@ export class FinderManager {
 			minEvents: Number.isInteger(minRaw) && minRaw >= 0 ? minRaw : 1,
 			maxEvents: maxRaw !== null && Number.isInteger(maxRaw) && maxRaw >= 0 ? maxRaw : null,
 		}, arm);
-		this.renderLatestResults();
+		if (changed) this.renderLatestResults();
 	}
 
 	/**

@@ -60,26 +60,10 @@ import type {
 import type { ReplayMode } from "../../batch-backtest/open-score-replay/types";
 import { settingsManager } from "../../settings-manager";
 import type { FinderManagerDom } from "../finder-manager-dom";
-import type { FinderStrategySelection } from "./finder-strategy-selection";
+import { FINDER_STRATEGY_PRESETS, type FinderStrategySelection } from "./finder-strategy-selection";
 import type { BatchHoldoutRange } from "./workflows/asset-opportunity";
 
 const MAJOR_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "ADAUSDT"] as const;
-const FINDER_FOLLOW_STRATEGY_KEYS = [
-	"decay_momentum_alignment",
-	"volatility_regime_median_alignment",
-	"initiative_pressure_acceleration_follow",
-	"volatility_breakout_follow",
-	"accumulation_persistence_streak_gate",
-] as const;
-const FINDER_REVERSION_STRATEGY_KEYS = [
-	"decay_pressure_percentile_reversion",
-	"cumulative_return_zscore_reversion",
-	"cumulative_return_percentile_reversion",
-	"acceptance_deviation_median_reversion",
-	"negative_autocorrelation_median_reversion",
-	"range_expansion_exhaustion_reversion",
-	"probability_boundary_eigen_shift",
-] as const;
 
 export interface FinderControlsDeps {
 	getDom(): FinderManagerDom;
@@ -89,6 +73,8 @@ export interface FinderControlsDeps {
 	applyResort(): void;
 	/** Run-button click (Run/Stop orchestration lives in the controller). */
 	requestRun(): void;
+	/** Flush any pending display update and its result checkpoint on pagehide. */
+	flushResultPersistence?(): void;
 	/** Completed result provenance; null means the live mode controls own the labels. */
 	getArmPerformanceReplayMode?(): ReplayMode | null;
 	renderRandomBenchmark(mode: FinderOptions["mode"], payload?: unknown): void;
@@ -129,7 +115,10 @@ export class FinderControls {
 	/** Pagehide flush for the debounced settings write. Idempotent. */
 	bindPersistenceLifecycle(): void {
 		if (!this.finderPersistenceLifecycleBound && typeof window !== "undefined") {
-			window.addEventListener("pagehide", () => this.persistUiStateDebounced.flush());
+			window.addEventListener("pagehide", () => {
+				this.persistUiStateDebounced.flush();
+				this.deps.flushResultPersistence?.();
+			});
 			this.finderPersistenceLifecycleBound = true;
 		}
 	}
@@ -456,13 +445,11 @@ initStrategySelectionUI(): void {
 		this.deps.selection.setStrategySelection(this.deps.selection.getVisibleStrategyKeys(), true);
 	});
 
-	dom.finderStrategySelectFollow.addEventListener('click', () => {
-		this.deps.selection.replaceStrategySelection(FINDER_FOLLOW_STRATEGY_KEYS);
-	});
-
-	dom.finderStrategySelectReversion.addEventListener('click', () => {
-		this.deps.selection.replaceStrategySelection(FINDER_REVERSION_STRATEGY_KEYS);
-	});
+	for (const preset of FINDER_STRATEGY_PRESETS) {
+		dom[preset.button].addEventListener('click', () => {
+			this.deps.selection.replaceStrategySelection(preset.keys);
+		});
+	}
 }
 
 initUniverseUI(): void {
@@ -681,6 +668,8 @@ initFinderSettingsPersistenceUI(): void {
 		dom.finderAdvancedToggle,
 		dom.finderMode,
 		dom.finderDataSlice,
+		dom.finderDataRangeFrom,
+		dom.finderDataRangeTo,
 		dom.finderTopN,
 		dom.finderMaxRuns,
 		dom.finderRange,
