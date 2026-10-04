@@ -5,6 +5,7 @@ import { isMainThread } from "node:worker_threads";
 import { debugLogger } from "../debug-logger";
 import { extractCandlesFromCsvPayload } from "../candle-cache";
 import { normalizeIbkrCandles } from "../data/data-interval-utils";
+import { PointBoundedParsedCache } from "../data/point-bounded-parsed-cache";
 import { isIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 
@@ -117,29 +118,6 @@ function candlesFromColumnsTail(columns: ParsedSeedColumns, limitBars: number): 
 
 type ParsedCsvCache = Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>;
 
-/** Entry recency is maintained by the shared cache helpers below. */
-class PointBoundedParsedCache extends Map<string, { mtimeMs: number; columns: ParsedSeedColumns }> {
-    points = 0;
-    constructor(private readonly maxPoints: number) { super(); }
-
-    override delete(key: string): boolean {
-        const previous = this.get(key);
-        if (!previous) return false;
-        this.points -= previous.columns.time.length;
-        return super.delete(key);
-    }
-
-    override set(key: string, value: { mtimeMs: number; columns: ParsedSeedColumns }): this {
-        this.delete(key);
-        super.set(key, value);
-        this.points += value.columns.time.length;
-        while (this.points > this.maxPoints) this.delete(this.keys().next().value!);
-        return this;
-    }
-
-    override clear(): void { super.clear(); this.points = 0; }
-}
-
 const parsedCsvCache: ParsedCsvCache = new Map();
 // The coordinator replays thousands of standalone 4h targets across annual
 // passes. Keep that main-thread target working set separate from the normal
@@ -147,7 +125,7 @@ const parsedCsvCache: ParsedCsvCache = new Map();
 const parsed4hTargetCache: ParsedCsvCache = new Map();
 // Main-thread daily targets are revisited by causal scoring, switch fills,
 // ranking and later candidates. Keep compact columns, never candle objects.
-const parsedDailyTargetCache = new PointBoundedParsedCache(PARSED_DAILY_TARGET_CACHE_MAX_POINTS);
+const parsedDailyTargetCache = new PointBoundedParsedCache<{ mtimeMs: number; columns: ParsedSeedColumns }>(PARSED_DAILY_TARGET_CACHE_MAX_POINTS);
 const dailyCacheCounters = { hits: 0, misses: 0 };
 
 export function getParsedIbkrDailyCacheStats() {
@@ -201,7 +179,9 @@ export function clearParsedIbkrCsvCache(): void {
     dailyCacheCounters.hits = dailyCacheCounters.misses = 0;
 }
 
-export const __testInternals = { PointBoundedParsedCache };
+export const __testInternals = {
+    PointBoundedParsedCache: PointBoundedParsedCache<{ mtimeMs: number; columns: ParsedSeedColumns }>,
+};
 
 // ============================================================================
 // Disk-backed parsed-seed sidecar

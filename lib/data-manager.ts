@@ -466,12 +466,14 @@ export class DataManager {
             );
 
             this.isStreaming = true;
-            // A reconnect that reaches the connected state should reset the
-            // attempt counter, otherwise intermittent drops over a long session
-            // accumulate toward DATA_MAX_RECONNECT_ATTEMPTS and the stream
-            // silently stops retrying.
-            this.reconnectAttempts = 0;
-            debugLogger.event('data.stream.connected', { symbol, interval });
+            const socket = this.ws;
+            socket.addEventListener('open', () => {
+                if (this.ws !== socket || !this.isActiveStreamContext(sessionId, symbol, interval, provider)) return;
+                // Construction only starts the handshake. Failed handshakes must
+                // retain their retry count so the backoff and ceiling apply.
+                this.reconnectAttempts = 0;
+                debugLogger.event('data.stream.connected', { symbol, interval });
+            });
         } catch (error) {
             debugLogger.error('data.stream.connection_failed', { error: String(error) });
             this.attemptReconnect();
@@ -751,7 +753,10 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
                 const activeLimit = this.chartLookbackBars ?? DATA_CHART_TOTAL_LIMIT;
                 if (currentData.length > activeLimit) {
                     const overflow = currentData.length - activeLimit;
-                    currentData.splice(0, overflow);
+                    const removed = currentData.splice(0, overflow);
+                    for (const candle of removed) {
+                        state._ohlcvTimeMap.delete(toTimeKey(candle.time));
+                    }
                 }
                 changed = true;
             }
@@ -776,7 +781,8 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
             persistSymbol,
             persistInterval,
             persistedData,
-            this.streamProvider || this.getProvider(persistSymbol)
+            this.streamProvider || this.getProvider(persistSymbol),
+            true,
         );
 
         const now = Date.now();

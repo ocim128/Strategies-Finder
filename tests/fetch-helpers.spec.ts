@@ -14,6 +14,65 @@ const originalFetch = globalThis.fetch;
 
 describe('price response body deadlines', () => {
     afterEach(() => { globalThis.fetch = originalFetch; });
+    for (const phase of ['headers', 'body'] as const) {
+        it(`retries its own deadline during ${phase} without treating it as caller cancellation`, async t => {
+            t.mock.timers.enable({ apis: ['setTimeout'] });
+            let calls = 0;
+            globalThis.fetch = async (_input, init) => {
+                if (++calls > 1) return new Response('{"ok":true}');
+                const signal = init!.signal!;
+                if (phase === 'headers') {
+                    return new Promise<Response>((_resolve, reject) => {
+                        signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+                    });
+                }
+                return new Response(new ReadableStream({
+                    start(controller) { signal.addEventListener('abort', () => controller.error(signal.reason), { once: true }); },
+                }));
+            };
+            const result = fetchAndConsumeWithTimeoutAndRetry('https://example.test/data', {}, r => r.json(), {
+                timeoutMs: 25, maxAttempts: 2, baseDelayMs: 0,
+            });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            t.mock.timers.tick(25);
+            assert.deepEqual(await result, { ok: true });
+            assert.equal(calls, 2);
+        });
+    }
+
+    it('preserves TimeoutError after the retry budget is exhausted', async t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        let calls = 0;
+        globalThis.fetch = async (_input, init) => {
+            calls++;
+            return new Promise<Response>((_resolve, reject) => {
+                init!.signal!.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+            });
+        };
+        const result = assert.rejects(fetchAndConsumeWithTimeoutAndRetry('https://example.test/data', {}, r => r.text(), {
+            timeoutMs: 25, maxAttempts: 2, baseDelayMs: 0,
+        }), { name: 'TimeoutError' });
+        t.mock.timers.tick(25);
+        await new Promise<void>(resolve => setImmediate(resolve));
+        t.mock.timers.tick(25);
+        await result;
+        assert.equal(calls, 2);
+    });
+
+    it('never retries caller cancellation even when the caller uses a TimeoutError reason', async () => {
+        const parent = new AbortController();
+        let calls = 0;
+        globalThis.fetch = async () => {
+            calls++;
+            const reason = new DOMException('Caller deadline', 'TimeoutError');
+            parent.abort(reason);
+            throw reason;
+        };
+        await assert.rejects(fetchAndConsumeWithTimeoutAndRetry('https://example.test/data', {}, r => r.text(), {
+            signal: parent.signal, maxAttempts: 3, baseDelayMs: 0,
+        }), { name: 'TimeoutError' });
+        assert.equal(calls, 1);
+    });
     for (const transport of ['provider', 'local'] as const) {
         const readBody = (signal?: AbortSignal) => transport === 'provider'
             ? fetchAndConsumeWithTimeoutAndRetry('https://example.test/data', {}, response => response.text(), { signal, timeoutMs: 25 })

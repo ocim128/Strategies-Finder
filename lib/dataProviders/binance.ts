@@ -14,6 +14,7 @@ import {
     findBestDivisibleInterval,
     formatProviderError,
     isAbortError,
+    isTimeoutError,
     resolveRawFetchLimit,
 } from "./fetch-helpers";
 
@@ -122,7 +123,7 @@ async function fetchKlinesBatch(
 
             return Array.isArray(data) ? data : [];
         } catch (error) {
-            if (isAbortError(error)) throw error;
+            if (options?.signal?.aborted || (isAbortError(error) && !isTimeoutError(error))) throw error;
             endpointErrors.push(`${base}:${formatProviderError(error)}`);
         }
     }
@@ -257,14 +258,20 @@ async function fetchForwardKlinePages(args: {
         });
         if (data.length === 0) break;
 
-        batches.push(data);
         requestCount++;
-        args.onProgress?.({ fetched: requestCount, total: maxRequests, requestCount });
 
+        const firstOpenMs = Number(data[0]?.[0]);
         const lastOpenMs = Number(data[data.length - 1]?.[0]);
-        if (!Number.isFinite(lastOpenMs)) break;
         const nextCursorMs = lastOpenMs + 1;
-        if (nextCursorMs <= cursorMs) break;
+        if (!Number.isFinite(firstOpenMs) || !Number.isFinite(lastOpenMs)
+            || firstOpenMs < cursorMs || lastOpenMs < firstOpenMs || nextCursorMs <= cursorMs) {
+            debugLogger.warn('data.fetch.pagination_stalled', {
+                symbol: args.symbol, interval: args.sourceInterval, cursorMs, firstOpenMs, lastOpenMs,
+            });
+            break;
+        }
+        batches.push(data);
+        args.onProgress?.({ fetched: requestCount, total: maxRequests, requestCount });
         cursorMs = nextCursorMs;
 
         if (data.length < LIMIT_PER_REQUEST) break;

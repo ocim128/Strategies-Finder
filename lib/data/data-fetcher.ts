@@ -475,6 +475,11 @@ export class DataFetcher {
     }
 
     private getSanitizedCacheMetadata(provider: DataProvider, storageInterval: string): CacheEntryMetadata {
+        if (provider === 'ibkr-local') {
+            // Bump this revision when IBKR normalization changes. An unguarded
+            // cache replacement clears the stamp through DataCache.set/update.
+            return { sanitizedFor: `ibkr-local|${storageInterval}|v1` };
+        }
         return isBinanceDataProvider(provider)
             ? { sanitizedFor: this.getBinanceCacheGuard(provider, storageInterval) }
             : {};
@@ -535,9 +540,7 @@ export class DataFetcher {
 
         const cached = this.cache.get(cacheKey);
         if (cached && cached.candles.length >= minBars) {
-            const sanitizedFor = isBinanceDataProvider(provider)
-                ? this.getBinanceCacheGuard(provider, storageInterval)
-                : undefined;
+            const sanitizedFor = this.getSanitizedCacheMetadata(provider, storageInterval).sanitizedFor;
             const candles = sanitizedFor && cached.sanitizedFor === sanitizedFor
                 ? cached.candles
                 : this.sanitizeFastPathCandles(provider, symbol, storageInterval, cached.candles, String(cached.source ?? 'cache'));
@@ -556,7 +559,8 @@ export class DataFetcher {
         symbol: string,
         interval: string,
         candles: OHLCVData[],
-        provider: DataProvider | '' = ''
+        provider: DataProvider | '' = '',
+        sorted = false,
     ): void {
         if (!symbol || !interval || candles.length === 0) return;
         const resolvedProvider: DataProvider = provider || this.providerRouter.getProvider(symbol);
@@ -573,6 +577,7 @@ export class DataFetcher {
             cacheKey,
             providerLabel: this.providerRouter.getProviderStorageLabel(resolvedProvider),
             ctx: this.createPersistenceContext(),
+            sorted,
         });
     }
 

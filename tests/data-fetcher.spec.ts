@@ -9,9 +9,71 @@ import {
 } from "../lib/dataProviders/bybit";
 import { resetLocalApiAvailability } from "../lib/local-api-transport";
 import type { OHLCVData, Time } from "../lib/types/strategies";
-import { fetchBinanceDataWithLimit } from "../lib/dataProviders/binance";
+import { fetchBinanceDataAfter, fetchBinanceDataWithLimit } from "../lib/dataProviders/binance";
 
 const originalFetch = globalThis.fetch;
+const drain = () => new Promise<void>(resolve => setImmediate(resolve));
+
+describe("Binance forward pagination", () => {
+    it("discards repeated pages before counting them as gap-fill progress", async () => {
+        const page = Array.from({ length: 1000 }, (_, i) => toBinanceKline(60 + i * 60, 100));
+        let calls = 0;
+        globalThis.fetch = async () => { calls++; return new Response(JSON.stringify(page)); };
+        const progress: number[] = [];
+        const data = await fetchBinanceDataAfter("BTCUSDT", "1m", 120, {
+            maxRequests: 10, onProgress: event => progress.push(event.fetched),
+        });
+        assert.equal(calls, 2);
+        assert.equal(data.length, 1000);
+        assert.equal(new Set(data.map(bar => bar.time)).size, 1000);
+        assert.deepEqual(progress, [1]);
+    });
+
+    it("continues across advancing pages and rejects rows before the requested cursor", async () => {
+        let calls = 0;
+        globalThis.fetch = async () => {
+            const start = calls++ === 0 ? 60 : 60_060;
+            return new Response(JSON.stringify(Array.from({ length: calls === 1 ? 1000 : 2 }, (_, i) => toBinanceKline(start + i * 60, 100))));
+        };
+        const data = await fetchBinanceDataAfter("BTCUSDT", "1m", 120);
+        assert.equal(data.length, 1002);
+        globalThis.fetch = async () => new Response(JSON.stringify([toBinanceKline(0, 100), toBinanceKline(60, 100)]));
+        assert.deepEqual(await fetchBinanceDataAfter("BTCUSDT", "1m", 120), []);
+    });
+});
+
+describe("Binance timeout failover", () => {
+    it("tries an alternate endpoint after exhausting timeout retries", async t => {
+        t.mock.timers.enable({ apis: ['setTimeout'] });
+        const hosts: string[] = [];
+        globalThis.fetch = async input => {
+            const host = new URL(String(input)).hostname;
+            hosts.push(host);
+            if (host === 'data-api.binance.vision') throw new DOMException('Timed out', 'TimeoutError');
+            return new Response(JSON.stringify([toBinanceKline(60, 100)]));
+        };
+        const result = fetchBinanceDataWithLimit('BTCUSDT', '1m', 1);
+        await drain();
+        t.mock.timers.tick(250);
+        await drain();
+        t.mock.timers.tick(500);
+        const data = await result;
+        assert.deepEqual(hosts, ['data-api.binance.vision', 'data-api.binance.vision', 'data-api.binance.vision', 'api.binance.com']);
+        assert.equal(data.length, 1);
+    });
+
+    it("does not retry or fail over when the caller cancels", async () => {
+        const controller = new AbortController();
+        let calls = 0;
+        globalThis.fetch = async () => {
+            calls++;
+            controller.abort();
+            throw new DOMException('Aborted', 'AbortError');
+        };
+        assert.deepEqual(await fetchBinanceDataWithLimit('BTCUSDT', '1m', 1, { signal: controller.signal }), []);
+        assert.equal(calls, 1);
+    });
+});
 
 describe("Binance backward pagination", () => {
     it("rejects repeated pages instead of counting duplicate candles as history", async () => {
@@ -103,6 +165,29 @@ function createFetcher(options: {
 }
 
 describe("DataFetcher chart lookback", () => {
+    it("reuses normalized IBKR daily cache entries and normalizes replacements", async () => {
+        const symbol = 'AAPL\u2022';
+        const key = `${symbol}::1d`;
+        const data: OHLCVData[] = [
+            { time: '2026-09-03', open: 100, high: 110, low: 90, close: 105, volume: 1 },
+            { time: '2026-09-04', open: 105, high: 105, low: 105, close: 105, volume: 0 },
+        ];
+        const cache = new DataCache();
+        cache.set(key, data, 'seed', { sanitizedFor: 'ibkr-local|1d|v0' });
+        const fetcher = createFetcher({ provider: 'ibkr-local', cache, getLookbackBars: () => null });
+        const first = await fetcher.fetchData(symbol, '1d');
+        const second = await fetcher.fetchData(symbol, '1d');
+        assert.equal(first.length, 1);
+        assert.strictEqual(second, first);
+        assert.strictEqual(second[0], first[0]);
+        cache.updateCandles(key, [...data, { ...data[0]!, time: '2026-09-08', close: 108 }]);
+        const updated = await fetcher.fetchData(symbol, '1d');
+        assert.notStrictEqual(updated, first);
+        assert.deepEqual(updated.map(c => c.close), [105, 108]);
+        cache.set(key, data, 'replacement');
+        assert.equal((await fetcher.fetchData(symbol, '1d')).length, 1);
+    });
+
     it("filters IBKR daily placeholders from both imports and warm chart caches", async () => {
         const symbol = "TANH\u2022";
         const key = `${symbol}::1d`;

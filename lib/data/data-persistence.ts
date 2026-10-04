@@ -67,9 +67,38 @@ export interface PersistenceContext {
     setCachedCandles: (cacheKey: string, candles: OHLCVData[], source: string) => void;
 }
 
+/** Capture an independent delta; only normalized, sorted stream callers opt in. */
+export function selectStreamPersistenceDelta(
+    candles: readonly OHLCVData[], cursor: number | undefined, sorted = false,
+): OHLCVData[] {
+    const start = Math.max(0, candles.length - DATA_CHART_TOTAL_LIMIT);
+    if (cursor === undefined) return candles.slice(Math.max(start, candles.length - 2));
+    if (sorted) {
+        let first = candles.length;
+        let newerTime = Infinity;
+        let validTail = true;
+        for (let i = candles.length - 1; i >= start; i--) {
+            const time = parseTimeToUnixSeconds(candles[i]!.time);
+            if (time === null || time > newerTime) {
+                validTail = false;
+                break;
+            }
+            if (time < cursor) break;
+            first = i;
+            newerTime = time;
+        }
+        if (validTail) return candles.slice(first);
+    }
+    // Preserve the full-filter behavior for callers without a sorted contract.
+    return candles.slice(start).filter(c => {
+        const time = parseTimeToUnixSeconds(c.time);
+        return time !== null && time >= cursor;
+    });
+}
+
 export class DataPersistence {
     private cachePersistTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
-    private cachePersistPendingByKey: Map<string, { symbol: string; storageInterval: string; candles: OHLCVData[] }> = new Map();
+    private cachePersistPendingByKey: Map<string, { symbol: string; storageInterval: string; candles: OHLCVData[]; sorted: boolean }> = new Map();
     // Last bar time (unix seconds) successfully persisted to SQLite per cacheKey.
     // Tracked so burst updates on fast intervals don't drop intermediate candles.
     private lastStreamPersistedTimeByKey: Map<string, number> = new Map();
@@ -293,6 +322,7 @@ export class DataPersistence {
         cacheKey: string;
         providerLabel: string;
         ctx: PersistenceContext;
+        sorted?: boolean;
     }): void {
         const {
             symbol,
@@ -310,6 +340,7 @@ export class DataPersistence {
             symbol: storageSymbol,
             storageInterval,
             candles,
+            sorted: deps.sorted === true,
         });
 
         const existingTimer = this.cachePersistTimers.get(cacheKey);
@@ -323,18 +354,16 @@ export class DataPersistence {
                     persistence.cachePersistPendingByKey.delete(cacheKey);
                     if (!pending || pending.candles.length === 0) return;
 
-                    const snapshot = pending.candles.length > DATA_CHART_TOTAL_LIMIT
-                        ? pending.candles.slice(-DATA_CHART_TOTAL_LIMIT)
-                        : pending.candles.slice();
                     // Replay the cursor candle because live OHLCV changes at the same
                     // timestamp. On the first flush, persist the latest two candles.
                     const lastPersistedTime = persistence.lastStreamPersistedTimeByKey.get(cacheKey);
-                    const delta = lastPersistedTime == null
-                        ? snapshot.slice(-2)
-                        : snapshot.filter(c => {
-                            const time = parseTimeToUnixSeconds(c.time);
-                            return time !== null && time >= lastPersistedTime;
-                        });
+                    const delta = selectStreamPersistenceDelta(pending.candles, lastPersistedTime, pending.sorted);
+                    // Capture the cursor and due snapshot before awaiting a write:
+                    // the live array may append or replace bars during that await.
+                    const lastTime = parseTimeToUnixSeconds(pending.candles[pending.candles.length - 1]?.time);
+                    const lastSnapshot = persistence.lastSnapshotPersistedAtByKey.get(cacheKey);
+                    const snapshotDue = lastSnapshot === undefined || Date.now() - lastSnapshot >= DATA_CACHE_SYNC_MIN_MS;
+                    let snapshot = snapshotDue ? pending.candles.slice(-DATA_CHART_TOTAL_LIMIT) : undefined;
                     const sqliteResult = await storeSqliteCandles(
                         pending.symbol,
                         pending.storageInterval,
@@ -343,7 +372,6 @@ export class DataPersistence {
                         'stream'
                     );
                     const sqliteSucceeded = sqliteResult?.ok === true;
-                    const lastTime = parseTimeToUnixSeconds(snapshot[snapshot.length - 1]?.time);
                     if (sqliteSucceeded && lastTime !== null) {
                         persistence.lastStreamPersistedTimeByKey.set(
                             cacheKey,
@@ -353,13 +381,15 @@ export class DataPersistence {
                     if (sqliteResult && !sqliteSucceeded) {
                         debugLogger.warn('data.persist.sqlite_failed', { cacheKey, error: sqliteResult.error ?? 'Write rejected' });
                     }
-                    const lastSnapshot = persistence.lastSnapshotPersistedAtByKey.get(cacheKey);
-                    const shouldPersistSnapshot = !sqliteSucceeded || lastSnapshot === undefined
-                        || Date.now() - lastSnapshot >= DATA_CACHE_SYNC_MIN_MS;
+                    // Recheck the snapshot clock after a slow write. A deferred
+                    // snapshot can use the latest view without advancing SQLite's
+                    // cursor beyond the delta that was actually acknowledged.
+                    const snapshotNowDue = lastSnapshot === undefined || Date.now() - lastSnapshot >= DATA_CACHE_SYNC_MIN_MS;
+                    if (!snapshot && (!sqliteSucceeded || snapshotNowDue)) snapshot = pending.candles.slice(-DATA_CHART_TOTAL_LIMIT);
                     await persistence.persistLocalCandles({
                         symbol: pending.symbol,
                         storageInterval: pending.storageInterval,
-                        cacheCandles: shouldPersistSnapshot ? snapshot : undefined,
+                        cacheCandles: snapshot,
                         trusted: true,
                         providerLabel,
                         sourceTrait: 'stream',
@@ -378,7 +408,7 @@ export class DataPersistence {
                     // series cannot race their cursor or overwrite a newer snapshot.
                     persistence.cachePersistTimers.delete(cacheKey);
                     const pending = persistence.cachePersistPendingByKey.get(cacheKey);
-                    if (pending) persistence.queuePersistCandles({ ...deps, candles: pending.candles });
+                    if (pending) persistence.queuePersistCandles({ ...deps, candles: pending.candles, sorted: pending.sorted });
                 }
             })();
         }, this.STREAM_PERSIST_DELAY_MS);

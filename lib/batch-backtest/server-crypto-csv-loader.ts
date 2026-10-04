@@ -3,6 +3,7 @@ import { readFile, stat } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { isMainThread } from "node:worker_threads";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { PointBoundedParsedCache } from "../data/point-bounded-parsed-cache";
 import type { OHLCVData } from "../types/strategies";
 
 const MAX_CANDLES_PER_SERIES = 100_000;
@@ -14,6 +15,8 @@ const CRYPTO_SYMBOL_PATTERN = /^[A-Z0-9]{2,30}$/;
 // cache stays off the V8 object graph — an object cache at this capacity
 // poisoned major-GC in TOP_MEAN workers (see the IBKR loader's audit comment).
 const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
+// Six Float64 columns per point: cap retained backing arrays at 384 MB.
+const PARSED_CSV_CACHE_MAX_POINTS = 8_000_000;
 
 interface ParsedSeedColumns {
     time: Float64Array;
@@ -63,7 +66,13 @@ function candlesFromColumns(columns: ParsedSeedColumns, limitBars?: number): OHL
     return candles;
 }
 
-const parsedCsvCache = new Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>();
+const parsedCsvCache = new PointBoundedParsedCache<{ mtimeMs: number; columns: ParsedSeedColumns }>(
+    PARSED_CSV_CACHE_MAX_POINTS, PARSED_CSV_CACHE_MAX_ENTRIES,
+);
+
+export function getParsedCryptoCsvCacheStats() {
+    return { entries: parsedCsvCache.size, points: parsedCsvCache.points, evictions: parsedCsvCache.evictions };
+}
 
 function normalizeSymbol(symbol: string): string | null {
     const normalized = symbol.trim().toUpperCase();
@@ -170,12 +179,6 @@ async function getCachedCandles(filePath: string, limitBars?: number): Promise<O
 }
 
 function setCachedCandles(filePath: string, mtimeMs: number, candles: OHLCVData[]): void {
-    if (parsedCsvCache.has(filePath)) {
-        parsedCsvCache.delete(filePath);
-    } else if (parsedCsvCache.size >= PARSED_CSV_CACHE_MAX_ENTRIES) {
-        const oldest = parsedCsvCache.keys().next().value;
-        if (oldest !== undefined) parsedCsvCache.delete(oldest);
-    }
     parsedCsvCache.set(filePath, { mtimeMs, columns: columnsFromCandles(candles) });
 }
 

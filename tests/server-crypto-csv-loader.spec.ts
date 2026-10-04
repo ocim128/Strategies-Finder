@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
     clearParsedCryptoCsvCache,
+    getParsedCryptoCsvCacheStats,
     loadFreshCryptoCandlesFromDisk,
 } from "../lib/batch-backtest/server-crypto-csv-loader";
 
@@ -29,6 +30,7 @@ async function main(): Promise<void> {
         assert.equal(first?.length, 2);
         assert.equal(first?.[0]?.open, 100);
         assert.equal(first?.[1]?.volume, 1100);
+        assert.deepEqual(getParsedCryptoCsvCacheStats(), { entries: 1, points: 2, evictions: 0 });
 
         const second = await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir);
         // Entries are columnar, so a cache hit materializes a FRESH candle
@@ -69,6 +71,7 @@ async function main(): Promise<void> {
         );
     } finally {
         clearParsedCryptoCsvCache();
+        assert.deepEqual(getParsedCryptoCsvCacheStats(), { entries: 0, points: 0, evictions: 0 });
         rmSync(baseDir, { recursive: true, force: true });
     }
 

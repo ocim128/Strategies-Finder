@@ -15,6 +15,8 @@ const DB_NAME = 'strategies-finder-candles';
 const STORE_NAME = 'series';
 const DB_VERSION = 1;
 const MAX_CANDLES_PER_SERIES = 100000;
+const DB_OPEN_RETRY_MS = 1000;
+const DB_OPEN_TIMEOUT_MS = 8000;
 
 type CandleCacheSource =
     | 'seed-file'
@@ -40,6 +42,7 @@ export type CachedCandles = {
 };
 
 let dbPromise: Promise<IDBDatabase | null> | null = null;
+let dbOpenRetryAt = 0;
 // Bounded negative-result caches. Without a cap, long-lived sessions that
 // sample many symbols accumulate entries forever; eviction also bounds the
 // window during which an operator-shipped CSV is wrongly remembered as missing.
@@ -119,31 +122,61 @@ function getIndexedDbFactory(): IDBFactory | null {
 
 function openDb(): Promise<IDBDatabase | null> {
     if (dbPromise) return dbPromise;
+    if (Date.now() < dbOpenRetryAt) return Promise.resolve(null);
+    const factory = getIndexedDbFactory();
+    if (!factory) return Promise.resolve(null);
 
-    dbPromise = new Promise((resolve) => {
-        const factory = getIndexedDbFactory();
-        if (!factory) {
-            resolve(null);
-            return;
+    const opening = new Promise<IDBDatabase | null>((resolve) => {
+        let settled = false;
+        const finish = (db: IDBDatabase | null) => {
+            settled = true;
+            clearTimeout(timer);
+            resolve(db);
+        };
+        const fail = (error: string) => {
+            if (settled) return;
+            dbOpenRetryAt = Date.now() + DB_OPEN_RETRY_MS;
+            debugLogger.warn('data.cache.open_failed', { error });
+            finish(null);
+        };
+        const timer = setTimeout(() => fail('IndexedDB open timed out'), DB_OPEN_TIMEOUT_MS);
+        try {
+            const request = factory.open(DB_NAME, DB_VERSION);
+            request.onupgradeneeded = () => {
+                if (settled) {
+                    request.transaction?.abort();
+                    return;
+                }
+                const db = request.result;
+                if (!db.objectStoreNames.contains(STORE_NAME)) {
+                    db.createObjectStore(STORE_NAME, { keyPath: 'key' });
+                }
+            };
+            request.onsuccess = () => {
+                const db = request.result;
+                if (settled) {
+                    db.close();
+                    return;
+                }
+                const invalidate = () => {
+                    if (dbPromise === opening) dbPromise = null;
+                };
+                db.onversionchange = () => { db.close(); invalidate(); };
+                db.onclose = invalidate;
+                dbOpenRetryAt = 0;
+                finish(db);
+            };
+            request.onerror = () => fail(request.error?.message ?? 'IndexedDB open failed');
+            request.onblocked = () => fail('IndexedDB open blocked by another connection');
+        } catch (error) {
+            fail(String(error));
         }
-
-        const request = factory.open(DB_NAME, DB_VERSION);
-        request.onupgradeneeded = () => {
-            const db = request.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME, { keyPath: 'key' });
-            }
-        };
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => {
-            debugLogger.warn('data.cache.open_failed', {
-                error: request.error?.message ?? 'unknown',
-            });
-            resolve(null);
-        };
     });
-
-    return dbPromise;
+    dbPromise = opening;
+    void opening.then(db => {
+        if (!db && dbPromise === opening) dbPromise = null;
+    });
+    return opening;
 }
 
 function normalizeTime(raw: unknown): number | null {
@@ -543,24 +576,34 @@ export async function loadCachedCandles(symbol: string, interval: string): Promi
     const key = toCacheKey(normalizedSymbol, normalizedInterval);
 
     return new Promise((resolve) => {
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        const request = store.get(key);
-
-        request.onsuccess = () => {
-            const record = request.result as CandleSeriesRecord | undefined;
-            if (!record || !Array.isArray(record.candles)) {
-                resolve(null);
-                return;
-            }
-            resolve({
-                candles: record.candles,
-                updatedAt: Number(record.updatedAt) || 0,
-                source: record.source || 'manual',
-                trusted: true
-            });
+        const fail = (error: unknown) => {
+            debugLogger.warn('data.cache.read_failed', { key, error: String(error) });
+            resolve(null);
         };
-        request.onerror = () => resolve(null);
+        try {
+            const transaction = db.transaction([STORE_NAME], 'readonly');
+            transaction.onerror = () => fail(transaction.error?.message ?? 'Read transaction failed');
+            transaction.onabort = () => fail(transaction.error?.message ?? 'Read transaction aborted');
+            const store = transaction.objectStore(STORE_NAME);
+            const request = store.get(key);
+
+            request.onsuccess = () => {
+                const record = request.result as CandleSeriesRecord | undefined;
+                if (!record || !Array.isArray(record.candles)) {
+                    resolve(null);
+                    return;
+                }
+                resolve({
+                    candles: record.candles,
+                    updatedAt: Number(record.updatedAt) || 0,
+                    source: record.source || 'manual',
+                    trusted: true
+                });
+            };
+            request.onerror = () => fail(request.error?.message ?? 'Read request failed');
+        } catch (error) {
+            fail(error);
+        }
     });
 }
 
@@ -608,6 +651,7 @@ export async function saveCachedCandles(
 }
 
 export async function clearCachedCandlesDatabase(): Promise<boolean> {
+    dbOpenRetryAt = 0;
     const factory = getIndexedDbFactory();
     if (!factory) return false;
 

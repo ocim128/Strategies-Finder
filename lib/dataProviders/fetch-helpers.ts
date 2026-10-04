@@ -54,6 +54,11 @@ export function isAbortError(error: unknown): boolean {
     return name === 'AbortError' || name === 'TimeoutError';
 }
 
+export function isTimeoutError(error: unknown): boolean {
+    return error !== null && typeof error === 'object'
+        && (error as { name?: string }).name === 'TimeoutError';
+}
+
 export function formatProviderError(error: unknown): string {
     if (error instanceof Error) {
         return `${error.name}: ${error.message}`;
@@ -179,9 +184,14 @@ export async function fetchAndConsumeWithTimeoutAndRetry<T>(
             const backoffMs = retryAfterMs ?? baseDelayMs * attempt;
             await delayWithAbort(backoffMs, sourceSignal ?? undefined);
         } catch (error) {
-            lastError = error;
-            if (sourceSignal?.aborted || isAbortError(error) || attempt >= maxAttempts) {
-                throw error;
+            const timeoutReason: unknown = timeout.signal?.reason;
+            const timedOut = isTimeoutError(error) || isTimeoutError(timeoutReason);
+            // Some fetch implementations report AbortError for our deadline.
+            // Preserve TimeoutError so provider failover can distinguish it.
+            const failure = isTimeoutError(timeoutReason) ? timeoutReason : error;
+            lastError = failure;
+            if (sourceSignal?.aborted || (isAbortError(error) && !timedOut) || attempt >= maxAttempts) {
+                throw sourceSignal?.aborted ? error : failure;
             }
             await delayWithAbort(baseDelayMs * attempt, sourceSignal ?? undefined);
         } finally {

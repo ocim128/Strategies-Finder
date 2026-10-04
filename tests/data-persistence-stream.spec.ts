@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, type TestContext } from 'node:test';
-import { DataPersistence, type PersistenceContext } from '../lib/data/data-persistence';
+import { DataPersistence, selectStreamPersistenceDelta, type PersistenceContext } from '../lib/data/data-persistence';
 import { clearCachedCandlesDatabase, clearLocalDailyCsvCachesForSymbols, saveCachedCandles } from '../lib/candle-cache';
 import { resetLocalApiAvailability } from '../lib/local-api-transport';
 import type { OHLCVData, Time } from '../lib/types/strategies';
@@ -52,7 +52,7 @@ function queue(candles: OHLCVData[]) {
     persistence.queuePersistCandles({
         symbol: 'BTCUSDT', interval: '1m', resolvedProvider: 'binance',
         storageSymbol: 'BTCUSDT', storageInterval: '1m', cacheKey: 'BTCUSDT::1m',
-        providerLabel: 'Binance', candles, ctx,
+        providerLabel: 'Binance', candles, ctx, sorted: true,
     });
 }
 
@@ -63,6 +63,77 @@ async function flush(t: TestContext, candles: OHLCVData[], elapsed = 1200) {
 }
 
 describe('stream candle persistence', () => {
+    it('does not copy full history between scheduled successful snapshots', async t => {
+        t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 100_000 });
+        const candles = Array.from({ length: 1000 }, (_, i) => bar((i + 1) * 60));
+        const copiedLengths: number[] = [];
+        const slice = candles.slice.bind(candles);
+        Object.defineProperty(candles, 'slice', {
+            value: (start?: number, end?: number) => {
+                const result = slice(start, end);
+                copiedLengths.push(result.length);
+                return result;
+            },
+        });
+        await flush(t, candles);
+        candles[candles.length - 1] = bar(60_000, 105);
+        await flush(t, candles);
+        candles.push(bar(60_060));
+        await flush(t, candles);
+        assert.deepEqual(copiedLengths, [2, 1000, 1, 2]);
+        assert.equal(idb.writes.length, 1);
+        assert.deepEqual(requests[2]!.map(c => c.time), [60_000, 60_060]);
+    });
+
+    it('captures the delta cursor before a slow write while the live array changes', async t => {
+        t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 100_000 });
+        const candles = [bar(60), bar(120)];
+        await flush(t, candles);
+        let release!: (response: Response) => void;
+        const fetch = globalThis.fetch;
+        globalThis.fetch = async (input, init) => {
+            if (String(input).includes('/store-ohlcv') && requests.length === 1) {
+                requests.push((JSON.parse(String(init!.body)) as { candles: OHLCVData[] }).candles);
+                return new Promise<Response>(resolve => { release = resolve; });
+            }
+            return fetch(input, init);
+        };
+        candles.push(bar(180));
+        await flush(t, candles);
+        candles[2] = bar(180, 108);
+        candles.push(bar(240));
+        queue(candles);
+        release(json({ ok: true }));
+        await drain();
+        t.mock.timers.tick(1200);
+        await drain();
+        assert.deepEqual(requests[2]!.map(c => [c.time, c.close]), [[180, 108], [240, 100]]);
+    });
+
+    it('writes a snapshot that becomes due during a slow successful write', async t => {
+        t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 100_000 });
+        const candles = [bar(60), bar(120)];
+        await flush(t, candles);
+        let release!: (response: Response) => void;
+        const fetch = globalThis.fetch;
+        globalThis.fetch = async (input, init) => {
+            if (String(input).includes('/store-ohlcv') && requests.length === 1) {
+                requests.push((JSON.parse(String(init!.body)) as { candles: OHLCVData[] }).candles);
+                return new Promise<Response>(resolve => { release = resolve; });
+            }
+            return fetch(input, init);
+        };
+        await flush(t, candles);
+        candles.push(bar(180));
+        t.mock.timers.tick(30_000);
+        release(json({ ok: true }));
+        await drain();
+        assert.equal(idb.writes.length, 2);
+        assert.deepEqual(idb.writes[1]!.candles.map(c => c.time), [60, 120, 180]);
+        await flush(t, candles);
+        assert.deepEqual(requests[2]!.map(c => c.time), [120, 180], 'newer snapshot must not skip the unacknowledged bar in SQLite');
+    });
+
     it('upserts same-timestamp corrections and the finalized previous candle', async t => {
         t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 100_000 });
         await flush(t, [bar(60), bar(120)]);
@@ -123,6 +194,29 @@ describe('stream candle persistence', () => {
         assert.equal(requests.length, 2);
         assert.deepEqual(requests[1]!.map(row => row.time), [120, 180, 240]);
         assert.equal(idb.writes.length, 1);
+    });
+});
+
+describe('stream persistence delta selection', () => {
+    it('reads only the changed sorted tail and includes all cursor corrections', () => {
+        let timeReads = 0;
+        const candles = Array.from({ length: 10_000 }, (_, i) => ({ ...bar((i + 1) * 60),
+            get time() { timeReads++; return ((i + 1) * 60) as Time; },
+        }));
+        const selected = selectStreamPersistenceDelta(candles, 9999 * 60, true);
+        assert.equal(timeReads, 3);
+        assert.deepEqual(selected.map(c => c.time), [9999 * 60, 10_000 * 60]);
+        assert.notStrictEqual(selected, candles);
+        assert.deepEqual(selectStreamPersistenceDelta([bar(60), bar(120), bar(120), bar(180)], 120, true).map(c => c.time), [120, 120, 180]);
+    });
+
+    it('retains the full-filter fallback for unsorted and invalid data', () => {
+        const unsorted = [bar(120), bar(60), bar(180)];
+        assert.deepEqual(selectStreamPersistenceDelta(unsorted, 120).map(c => c.time), [120, 180]);
+        assert.deepEqual(selectStreamPersistenceDelta([bar(60), bar(180), bar(120)], 120, true).map(c => c.time), [180, 120]);
+        assert.deepEqual(selectStreamPersistenceDelta([bar(60), bar('invalid'), bar(120)], 120, true).map(c => c.time), [120]);
+        assert.deepEqual(selectStreamPersistenceDelta([], undefined, true), []);
+        assert.deepEqual(selectStreamPersistenceDelta([bar(60)], 120, true), []);
     });
 });
 

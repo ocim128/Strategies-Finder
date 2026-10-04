@@ -32,6 +32,25 @@ them to obtain results using the filtered candles.
 The IBKR fast path preserves that source precedence rather than assuming the
 longest cached history is authoritative. Normalize times with the existing
 time helpers and keep TradFi daily normalization in `data-interval-utils.ts`.
+Warm IBKR cache entries receive a provider/interval/revision `sanitizedFor`
+stamp after normalization. Repeated reads reuse the normalized candles;
+unguarded replacements and updates clear the stamp. Bump the IBKR revision in
+`DataFetcher.getSanitizedCacheMetadata` when normalization behavior changes.
+
+## Browser cache and live-stream lifecycle
+
+IndexedDB retains a successful connection or an in-flight open. Failed opens
+can retry after a one-second cooldown, and an open that stalls for eight
+seconds falls back to other sources. A late successful open is closed rather
+than retained. Version-change events close and invalidate the connection so
+another tab can clear or upgrade the database. Failed or aborted reads return
+`null`; failures emit `data.cache.read_failed` without candle payloads.
+
+Realtime rolling-window eviction removes the same timestamps from the
+crosshair candle lookup, keeping both representations bounded by the active
+lookback. WebSocket construction starts a handshake; only a current socket's
+`open` event resets reconnect attempts and emits `data.stream.connected`.
+Failures before opening retain the existing exponential backoff and ceiling.
 
 ## Stream persistence
 
@@ -44,6 +63,13 @@ include the last successfully persisted timestamp as well as newer bars:
 live OHLCV changes at the same timestamp, and the previous candle's final
 values may arrive alongside a new candle. SQLite upserts by
 `(symbol, interval, time)` make this overlap safe.
+
+Normalized, sorted realtime callers opt into tail-only delta selection. Other
+callers retain the full-filter path, and malformed tails fall back to it.
+The delta and its cursor are captured before awaiting SQLite. Full arrays are
+copied only for due IndexedDB snapshots or failed-write fallback. The snapshot
+clock is checked again after slow writes; deferred snapshots may capture newer
+live updates without advancing SQLite's cursor beyond acknowledged rows.
 
 Only a response with `ok: true` advances the SQLite cursor. A rejected write
 retains that cursor for the next flush and immediately attempts an IndexedDB
@@ -66,11 +92,19 @@ and SQLite JSON/binary transfers). These helpers keep the deadline and caller
 abort signal active until the body consumer resolves. The response-returning
 helpers remain available for callers that only need headers/status.
 
+The shared provider helper retries its own deadline failures within the
+configured attempt budget, preserving `TimeoutError` even when fetch reports
+an `AbortError` for that deadline. Binance then tries its next endpoint after
+exhausting timeout retries. Caller cancellation stops retries and failover
+immediately, including when the caller's abort reason is `TimeoutError`.
+
 Binance backward pagination accepts a page only when its cursor moves strictly
 backward and its final open time respects the requested end time. A stalled
 or invalid page stops pagination and emits `data.fetch.pagination_stalled`;
 discarded rows do not inflate candle progress. The existing request ceiling
 still applies.
+Forward gap-fill pagination likewise validates its first/last timestamps and
+strictly advancing cursor before accepting a page or reporting progress.
 
 ## SQLite authorization
 
@@ -89,6 +123,12 @@ Cache hits materialize only that trailing range into fresh candle objects.
 Cold reads still parse/cache the complete capped series, and detached callers
 without a limit retain the full-series contract. File mtime invalidation and
 the columnar cache's entry cap remain intact.
+The crypto cache also caps retention at eight million candle points (six
+Float64 columns, at most 384 MB of backing arrays) per process, alongside the
+512-entry cap. It shares `PointBoundedParsedCache` with IBKR daily targets.
+`getParsedCryptoCsvCacheStats()` exposes entries, retained points, and budget
+evictions; clearing the cache resets these counters. Evicted data is reloaded
+normally without changing candle values.
 
 ## Server IBKR seed sidecar
 
@@ -123,7 +163,7 @@ automatically on the next stat — no explicit clear.
 ## Validation
 
 ```powershell
-npm run test -- data-persistence data-fetcher.spec.ts candle-cache.spec.ts fetch-helpers.spec.ts local-sqlite local-route-authorization.spec.ts server-crypto-csv-loader.spec.ts server-ibkr-csv-loader.spec.ts batch-backtest-server-loader-parity.spec.ts finder-server-loader-parity.spec.ts
+npm run test -- data-persistence data-fetcher.spec.ts candle-cache data-manager-stream.browser.spec.ts point-bounded-parsed-cache.spec.ts fetch-helpers.spec.ts local-sqlite local-route-authorization.spec.ts server-crypto-csv-loader.spec.ts server-ibkr-csv-loader.spec.ts batch-backtest-server-loader-parity.spec.ts finder-server-loader-parity.spec.ts
 npm run typecheck
 npm run typecheck:tests
 ```
