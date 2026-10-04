@@ -127,7 +127,7 @@ appropriate settings/data before the thesis can be evaluated.
 | --- | --- | --- |
 | Finder Asset Opportunity settings and `Re-Sort` select | `html-partials/tab-finder.html` | Provides the existing controls; normally no new structural DOM id is needed for a metric-only sort. |
 | Finder DOM contract | `lib/finder/finder-manager-dom.ts` | Defines required IDs. Update only if the new idea adds a control or output field. |
-| Metric and comparator | `lib/finder/finder-asset-opportunity-metrics.ts` | Defines the metric key, available metric list, value extraction, direction, grouping, ties, and invalid-value behavior. |
+| Metric and comparator | `lib/finder/finder-asset-opportunity-metrics.ts` | Defines the metric key, available metric list, value extraction, direction, grouping, ties, and invalid-value behavior. One pairwise comparator (`resolvePairwiseAssetMetricComparator`) is the single ranking policy for both selection algorithms: the full stable sort and the bounded top-N selector. |
 | Browser orchestration | `lib/finder-manager.ts` | Populates `finderResort`, applies the selected metric, retains the full strategy-level pool, and renders the bounded result view. |
 | Asset Opportunity result presentation | `lib/finder/finder-ui.ts` | Renders the scalar on each visible result row. A dropdown label alone is not proof that the metric is available to the user. |
 | Per-asset result production | `lib/finder/finder-asset-opportunity-runner.ts` and `lib/finder/server/asset-opportunity-iteration.ts` | Produces the result row and, when needed, computes a new scalar before heavy arrays are stripped. |
@@ -278,9 +278,16 @@ Edit `lib/finder/finder-asset-opportunity-metrics.ts` surgically.
    archive list.
 4. Add scalar extraction to `getAssetOpportunityMetricValue` when the metric
    is a direct row-level field.
-5. Add a dedicated branch in
-   `sortAssetOpportunityResultsByMetric` when the metric needs grouping,
-   special direction, fixed constants, or custom tie logic.
+5. Add the metric's pairwise ranking to
+   `resolvePairwiseAssetMetricComparator`. That comparator is the ONE
+   definition of the metric's policy: `sortAssetOpportunityResultsByMetric`
+   uses it for the full stable sort and `selectTopAssetOpportunityResults`
+   reuses it for bounded top-N heap selection, so a metric registered once
+   ranks identically in the browser re-sort and the archive blocks. Add a
+   dedicated whole-collection branch in `sortAssetOpportunityResultsByMetric`
+   only when the metric needs grouping or collection-wide preparation (the
+   consensus and coverage-gate metrics); those have no pairwise shortcut and
+   the selector delegates them to the full sort.
 6. Return a new array from the public post-run sort function. Do not mutate the
    caller's saved default order.
 
@@ -339,15 +346,17 @@ The server batch path is intentionally centralized:
 ```text
 resolveAssetOpportunityArchiveSorts()
   -> [null, ...getAssetOpportunityResortMetrics()]
-  -> sortAssetOpportunityResultsByMetric(iteration.results, sortMetric)
-  -> slice topN for the archive block
+  -> selectTopAssetOpportunityResults(iteration.results, sortMetric, topN)
+     (pairwise metrics: one bounded heap pass over the shared comparator;
+      grouped/null metrics: full sortAssetOpportunityResultsByMetric then slice)
   -> buildAssetOpportunityPerformancePayload(...)
   -> append `Archive sort: <metric>` to oos-holdout-<N>-bars.txt
 ```
 
 After registering a metric, verify this path rather than adding a second
 per-metric server branch. The archive must contain a new labeled block for the
-metric at every holdout value.
+metric at every holdout value, with rows and order identical to sorting then
+slicing.
 
 If the metric uses only existing persisted fields, no archive format change is
 needed. The existing archive persists `nextExitOosPerformance` when the run
@@ -431,9 +440,11 @@ registered re-sort. Registering the new key in
 `Archive sort: <new-key>` block automatically through
 `resolveAssetOpportunityArchiveSorts()`.
 
-Do not add a second archive loop. The archive writer already sorts the same
-iteration result set by each registered metric and slices only after sorting.
-The default run order remains `run_default`; the new metric gets its own label.
+Do not add a second archive loop. The archive writer already ranks the same
+iteration result set by each registered metric — pairwise metrics through one
+bounded heap pass over the shared comparator, grouped metrics through the full
+sort — producing rows identical to sorting then slicing. The default run order
+remains `run_default`; the new metric gets its own label.
 
 If the metric uses only existing persisted fields, no archive format change is
 needed. The existing archive already persists `nextExitOosPerformance` when the

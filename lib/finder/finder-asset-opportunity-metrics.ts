@@ -700,23 +700,6 @@ function compareAssetOpportunityCandidateTuple(
     return 0;
 }
 
-function sortOptionalAssetMetric(
-    results: readonly FinderAssetOpportunityResult[],
-    read: (result: FinderAssetOpportunityResult) => number | null | undefined,
-    descending: boolean,
-    tieBreak: (a: FinderAssetOpportunityResult, b: FinderAssetOpportunityResult) => number = compareAssetOpportunityCandidateTuple,
-): FinderAssetOpportunityResult[] {
-    return [...results].sort((a, b) => {
-        const valueA = read(a) ?? Number.NaN;
-        const valueB = read(b) ?? Number.NaN;
-        const validA = Number.isFinite(valueA) || valueA === Number.POSITIVE_INFINITY;
-        const validB = Number.isFinite(valueB) || valueB === Number.POSITIVE_INFINITY;
-        if (validA !== validB) return validA ? -1 : 1;
-        if (validA && validB && valueA !== valueB) return descending ? valueB! - valueA! : valueA! - valueB!;
-        return tieBreak(a, b);
-    });
-}
-
 /**
  * Sort a copy of Asset Opportunity results by a single metric for the post-run
  * re-sort dropdown. When `metric` is null, falls back to the existing
@@ -731,6 +714,14 @@ function sortOptionalAssetMetric(
  * Grade is intentionally NOT consulted as a tiebreak; a metric re-sort
  * overrides grade by design.
  *
+ * Every pairwise metric shares ONE comparator definition with the bounded
+ * top-N selector: `resolvePairwiseAssetMetricComparator` is the single ranking
+ * policy, consumed here for the full stable sort and by
+ * `selectTopAssetOpportunityResults` for heap selection. Only the grouped
+ * collection metrics (fresh-signal-library consensus and the strategy coverage
+ * gate) keep whole-collection branches here, because no pairwise comparator
+ * can express them; the selector delegates those to this full sort.
+ *
  * Returns a NEW array — does not mutate the input.
  */
 export function sortAssetOpportunityResultsByMetric(
@@ -740,7 +731,6 @@ export function sortAssetOpportunityResultsByMetric(
     if (metric === null) {
         return sortAssetOpportunityResults([...results]);
     }
-    const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
     if (metric === FRESH_SIGNAL_LIBRARIES_METRIC || metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC) {
         const counts = getFreshSignalLibraryCounts(results);
         const representatives = new Map<string, FinderAssetOpportunityResult>();
@@ -774,19 +764,6 @@ export function sortAssetOpportunityResultsByMetric(
                 return a.symbol.localeCompare(b.symbol);
             });
     }
-    if (metric === TOP_RAW_SUPPORT_METRIC) {
-        return [...results].sort((a, b) => {
-            const rawA = a.support.freshSameDirection;
-            const rawB = b.support.freshSameDirection;
-            if (rawA !== rawB) return rawB - rawA;
-            for (const secondary of SECONDARY_TIEBREAK_METRICS) {
-                const valueA = getAssetOpportunityMetricValue(a, secondary);
-                const valueB = getAssetOpportunityMetricValue(b, secondary);
-                if (valueA !== valueB) return valueB - valueA;
-            }
-            return compareAssetOpportunityCandidateTuple(a, b);
-        });
-    }
     if (metric === STRATEGY_COVERAGE_GATE_METRIC) {
         const strategiesBySymbol = new Map<string, Set<string>>();
         const representatives = new Map<string, FinderAssetOpportunityResult>();
@@ -815,146 +792,68 @@ export function sortAssetOpportunityResultsByMetric(
                 return compareAssetOpportunityCandidateTuple(a, b);
             });
     }
-    if (metric === TOTAL_TRADES_CAPPED_METRIC) {
-        // Percentile saturation: cap = P90 of totalTrades within this result
-        // set (auto-fits the run config; a fixed cap saturates everything on
-        // maxholdbars=1 runs and degenerates into the tiebreak). Rank by
-        // min(trades, cap) descending; the saturated elite ties at the cap and
-        // is contested by averageGain (larger average win), then symbol.
-        // netProfitPercent and expectancy are deliberately NOT consulted.
-        const tradeCounts = results
-            .map((result) => getAssetOpportunityMetricValue(result, "totalTrades"))
-            .sort((left, right) => left - right);
-        if (tradeCounts.length === 0) return [...results];
-        const saturationCap = quantileSorted(tradeCounts, TOTAL_TRADES_SATURATION_PERCENTILE);
-        return [...results]
-            .map((result) => ({
-                ...result,
-                totalTradesCappedValue: Math.min(
-                    getAssetOpportunityMetricValue(result, "totalTrades"),
-                    saturationCap,
-                ),
-            }))
-            .sort((a, b) => {
-                const capA = a.totalTradesCappedValue;
-                const capB = b.totalTradesCappedValue;
-                if (capA !== capB) return capB - capA;
-                const gainA = getAssetOpportunityMetricValue(a, "averageGain");
-                const gainB = getAssetOpportunityMetricValue(b, "averageGain");
-                if (gainA !== gainB) return gainB - gainA;
-                if (a.symbol < b.symbol) return -1;
-                if (a.symbol > b.symbol) return 1;
-                return 0;
-            });
-    }
-    if (metric === MEDIAN_BARS_TO_TP_METRIC) {
-        return [...results].sort((a, b) => {
-            const medianA = a.medianBarsToTp;
-            const medianB = b.medianBarsToTp;
-            const validA = typeof medianA === "number" && Number.isFinite(medianA) && medianA >= 0;
-            const validB = typeof medianB === "number" && Number.isFinite(medianB) && medianB >= 0;
-            if (validA !== validB) return validA ? -1 : 1;
-            if (validA && validB && medianA !== medianB) return medianA - medianB;
+    // The grouped collection metrics handled above are exactly the resolver's
+    // null cases, so a pairwise comparator always exists from here on.
+    const comparator = resolvePairwiseAssetMetricComparator(metric)!;
+    const rows = metric === TOTAL_TRADES_CAPPED_METRIC
+        ? prepareTotalTradesCappedRows(results)
+        : results;
+    return [...rows].sort(comparator);
+}
 
-            return compareAssetOpportunityCandidateTuple(a, b);
-        });
-    }
-    if (metric === PRIOR_TUPLE_RECURRENCE_METRIC) {
-        return sortOptionalAssetMetric(results, (result) => result.priorTupleRecurrenceCount, true);
-    }
-    if (metric === BARRIER_EXIT_SHARE_METRIC) {
-        return sortOptionalAssetMetric(
-            results,
-            (result) => result.barrierExitShare,
-            true,
-            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
-                || compareAssetOpportunityCandidateTuple(a, b),
-        );
-    }
-    if (metric === TRADE_GAP_UNIFORMITY_METRIC) {
-        return sortOptionalAssetMetric(
-            results,
-            (result) => result.tradeGapUniformity,
-            true,
-            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
-                || compareAssetOpportunityCandidateTuple(a, b),
-        );
-    }
-    if (metric === TOP_DECILE_PROFIT_SHARE_METRIC) {
-        return sortOptionalAssetMetric(
-            results,
-            (result) => result.topDecileProfitShare,
-            false,
-            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
-                || compareAssetOpportunityCandidateTuple(a, b),
-        );
-    }
-    if (metric === WINNER_LOSER_HOLD_GAP_BARS_METRIC) {
-        return sortOptionalAssetMetric(
-            results,
-            (result) => result.winnerLoserHoldGapBars,
-            false,
-            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
-                || compareAssetOpportunityCandidateTuple(a, b),
-        );
-    }
-    if (metric === EQUITY_PATH_LINEARITY_METRIC) {
-        return sortOptionalAssetMetric(
-            results,
-            (result) => result.equityPathLinearity,
-            true,
-            (a, b) => (b.selectionResult.totalTrades - a.selectionResult.totalTrades)
-                || compareAssetOpportunityCandidateTuple(a, b),
-        );
-    }
-    const INVERTED_METRIC_BASE: Partial<Record<FinderAssetOpportunityResortMetric, FinderMetric>> = {
-        [INVERTED_NET_PROFIT_METRIC]: "netProfit",
-        [INVERTED_EXPECTANCY_METRIC]: "expectancy",
-        [INVERTED_AVERAGE_GAIN_METRIC]: "averageGain",
-        [INVERTED_WIN_RATE_METRIC]: "winRate",
-        [INVERTED_SHARPE_RATIO_METRIC]: "sharpeRatio",
-        [INVERTED_PROFIT_FACTOR_METRIC]: "profitFactor",
-        [INVERTED_MAX_DRAWDOWN_METRIC]: "maxDrawdownPercent",
-    };
-    const invertedBase = INVERTED_METRIC_BASE[metric];
-    // Safe cast: when metric is one of the inverted keys the lookup above is
-    // defined, so the ?? fallback only ever sees a plain FinderMetric.
-    const valueMetric = (invertedBase ?? metric) as FinderMetric;
-    // Worst-first direction: larger-is-better metrics invert to ascending; the
-    // smaller-is-better drawdown metric inverts to descending.
-    const ascending = invertedBase !== undefined
-        ? invertedBase !== "maxDrawdownPercent"
-        : metric === "maxDrawdownPercent";
-    return [...results].sort((a, b) => {
-        const valA = getAssetOpportunityMetricValue(a, valueMetric);
-        const valB = getAssetOpportunityMetricValue(b, valueMetric);
-        if (valA !== valB) return ascending ? valA - valB : valB - valA;
-        // Metric tie: fall back to realized performance scalars (each
-        // larger-is-better) before the deterministic symbol order, so a mass
-        // tie at the metric optimum does not collapse the top-N into an
-        // alphabetical slice. See the function docstring for full rationale.
-        for (const secondary of SECONDARY_TIEBREAK_METRICS) {
-            const sA = getAssetOpportunityMetricValue(a, secondary);
-            const sB = getAssetOpportunityMetricValue(b, secondary);
-            if (sA !== sB) return sB - sA;
-        }
-        if (a.symbol < b.symbol) return -1;
-        if (a.symbol > b.symbol) return 1;
-        return 0;
-    });
+/** Realized-performance tiebreak cascade shared by every pairwise metric. */
+const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
+
+/** The one inverted-metric → base-metric mapping for the worst-first sorts. */
+const INVERTED_METRIC_BASE: Partial<Record<FinderAssetOpportunityResortMetric, FinderMetric>> = {
+    [INVERTED_NET_PROFIT_METRIC]: "netProfit",
+    [INVERTED_EXPECTANCY_METRIC]: "expectancy",
+    [INVERTED_AVERAGE_GAIN_METRIC]: "averageGain",
+    [INVERTED_WIN_RATE_METRIC]: "winRate",
+    [INVERTED_SHARPE_RATIO_METRIC]: "sharpeRatio",
+    [INVERTED_PROFIT_FACTOR_METRIC]: "profitFactor",
+    [INVERTED_MAX_DRAWDOWN_METRIC]: "maxDrawdownPercent",
+};
+
+/**
+ * Shared TOTAL_TRADES_CAPPED preparation: compute the P90 saturation cap from
+ * the WHOLE collection (the population-dependent input that both selection
+ * paths need), then return the same augmented row copies. Input rows are
+ * never mutated; empty input yields an empty array.
+ */
+function prepareTotalTradesCappedRows(
+    results: readonly FinderAssetOpportunityResult[],
+): FinderAssetOpportunityResult[] {
+    const tradeCounts = results
+        .map((result) => getAssetOpportunityMetricValue(result, "totalTrades"))
+        .sort((left, right) => left - right);
+    const saturationCap = tradeCounts.length === 0
+        ? 0
+        : quantileSorted(tradeCounts, TOTAL_TRADES_SATURATION_PERCENTILE);
+    return results.map((result) => ({
+        ...result,
+        totalTradesCappedValue: Math.min(
+            getAssetOpportunityMetricValue(result, "totalTrades"),
+            saturationCap,
+        ),
+    }));
 }
 
 /**
- * Pairwise comparator for one resort metric, mirroring the branch of
- * `sortAssetOpportunityResultsByMetric` of the same name. Returns `null` for
- * the metrics whose ranking is derived from the WHOLE collection (the grouped
- * FRESH_SIGNAL_LIBRARIES representatives, the STRATEGY_COVERAGE_GATE filter,
- * and the null-metric grade order) — those have no pairwise shortcut. The
+ * THE single pairwise ranking policy for one resort metric. Both selection
+ * algorithms consume it: `sortAssetOpportunityResultsByMetric` for the full
+ * stable sort and `selectTopAssetOpportunityResults` for the bounded top-N
+ * heap. Returns `null` for the metrics whose ranking is derived from the WHOLE
+ * collection (the grouped FRESH_SIGNAL_LIBRARIES representatives, the
+ * STRATEGY_COVERAGE_GATE filter, and the null-metric grade order) — those have
+ * no pairwise shortcut and fall back to the full sort. The
  * TOTAL_TRADES_CAPPED comparator reads the precomputed
  * `totalTradesCappedValue` field, so callers must augment rows with the
- * collection-wide P90 cap first (see `selectTopAssetOpportunityResults`).
- * `tests/finder-asset-opportunity-all-resorts.spec.ts` locks this mirror to
- * the sort function output exactly.
+ * collection-wide P90 cap first (see `prepareTotalTradesCappedRows`).
+ * `tests/finder-asset-opportunity-all-resorts.spec.ts` locks the heap
+ * selection to the sort function output exactly, and the independent
+ * expected-order cases in `tests/finder-asset-opportunity-metrics.spec.ts`
+ * remain the semantic oracle for the policy itself.
  */
 function resolvePairwiseAssetMetricComparator(
     metric: FinderAssetOpportunityResortMetric,
@@ -966,7 +865,6 @@ function resolvePairwiseAssetMetricComparator(
     ) {
         return null;
     }
-    const SECONDARY_TIEBREAK_METRICS: readonly FinderMetric[] = ["expectancy", "netProfitPercent", "totalTrades"];
     if (metric === TOP_RAW_SUPPORT_METRIC) {
         return (a, b) => {
             const rawA = a.support.freshSameDirection;
@@ -1044,15 +942,6 @@ function resolvePairwiseAssetMetricComparator(
     if (metric === EQUITY_PATH_LINEARITY_METRIC) {
         return optionalMetricComparator((result) => result.equityPathLinearity, true, tradesThenTuple);
     }
-    const INVERTED_METRIC_BASE: Partial<Record<FinderAssetOpportunityResortMetric, FinderMetric>> = {
-        [INVERTED_NET_PROFIT_METRIC]: "netProfit",
-        [INVERTED_EXPECTANCY_METRIC]: "expectancy",
-        [INVERTED_AVERAGE_GAIN_METRIC]: "averageGain",
-        [INVERTED_WIN_RATE_METRIC]: "winRate",
-        [INVERTED_SHARPE_RATIO_METRIC]: "sharpeRatio",
-        [INVERTED_PROFIT_FACTOR_METRIC]: "profitFactor",
-        [INVERTED_MAX_DRAWDOWN_METRIC]: "maxDrawdownPercent",
-    };
     const invertedBase = INVERTED_METRIC_BASE[metric];
     // Safe cast: when metric is one of the inverted keys the lookup above is
     // defined, so the ?? fallback only ever sees a plain FinderMetric.
@@ -1108,18 +997,7 @@ export function selectTopAssetOpportunityResults(
     if (metric === TOTAL_TRADES_CAPPED_METRIC) {
         // Percentile saturation cap over the WHOLE collection (the sort's
         // population-dependent input), then the same augmented row copies.
-        const tradeCounts = results
-            .map((result) => getAssetOpportunityMetricValue(result, "totalTrades"))
-            .sort((left, right) => left - right);
-        if (tradeCounts.length === 0) return [];
-        const saturationCap = quantileSorted(tradeCounts, TOTAL_TRADES_SATURATION_PERCENTILE);
-        rows = results.map((result) => ({
-            ...result,
-            totalTradesCappedValue: Math.min(
-                getAssetOpportunityMetricValue(result, "totalTrades"),
-                saturationCap,
-            ),
-        }));
+        rows = prepareTotalTradesCappedRows(results);
     }
     // Max-heap of retained entries ordered by "sorts after": the root is the
     // WORST retained row under (comparator, then original index).

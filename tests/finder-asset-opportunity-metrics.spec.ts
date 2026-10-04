@@ -18,10 +18,13 @@ import {
     decideAssetGrade,
     compareAssetOpportunityResults,
     deduplicateAssetOpportunityResultsBySymbol,
+    PRIOR_TUPLE_RECURRENCE_METRIC,
+    selectTopAssetOpportunityResults,
     sortAssetOpportunityResults,
     sortAssetOpportunityResultsByMetric,
     getAssetOpportunityResortMetrics,
     MEDIAN_BARS_TO_TP_METRIC,
+    TOP_RAW_SUPPORT_METRIC,
     TOTAL_TRADES_CAPPED_METRIC,
     retainAssetOpportunityResultsForSymbols,
     type AssetPoolCandidate,
@@ -721,5 +724,107 @@ describe("Asset Opportunity post-run re-sort", () => {
         // (AAA 5 > ZZZ 1), so AAA first — the opposite ordering.
         const plain = sortAssetOpportunityResultsByMetric(results, "freshSignalLibraries");
         expect(plain.map((r) => r.symbol)).to.deep.equal(["AAA•+SPY•", "ZZZ•+SPY•", "MMM•+SPY•"]);
+    });
+
+    /**
+     * Independent expected-order cases for the pairwise metric policies. These
+     * literals are the semantic oracle for the shared comparator: they must
+     * keep passing whether the order is computed by the full sort, the bounded
+     * top-N selector, or any future sharing of the ranking rules.
+     */
+    describe("independent pairwise metric expected orders", () => {
+        function withSupport(
+            result: FinderAssetOpportunityResult,
+            freshSameDirection: number,
+        ): FinderAssetOpportunityResult {
+            return { ...result, support: { ...result.support, freshSameDirection } };
+        }
+
+        it("topRawSupport ranks by raw same-direction support, then expectancy, then netProfitPercent, then trades, then tuple", () => {
+            const low = withSupport(makeResortResult({ symbol: "LOW" }), 1);
+            const high = withSupport(makeResortResult({ symbol: "HIGH" }), 4);
+            const tieHighExpectancy = withSupport(
+                makeResortResult({ symbol: "TIE_E", expectancy: 5 }),
+                2,
+            );
+            const tieHighProfit = withSupport(
+                makeResortResult({ symbol: "TIE_P", expectancy: 5, netProfitPercent: 9 }),
+                2,
+            );
+            const tieBothTrades = withSupport(
+                makeResortResult({ symbol: "TIE_T", expectancy: 5, netProfitPercent: 9, totalTrades: 30 }),
+                2,
+            );
+            const sorted = sortAssetOpportunityResultsByMetric(
+                [low, tieBothTrades, tieHighProfit, tieHighExpectancy, high],
+                TOP_RAW_SUPPORT_METRIC,
+            );
+            expect(sorted.map((r) => r.symbol)).to.deep.equal([
+                "HIGH",
+                "TIE_T",
+                "TIE_P",
+                "TIE_E",
+                "LOW",
+            ]);
+        });
+
+        it("priorTupleRecurrence ranks higher counts first and invalid rows last in tuple order", () => {
+            const high = { ...makeResortResult({ symbol: "B" }), priorTupleRecurrenceCount: 2 };
+            const zero = { ...makeResortResult({ symbol: "A" }), priorTupleRecurrenceCount: 0 };
+            const nan = makeResortResult({ symbol: "C" });
+            (nan as { priorTupleRecurrenceCount?: number }).priorTupleRecurrenceCount = Number.NaN;
+            const missing = makeResortResult({ symbol: "D" });
+            const sorted = sortAssetOpportunityResultsByMetric(
+                [missing, nan, zero, high],
+                PRIOR_TUPLE_RECURRENCE_METRIC,
+            );
+            expect(sorted.map((r) => r.symbol)).to.deep.equal(["B", "A", "C", "D"]);
+        });
+
+        it("selectTop returns the documented totalTradesCapped order with augmented copies, leaving inputs untouched", () => {
+            const low80 = makeResortResult({ symbol: "L1", totalTrades: 80 });
+            const low90 = makeResortResult({ symbol: "L2", totalTrades: 90 });
+            const low100 = makeResortResult({ symbol: "L3", totalTrades: 100 });
+            const eliteProfit = makeResortResult({
+                symbol: "E1", totalTrades: 2000, avgWin: 5, expectancy: 9, netProfitPercent: 50,
+            });
+            const eliteGain = makeResortResult({
+                symbol: "E2", totalTrades: 2000, avgWin: 9, expectancy: 0.1, netProfitPercent: 1,
+            });
+            const pool = [low80, low90, low100, eliteProfit, eliteGain];
+            const selected = selectTopAssetOpportunityResults(pool, TOTAL_TRADES_CAPPED_METRIC, 2);
+
+            expect(selected.map((r) => r.symbol)).to.deep.equal(["E2", "E1"]);
+            expect(selected.map((r) => r.totalTradesCappedValue)).to.deep.equal([2000, 2000]);
+            // The augmented rows are copies: originals never gain the field and
+            // the input array keeps its order.
+            for (const result of pool) {
+                expect(result.totalTradesCappedValue).to.equal(undefined);
+            }
+            expect(pool.map((r) => r.symbol)).to.deep.equal(["L1", "L2", "L3", "E1", "E2"]);
+        });
+
+        it("comparator-equal rows with identical tuples keep their original order in the sort and the selector", () => {
+            const first = makeResortResult({ symbol: "SAME", netProfit: 5 });
+            const second = makeResortResult({ symbol: "SAME", netProfit: 5 });
+            expect(sortAssetOpportunityResultsByMetric([second, first], "netProfit").map((r) => r))
+                .to.deep.equal([second, first]);
+            // The bounded heap must also retain the earlier original index.
+            expect(selectTopAssetOpportunityResults([second, first], "netProfit", 1).map((r) => r))
+                .to.deep.equal([second]);
+        });
+
+        it("does not mutate the input array for a collection-prepared metric", () => {
+            const original = [
+                makeResortResult({ symbol: "Z", totalTrades: 2000, avgWin: 7 }),
+                makeResortResult({ symbol: "A", totalTrades: 2000, avgWin: 7 }),
+                makeResortResult({ symbol: "F1", totalTrades: 80 }),
+            ];
+            const originalOrder = original.map((r) => r.symbol);
+            sortAssetOpportunityResultsByMetric(original, TOTAL_TRADES_CAPPED_METRIC);
+            expect(original.map((r) => r.symbol), "input array is unchanged").to.deep.equal(originalOrder);
+            expect(original.some((r) => r.totalTradesCappedValue !== undefined), "input rows are not augmented")
+                .to.equal(false);
+        });
     });
 });
