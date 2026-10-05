@@ -510,6 +510,222 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(runnerByAffinity.size).to.equal(2);
     });
 
+    it("prefers chunk affinity when chunk and cache-affinity metadata are both present", async () => {
+        // Conflicting groupings: chunk keys pair (0,2)/(1,3) while cache keys
+        // pair (0,1)/(2,3). Chunk mode takes precedence, so runners pin by
+        // assetChunkIndex and the cache-affinity groups cross runners.
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3, 4, 5].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            assetChunkIndex: taskIndex % 2,
+            assetChunkCount: 2,
+            cacheAffinityIndex: Math.floor(taskIndex / 2),
+            cacheAffinityCount: 2,
+            runId: "chunk-precedence",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        const started: Array<{ chunk: number; cacheAffinity: number; runnerIndex: number }> = [];
+        const result = await runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                onTaskStart: (task, runnerIndex) => started.push({
+                    chunk: task.assetChunkIndex!,
+                    cacheAffinity: task.cacheAffinityIndex!,
+                    runnerIndex,
+                }),
+            }),
+            onIterationResult: async () => undefined,
+            onProgress: () => undefined,
+            onRunLog: () => undefined,
+            isCancelled: () => false,
+        });
+
+        expect(result.fatal).to.equal(null);
+        expect(started).to.have.length(4);
+        const runnerByChunk = new Map<number, number>();
+        for (const entry of started) {
+            const previous = runnerByChunk.get(entry.chunk);
+            if (previous === undefined) runnerByChunk.set(entry.chunk, entry.runnerIndex);
+            else expect(entry.runnerIndex).to.equal(previous);
+        }
+        expect(runnerByChunk.size).to.equal(2);
+        // Cache-affinity groups do NOT pin: each spans both runners.
+        for (const cacheAffinity of [0, 1]) {
+            const runners = new Set(
+                started.filter((entry) => entry.cacheAffinity === cacheAffinity).map((entry) => entry.runnerIndex),
+            );
+            expect(runners.size, `cache affinity ${cacheAffinity} spans both runners`).to.equal(2);
+        }
+    });
+
+    it("keeps ordinary scheduling when affinity metadata is mixed or incomplete", async () => {
+        // Task 1's assetChunkCount of 1 disqualifies chunk mode for the whole
+        // run and its missing cacheAffinityCount disqualifies cache mode, so
+        // ordinary scheduling applies: task 2 shares task 0's chunk key but
+        // must NOT wait for task 0's runner.
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3, 4].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            assetChunkIndex: taskIndex % 2,
+            assetChunkCount: 1,
+            cacheAffinityIndex: Math.floor(taskIndex / 2),
+            ...(taskIndex === 1 ? {} : { cacheAffinityCount: 2 }),
+            runId: "mixed-affinity-ordinary",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        const started: Array<{ taskIndex: number; chunk: number; runnerIndex: number }> = [];
+        const emitted: number[] = [];
+        const result = await runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                onTaskStart: (task, runnerIndex) => started.push({
+                    taskIndex: task.taskIndex,
+                    chunk: task.assetChunkIndex!,
+                    runnerIndex,
+                }),
+                // Task 0 (chunk key 0) is slow; tasks 1 and 2 finish fast.
+                delayMs: (taskIndex) => (taskIndex === 0 ? 60 : 5),
+            }),
+            onIterationResult: async (task) => {
+                emitted.push(task.holdoutBars);
+            },
+            onProgress: () => undefined,
+            onRunLog: () => undefined,
+            isCancelled: () => false,
+        });
+
+        expect(result.fatal).to.equal(null);
+        expect(emitted).to.deep.equal([2, 3, 4]);
+        const task0 = started.find((entry) => entry.taskIndex === 0)!;
+        const task2 = started.find((entry) => entry.taskIndex === 2)!;
+        // Ordinary scheduling: the same chunk key ran on two different
+        // runners (affinity scheduling would have pinned it).
+        expect(task2.runnerIndex).to.not.equal(task0.runnerIndex);
+    });
+
+    it("emits ascending and pins runners for out-of-order chunk-affinity completion", async () => {
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3, 4, 5].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            assetChunkIndex: taskIndex % 2,
+            assetChunkCount: 2,
+            runId: "chunk-out-of-order",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        const started: Array<{ chunk: number; runnerIndex: number }> = [];
+        const emitted: number[] = [];
+        const result = await runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                onTaskStart: (task, runnerIndex) => started.push({
+                    chunk: task.assetChunkIndex!,
+                    runnerIndex,
+                }),
+                // Later task indexes complete first, so emissions buffer.
+                delayMs: (taskIndex) => (3 - taskIndex) * 15,
+            }),
+            onIterationResult: async (task) => {
+                emitted.push(task.holdoutBars);
+            },
+            onProgress: () => undefined,
+            onRunLog: () => undefined,
+            isCancelled: () => false,
+        });
+
+        expect(result.fatal).to.equal(null);
+        expect(emitted).to.deep.equal([2, 3, 4, 5]);
+        const runnerByChunk = new Map<number, number>();
+        for (const entry of started) {
+            const previous = runnerByChunk.get(entry.chunk);
+            if (previous === undefined) runnerByChunk.set(entry.chunk, entry.runnerIndex);
+            else expect(entry.runnerIndex).to.equal(previous);
+        }
+        expect(runnerByChunk.size).to.equal(2);
+    });
+
+    it("isolates a fatal in chunk-affinity mode: earlier work archives, later work is discarded", async () => {
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3, 4, 5].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            assetChunkIndex: taskIndex % 2,
+            assetChunkCount: 2,
+            runId: "chunk-fatal",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        const emitted: number[] = [];
+        const result = await runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                // Task 1 fatals while task 0 still runs; task 2 (already
+                // assigned to task 0's chunk runner) is aborted after.
+                delayMs: (taskIndex) => (taskIndex === 1 ? 40 : (2 - taskIndex) * 15),
+                fatalTasks: new Set([1]),
+            }),
+            onIterationResult: async (task) => {
+                emitted.push(task.holdoutBars);
+            },
+            onProgress: () => undefined,
+            onRunLog: () => undefined,
+            isCancelled: () => false,
+        });
+
+        expect(result.fatal?.task.holdoutBars).to.equal(3);
+        expect(result.completedIterations).to.equal(1);
+        expect(emitted).to.deep.equal([2]);
+    });
+
     it("clamps the auto worker count for Rust-engine runs; the env override still wins", () => {
         const auto = resolveAssetOpportunityBatchWorkerCount(41, 10, {}, 64 * GIB);
         // rustEngine caps the AUTO value at 2 (the Rust HTTP server serializes;
@@ -750,6 +966,94 @@ describe("finder Asset Opportunity batch parallel execution", () => {
         expect(result.completedIterations).to.equal(1);
         // Task 0 (holdout 2) completed and flushed; task 1 (holdout 3) was
         // aborted mid-flight and discarded; tasks 2/3 never started.
+        expect(emitted).to.deep.equal([2]);
+    });
+
+    it("flushes completed chunk-affinity work on Stop and discards the rest", async () => {
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3, 4, 5].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            assetChunkIndex: taskIndex % 2,
+            assetChunkCount: 2,
+            runId: "chunk-stop",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        let stopRequested = false;
+        const emitted: number[] = [];
+        const result = await runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                parkUntilStopTasks: new Set([1]),
+            }),
+            onIterationResult: async (task) => {
+                emitted.push(task.holdoutBars);
+                if (task.taskIndex === 0) stopRequested = true;
+            },
+            onProgress: () => {},
+            onRunLog: () => {},
+            isCancelled: () => stopRequested,
+        });
+
+        expect(result.cancelled).to.equal(true);
+        expect(result.fatal).to.equal(null);
+        expect(result.completedIterations).to.equal(1);
+        expect(emitted).to.deep.equal([2]);
+    });
+
+    it("flushes completed cache-affinity work on Stop and discards the rest", async () => {
+        const datasets = longUpDownDatasets();
+        const symbols = [...datasets.keys()];
+        const tasks: AssetOpportunityBatchWorkerTask[] = [2, 3, 4, 5].map((holdoutBars, taskIndex) => ({
+            taskIndex,
+            holdoutBars,
+            cacheAffinityIndex: Math.floor(taskIndex / 2),
+            cacheAffinityCount: 2,
+            runId: "cache-affinity-stop",
+            interval: "5m",
+            symbols,
+            options: makeBatchOptions(symbols),
+            settings,
+            capitalSettings,
+            strategyKeys: [STRATEGY_KEY],
+            exitStrategyKeys: [],
+            useRustEnginePreference: false,
+            candidatePoolSize: 2,
+            minFreshSupport: 1,
+        }));
+        let stopRequested = false;
+        const emitted: number[] = [];
+        const result = await runAssetOpportunityBatchSweep({
+            tasks,
+            runnerCount: 2,
+            createRunner: createInProcessRunnerFactory({
+                datasets,
+                parkUntilStopTasks: new Set([1]),
+            }),
+            onIterationResult: async (task) => {
+                emitted.push(task.holdoutBars);
+                if (task.taskIndex === 0) stopRequested = true;
+            },
+            onProgress: () => {},
+            onRunLog: () => {},
+            isCancelled: () => stopRequested,
+        });
+
+        expect(result.cancelled).to.equal(true);
+        expect(result.fatal).to.equal(null);
+        expect(result.completedIterations).to.equal(1);
         expect(emitted).to.deep.equal([2]);
     });
 

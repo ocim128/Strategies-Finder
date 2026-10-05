@@ -550,7 +550,9 @@ at 32. Each worker holds each assigned dataset and its prepared closed-candle
 view, so large symbol lists reduce the worker count automatically. For chunked tasks the
 memory estimate uses the partition size, allowing the pool to use more CPU
 without budgeting a full-universe copy per worker. Chunked tasks carry only
-their symbol partition and stay affinity-pinned to one worker across holdouts,
+their symbol partition and stay affinity-pinned to one worker across holdouts
+(whole-holdout tasks pin by their cache-affinity group through the same
+scheduling path),
 so the total retained dataset budget stays bounded by the same policy while
 synthetic leg/pair caches are reused. Large holdout ranges still use one
 whole-holdout task per worker. When Rust is actually eligible, the external
