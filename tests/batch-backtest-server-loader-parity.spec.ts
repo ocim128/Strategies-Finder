@@ -10,6 +10,7 @@ import {
 import type { BatchDatasetLoadResult } from "../lib/batch-backtest/batch-dataset-loader-core";
 import { SyntheticLegCache } from "../lib/batch-backtest/synthetic-leg-cache";
 import {
+    clearServerBatchDatasetCaches,
     fetchServerHistoricalData,
     loadServerBatchDataset,
 } from "../lib/batch-backtest/server-batch-data-loader";
@@ -496,12 +497,13 @@ describe("batch-backtest server loader parity", () => {
 });
 
 /**
- * Behavioral parity for the disk-first routing both server loaders share. This
- * block mirrors the same cases in `tests/finder-server-loader-parity.spec.ts`:
- * source-text assertions above prove delegation, these prove the routing
- * contract itself (IBKR historical vs detached misses, crypto precedence,
- * aborts, empty tails, tail limits, and mtime invalidation) with the calling
- * loader's DataFetcher replaced by scoped stubs.
+ * THE behavioral suite for the disk-first routing both server loaders share
+ * (the finder spec keeps only loader-level integration cases). These cases
+ * prove the routing contract itself — IBKR historical vs detached misses,
+ * crypto precedence, aborts, empty tails, tail limits, and mtime
+ * invalidation — with the calling loader's DataFetcher replaced by scoped
+ * stubs; the loader-level cases at the end prove the Batch wiring end-to-end
+ * through the real loaders.
  */
 describe("shared server data-source routing", () => {
     const fallbackBars: OHLCVData[] = [{ time: 1 as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 }];
@@ -689,6 +691,41 @@ describe("shared server data-source routing", () => {
             expect(wrapper.map((bar) => Number(bar.time))).to.deep.equal(bars.slice(-2).map((bar) => Number(bar.time)));
             const loaded = await loadServerBatchDataset("AAPL\u2022", "30m");
             expect(loaded.map((bar) => Number(bar.time))).to.deep.equal(bars.map((bar) => Number(bar.time)));
+        });
+    });
+
+    it("offline Batch loads take the synced crypto CSV before the DataFetcher", async () => {
+        // The 1d series clears the loader core's stale-fragment threshold
+        // (365 bars for 1d), so the detached CSV hit is returned without an
+        // online refetch — which the fixture fails on.
+        const bars = makeBars(366, 8);
+        await withLocalCryptoFixture("1d", { BTCUSDT: bars }, async () => {
+            clearServerBatchDatasetCaches();
+            // Standalone loads fetch detached with offline: true, so a synced
+            // CSV must satisfy the request with zero network activity (the
+            // fixture fails the test on any fetch).
+            const loaded = await loadServerBatchDataset("BTCUSDT", "1d");
+            expect(loaded.map((bar) => Number(bar.time))).to.deep.equal(bars.map((bar) => Number(bar.time)));
+        });
+    });
+
+    it("invalidation plus CSV replacement refresh Batch loads (mtime freshness)", async () => {
+        const first = makeBars(366, 9);
+        const second = makeBars(367, 9);
+        await withLocalCryptoFixture("1d", { BTCUSDT: first }, async ({ csvDir }) => {
+            clearServerBatchDatasetCaches();
+            const before = await loadServerBatchDataset("BTCUSDT", "1d");
+            expect(before.map((bar) => Number(bar.time))).to.deep.equal(first.map((bar) => Number(bar.time)));
+
+            writeCryptoCsv(csvDir, "BTCUSDT", second);
+            const forcedMtime = (Date.now() + 60_000) / 1000;
+            utimesSync(path.join(csvDir, "BTCUSDT.csv"), forcedMtime, forcedMtime);
+            // Batch clears its caches between runs (see
+            // clearServerBatchDatasetCaches), then mtime invalidation
+            // re-reads the replaced CSV.
+            clearServerBatchDatasetCaches();
+            const after = await loadServerBatchDataset("BTCUSDT", "1d");
+            expect(after.map((bar) => Number(bar.time))).to.deep.equal(second.map((bar) => Number(bar.time)));
         });
     });
 });

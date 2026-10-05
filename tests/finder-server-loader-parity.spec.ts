@@ -9,11 +9,6 @@ import {
     clearServerFinderDatasetCaches,
     loadServerFinderDataset,
 } from "../lib/finder/server/server-finder-data-loader";
-import {
-    fetchServerDetachedDataWithFetcher,
-    fetchServerHistoricalDataWithFetcher,
-} from "../lib/data/server-data-fetcher-factory";
-import type { DataFetcher } from "../lib/data/data-fetcher";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 
 const APP_ROOT = process.cwd();
@@ -224,20 +219,18 @@ describe("finder server loader parity", () => {
             expect(batchLoader, `batch invalidation must retain ${symbol}`).to.not.include(symbol);
         }
     });
-
 });
 
 /**
- * Behavioral parity for the disk-first routing both server loaders share. This
- * block mirrors the same cases in `tests/batch-backtest-server-loader-parity.spec.ts`:
- * source-text assertions above prove delegation, these prove the routing
- * contract itself (IBKR historical vs detached misses, crypto precedence,
- * aborts, empty tails, tail limits, and mtime invalidation) with the calling
- * loader's DataFetcher replaced by scoped stubs.
+ * Loader-level integration cases for the Finder server loader. The routing
+ * matrix itself (IBKR historical vs detached misses, crypto precedence,
+ * aborts, empty tails, tail limits, and CSV replacement with stub fetchers)
+ * lives ONCE in `tests/batch-backtest-server-loader-parity.spec.ts`; the
+ * structural assertions above prove this loader delegates to that shared
+ * policy. The cases here prove the Finder wiring end-to-end through
+ * `loadServerFinderDataset` with real disk fixtures.
  */
-describe("shared server data-source routing", () => {
-    const fallbackBars: OHLCVData[] = [{ time: 1 as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 }];
-
+describe("finder server loader integration", () => {
     function makeBars(count: number, dayOffset: number): OHLCVData[] {
         return Array.from({ length: count }, (_, index) => ({
             time: (1_700_000_000 + (dayOffset * 1_000 + index) * 1_800) as Time,
@@ -249,177 +242,45 @@ describe("shared server data-source routing", () => {
         }));
     }
 
-    type RecordedCall = {
-        method: "historical" | "detached";
-        symbol: string;
-        interval: string;
-        limit?: number;
-        signal?: AbortSignal;
-        offline?: boolean;
-    };
-
-    function recordingDataFetcher(returned: OHLCVData[]): { fetcher: DataFetcher; calls: RecordedCall[] } {
-        const calls: RecordedCall[] = [];
-        const fetcher = {
-            fetchHistoricalData: async (
-                symbol: string,
-                interval: string,
-                limit: number,
-                options?: { signal?: AbortSignal; offline?: boolean },
-            ) => {
-                calls.push({
-                    method: "historical",
-                    symbol,
-                    interval,
-                    limit,
-                    signal: options?.signal,
-                    offline: options?.offline,
-                });
-                return returned;
-            },
-            fetchDataDetached: async (
-                symbol: string,
-                interval: string,
-                options?: { signal?: AbortSignal; offline?: boolean },
-            ) => {
-                calls.push({
-                    method: "detached",
-                    symbol,
-                    interval,
-                    signal: options?.signal,
-                    offline: options?.offline,
-                });
-                return returned;
-            },
-        } as unknown as DataFetcher;
-        return { fetcher, calls };
-    }
-
-    it("historical IBKR: a local hit serves CSV candles with the tail limit; a null read returns [] without the fetcher", async () => {
-        const bars = makeBars(6, 0);
-        await withLocalIbkrFixture("30m", { AAPL: bars }, async () => {
-            const { fetcher, calls } = recordingDataFetcher(fallbackBars);
-            const hit = await fetchServerHistoricalDataWithFetcher(fetcher, "AAPL\u2022", "30m", 4);
-            expect(hit.map((bar) => Number(bar.time))).to.deep.equal(bars.slice(-4).map((bar) => Number(bar.time)));
-            const miss = await fetchServerHistoricalDataWithFetcher(fetcher, "MISSING\u2022", "30m", 4);
-            expect(miss).to.deep.equal([]);
-            expect(calls).to.deep.equal([]);
-        });
-    });
-
-    it("detached IBKR: a local hit serves CSV candles; a null read continues to the fallback fetcher", async () => {
-        const bars = makeBars(3, 1);
-        await withLocalIbkrFixture("30m", { AAPL: bars }, async () => {
-            const { fetcher, calls } = recordingDataFetcher(fallbackBars);
-            const hit = await fetchServerDetachedDataWithFetcher(fetcher, "AAPL\u2022", "30m");
-            expect(hit.map((bar) => Number(bar.time))).to.deep.equal(bars.map((bar) => Number(bar.time)));
-            expect(calls).to.deep.equal([]);
-            const miss = await fetchServerDetachedDataWithFetcher(fetcher, "MISSING\u2022", "30m");
-            expect(miss).to.equal(fallbackBars);
-            expect(calls).to.deep.equal([
-                { method: "detached", symbol: "MISSING\u2022", interval: "30m", signal: undefined, offline: undefined },
-            ]);
-        });
-    });
-
-    it("offline crypto: a synced CSV wins before the fetcher; a miss falls back with the same options", async () => {
-        const bars = makeBars(5, 2);
-        await withLocalCryptoFixture("30m", { BTCUSDT: bars }, async () => {
-            const { fetcher, calls } = recordingDataFetcher(fallbackBars);
-            const hit = await fetchServerHistoricalDataWithFetcher(fetcher, "BTCUSDT", "30m", 2, { offline: true });
-            expect(hit.map((bar) => Number(bar.time))).to.deep.equal(bars.slice(-2).map((bar) => Number(bar.time)));
-            const miss = await fetchServerHistoricalDataWithFetcher(fetcher, "ETHUSDT", "30m", 4, { offline: true });
-            expect(miss).to.equal(fallbackBars);
-            expect(calls).to.deep.equal([
-                {
-                    method: "historical",
-                    symbol: "ETHUSDT",
-                    interval: "30m",
-                    limit: 4,
-                    signal: undefined,
-                    offline: true,
-                },
-            ]);
-        });
-    });
-
-    it("online non-IBKR: the retained DataFetcher serves the request even when a synced CSV exists", async () => {
-        const bars = makeBars(5, 3);
-        await withLocalCryptoFixture("30m", { BTCUSDT: bars }, async () => {
-            const { fetcher, calls } = recordingDataFetcher(fallbackBars);
-            const result = await fetchServerHistoricalDataWithFetcher(fetcher, "BTCUSDT", "30m", 7);
-            expect(result).to.equal(fallbackBars);
-            expect(calls).to.deep.equal([
-                {
-                    method: "historical",
-                    symbol: "BTCUSDT",
-                    interval: "30m",
-                    limit: 7,
-                    signal: undefined,
-                    offline: undefined,
-                },
-            ]);
-        });
-    });
-
-    it("offline crypto: a non-null empty tail (limit 0) is still a local hit", async () => {
-        const bars = makeBars(3, 4);
-        await withLocalCryptoFixture("30m", { BTCUSDT: bars }, async () => {
-            const { fetcher, calls } = recordingDataFetcher(fallbackBars);
-            const empty = await fetchServerHistoricalDataWithFetcher(fetcher, "BTCUSDT", "30m", 0, { offline: true });
-            expect(empty).to.deep.equal([]);
-            expect(calls).to.deep.equal([]);
-        });
-    });
-
-    it("abort forwarding: a pre-aborted signal short-circuits IBKR historical reads and reaches detached fallbacks", async () => {
-        const bars = makeBars(4, 5);
-        await withLocalIbkrFixture("30m", { AAPL: bars }, async () => {
-            const controller = new AbortController();
-            controller.abort();
-            const { fetcher, calls } = recordingDataFetcher(fallbackBars);
-            const historical = await fetchServerHistoricalDataWithFetcher(
-                fetcher,
-                "AAPL\u2022",
-                "30m",
-                2,
-                { signal: controller.signal },
-            );
-            expect(historical).to.deep.equal([]);
-            const detached = await fetchServerDetachedDataWithFetcher(
-                fetcher,
-                "AAPL\u2022",
-                "30m",
-                { signal: controller.signal },
-            );
-            expect(detached).to.equal(fallbackBars);
-            expect(calls).to.have.lengthOf(1);
-            expect(calls[0]!.method).to.equal("detached");
-            expect(calls[0]!.signal?.aborted).to.equal(true);
-        });
-    });
-
-    it("rewrites a synced crypto CSV between reads without clearing caches (mtime invalidation)", async () => {
-        const first = makeBars(3, 6);
-        const second = makeBars(5, 6);
-        await withLocalCryptoFixture("30m", { BTCUSDT: first }, async ({ csvDir }) => {
-            const { fetcher } = recordingDataFetcher(fallbackBars);
-            const before = await fetchServerHistoricalDataWithFetcher(fetcher, "BTCUSDT", "30m", 2, { offline: true });
-            expect(before.map((bar) => Number(bar.time))).to.deep.equal(first.slice(-2).map((bar) => Number(bar.time)));
-            writeCryptoCsv(csvDir, "BTCUSDT", second);
-            const forcedMtime = (Date.now() + 60_000) / 1000;
-            utimesSync(path.join(csvDir, "BTCUSDT.csv"), forcedMtime, forcedMtime);
-            const after = await fetchServerHistoricalDataWithFetcher(fetcher, "BTCUSDT", "30m", 2, { offline: true });
-            expect(after.map((bar) => Number(bar.time))).to.deep.equal(second.slice(-2).map((bar) => Number(bar.time)));
-        });
-    });
-
     it("finder loader keeps serving standalone IBKR targets through the shared routing", async () => {
         const bars = makeBars(4, 7);
         await withLocalIbkrFixture("30m", { AAPL: bars }, async () => {
             clearServerFinderDatasetCaches();
-            const loaded = await loadServerFinderDataset("AAPL\u2022", "30m");
+            const loaded = await loadServerFinderDataset("AAPL•", "30m");
             expect(loaded.map((bar) => Number(bar.time))).to.deep.equal(bars.map((bar) => Number(bar.time)));
+        });
+    });
+
+    it("offline Finder loads take the synced crypto CSV before the DataFetcher", async () => {
+        // The 1d series clears the loader core's stale-fragment threshold
+        // (365 bars for 1d), so the detached CSV hit is returned without an
+        // online refetch — which the fixture fails on.
+        const bars = makeBars(366, 8);
+        await withLocalCryptoFixture("1d", { BTCUSDT: bars }, async () => {
+            clearServerFinderDatasetCaches();
+            // Standalone loads fetch detached with offline: true, so a synced
+            // CSV must satisfy the request with zero network activity (the
+            // fixture fails the test on any fetch).
+            const loaded = await loadServerFinderDataset("BTCUSDT", "1d");
+            expect(loaded.map((bar) => Number(bar.time))).to.deep.equal(bars.map((bar) => Number(bar.time)));
+        });
+    });
+
+    it("invalidation plus CSV replacement refresh Finder loads (mtime freshness)", async () => {
+        const first = makeBars(366, 9);
+        const second = makeBars(367, 9);
+        await withLocalCryptoFixture("1d", { BTCUSDT: first }, async ({ csvDir }) => {
+            clearServerFinderDatasetCaches();
+            const before = await loadServerFinderDataset("BTCUSDT", "1d");
+            expect(before.map((bar) => Number(bar.time))).to.deep.equal(first.map((bar) => Number(bar.time)));
+
+            writeCryptoCsv(csvDir, "BTCUSDT", second);
+            const forcedMtime = (Date.now() + 60_000) / 1000;
+            utimesSync(path.join(csvDir, "BTCUSDT.csv"), forcedMtime, forcedMtime);
+            // Mirrors the browser's invalidate-cache call between runs.
+            clearServerFinderDatasetCaches();
+            const after = await loadServerFinderDataset("BTCUSDT", "1d");
+            expect(after.map((bar) => Number(bar.time))).to.deep.equal(second.map((bar) => Number(bar.time)));
         });
     });
 });
