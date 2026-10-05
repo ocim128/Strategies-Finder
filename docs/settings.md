@@ -22,6 +22,10 @@ Deletion reports success and refreshes configuration consumers only after the st
 
 Some retired controls no longer have UI or execution behavior: the advanced-risk fields (partial take-profit, break-even, time-stop, and win-streak stop-loss values), `marketMode`, and `allowSameBarExit`. The resolver (`lib/backtest-settings-resolver.ts`) still accepts these fields so older saved payloads and legacy raw JSON keep loading without a migration, but `applyRemovedBacktestSettingDefaults` forces them to fixed inert values as the final step of every resolution. None of them have DOM contracts. Their Rust wire contract is mixed: `marketMode` and the win-streak fields are stripped from Rust payloads by `lib/rust-settings-sanitizer.ts`, while `partialTakeProfitAtR`, `partialTakeProfitPercent`, `breakEvenAtR`, `breakEvenPercent`, `timeStopBars`, and `allowSameBarExit` are forwarded to the Rust engine with their inert values. Do not add new controls or resolver rules for them.
 
+## Shared value parsers
+
+Four setting-value interpretations have one owner in `lib/backtest-settings-resolver.ts`: path-exit mode (`resolvePathExitMode`), entry-confirmation move (`resolveEntryConfirmationMove`, with an optional fallback so callers keep their own default), confirmation mode (`readConfirmationMode`), and strategy-name lists (`readStringArray`). Both the raw resolver and the DOM settings contract (`lib/backtest-settings-dom-contract.ts`) call these helpers, so an accepted mode or list rule changes in one place. Their toggle gating, fallback sources, and storage/DOM responsibilities stay separate; numeric and JSON parameter parsing intentionally differs between the capture and DOM paths and is not shared. `settings-compat.spec.ts` pins the DOM/raw parity for all supported enum values and list shapes.
+
 ## Owners and checks
 
 - Markup: `html-partials/tab-settings-*.html`; required workspace IDs: `lib/ui-manager-dom.ts`.

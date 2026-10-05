@@ -121,7 +121,12 @@ function coerceDeepValue(rawValue: unknown): unknown {
     return coerceScalar(rawValue);
 }
 
-function resolvePathExitMode(rawValue: unknown): PathExitMode {
+/**
+ * Shared pure parser for path-exit mode values (trim + lowercase, falling
+ * back to "off"). The DOM settings contract reuses this instead of keeping a
+ * second copy of the accepted-mode list.
+ */
+export function resolvePathExitMode(rawValue: unknown): PathExitMode {
     if (typeof rawValue === "string") {
         const mode = rawValue.trim().toLowerCase() as PathExitMode;
         if (
@@ -141,12 +146,20 @@ function resolvePathExitMode(rawValue: unknown): PathExitMode {
     return "off";
 }
 
-function resolveEntryConfirmationMove(rawValue: unknown): EntryConfirmationMove {
+/**
+ * Shared pure parser for the entry-confirmation move direction (trim +
+ * lowercase). `fallback` lets DOM callers supply their own default while the
+ * raw resolver keeps the effective default.
+ */
+export function resolveEntryConfirmationMove(
+    rawValue: unknown,
+    fallback: EntryConfirmationMove = EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationMove,
+): EntryConfirmationMove {
     if (typeof rawValue === "string") {
         const move = rawValue.trim().toLowerCase() as EntryConfirmationMove;
         if (move === "down" || move === "up" || move === "both") return move;
     }
-    return EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationMove;
+    return fallback;
 }
 
 function readNumber(raw: Record<string, unknown>, key: string, fallback: number): number {
@@ -174,7 +187,9 @@ function readTradeDirection(rawValue: unknown, fallback: TradeDirection): TradeD
     return fallback;
 }
 
-function readStringArray(rawValue: unknown): string[] {
+/** Shared pure parser for strategy-name lists: strings split on commas; items
+ * are trimmed, and empty items plus duplicates are dropped (case-sensitive). */
+export function readStringArray(rawValue: unknown): string[] {
     const source = Array.isArray(rawValue)
         ? rawValue
         : typeof rawValue === "string"
@@ -255,7 +270,9 @@ function readStrategyParams(rawValue: unknown): StrategyParams {
     return result;
 }
 
-function readConfirmationMode(rawValue: unknown, fallback: ConfirmationMode): ConfirmationMode {
+/** Shared pure parser for confirmation mode values (trim + lowercase, caller
+ * supplies the fallback). */
+export function readConfirmationMode(rawValue: unknown, fallback: ConfirmationMode): ConfirmationMode {
     if (typeof rawValue === "string") {
         const mode = rawValue.trim().toLowerCase() as ConfirmationMode;
         if (VALID_CONFIRMATION_MODES.has(mode)) return mode;

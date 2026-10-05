@@ -22,7 +22,17 @@ import {
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
 import { resolveTakeProfitMode } from "./take-profit-settings";
 import { resolveEntryTimeFilter } from "./entry-time-filter";
-import type { BacktestSettings, StrategyParams, PathExitMode } from "./types/strategies";
+// Shared pure value parsers: the DOM contract and the raw settings resolver
+// must interpret these values identically, so both call the same owner.
+// Dependency direction stays DOM contract -> resolver; the resolver never
+// imports this module.
+import {
+    readConfirmationMode,
+    readStringArray,
+    resolveEntryConfirmationMove,
+    resolvePathExitMode,
+} from "./backtest-settings-resolver";
+import type { BacktestSettings, StrategyParams } from "./types/strategies";
 
 export type BacktestDomSettingKey = keyof BacktestSettingsData;
 export type BacktestDomSettingParser =
@@ -383,26 +393,6 @@ function readBooleanValue(value: unknown, fallback: boolean): boolean {
     return readBoolean(value, fallback);
 }
 
-function readStringArrayValue(value: unknown): string[] {
-    const source = Array.isArray(value)
-        ? value
-        : typeof value === "string"
-            ? value.split(",")
-            : [];
-    const seen = new Set<string>();
-    const result: string[] = [];
-
-    for (const item of source) {
-        if (typeof item !== "string") continue;
-        const normalized = item.trim();
-        if (!normalized || seen.has(normalized)) continue;
-        seen.add(normalized);
-        result.push(normalized);
-    }
-
-    return result;
-}
-
 function readConfirmationStrategyParamsValue(value: unknown): Record<string, StrategyParams> {
     let source = value;
     if (typeof value === "string") {
@@ -469,15 +459,8 @@ export function coerceBacktestDomSettingValue(
             return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "takeProfitMode":
             return resolveTakeProfitMode(value);
-        case "entryConfirmationMove": {
-            if (typeof value === "string") {
-                const normalized = value.trim().toLowerCase();
-                if (normalized === "down" || normalized === "up" || normalized === "both") {
-                    return normalized;
-                }
-            }
-            return DEFAULT_BACKTEST_SETTINGS.riskEntryConfirmationMove;
-        }
+        case "entryConfirmationMove":
+            return resolveEntryConfirmationMove(value, DEFAULT_BACKTEST_SETTINGS.riskEntryConfirmationMove);
         case "tradeDirection":
             return resolveTradeDirection({ tradeDirection: value as any }, DEFAULT_BACKTEST_SETTINGS);
         case "marketMode":
@@ -497,23 +480,7 @@ export function coerceBacktestDomSettingValue(
         case "secureFMethod":
             return resolveSecureFMethod(value);
         case "pathExitMode":
-            if (typeof value === "string") {
-                const normalized = value.trim().toLowerCase();
-                if (
-                    normalized === "off"
-                    || normalized === "mfe_giveback"
-                    || normalized === "momentum_deceleration"
-                    || normalized === "capitulation_exhaustion"
-                    || normalized === "squeeze_pressure"
-                    || normalized === "conditional_hazard"
-                    || normalized === "triple_barrier_meta"
-                    || normalized === "structure_reclaim"
-                    || normalized === "profit_compression"
-                ) {
-                    return normalized as PathExitMode;
-                }
-            }
-            return "off";
+            return resolvePathExitMode(value);
         case "boolean":
             return readBooleanValue(value, Boolean(contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey] ?? false));
         case "string": {
@@ -524,22 +491,9 @@ export function coerceBacktestDomSettingValue(
             return typeof fallback === "string" ? fallback : "";
         }
         case "stringArray":
-            return readStringArrayValue(value);
-        case "confirmationMode": {
-            if (typeof value === "string") {
-                const normalized = value.trim().toLowerCase();
-                if (
-                    normalized === "agree"
-                    || normalized === "disagree"
-                    || normalized === "veto_opposite"
-                    || normalized === "confirm_within_window"
-                    || normalized === "veto_within_window"
-                ) {
-                    return normalized;
-                }
-            }
-            return DEFAULT_BACKTEST_SETTINGS.confirmationMode;
-        }
+            return readStringArray(value);
+        case "confirmationMode":
+            return readConfirmationMode(value, DEFAULT_BACKTEST_SETTINGS.confirmationMode);
         case "confirmationStrategyParams":
             return readConfirmationStrategyParamsValue(value);
         case "strategyKey": {
