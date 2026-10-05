@@ -21,13 +21,29 @@ export interface FinderCandidateStrategy {
     strategy: Strategy;
 }
 
-/** Shared deterministic plan generation for Universe and Arm Performance. */
+/**
+ * Shared deterministic plan generation for the current chart, Universe, and
+ * Arm Performance.
+ *
+ * `randomFn` and `exitParamSetsByKey` are explicit overrides for callers that
+ * must share ONE draw sequence and exit-set cache across several helper
+ * calls (the current-chart run samples continuously across all selected
+ * entry strategies). When omitted, each call creates its own seeded or
+ * unseeded RNG and its own per-call cache, which is the per-entry-strategy
+ * lifetime Universe and Arm rely on. The seed offset and the order of the
+ * two random draws per entry candidate are part of the reproducibility
+ * contract and must not change.
+ */
 export function buildFinderCandidatePlans(args: {
     selectedStrategy: FinderCandidateStrategy;
     exitStrategyCandidates: readonly FinderCandidateStrategy[];
     settings: BacktestSettings;
     options: FinderOptions;
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[];
+    /** Explicit RNG; omit to create one from the finder options. */
+    randomFn?: () => number;
+    /** Explicit lazily-filled exit-set cache; omit for a per-call cache. */
+    exitParamSetsByKey?: Map<string, StrategyParams[]>;
 }): FinderCandidatePlan[] {
     const { selectedStrategy, exitStrategyCandidates, settings, options, generateParamSets } = args;
     if (exitStrategyCandidates.length === 0) {
@@ -46,10 +62,11 @@ export function buildFinderCandidatePlans(args: {
     );
     if (entryParamSets.length === 0) return [];
 
-    const randomFn = options.mode === "random" && Number.isFinite(options.randomSeed)
-        ? createSeededRandom(Number(options.randomSeed) + 0x9e3779b9)
-        : Math.random;
-    const exitParamSetsByKey = new Map<string, StrategyParams[]>();
+    const randomFn = args.randomFn
+        ?? (options.mode === "random" && Number.isFinite(options.randomSeed)
+            ? createSeededRandom(Number(options.randomSeed) + 0x9e3779b9)
+            : Math.random);
+    const exitParamSetsByKey = args.exitParamSetsByKey ?? new Map<string, StrategyParams[]>();
     const getExitParamSets = (selection: FinderCandidateStrategy): StrategyParams[] => {
         const cached = exitParamSetsByKey.get(selection.key);
         if (cached) return cached;

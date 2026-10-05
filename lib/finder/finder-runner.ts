@@ -13,12 +13,11 @@ import {
 } from "./finder-runner-shared";
 import {
     buildFinderSearchBaseParams,
-    getFinderStrategyParamDefaults,
     normalizeFinderCandidateParamSets,
     shouldUseRustCachedMode,
     resolveFinderRiskOverrides,
 } from "./finder-runner-core";
-import { withExitStrategyBaseParams } from "./exit-strategy-param-prefix";
+import { buildFinderCandidatePlans } from "./finder-candidate-plans";
 import { createSeededRandom } from "../param-math-utils";
 import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
 import { finderSortRequiresExitAlpha } from "./finder-exit-alpha";
@@ -119,46 +118,39 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
     const exitStrategyCandidates = options.exitStrategyOverrideEnabled
         ? (input.exitStrategyCandidates ?? [])
         : [];
+    // One draw sequence and one exit-set cache span every selected entry
+    // strategy: results must stay reproducible against the flat sample order
+    // the pre-planner implementation produced.
     const exitRandom = options.mode === "random" && Number.isFinite(options.randomSeed)
         ? createSeededRandom(Number(options.randomSeed) + 0x9e3779b9)
         : Math.random;
     const exitParamSetsByKey = new Map<string, StrategyParams[]>();
-    const getExitParamSets = (selection: FinderSelectedStrategy): StrategyParams[] => {
-        const cached = exitParamSetsByKey.get(selection.key);
-        if (cached) return cached;
-
-        const exitDefaults = getFinderStrategyParamDefaults(selection.strategy);
-        const generated = input.generateParamSets(exitDefaults, options);
-        const normalized = normalizeFinderCandidateParamSets(selection.strategy, generated);
-        const paramSets = normalized.length > 0
-            ? normalized
-            : [{ ...selection.strategy.defaultParams }];
-        exitParamSetsByKey.set(selection.key, paramSets);
-        return paramSets;
-    };
+    const exitSelectionByKey = new Map(exitStrategyCandidates.map((candidate) => [candidate.key, candidate]));
 
     for (const selection of selectedStrategies) {
         if (exitStrategyCandidates.length > 0) {
-            const entryOptions = { ...options, exitStrategyBaseParams: undefined };
-            const entryDefaults = buildFinderSearchBaseParams(selection.strategy, settings, entryOptions);
-            const entryParamSets = normalizeFinderCandidateParamSets(
-                selection.strategy,
-                input.generateParamSets(entryDefaults, options)
-            );
+            // Sampled-exit branch: the shared planner draws the exit strategy
+            // and its parameter set per entry candidate; this run owns the
+            // continuous RNG and cache so sequences match the seeded baseline.
+            const plans = buildFinderCandidatePlans({
+                selectedStrategy: selection,
+                exitStrategyCandidates,
+                settings,
+                options,
+                generateParamSets: input.generateParamSets,
+                randomFn: exitRandom,
+                exitParamSetsByKey,
+            });
             const groupedByExit = new Map<string, { selection: FinderSelectedStrategy; paramSets: StrategyParams[] }>();
 
-            for (const entryParams of entryParamSets) {
-                const exitSelection = exitStrategyCandidates[Math.floor(exitRandom() * exitStrategyCandidates.length)]!;
-                const exitParamSets = getExitParamSets(exitSelection);
-                const exitParams = exitParamSets[Math.floor(exitRandom() * exitParamSets.length)] ?? exitSelection.strategy.defaultParams;
+            for (const plan of plans) {
+                const exitSelection = exitSelectionByKey.get(plan.exitStrategyKey ?? "");
+                if (!exitSelection) continue;
                 const group = groupedByExit.get(exitSelection.key) ?? {
                     selection: exitSelection,
                     paramSets: [],
                 };
-                group.paramSets.push({
-                    ...entryParams,
-                    ...withExitStrategyBaseParams({}, exitParams),
-                });
+                group.paramSets.push(plan.params);
                 groupedByExit.set(exitSelection.key, group);
             }
 

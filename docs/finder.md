@@ -718,6 +718,21 @@ strategy override. When enabled, Finder samples exit strategies from the
 checked list and varies their parameters with the entry parameters. Applying a
 result writes both entry and exit strategy settings.
 
+Sampled-exit candidate construction has one owner:
+`buildFinderCandidatePlans` in `lib/finder/finder-candidate-plans.ts`. It
+builds entry defaults, normalizes and deduplicates entry sets, lazily
+generates and caches exit sets per exit key, falls back to copied exit
+defaults when a generator returns none, draws the exit strategy and parameter
+set, and prefixes exit parameters with `_exit__`. All three scopes call it:
+the current chart passes one run-scoped `randomFn` and `exitParamSetsByKey`
+so the draw sequence continues across entry strategies and exit sets are
+generated once per run; Universe and Arm omit the overrides and get a fresh
+RNG and cache per call (per entry strategy). Current chart then groups the
+returned plans by exit key in first-seen order for execution; Arm adds
+candidate ordinals. `tests/finder-candidate-plans.spec.ts` pins the seeded
+draw sequences, lifetimes, and grouping. Asset Opportunity keeps its separate
+index-modulo sampler; it is not equivalent to this random sampler.
+
 Any change to exit parameter generation must preserve normalized parameters and
 the TypeScript/Rust execution contract. Validate long, short, combined, signal
 close, and next-open/next-close behavior when the change affects fills or exit
