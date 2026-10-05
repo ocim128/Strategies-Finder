@@ -34,6 +34,7 @@ Use this file as a short task router. Read the guide and tests for the feature y
 
 ## Validation
 
+- Read [Testing for agent workflows](docs/testing.md) when changing specs or the runner. Use **npm run test -- filter --list --json** to inspect selection without replacing logs. Parallel runs use successful timing history to start slow specs first; **--runInBand** preserves discovery order. Clear deadline timers and dispose test resources when operations settle.
 - **npm run validate:changes** previews a validation plan for the current Git changes (staged, unstaged, untracked, or `--base <ref>`), listing the guides, focused spec filters, and fixed checks each routing rule selects, with the reason. Add `--run` to execute the selected checks sequentially — it stops at the first failure, preserves output in `artifacts/validation-logs/latest/`, and reports tool versions with results. `--json` prints one machine-readable report (use `npm run --silent validate:changes -- --json` so npm's banner stays off stdout).
 - The routing table in `scripts/validation-map.ts` is manually maintained and advisory. Shared modules are widened by extra rules rather than an import graph, unclassified non-documentation files fall back to the full JS checks, and documentation-only changes select no code checks and say so. Selection never replaces the route table above, caller inspection, or the requirement to add semantic-impact tests; keep full CI, E2E, and Rust policy intact.
 - **npm run typecheck** checks application TypeScript.

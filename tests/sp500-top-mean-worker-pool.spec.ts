@@ -1,4 +1,5 @@
 import { makeBacktestSettings, makeCapitalSettings } from "./helpers/backtest-settings-fixtures";
+import { withTimeout } from "./helpers/with-timeout";
 import assert from "node:assert/strict";
 import type { Time } from "lightweight-charts";
 import { availableParallelism } from "node:os";
@@ -560,7 +561,7 @@ async function testAllWorkersDyingDuringQueuedRetryRejects(): Promise<void> {
         };
         const pool = new TopMeanWorkerPool();
         try {
-            await Promise.race([
+            await withTimeout(
                 pool.execute({
                     runId: manifest.runId,
                     manifest,
@@ -576,15 +577,9 @@ async function testAllWorkersDyingDuringQueuedRetryRejects(): Promise<void> {
                     workerPath: dieOnFirstTaskWorkerPath,
                     baseDir,
                 }),
-                new Promise<never>((_resolve, reject) => {
-                    setTimeout(
-                        () => reject(new Error(
-                            "execute() hung: worker death with queued retries must terminate the run, not wait forever",
-                        )),
-                        15_000,
-                    );
-                }),
-            ]);
+                15_000,
+                "execute() hung: worker death with queued retries must terminate the run, not wait forever",
+            );
             assert.fail("execute() must not resolve: the fixture workers never produce shard_complete");
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);
@@ -636,7 +631,7 @@ async function testWorkerExitCodeZeroFailsInFlightTask(): Promise<void> {
     };
     const pool = new TopMeanWorkerPool();
     try {
-        await Promise.race([
+        await withTimeout(
             pool.execute({
                 runId: manifest.runId,
                 manifest,
@@ -651,15 +646,9 @@ async function testWorkerExitCodeZeroFailsInFlightTask(): Promise<void> {
                 useRustEnginePreference: false,
                 workerPath: exitZeroOnFirstTaskWorkerPath,
             }),
-            new Promise<never>((_resolve, reject) => {
-                setTimeout(
-                    () => reject(new Error(
-                        "execute() hung: a worker exiting with code 0 mid-task must fail its in-flight shard, not wait forever",
-                    )),
-                    15_000,
-                );
-            }),
-        ]);
+            15_000,
+            "execute() hung: a worker exiting with code 0 mid-task must fail its in-flight shard, not wait forever",
+        );
         assert.fail("execute() must not resolve: the fixture workers never produce shard_complete");
     } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

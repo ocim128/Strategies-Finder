@@ -1,18 +1,93 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Writable } from "node:stream";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { spawnSync } from "node:child_process";
 import {
     LineRingBuffer,
     classifyTestRunStatus,
     createTestLogWriter,
+    findUnmatchedTestFilters,
     normalizeForMatch,
     parseExplicitJobCount,
     parseTimeoutMs,
+    orderTestsByDuration,
+    readTestDurations,
     sanitizeLogName,
     selectTests,
 } from "../scripts/run-tests";
 
+const root = fileURLToPath(new URL("../", import.meta.url));
+const esnoCli = createRequire(import.meta.url).resolve("esno/esno.js");
+
 describe("test runner contracts", () => {
+    it("rejects unmatched filters even when another filter matches", () => {
+        assert.deepEqual(findUnmatchedTestFilters(["tests/finder-engine.spec.ts"], ["finder", "finder-typo"]), ["finder-typo"]);
+    });
+
+    it("starts slow specs first without mutating selection or losing unknown specs", () => {
+        const files = ["a", "b", "new", "c"];
+        const durations = new Map([["a", 10], ["b", 100], ["c", 10], ["deleted", 999]]);
+        assert.deepEqual(orderTestsByDuration(files, durations), ["b", "a", "c", "new"]);
+        assert.deepEqual(files, ["a", "b", "new", "c"]);
+        assert.deepEqual(orderTestsByDuration(files, new Map()), files);
+    });
+
+    it("tolerates missing and corrupt history and uses only valid successful timings", () => {
+        const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "test-runner-history-"));
+        const fixture = path.join(fixtureRoot, "timings.json");
+        try {
+            assert.equal(readTestDurations(fixture).size, 0);
+            for (const text of ["broken json", "null", "{}", '{"results":{}}']) {
+                fs.writeFileSync(fixture, text);
+                assert.equal(readTestDurations(fixture).size, 0);
+            }
+            fs.writeFileSync(fixture, JSON.stringify({ results: [
+                { file: "pass", status: "PASS", durationMs: 50 },
+                { file: "zero", status: "PASS", durationMs: 0 },
+                { file: "fail", status: "FAIL", durationMs: 120_000 },
+                { file: "skip", status: "SKIP", durationMs: 20 },
+                { file: "negative", status: "PASS", durationMs: -1 },
+                { file: "string", status: "PASS", durationMs: "100" },
+                { file: 123, status: "PASS", durationMs: 10 }, null,
+            ] }));
+            assert.deepEqual([...readTestDurations(fixture)], [["pass", 50], ["zero", 0]]);
+        } finally {
+            fs.rmSync(fixtureRoot, { recursive: true, force: true });
+        }
+    });
+
+    it("lists selected specs as one JSON object without replacing run evidence", () => {
+        const evidencePaths = ["artifacts/test-logs/latest/summary.json", "artifacts/test-logs/timings.json"];
+        const readEvidence = () => evidencePaths.map(file => fs.existsSync(path.join(root, file))
+            ? fs.readFileSync(path.join(root, file), "utf8") : null);
+        const before = readEvidence();
+        const result = spawnSync(process.execPath, [esnoCli, "scripts/run-tests.ts", "test-runner-contract.spec.ts", "--list", "--json"], {
+            cwd: root, encoding: "utf8", timeout: 10_000,
+        });
+        assert.equal(result.status, 0, result.stderr);
+        const listing = JSON.parse(result.stdout);
+        assert.equal(listing.selectedCount, 1);
+        assert.ok(listing.totalCount > 1);
+        assert.deepEqual(listing.files, ["tests/test-runner-contract.spec.ts"]);
+        assert.deepEqual(readEvidence(), before);
+    });
+
+    it("fails CLI typos before running a matching spec", () => {
+        for (const badArgument of ["no-such-spec-xyz", "--jbos=4"]) {
+            const result = spawnSync(process.execPath, [esnoCli, "scripts/run-tests.ts", "test-runner-contract.spec.ts", badArgument, "--list"], {
+                cwd: root, encoding: "utf8", timeout: 10_000,
+            });
+            assert.equal(result.status, 1, result.stderr);
+            assert.match(result.stderr, /No test files matched|Unknown test runner option/);
+            assert.equal(result.stdout, "");
+        }
+    });
+
     it("handles a log open error before the test finishes without hanging", async () => {
         const stream = new Writable({ write: (_chunk, _encoding, callback) => callback() });
         const log = createTestLogWriter(stream);

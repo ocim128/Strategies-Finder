@@ -296,6 +296,14 @@ npm run validate:changes
 
 `npm run test` uses a compact wrapper that discovers `tests/**/*.spec.ts`, excludes `tests/e2e.spec.ts`, prints one status line per spec, and writes full per-spec logs to `artifacts/test-logs/latest`. `artifacts/test-logs/latest/summary.json` contains the machine-readable summary for agent or tooling use.
 
+Parallel runs start slow specs first using successful timings retained across
+focused runs in `artifacts/test-logs/timings.json`. Every selected spec still
+executes in its own process. `--runInBand` preserves discovery order. Use
+`npm run test -- filter --list --json` to inspect selection without replacing
+logs. Every filter must match, and unknown options fail early. See
+[Testing for agent workflows](docs/testing.md) for selection, evidence, and
+reliable async fixtures.
+
 Log open/write failures are reported as `LOG ERROR` and optional `logError`
 summary fields; they do not discard concurrent results or change test outcomes.
 
@@ -336,6 +344,7 @@ npm run test:json
 npm run test -- --runInBand
 npm run test -- --jobs=4
 npm run test -- backtesting-engine
+npm run --silent test -- finder-engine.spec.ts --list --json
 ```
 
 Useful extras:

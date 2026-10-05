@@ -503,7 +503,7 @@ function compareStrings(left: string, right: string): number {
  * Build a deterministic validation plan from changed paths.
  *
  * Every rule filter is validated individually against `availableSpecs` using
- * the runner's `selectTests()` semantics, because the runner only detects an
+ * the runner's `selectTests()` semantics, because selection alone only detects an
  * empty aggregate selection. A filter matching zero specs is map rot and
  * raises `ValidationMapError` instead of an apparently clean plan.
  */

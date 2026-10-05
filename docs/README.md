@@ -9,6 +9,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Core Guides
 
+- [testing.md](testing.md) - focused spec selection, parallel scheduling, machine-readable evidence, and deterministic test helpers for agent workflows.
 - [settings.md](settings.md) - Settings layout, search, live summaries, autosave feedback, and named configuration restore.
 
 - [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, and prepared execution.

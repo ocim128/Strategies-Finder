@@ -1,9 +1,43 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 import { waitFor } from "./helpers/wait-for";
+import { withTimeout } from "./helpers/with-timeout";
 import { createFakeFinderElement } from "./helpers/fake-finder-manager-dom";
 import { createFakeBatchElement } from "./helpers/fake-batch-backtest-dom";
+
+describe("operation deadlines", () => {
+    it("fails a hung operation at its deadline with the supplied diagnostic", async context => {
+        context.mock.timers.enable({ apis: ["setTimeout"] });
+        const result = withTimeout(new Promise<never>(() => {}), 15_000, "worker did not settle");
+        const rejected = assert.rejects(result, /worker did not settle/);
+        context.mock.timers.tick(15_000);
+        await rejected;
+    });
+
+    it("lets a process exit after resolved and rejected operations without waiting for deadlines", () => {
+        const esnoCli = createRequire(import.meta.url).resolve("esno/esno.js");
+        const script = `
+            const assert = require('node:assert/strict');
+            const { withTimeout } = require('./tests/helpers/with-timeout.ts');
+            (async () => {
+                assert.equal(await withTimeout(Promise.resolve(7), 60000, 'late success'), 7);
+                const failure = new Error('original failure');
+                await assert.rejects(withTimeout(Promise.reject(failure), 60000, 'late failure'), error => error === failure);
+                console.log('settled');
+            })().catch(error => { console.error(error); process.exitCode = 1; });
+        `;
+        const result = spawnSync(process.execPath, [esnoCli, "-e", script], {
+            cwd: fileURLToPath(new URL("../", import.meta.url)), encoding: "utf8", timeout: 10_000,
+        });
+        assert.equal(result.error, undefined, "settled deadlines must not keep the child alive");
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(result.stdout.trim(), "settled");
+    });
+});
 
 describe("bounded condition waits", () => {
     it("observes a condition becoming ready", async () => {

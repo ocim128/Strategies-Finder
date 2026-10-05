@@ -41,6 +41,8 @@ type TestRunResult = {
 
 type OutputMode = "compact" | "verbose" | "silent";
 
+class TestRunnerUsageError extends Error {}
+
 type TestRunSummary = {
     generatedAt: string;
     selectedCount: number;
@@ -50,6 +52,8 @@ type TestRunSummary = {
     skippedCount: number;
     durationMs: number;
     timeoutMs: number;
+    jobs: number;
+    scheduling: "discovery" | "longest-first";
     verbose: boolean;
     filters: string[];
     logsDir: string;
@@ -134,12 +138,14 @@ const requireFromHere = createRequire(import.meta.url);
 const esnoCliPath = requireFromHere.resolve("esno/esno.js");
 const logsBaseDir = path.join(repoRoot, "artifacts", "test-logs");
 const latestLogsDir = path.join(logsBaseDir, "latest");
+const timingHistoryPath = path.join(logsBaseDir, "timings.json");
 
 function printUsage(): void {
     console.log([
         "Usage:",
         "  npm run test",
         "  npm run test -- <filter>",
+        "  npm run test -- <filter> --list --json",
         "  npm run test -- --jobs=4",
         "  npm run test -- --timeoutMs=120000",
         "  npm run test -- --runInBand",
@@ -151,6 +157,9 @@ function printUsage(): void {
         "  - It prints one compact status line per spec and a short summary.",
         "  - Full per-spec logs are written to `artifacts/test-logs/latest`.",
         "  - Pass one or more filters to run a subset by path fragment or filename.",
+        "  - Every filter must match a spec; unknown options are errors.",
+        "  - Use --list to inspect the selected paths without running tests or writing logs.",
+        "  - Parallel runs start historically slow specs first; each spec keeps its own process.",
         "  - Use --runInBand for serial execution or --jobs=<n> for bounded parallelism.",
         "  - Use --timeoutMs=<n> to terminate a hung spec after a bounded time.",
         "",
@@ -288,6 +297,48 @@ export function selectTests(testFiles: readonly string[], filters: string[]): st
     });
 
     return [...selected];
+}
+
+/** Keep selectTests usable by advisory routing; enforce every CLI filter separately. */
+export function findUnmatchedTestFilters(testFiles: readonly string[], filters: string[]): string[] {
+    return filters.filter(filter => selectTests(testFiles, [filter]).length === 0);
+}
+
+/** Timing data is an optional scheduling hint, never evidence for skipping a spec. */
+export function readTestDurations(filePath: string): Map<string, number> {
+    const durations = new Map<string, number>();
+    try {
+        const data: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
+        if (!data || typeof data !== "object" || !("results" in data) || !Array.isArray(data.results)) return durations;
+        for (const result of data.results) {
+            if (result && typeof result.file === "string" && result.status === "PASS"
+                && typeof result.durationMs === "number" && Number.isFinite(result.durationMs) && result.durationMs >= 0) {
+                durations.set(result.file, result.durationMs);
+            }
+        }
+    } catch {
+        // Missing, corrupt, or unreadable timing history falls back to discovery order.
+    }
+    return durations;
+}
+
+export function orderTestsByDuration(files: readonly string[], durations: ReadonlyMap<string, number>): string[] {
+    // Stable ties preserve discovery order, including specs without history.
+    return [...files].sort((left, right) => (durations.get(right) ?? 0) - (durations.get(left) ?? 0));
+}
+
+function writeTestDurations(durations: Map<string, number>, results: readonly TestRunResult[]): void {
+    for (const result of results) {
+        if (result.status === "PASS") durations.set(result.file, result.durationMs);
+    }
+    try {
+        fs.writeFileSync(timingHistoryPath, JSON.stringify({
+            formatVersion: 1,
+            results: [...durations].map(([file, durationMs]) => ({ file, durationMs, status: "PASS" })),
+        }), "utf8");
+    } catch (error) {
+        console.error(`Timing history unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
 }
 
 function resolveTestLogPath(file: string): string {
@@ -470,7 +521,8 @@ function writeSummary(summary: TestRunSummary): string {
 async function main(): Promise<void> {
     const args = process.argv.slice(2);
     let verbose = false;
-    let json = false;
+    let json = isEnabledEnvFlag(process.env.npm_config_json);
+    let list = isEnabledEnvFlag(process.env.npm_config_list);
     let runInBand = isEnabledEnvFlag(process.env.npm_config_runinband)
         || isEnabledEnvFlag(process.env.npm_config_run_in_band);
     let requestedJobs: number | null = null;
@@ -517,6 +569,10 @@ async function main(): Promise<void> {
             json = true;
             continue;
         }
+        if (arg === "--list") {
+            list = true;
+            continue;
+        }
         if (arg === "--runInBand") {
             runInBand = true;
             continue;
@@ -547,6 +603,7 @@ async function main(): Promise<void> {
             printUsage();
             process.exit(0);
         }
+        if (arg.startsWith("-")) throw new TestRunnerUsageError(`Unknown test runner option: ${arg}. Use --help for supported options.`);
         filters.push(arg);
     }
     if (expectNpmJobsValue) {
@@ -557,6 +614,10 @@ async function main(): Promise<void> {
     }
 
     const testFiles = discoverTestFiles();
+    const unmatchedFilters = findUnmatchedTestFilters(testFiles, filters);
+    if (unmatchedFilters.length > 0) {
+        throw new TestRunnerUsageError(`No test files matched: ${unmatchedFilters.join(", ")}. Use --list to inspect available specs.`);
+    }
     const selectedTests = selectTests(testFiles, filters);
     if (selectedTests.length === 0) {
         console.error("No test files matched the provided filters.");
@@ -564,12 +625,26 @@ async function main(): Promise<void> {
         process.exit(1);
     }
 
+    if (list) {
+        console.log(json ? JSON.stringify({ selectedCount: selectedTests.length, totalCount: testFiles.length, filters, files: selectedTests }, null, 2)
+            : selectedTests.join("\n"));
+        return;
+    }
+
+    // Read before latest/ is replaced. Merge its successful runs over persistent
+    // history so focused runs update timings without discarding other specs.
+    const durations = readTestDurations(timingHistoryPath);
+    for (const [file, durationMs] of readTestDurations(path.join(latestLogsDir, "summary.json"))) {
+        durations.set(file, durationMs);
+    }
+    const jobs = runInBand ? 1 : requestedJobs ?? resolveDefaultJobCount();
+    const scheduledTests = jobs > 1 ? orderTestsByDuration(selectedTests, durations) : selectedTests;
+    const scheduling = jobs > 1 && selectedTests.some(file => durations.has(file)) ? "longest-first" : "discovery";
     ensureLatestLogsDir();
 
     const startedAt = Date.now();
     const outputMode: OutputMode = json ? "silent" : verbose ? "verbose" : "compact";
-    const jobs = runInBand ? 1 : requestedJobs ?? resolveDefaultJobCount();
-    const results = await runTestsInPool(selectedTests, jobs, timeoutMs, outputMode, (result) => {
+    const results = await runTestsInPool(scheduledTests, jobs, timeoutMs, outputMode, (result) => {
         printTestResult(result, outputMode);
     });
     const durationMs = Date.now() - startedAt;
@@ -586,10 +661,12 @@ async function main(): Promise<void> {
         skippedCount,
         durationMs,
         timeoutMs,
+        jobs,
+        scheduling,
         verbose,
         filters,
         logsDir: latestLogsDir,
-        results: results.map((result) => ({
+        results: [...results].sort((left, right) => left.file.localeCompare(right.file)).map((result) => ({
             file: result.file,
             status: result.status,
             durationMs: result.durationMs,
@@ -603,6 +680,7 @@ async function main(): Promise<void> {
     };
 
     const summaryPath = writeSummary(summary);
+    writeTestDurations(durations, results);
 
     if (json) {
         console.log(JSON.stringify(summary, null, 2));
@@ -613,6 +691,7 @@ async function main(): Promise<void> {
         console.log(`Logs: ${latestLogsDir}`);
         console.log(`Summary JSON: ${summaryPath}`);
         console.log(`Jobs: ${jobs}`);
+        console.log(`Scheduling: ${scheduling}`);
         console.log(`Timeout: ${timeoutMs}ms`);
         if (filters.length > 0) {
             console.log(`Filters: ${filters.join(", ")}`);
@@ -624,7 +703,7 @@ async function main(): Promise<void> {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === currentFilePath) {
     void main().catch((error: unknown) => {
-        if (error instanceof Error && (error.message.startsWith("--jobs") || error.message.startsWith("--timeout"))) {
+        if (error instanceof TestRunnerUsageError || (error instanceof Error && (error.message.startsWith("--jobs") || error.message.startsWith("--timeout")))) {
             console.error(`Error: ${error.message}`);
             process.exit(1);
         }
