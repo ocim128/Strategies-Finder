@@ -72,7 +72,19 @@ export class FinderResultStore {
 	symbolUniverseRunResults: FinderUniverseCandidate[] = [];
 	/** Display limit captured from the completed Symbol Universe run. */
 	symbolUniverseDisplayLimit = DEFAULT_FINDER_UI_STATE.topN;
-	/** Full scalar Asset Opportunity rows for the current run. */
+	/**
+	 * Full scalar Asset Opportunity rows for the current run, in the WORKING
+	 * order produced by the last ordinary re-sort chain. This order is
+	 * observable: pairwise metric comparators tie same-symbol rows (the
+	 * capped-trades comparator never consults expectancy; the generic
+	 * cascade ends at symbol), so the stable sort keeps the working order and
+	 * the deduplicated display keeps its first same-symbol row as the
+	 * representative. Deriving every view from the default pool would change
+	 * winners after an ordinary → ordinary re-sort sequence, so a working
+	 * pool plus the default baseline below is the MINIMUM ordering state.
+	 * Deleting either array is deferred until ranking policy itself defines
+	 * a canonical tie order (which would change observable winners).
+	 */
 	private assetOpportunityRunResults: FinderAssetOpportunityResult[] = [];
 	/** Default-order full rows used when the re-sort control is reset. */
 	private assetOpportunityDefaultResults: FinderAssetOpportunityResult[] = [];

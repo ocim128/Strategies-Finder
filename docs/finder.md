@@ -282,8 +282,19 @@ The controls are:
 
 Asset Opportunity keeps the current iteration's full scalar strategy-level
 rows for re-sort, while the browser normally displays one representative row
-per normalized symbol. Do not send or retain candles, signals, trades, or
-equity curves merely to implement a post-run sort.
+per normalized symbol. `FinderResultStore` owns every inventory transition:
+`adoptAssetOpportunityResults` (terminal stream done, status recovery,
+terminal reattach, latest batch iteration), 
+`setAssetOpportunityProvisionalResults` (streamed rows — never persisted,
+Run Sort baseline untouched), and `restoreAssetOpportunityResults` (a
+reload's saved display view keeps its saved order — never grade-sorted or
+re-persisted). The store retains TWO pools: the working order produced by
+the re-sort chain and the default-order baseline for Run Sort. Both are
+necessary — pairwise metric comparators tie same-symbol rows (capped trades
+never consults expectancy; the generic cascade ends at symbol), so the
+stable sort makes earlier re-sorts observable through the deduplicated
+representative. Do not send or retain candles, signals, trades, or equity
+curves merely to implement a post-run sort.
 
 ### Arm Performance
 
@@ -859,7 +870,7 @@ mutable state of its own beyond the retained run context
 | Storage envelopes (UI state, results snapshot, active server run) | `lib/finder/browser/finder-persistence.ts` | `tests/finder-settings-persistence.spec.ts`, `tests/finder-result-snapshot.spec.ts` |
 | Copy payloads (top results, run configuration, Arm/Asset diagnostics), clipboard | `lib/finder/browser/finder-export.ts` | `tests/finder-export-diagnostics.spec.ts`, `tests/finder-config-capture.spec.ts` |
 | Failure/fallback/quality diagnostics builders, engine-mode label | `lib/finder/browser/finder-run-diagnostics.ts` | `tests/finder-export-diagnostics.spec.ts`, `tests/finder-diagnostics.spec.ts` |
-| Result inventories, display limits, re-sort and Run Sort restoration, Arm run/apply context | `lib/finder/browser/finder-result-store.ts` — Arm default views are derived from the full inventory under the current display filter (`TOP_RAW_PROFIT_NOW` + filter); there is no cached default array | `tests/finder-result-store.spec.ts`, `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-all-resorts.spec.ts` |
+| Result inventories, display limits, re-sort and Run Sort restoration, Arm run/apply context | `lib/finder/browser/finder-result-store.ts` — owns every Asset Opportunity inventory transition (adopt/provisional/restore); Arm default views are derived from the full inventory under the current display filter (`TOP_RAW_PROFIT_NOW` + filter); there is no cached default array | `tests/finder-result-store.spec.ts`, `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-all-resorts.spec.ts` |
 | Candidate Apply flows, apply-in-flight guard, backtest-settings merge | `lib/finder/browser/finder-result-actions.ts` | `tests/finder-selection-apply.browser.spec.ts`, `tests/finder-arm-performance-settings.spec.ts`, `tests/finder-freeze-randomize-path-exit.spec.ts` |
 | Strategy selection sets, toggle maps, filter/range/bulk selection | `lib/finder/browser/finder-strategy-selection.ts` | `tests/finder-selection-apply.browser.spec.ts` |
 | Server run ownership, scoped Stop, one shared owned-run poll loop (reattach + recovery) | `lib/finder/browser/finder-server-session.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |

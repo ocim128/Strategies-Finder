@@ -259,8 +259,11 @@ The comparator must state:
 
 Follow the existing `freshSignalLibraries` pattern in
 `sortAssetOpportunityResultsByMetric`: derive one representative per symbol
-for the consensus view, but keep `assetOpportunityRunResults` as the complete
-strategy-level set for later re-sorts. Archive consumers must use the tuple
+for the consensus view, but keep the store's full strategy-level working pool
+(`FinderResultStore`, via `adoptAssetOpportunityResults` /
+`applyResortMetric`) intact for later re-sorts — a grouped sort reads the
+default-order rows and never replaces the working pool. Archive consumers
+must use the tuple
 identity `(symbol, strategyId, candidateFingerprint)` and must not count
 correlated parameter variants as independent strategy families.
 

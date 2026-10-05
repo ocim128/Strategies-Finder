@@ -99,11 +99,11 @@ function makeArmCandidate(ordinal: number, rawNow: number, raw: number): FinderA
     };
 }
 
-function makeAssetRow(symbol: string, strategyKey: string, expectancy: number, extras: Record<string, unknown> = {}): FinderAssetOpportunityResult {
+function makeAssetRow(symbol: string, strategyKey: string, expectancy: number, extras: Record<string, unknown> = {}, netProfit = 10): FinderAssetOpportunityResult {
     const backtest = {
         trades: [],
         equityCurve: [],
-        netProfit: 10,
+        netProfit,
         netProfitPercent: 1,
         winRate: 50,
         expectancy,
@@ -488,6 +488,84 @@ describe("FinderResultStore", () => {
         store.restoreRunSort();
         expect((store.latestResults.results as FinderAssetOpportunityResult[]).map((row) => row.symbol))
             .to.deep.equal(["AAA", "BBB", "CCC"]);
+    });
+
+    it("keeps the working order observable: earlier re-sorts change the capped-ties representative", () => {
+        // AAA/alpha and AAA/beta TIE under totalTradesCapped: same capped
+        // trade count, same averageGain, same symbol — and the comparator
+        // intentionally never consults expectancy. The stable sort keeps the
+        // current working order, so the deduplicated display's first AAA row
+        // (the symbol's representative) depends on earlier re-sorts. This is
+        // why the store retains a working-order pool alongside the default
+        // rows instead of deriving every view from the default pool.
+        const { store } = makeStore();
+        const alpha = makeAssetRow("AAA", "alpha", 5.0, {}, 10);
+        const beta = makeAssetRow("AAA", "beta", 1.0, {}, 50);
+        store.adoptAssetOpportunityResults([beta, alpha], false, 10);
+
+        // The default (grade) order puts the higher expectancy first, and
+        // the capped tie preserves it.
+        store.applyResortMetric("totalTradesCapped");
+        let displayed = store.latestResults.results as FinderAssetOpportunityResult[];
+        expect(displayed).to.have.length(1);
+        expect(displayed[0]!.strategyKey).to.equal("alpha");
+        // The capped sort displays augmented row copies carrying the cap.
+        expect((displayed[0] as unknown as { totalTradesCappedValue: number }).totalTradesCappedValue).to.equal(10);
+
+        // A netProfit re-sort reverses the same-symbol pair (beta nets 50).
+        store.applyResortMetric("netProfit");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[])[0]!.strategyKey).to.equal("beta");
+
+        // Re-running the capped sort keeps the reversed working order: the
+        // earlier re-sort is observable through the tie.
+        store.applyResortMetric("totalTradesCapped");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[])[0]!.strategyKey).to.equal("beta");
+
+        // Run Sort restores the default rows, and the capped tie is again
+        // resolved by the default order.
+        store.restoreRunSort();
+        store.applyResortMetric("totalTradesCapped");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[])[0]!.strategyKey).to.equal("alpha");
+    });
+
+    it("grouped re-sorts read the default rows and never replace the working pool", () => {
+        const { store } = makeStore();
+        const alpha = makeAssetRow("AAA", "alpha", 5.0, {}, 10);
+        const beta = makeAssetRow("AAA", "beta", 1.0, {}, 50);
+        store.adoptAssetOpportunityResults([beta, alpha], false, 10);
+
+        // ordinary → grouped → ordinary behaves exactly like ordinary →
+        // ordinary: the grouped consensus sort derives from the default rows
+        // and leaves the working order (beta before alpha) untouched for the
+        // next pairwise tie.
+        store.applyResortMetric("netProfit");
+        store.applyResortMetric("freshSignalLibraries");
+        store.applyResortMetric("totalTradesCapped");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[])[0]!.strategyKey).to.equal("beta");
+
+        // The identical sequence without the grouped sort agrees.
+        store.restoreRunSort();
+        store.applyResortMetric("netProfit");
+        store.applyResortMetric("totalTradesCapped");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[])[0]!.strategyKey).to.equal("beta");
+    });
+
+    it("sorts missing metric values deterministically instead of resurrecting them", () => {
+        const { store } = makeStore();
+        const valid = makeAssetRow("AAA", "alpha", 5.0);
+        const missing = makeAssetRow("BBB", "alpha", Number.NaN);
+        store.adoptAssetOpportunityResults([missing, valid], false, 10);
+
+        // Adoption's grade sort maps non-finite expectancy to 0, so the
+        // valid row leads the default order...
+        expect((store.latestResults.results as FinderAssetOpportunityResult[]).map((row) => row.symbol))
+            .to.deep.equal(["AAA", "BBB"]);
+
+        // ...and the expectancy re-sort agrees: a missing value reads as 0,
+        // never as "better than every finite row".
+        store.applyResortMetric("expectancy");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[]).map((row) => row.symbol))
+            .to.deep.equal(["AAA", "BBB"]);
     });
 
     it("stashes the run-sort baseline and reports resort options per scope", () => {
