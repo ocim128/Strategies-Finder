@@ -314,10 +314,11 @@ describe('Backtesting Engine - compact vs full parity', () => {
 // ---------------------------------------------------------------------------
 // Fallback characterization (pre-extraction baseline).
 //
-// The single-position Finder fast path only engages when the run omits the
-// equity curve + Sharpe and passes every per-feature blocker; every other
+// The single-position Finder fast path only engages when the caller opts out
+// of the returned equity curve (options.omitEquityCurve — scalar Sharpe
+// stays supported) and passes every per-feature blocker; every other
 // configuration takes the per-wrapper FALLBACK simulation. These tests are
-// the semantic oracle for sharing that fallback between runBacktest and
+// the semantic oracle for the shared fallback between runBacktest and
 // runBacktestCompact: each case asserts diagnostics.fastPath.used === false,
 // locks deterministic expected trades/scalars, and records the CURRENT
 // wrapper differences (they characterize behavior; they do not endorse it):

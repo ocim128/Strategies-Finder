@@ -151,12 +151,18 @@ or an OOS trade history.
 
 ### TypeScript fallback simulations
 
-The single-position Finder fast path only engages when the run omits the equity
-curve and Sharpe and passes every per-feature blocker (`maxOpenTrades === 1`,
-no trailing ATR, no adaptive percentage take profit, no entry-time filter, and
-the remaining eligibility fences). Every other configuration executes ONE
-shared fallback simulation, `runFallbackPositionSimulation()` in
-`backtest-engine.ts`, used by both `runBacktest()` and `runBacktestCompact()`.
+The single-position Finder fast path only engages when the caller opts out of
+the RETURNED equity curve (`options.omitEquityCurve === true`) and passes
+every per-feature blocker (`maxOpenTrades === 1`, no trailing ATR, no adaptive
+percentage take profit, no entry-time filter, and the remaining eligibility
+fences). Scalar Sharpe remains supported on the fast path: when
+`includeSharpeRatio` is not disabled, the fast path fills its typed equity
+buffer and computes Sharpe from it, even though no object equity curve is
+returned. The narrower signal-only scan (`canUseSignalOnlyFinderFastPath`)
+additionally requires drawdown skipping (`skipDrawdown`) and Sharpe disabled.
+Every configuration outside these fences executes ONE shared fallback
+simulation, `runFallbackPositionSimulation()` in `backtest-engine.ts`, used
+by both `runBacktest()` and `runBacktestCompact()`.
 It is the single implementation of the trading-state transitions — pending
 adaptive exits at the open, `next_open` open-only exits + signal scan,
 backward position iteration with close-based exits, signal entries/exits with
