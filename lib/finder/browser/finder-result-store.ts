@@ -20,6 +20,7 @@ import {
 import { sortFinderResults } from "../finder-engine";
 import {
 	deduplicateAssetOpportunityResultsBySymbol,
+	sortAssetOpportunityResults,
 	sortAssetOpportunityResultsByMetric,
 	getAssetOpportunityResortMetrics,
 	FRESH_SIGNAL_LIBRARIES_METRIC,
@@ -72,9 +73,9 @@ export class FinderResultStore {
 	/** Display limit captured from the completed Symbol Universe run. */
 	symbolUniverseDisplayLimit = DEFAULT_FINDER_UI_STATE.topN;
 	/** Full scalar Asset Opportunity rows for the current run. */
-	assetOpportunityRunResults: FinderAssetOpportunityResult[] = [];
+	private assetOpportunityRunResults: FinderAssetOpportunityResult[] = [];
 	/** Default-order full rows used when the re-sort control is reset. */
-	assetOpportunityDefaultResults: FinderAssetOpportunityResult[] = [];
+	private assetOpportunityDefaultResults: FinderAssetOpportunityResult[] = [];
 	/** Full compact Arm Performance inventory for every post-run arm sort. */
 	armPerformanceRunResults: FinderArmPerformanceCandidate[] = [];
 	armPerformanceRunContext: FinderArmPerformanceRunContext | null = null;
@@ -128,6 +129,48 @@ export class FinderResultStore {
 			results: deduplicateAssetOpportunityResultsBySymbol(results)
 				.slice(0, Math.max(1, limit)),
 		}, persist);
+	}
+
+	/**
+	 * Adopt a terminal Asset Opportunity inventory (normal stream done,
+	 * status recovery, terminal reattach, latest batch iteration): retain
+	 * the full run-order rows for post-run re-sort, keep the Run Sort
+	 * default copy, and display the deduplicated top-N. `persist` and
+	 * `limit` are explicit — call sites must not rely on differing defaults.
+	 */
+	adoptAssetOpportunityResults(
+		results: readonly FinderAssetOpportunityResult[],
+		persist: boolean,
+		limit: number,
+	): void {
+		this.assetOpportunityRunResults = sortAssetOpportunityResults([...results]);
+		this.assetOpportunityDefaultResults = [...this.assetOpportunityRunResults];
+		this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, persist, limit);
+	}
+
+	/**
+	 * Provisional streamed rows: refresh the working inventory and display
+	 * without persisting or touching the terminal Run Sort baseline.
+	 */
+	setAssetOpportunityProvisionalResults(
+		results: readonly FinderAssetOpportunityResult[],
+		limit: number,
+	): void {
+		this.assetOpportunityRunResults = sortAssetOpportunityResults([...results]);
+		this.setAssetOpportunityLatestResults(this.assetOpportunityRunResults, false, limit);
+	}
+
+	/**
+	 * Restore persisted Asset Opportunity rows after a reload. The saved rows
+	 * are already the bounded, deduplicated saved display view (possibly a
+	 * re-sorted metric view): keep their saved order — never grade-sort a
+	 * saved view — and do not persist the snapshot back over itself.
+	 */
+	restoreAssetOpportunityResults(results: readonly FinderAssetOpportunityResult[]): void {
+		const restored = deduplicateAssetOpportunityResultsBySymbol(results);
+		this.assetOpportunityRunResults = [...restored];
+		this.assetOpportunityDefaultResults = [...restored];
+		this.latestResults = { scope: 'asset_opportunity', results: [...restored] };
 	}
 
 	/** Retain the full terminal Universe run while rendering only the display topN. */

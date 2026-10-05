@@ -14,7 +14,6 @@ import { shouldUseRustEngine } from "../../../engine-preferences";
 import {
 	ASSET_OPPORTUNITY_ALL_SORTS,
 	retainAssetOpportunityResultsForSymbols,
-	sortAssetOpportunityResults,
 	type FinderAssetOpportunityArchiveSort,
 } from "../../finder-asset-opportunity-metrics";
 import type {
@@ -210,12 +209,12 @@ async function runAssetOpportunityFinderServer(args: {
 	const flushProvisionalRender = (): void => {
 		provisionalRenderTimer = null;
 		if (terminalResults !== null) return;
-		store.assetOpportunityRunResults = sortAssetOpportunityResults([
-			...provisionalAssetResults.values(),
-		]);
 		// Provisional streamed asset — no persistence until terminal
-		// asset_done adoption.
-		store.setAssetOpportunityLatestResults(store.assetOpportunityRunResults, false, options.topN);
+		// asset_done adoption, and the Run Sort baseline stays untouched.
+		store.setAssetOpportunityProvisionalResults(
+			[...provisionalAssetResults.values()],
+			options.topN,
+		);
 		host.renderLatestResults();
 	};
 	const scheduleProvisionalRender = (): void => {
@@ -259,9 +258,7 @@ async function runAssetOpportunityFinderServer(args: {
 				failedAssets = event.totals.failedAssets;
 				cancelProvisionalRender();
 				if (isStillActive()) {
-					store.assetOpportunityRunResults = sortAssetOpportunityResults([...(terminalResults ?? [])]);
-					store.assetOpportunityDefaultResults = [...store.assetOpportunityRunResults];
-					store.setAssetOpportunityLatestResults(store.assetOpportunityRunResults, true, options.topN);
+					store.adoptAssetOpportunityResults(terminalResults ?? [], true, options.topN);
 					host.stashAndResetResort();
 					host.renderLatestResults();
 				}
@@ -303,9 +300,7 @@ async function runAssetOpportunityFinderServer(args: {
 					: null);
 				assetsWithFreshEntry = recovered.assetTotals?.assetsWithFreshEntry ?? terminalResults.length;
 				failedAssets = recovered.assetTotals?.failedAssets ?? 0;
-				store.assetOpportunityRunResults = sortAssetOpportunityResults([...terminalResults]);
-				store.assetOpportunityDefaultResults = [...store.assetOpportunityRunResults];
-				store.setAssetOpportunityLatestResults(store.assetOpportunityRunResults, true, options.topN);
+				store.adoptAssetOpportunityResults(terminalResults, true, options.topN);
 				host.stashAndResetResort();
 				host.renderLatestResults();
 			} else if (!host.isCancelled()) {
@@ -461,9 +456,7 @@ export async function runAssetOpportunityBatchFinderServer(args: {
 	// Renders ONLY the latest completed iteration; prior iterations are not
 	// retained (their rows were already appended to the archive server-side).
 	const adoptIterationRows = (rows: readonly FinderAssetOpportunityResult[], persist: boolean): void => {
-		store.assetOpportunityRunResults = sortAssetOpportunityResults([...rows]);
-		store.assetOpportunityDefaultResults = [...store.assetOpportunityRunResults];
-		store.setAssetOpportunityLatestResults(store.assetOpportunityRunResults, persist, options.topN);
+		store.adoptAssetOpportunityResults(rows, persist, options.topN);
 		host.stashAndResetResort();
 		host.renderLatestResults();
 	};

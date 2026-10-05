@@ -11,13 +11,9 @@ import type { FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
 import { refreshFinderSettingsSummaries } from "./finder/browser/finder-workspace";
-import {
-	ASSET_OPPORTUNITY_ALL_SORTS,
-	deduplicateAssetOpportunityResultsBySymbol,
-	sortAssetOpportunityResults,
-} from "./finder/finder-asset-opportunity-metrics";
+import { ASSET_OPPORTUNITY_ALL_SORTS } from "./finder/finder-asset-opportunity-metrics";
 import { debugLogger } from "./debug-logger";
-import { emptyFinderLatestResults } from "./finder/browser/finder-settings";
+import { DEFAULT_FINDER_UI_STATE, emptyFinderLatestResults } from "./finder/browser/finder-settings";
 import type { FinderRunStatusSnapshot } from "./finder/server/finder-stream-types";
 import {
 	createFinderManagerDom,
@@ -356,26 +352,24 @@ export class FinderManager {
 		const snapshot = readFinderLatestResultsSnapshot();
 		if (!snapshot) return;
 
-		const restoredResults = snapshot.results.scope === 'asset_opportunity'
-			? {
-				scope: 'asset_opportunity' as const,
-				results: deduplicateAssetOpportunityResultsBySymbol(snapshot.results.results),
+		const snapshotResults = snapshot.results;
+		if (snapshotResults.scope === 'asset_opportunity') {
+			// The saved rows are the saved display view; the store keeps their
+			// order and never re-sorts or re-persists them.
+			this.resultStore.restoreAssetOpportunityResults(snapshotResults.results);
+		} else {
+			this.resultStore.latestResults = snapshotResults;
+			if (snapshotResults.scope === 'arm_performance') {
+				this.resultStore.armPerformanceRunResults = [...snapshotResults.results];
+				this.resultStore.armPerformanceRunContext = snapshotResults.runContext;
+				this.resultStore.armPerformanceInventoryComplete = snapshotResults.inventoryComplete;
+				this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.controls.uiState.topN);
+				this.adoptArmPerformanceResults(snapshotResults.results, snapshotResults.runContext, snapshotResults.inventoryComplete, false);
 			}
-			: snapshot.results;
-		this.resultStore.latestResults = restoredResults;
-		if (restoredResults.scope === 'asset_opportunity') {
-			this.resultStore.assetOpportunityRunResults = [...restoredResults.results];
-			this.resultStore.assetOpportunityDefaultResults = [...restoredResults.results];
-		} else if (restoredResults.scope === 'arm_performance') {
-			this.resultStore.armPerformanceRunResults = [...restoredResults.results];
-			this.resultStore.armPerformanceRunContext = restoredResults.runContext;
-			this.resultStore.armPerformanceInventoryComplete = restoredResults.inventoryComplete;
-			this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.controls.uiState.topN);
-			this.adoptArmPerformanceResults(restoredResults.results, restoredResults.runContext, restoredResults.inventoryComplete, false);
 		}
 		debugLogger.event("finder.latest_results_restored", {
-			scope: restoredResults.scope,
-			count: restoredResults.results.length,
+			scope: snapshotResults.scope,
+			count: this.resultStore.latestResults.results.length,
 			symbol: snapshot.symbol,
 			interval: snapshot.interval,
 			savedAt: snapshot.savedAt,
@@ -480,9 +474,13 @@ export class FinderManager {
 			this.renderLatestResults();
 		} else if ((persistedScope === 'asset_opportunity' || persistedScope === 'asset_opportunity_batch')
 			&& snapshot.terminalAssets) {
-			this.resultStore.assetOpportunityRunResults = sortAssetOpportunityResults([...snapshot.terminalAssets]);
-			this.resultStore.assetOpportunityDefaultResults = [...this.resultStore.assetOpportunityRunResults];
-			this.resultStore.setAssetOpportunityLatestResults(this.resultStore.assetOpportunityRunResults);
+			// Terminal reattach adoption grades rows like a fresh run; the
+			// display limit stays the store default reattach has always used.
+			this.resultStore.adoptAssetOpportunityResults(
+				snapshot.terminalAssets,
+				true,
+				DEFAULT_FINDER_UI_STATE.topN,
+			);
 			this.stashAndResetResort();
 			this.renderLatestResults();
 			this.latestDiagnostics = snapshot.diagnostics;

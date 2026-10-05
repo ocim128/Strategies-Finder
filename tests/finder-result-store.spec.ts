@@ -398,30 +398,96 @@ describe("FinderResultStore", () => {
     it("retains strategy-level Asset rows on consensus re-sorts while grouping displayed rows by symbol", () => {
         const { store } = makeStore();
         const rows = [
-            makeAssetRow("AAA", "alpha", 2.0),
-            makeAssetRow("AAA", "beta", 1.0),
+            makeAssetRow("AAA", "alpha", 2.0, { medianBarsToTp: 3 }),
+            makeAssetRow("AAA", "beta", 1.0, { medianBarsToTp: 1 }),
             makeAssetRow("BBB", "alpha", 3.0, { strategyCoverageCount: 5 }),
         ];
-        store.assetOpportunityRunResults = [...rows];
-        store.assetOpportunityDefaultResults = [...rows];
-        store.setAssetOpportunityLatestResults(rows, false, 10);
+        store.adoptAssetOpportunityResults(rows, false, 10);
 
         // Display is deduplicated by symbol: AAA keeps its best row only.
         expect(store.latestResults.results).to.have.length(2);
 
         // A consensus (grouped) metric re-sorts the default rows but must NOT
-        // overwrite the full strategy-level inventory.
+        // overwrite the full strategy-level inventory: the non-representative
+        // AAA/beta row survives and becomes the AAA representative under the
+        // lower-bars metric.
         store.applyResortMetric("freshSignalLibraries");
-        expect(store.assetOpportunityRunResults).to.have.length(3);
-        const aaaRows = store.assetOpportunityRunResults.filter((row) => row.symbol === "AAA");
-        expect(aaaRows.map((row) => row.strategyKey).sort()).to.deep.equal(["alpha", "beta"]);
+        store.applyResortMetric("medianBarsToTp");
+        const aaaDisplayed = (store.latestResults.results as FinderAssetOpportunityResult[])
+            .find((row) => row.symbol === "AAA");
+        expect(aaaDisplayed?.strategyKey).to.equal("beta");
 
-        // A per-row metric re-sort replaces the working inventory with the
-        // sorted full set.
+        // A per-row metric re-sort orders the deduplicated display by that
+        // metric across the full strategy-level inventory.
         store.applyResortMetric("expectancy");
-        expect(store.assetOpportunityRunResults[0]!.selectionResult.expectancy).to.be.greaterThan(
-            store.assetOpportunityRunResults[store.assetOpportunityRunResults.length - 1]!.selectionResult.expectancy,
+        const displayed = store.latestResults.results as FinderAssetOpportunityResult[];
+        expect(displayed).to.have.length(2);
+        expect(displayed[0]!.symbol).to.equal("BBB");
+        expect(displayed[1]!.symbol).to.equal("AAA");
+        expect(displayed[0]!.selectionResult.expectancy).to.be.greaterThan(
+            displayed[1]!.selectionResult.expectancy,
         );
+    });
+
+    it("persists terminal Asset adoption once and keeps provisional rows off the baseline", () => {
+        const { store, writes } = makeStore();
+        store.adoptAssetOpportunityResults([
+            makeAssetRow("AAA", "alpha", 2.0, { medianBarsToTp: 3 }),
+            makeAssetRow("AAA", "beta", 1.0, { medianBarsToTp: 1 }),
+        ], true, 10);
+        expect(writes).to.have.length(1);
+        expect(writes[0]!.results).to.have.length(1, "terminal display is deduplicated");
+
+        // Provisional streamed rows: displayed, never persisted, and the
+        // terminal Run Sort baseline stays untouched.
+        store.setAssetOpportunityProvisionalResults([makeAssetRow("BBB", "alpha", 5.0)], 10);
+        expect((store.latestResults.results as FinderAssetOpportunityResult[])[0]!.symbol).to.equal("BBB");
+        expect(writes).to.have.length(1, "provisional rows never persist");
+
+        // Run Sort restores the untouched terminal default rows.
+        store.restoreRunSort();
+        expect((store.latestResults.results as FinderAssetOpportunityResult[])[0]!.symbol).to.equal("AAA");
+        expect(writes).to.have.length(2, "Run Sort persists the restored default view");
+    });
+
+    it("adopts empty Asset rows without resurrecting previous results", () => {
+        const { store, writes } = makeStore();
+        store.adoptAssetOpportunityResults([makeAssetRow("AAA", "alpha", 2.0)], true, 10);
+        expect(store.latestResults.results).to.have.length(1);
+
+        store.adoptAssetOpportunityResults([], true, 10);
+        expect(store.latestResults.scope).to.equal("asset_opportunity");
+        expect(store.latestResults.results).to.have.length(0);
+        expect(writes).to.have.length(2);
+
+        // A later re-sort on the empty inventory stays empty.
+        store.applyResortMetric("expectancy");
+        expect(store.latestResults.results).to.have.length(0);
+    });
+
+    it("restores persisted Asset rows in their saved display order without persisting", () => {
+        const { store, writes } = makeStore();
+        // Saved view: ascending expectancy — deliberately NOT grade order.
+        const saved = [
+            makeAssetRow("AAA", "alpha", 1.0),
+            makeAssetRow("BBB", "alpha", 3.0),
+            makeAssetRow("CCC", "alpha", 2.0),
+        ];
+        store.restoreAssetOpportunityResults(saved);
+        expect(writes).to.have.length(0, "restoring never re-persists the snapshot");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[]).map((row) => row.symbol))
+            .to.deep.equal(["AAA", "BBB", "CCC"], "saved order is kept, not grade-sorted");
+
+        // A re-sort starts from the full restored inventory and persists.
+        store.applyResortMetric("expectancy");
+        expect((store.latestResults.results as FinderAssetOpportunityResult[]).map((row) => row.symbol))
+            .to.deep.equal(["BBB", "CCC", "AAA"]);
+        expect(writes).to.have.length(1);
+
+        // Run Sort returns to the saved order (the restored default rows).
+        store.restoreRunSort();
+        expect((store.latestResults.results as FinderAssetOpportunityResult[]).map((row) => row.symbol))
+            .to.deep.equal(["AAA", "BBB", "CCC"]);
     });
 
     it("stashes the run-sort baseline and reports resort options per scope", () => {
