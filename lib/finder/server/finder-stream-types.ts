@@ -36,6 +36,7 @@ import { compactRankingMeasurement, compactCausalArmDiagnostics } from "../../ba
 import type { BatchDatasetCacheStats } from "../../batch-backtest/batch-dataset-loader-core";
 import type { FinderAssetOpportunityArchiveSort } from "../finder-asset-opportunity-metrics";
 import type {
+    FinderLatestResults,
     FinderArmPerformanceCandidate,
     FinderArmPerformanceRunContext,
     FinderAssetOpportunityDiagnostics,
@@ -371,10 +372,10 @@ export type AnyFinderStreamEvent =
  * untyped introspection object so the browser reattach path and the server
  * agree on the shape.
  *
- * In-progress snapshots are SUMMARY-ONLY: they carry candidate COUNTS, never
- * the full candidate payload, so polling stays small while a large universe
- * is running. The terminal snapshot is the one place that carries the
- * authoritative full candidate inventory for post-run re-sort.
+ * In-progress snapshots are summary-only by default. Scoped reload requests
+ * can opt into a compact, bounded Universe preview; they never receive the
+ * full inventory until terminal. The terminal snapshot carries the authoritative
+ * full candidate inventory for post-run re-sort.
  *
  * A status response for a run id that does not match the active/last run
  * returns 404 at the HTTP layer; this type only describes a matching run.
@@ -414,6 +415,8 @@ export type FinderRunStatusSnapshot = {
     cancelled: boolean;
     /** Present and authoritative only on the terminal symbol_universe snapshot. */
     terminalCandidates: FinderUniverseCandidate[] | null;
+    /** Opt-in bounded display preview while running; never the terminal inventory. */
+    previewResults?: FinderLatestResults | null;
     /** Present and authoritative only on the terminal asset_opportunity snapshot. */
     terminalAssets: FinderAssetOpportunityResult[] | null;
     /** Terminal authoritative scalar Arm Performance inventory. */

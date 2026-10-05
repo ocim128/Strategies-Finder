@@ -176,12 +176,21 @@ Implementation invariants:
 - `Run Sort` restores the run-time order and then reapplies the display limit.
 - A re-sort must not mutate or discard the full source needed by a later
   re-sort.
-- The Re-Sort menu follows the selected Scope, even while results from a
-  previous scope are retained and hidden. Switching scopes or starting a new
+- While idle, the Re-Sort menu follows the selected Scope, even while results
+  from a previous scope are retained and hidden. Switching scopes or starting a new
   run resets it to Run Sort; refreshing options within the same scope keeps a
   valid selection. Run start and server reattach refresh the menu before any
   candidates arrive, including Arm Performance previews. Re-Sort and Arm
   display edits never change a hidden inventory belonging to another scope.
+- While running or reattached, the submitted job owns the result view and
+  Re-Sort metrics. Scope and Reset Settings are disabled until the run ends.
+  A browser-restored Scope value is read before submitting a new job, even
+  when restoration did not dispatch a change event.
+- Reloaded Universe runs request a bounded live preview from the matching
+  server job: up to 25 ranked candidates and 200 scalar symbol rows per candidate.
+  The list updates with status polls without restarting computation. This
+  preview is not the full inventory; terminal adoption still restores every
+  retained candidate for post-run re-sort.
 
 Current Chart and Strategy Quality have their own result-retention paths. If a
 new scope is added, define explicitly which collection is full and which is

@@ -89,6 +89,13 @@ export class FinderControls {
 	constructor(private readonly deps: FinderControlsDeps) {}
 
 	getScope(): FinderScopeLike {
+		// Browsers can restore a select's value without dispatching change.
+		// Read the mounted control when it has a supported value; tests and
+		// pre-mount callers can still use the persisted state as a fallback.
+		const value = this.deps.getDom().finderScope.value;
+		if (["current_chart", "symbol_universe", "asset_opportunity", "strategy_quality", "arm_performance"].includes(value)) {
+			this.uiState.scope = normalizeFinderScope(value);
+		}
 		return this.uiState.scope;
 	}
 

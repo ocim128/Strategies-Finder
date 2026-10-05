@@ -1923,6 +1923,73 @@ describe("Finder Re-Sort scope transitions", () => {
         await controller.runFinder();
         expect(checked).to.equal(true);
     });
+
+    it("uses the visible Scope value when browser restoration did not fire change", () => {
+        const m = manager();
+        m.controls.uiState.scope = "arm_performance";
+        m.getDom().finderScope.value = "symbol_universe";
+        m.populateResortOptions();
+        expect(m.getDom().finderResort.children.map((option: any) => option.value)).to.include("robustUniverseScore");
+        expect(m.controls.readOptions({}).scope).to.equal("symbol_universe");
+    });
+
+    it("keeps the running Universe's menu and results when live controls change to Arm", () => {
+        const m = manager();
+        const rows = [makeCandidate()];
+        m.resultStore.adoptSymbolUniverseResults(rows, false);
+        m.controls.uiState.scope = "arm_performance";
+        m.populateResortOptions();
+        expect(m.getDom().finderResort.children.map((option: any) => option.value)).to.include("TOP_RAW");
+        m.setServerRunRunning(true);
+        try {
+            m.renderLatestResults();
+            expect(m.getDom().finderResort.children.map((option: any) => option.value)).to.include("robustUniverseScore");
+            expect(m.getDom().finderResort.children.map((option: any) => option.value)).not.to.include("TOP_RAW");
+            const collectText = (node: any): string => [node.textContent, ...(node.children ?? []).map(collectText)].join(" ");
+            expect(collectText(m.ui.getDom().finderList)).to.include("Universe Test");
+            expect(m.getDom().finderScope.disabled).to.equal(true);
+        } finally {
+            m.setServerRunRunning(false);
+        }
+    });
+
+    it("restores and updates a running Universe ranking after reload before terminal adoption", async () => {
+        const m = manager();
+        m.session = new FinderServerSession();
+        m.session.timing.pollIntervalMs = 1;
+        persistActiveServerRun("universe-live-preview");
+        const row = makeCandidate({ threshold: 1 }, 10);
+        const running = { ...runningSnapshot("universe-live-preview"),
+            candidateCount: 1, previewResults: { scope: "symbol_universe", results: [row] } };
+        const reattach = m.reattachToActiveServerRun();
+        try {
+            expect(mockFetch.requests[0]!.url).to.include("includePreview=1");
+            mockFetch.resolveFirst(running);
+            await waitFor(() => mockFetch.requests.length > 0);
+            expect(m.resultStore.latestResults.results[0]?.params.threshold).to.equal(1);
+            expect(m.resultStore.symbolUniverseRunResults).to.have.length(0, "preview is not the terminal inventory");
+            const better = makeCandidate({ threshold: 2 }, 100);
+            mockFetch.resolveFirst({ ...running, previewResults: { scope: "symbol_universe", results: [better] } });
+            await waitFor(() => mockFetch.requests.length > 0);
+            expect(m.resultStore.latestResults.results[0]?.params.threshold).to.equal(2);
+            mockFetch.resolveFirst(terminalDoneSnapshot("universe-live-preview", [row, better]));
+            await reattach;
+            expect(m.resultStore.symbolUniverseRunResults).to.have.length(2);
+            expect(m.getDom().finderScope.disabled).to.equal(false);
+        } finally {
+            m.session.stopReattachPoll();
+            await reattach;
+        }
+    });
+
+    it("ignores a late ranking preview after a newer run takes ownership", () => {
+        const m = manager();
+        m.session.activeRunId = "new-run";
+        const retained = m.resultStore.latestResults;
+        m.interpretServerRunPreview({ ...runningSnapshot("old-run"),
+            previewResults: { scope: "symbol_universe", results: [makeCandidate()] } });
+        expect(m.resultStore.latestResults).to.equal(retained);
+    });
 });
 
 describe("Copy Diagnostics availability transitions", () => {

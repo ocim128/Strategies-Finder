@@ -36,6 +36,7 @@ import {
     type FinderAssetOpportunityStreamEvent,
 } from "../lib/finder/server/finder-stream-types";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
+import { FINDER_RESULT_SNAPSHOT_LIMIT } from "../lib/finder/finder-result-snapshot";
 import {
     ASSET_OPPORTUNITY_ALL_SORTS,
     getAssetOpportunityResortMetrics,
@@ -544,6 +545,55 @@ describe("finder server plugin processFinderUniverseRun", () => {
         const status = handleStatusRequest("run-different") as { ok: false; error: string };
         expect(status.ok).to.equal(false);
         expect(status.error).to.match(/does not match/);
+    });
+
+    it("serves a bounded scalar live preview only on opt-in scoped status requests", async () => {
+        const candidate = buildFinderUniverseCandidate({ strategyKey: "preview", strategyName: "Preview",
+            params: {}, symbols: [] });
+        const candidates = Array.from({ length: 40 }, (_, threshold) => ({
+            ...candidate, params: { threshold },
+            symbols: Array.from({ length: 300 }, (_, index) => ({ symbol: `S${index}`, status: "no_trades" as const, barCount: 10 })),
+            data: new Array(1000).fill(1),
+        }));
+        const state = { runId: "live-preview", startedAt: 1, finishedAt: null, interval: "4h",
+            jobKind: "symbol_universe" as const, strategyKeys: ["preview"], strategyIndex: 0, strategyCount: 1,
+            phase: "evaluating" as const, totalSymbols: 300, progressPercent: 50, statusText: "Evaluating",
+            loadedSymbols: 300, failedSymbols: 0, candidates, diagnostics: null, cancelled: false,
+            summary: null, error: null, totals: null };
+        __testInternals.setRunStateForTests(state);
+        setRunOwnerForTests(77);
+        const summary = handleStatusRequest(state.runId);
+        assert.equal(summary.ok, true);
+        assert.equal(summary.terminalCandidates, null);
+        assert.equal(summary.previewResults, undefined);
+        const preview = handleStatusRequest(state.runId, true);
+        assert.equal(preview.ok, true);
+        assert.equal(preview.terminalCandidates, null);
+        assert.equal(preview.previewResults?.scope, "symbol_universe");
+        assert.equal(preview.previewResults?.results.length, FINDER_RESULT_SNAPSHOT_LIMIT);
+        if (preview.previewResults?.scope !== "symbol_universe") throw new Error("Missing Universe preview");
+        for (const row of preview.previewResults.results) {
+            assertCandidateIsScalar(row);
+            assert.equal(row.symbols.length, 200);
+        }
+        const response = makeRouteResponse();
+        await captureFinderRoutes().get("/api/finder/status")!({
+            method: "GET", url: "/api/finder/status?runId=live-preview&includePreview=1",
+            socket: { remoteAddress: "127.0.0.1" },
+            headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+        }, response);
+        assert.equal(response.statusCode, 200);
+        assert.equal(JSON.parse(response.body).previewResults.results.length, FINDER_RESULT_SNAPSHOT_LIMIT);
+        assert.equal(handleStatusRequest("different-run", true).ok, false);
+        const unscoped = handleStatusRequest(null, true);
+        assert.equal(unscoped.ok, true);
+        assert.equal(unscoped.previewResults, undefined);
+        __testInternals.setRunStateForTests({ ...state, finishedAt: 2 });
+        setRunOwnerForTests(0);
+        const terminal = handleStatusRequest(state.runId, true);
+        assert.equal(terminal.ok, true);
+        assert.equal(terminal.previewResults, undefined);
+        assert.equal(terminal.terminalCandidates?.length, 40, "terminal inventory is never capped by the preview");
     });
 
     // --- Phase 2: multi-strategy orchestration ---

@@ -40,8 +40,8 @@
  * `assertCandidateIsScalar` enforce this at the source so a future field that
  * accidentally carries an OHLCV / signals / trades array cannot reach the
  * wire and re-pressurize the browser tab. In-progress `/status` polls carry
- * candidate COUNTS only — never the per-symbol payload — so polling stays
- * small while a large universe runs.
+ * candidate counts by default. Scoped reload polls may request a bounded,
+ * compact Universe preview; the full inventory is terminal-only.
  */
 
 import type { Plugin } from "vite";
@@ -63,6 +63,7 @@ import type { FinderUniverseRunOutput } from "../finder-runner-universe";
 import type { FinderSelectedStrategy } from "../finder-runner";
 import { FinderParamSpace } from "../finder-param-space";
 import { normalizeFinderDateRange, sliceFinderDataWindow } from "../finder-manager-logic";
+import { compactFinderLatestResults } from "../finder-result-snapshot";
 import { isRustSupportedTradeSizingMode, type CapitalSettings } from "../../types/backtest";
 import type {
     FinderAssetOpportunityResult,
@@ -3728,11 +3729,11 @@ function stopArmPerformanceParent(runId: string): boolean {
  * introspection object for `curl` debugging; the browser reattach path must
  * never use the unscoped form.
  *
- * In-progress snapshots are SUMMARY-ONLY (candidate counts, never the
- * per-symbol payload) so polling stays small. The terminal snapshot carries
+ * In-progress snapshots are summary-only by default; scoped reattach may
+ * opt into a bounded compact preview. The terminal snapshot carries
  * the authoritative full candidate inventory once.
  */
-function handleStatusRequest(runIdFilter: string | null): FinderRunStatusSnapshot | { ok: false; error: string } {
+function handleStatusRequest(runIdFilter: string | null, includePreview = false): FinderRunStatusSnapshot | { ok: false; error: string } {
     if (!runState) {
         return { ok: false, error: "No Finder run state available." };
     }
@@ -3741,7 +3742,7 @@ function handleStatusRequest(runIdFilter: string | null): FinderRunStatusSnapsho
         if (runState.runId !== runIdFilter) {
             return { ok: false, error: "Run id does not match the active or last Finder run." };
         }
-        return buildStatusSnapshot();
+        return buildStatusSnapshot(includePreview);
     }
     // Unscoped form: legacy `curl` introspection. Only meaningful when there
     // is an active/last run; the browser reattach path must pass a runId.
@@ -3772,7 +3773,7 @@ function handleArmDiagnosticsRequest(runId: string | null) {
     });
 }
 
-function buildStatusSnapshot(): FinderRunStatusSnapshot {
+function buildStatusSnapshot(includePreview = false): FinderRunStatusSnapshot {
     const running = runOwner !== RUN_OWNER_NONE;
     const terminal = runState!.finishedAt !== null;
     const state = runState!;
@@ -3805,6 +3806,9 @@ function buildStatusSnapshot(): FinderRunStatusSnapshot {
         // and batch) carry the full scalar asset result set of the run / last
         // completed iteration on `terminalAssets` instead.
         terminalCandidates: terminal && jobKind === "symbol_universe" ? state.candidates : null,
+        ...(includePreview && !terminal && jobKind === "symbol_universe" ? {
+            previewResults: compactFinderLatestResults({ scope: "symbol_universe", results: state.candidates }),
+        } : {}),
         terminalAssets: terminal && assetOpportunityKind ? state.assetResults ?? [] : null,
         terminalArmPerformanceResults: terminal && armPerformanceKind ? state.armPerformanceResults ?? [] : null,
         armPerformanceRunContext: terminal && armPerformanceKind ? state.armPerformanceRunContext ?? null : null,
@@ -4126,7 +4130,7 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string, batchOwnerL
             const runIdFilter = url.searchParams.has("runId")
                 ? url.searchParams.get("runId")
                 : null;
-            const snapshot = handleStatusRequest(runIdFilter);
+            const snapshot = handleStatusRequest(runIdFilter, url.searchParams.get("includePreview") === "1");
             if (snapshot && typeof snapshot === "object" && snapshot.ok === false) {
                 sendJson(res, 404, snapshot);
                 return;

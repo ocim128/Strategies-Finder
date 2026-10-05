@@ -731,8 +731,12 @@ infer server ownership for another Finder mode from the shared result types.
   `runId` (`playground_finder_active_server_run`, schema
   `finder.active_server_run`, v1) before `fetch`. On Finder init, it polls
   `GET /api/finder/status?runId=...`; if the server still has the job, it
-  restores progress + Stop state and polls summary-only status until
-  terminal, then adopts the authoritative final candidates once. Reattach
+  restores progress + Stop state and polls status with `includePreview=1` until
+  terminal. Universe responses include a bounded live ranking preview (25
+  candidates, at most 200 scalar symbol rows per candidate), so existing rows
+  return after reload and continue updating without starting another run.
+  The preview never becomes the full run inventory; terminal adoption replaces
+  it with the authoritative final candidates once. Reattach
   only survives a browser reload while the same Vite process remains alive
   — a Vite restart loses the in-memory job (the reattach clears its record).
 
@@ -803,7 +807,10 @@ exhaust the host.
 | `fatal` | Terminates the run with an error and the matching `runId`. |
 
 The terminal `done.candidates` slice is authoritative. `/status` in-progress
-snapshots are summary-only (candidate counts, never the per-symbol payload);
+snapshots are summary-only by default. Scoped reattach requests can opt into
+the bounded Universe `previewResults` with `includePreview=1`; unscoped
+requests cannot retrieve a preview. It uses the existing snapshot compactor
+and carries no candles, trades or signals. Terminal responses omit the preview;
 the terminal snapshot is the one place that carries the final candidate slice.
 
 Copied diagnostics report job-cache requests, hits, misses, unique bars,
@@ -824,6 +831,11 @@ running), loaded/failed totals, and — when terminal — the authoritative
 returns 404 and must never be adopted. A request without `runId` returns the
 legacy ad-hoc introspection object for `curl` debugging; the browser reattach
 path must pass a `runId`.
+
+With `includePreview=1`, a matching running Universe job also returns
+`previewResults`, a compact display checkpoint. Default polling and other
+job kinds retain their counts-only contract. Each preview is guarded by the
+active run id before rendering; late responses cannot replace a newer run.
 
 ## Data flow
 

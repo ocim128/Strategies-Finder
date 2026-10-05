@@ -226,6 +226,76 @@ const verifySettingsWorkspace = async (page: Page): Promise<void> => {
     console.log('Settings layout, search, autosave feedback, configuration drift and restore passed.');
 };
 
+const verifyFinderReloadPreview = async (page: Page): Promise<void> => {
+    await page.click('.panel-tab[data-tab="finder"]');
+    await page.waitForSelector('#finderScope', { visible: true });
+    const candidate = await page.evaluate(async () => {
+        const managerPath = '/lib/finder-manager.ts', metricsPath = '/lib/finder/finder-universe-metrics.ts';
+        const persistencePath = '/lib/finder/browser/finder-persistence.ts';
+        const { finderManager: manager } = await import(managerPath);
+        const { buildFinderUniverseCandidate } = await import(metricsPath);
+        const { writeFinderActiveServerRun, clearFinderLatestResultsSnapshot } = await import(persistencePath);
+        const candidate = buildFinderUniverseCandidate({ strategyKey: 'ema_confirmation',
+            strategyName: 'Reload Universe fixture', params: { fastPeriod: 12 }, symbols: [] });
+        manager.resultStore.adoptSymbolUniverseResults([candidate], false);
+        manager.setServerRunRunning(true);
+        try {
+            const scope = document.getElementById('finderScope') as HTMLSelectElement;
+            if (!scope.disabled) throw new Error('Running Finder scope must be locked');
+            scope.value = 'arm_performance';
+            manager.controls.uiState.scope = 'arm_performance';
+            manager.populateResortOptions(); manager.renderLatestResults();
+            const values = Array.from((document.getElementById('finderResort') as HTMLSelectElement).options).map((option) => option.value);
+            if (!values.includes('robustUniverseScore') || values.includes('TOP_RAW')) throw new Error('Active Universe inherited Arm options');
+            if (!document.getElementById('finderList')!.textContent!.includes(candidate.strategyName)) throw new Error('Live scope edit hid the active ranking');
+        } finally {
+            manager.setServerRunRunning(false);
+        }
+        manager.controls.saveUiState();
+        clearFinderLatestResultsSnapshot();
+        writeFinderActiveServerRun({ runId: 'e2e-universe-preview', scope: 'symbol_universe', startedAt: 1 });
+        return candidate;
+    });
+    let terminal = false;
+    let runRequests = 0;
+    await page.setRequestInterception(true);
+    const intercept = (request: import('puppeteer').HTTPRequest) => {
+        if (request.url().includes('/api/finder/universe-run') || request.url().includes('/api/finder/arm-performance-run')) runRequests += 1;
+        if (!request.url().includes('/api/finder/status?runId=e2e-universe-preview')) {
+            void request.continue(); return;
+        }
+        const withPreview = new URL(request.url()).searchParams.get('includePreview') === '1';
+        void request.respond({ status: 200, contentType: 'application/json', body: JSON.stringify({
+            ok: true, runId: 'e2e-universe-preview', running: !terminal, terminal, startedAt: 1,
+            finishedAt: terminal ? 2 : null, interval: '4h', jobKind: 'symbol_universe', strategyKeys: ['ema_confirmation'],
+            strategyIndex: 0, strategyCount: 1, totalSymbols: 1, progressPercent: terminal ? 100 : 50,
+            phase: terminal ? 'done' : 'evaluating', statusText: terminal ? 'Done' : 'Still evaluating',
+            candidateCount: 1, loadedSymbols: 1, failedSymbols: 0, cancelled: false,
+            terminalCandidates: terminal ? [candidate] : null, terminalAssets: null,
+            ...(withPreview && !terminal ? { previewResults: { scope: 'symbol_universe', results: [candidate] } } : {}),
+            summary: terminal ? 'Done' : null, error: null, diagnostics: null, totals: null, assetTotals: null,
+        }) });
+    };
+    page.on('request', intercept);
+    try {
+        await page.reload({ waitUntil: 'networkidle0' });
+        await page.click('.panel-tab[data-tab="finder"]');
+        await page.waitForFunction(() => document.getElementById('finderList')?.textContent?.includes('Reload Universe fixture'));
+        await page.evaluate(() => {
+            const scope = document.getElementById('finderScope') as HTMLSelectElement;
+            if (scope.value !== 'symbol_universe' || !scope.disabled) throw new Error('Reload did not restore owned Universe scope');
+            if (getComputedStyle(document.getElementById('stopFinder')!).display === 'none') throw new Error('Reload lost Stop');
+        });
+        terminal = true;
+        await page.waitForFunction(() => !(document.getElementById('runFinder') as HTMLButtonElement).disabled);
+        if (runRequests !== 0) throw new Error('Reload restarted the Finder computation');
+        console.log('Finder active scope and running ranking reload preview passed without restarting compute.');
+    } finally {
+        page.off('request', intercept);
+        await page.setRequestInterception(false);
+    }
+};
+
 const verifyRankingCards = async (page: Page): Promise<void> => {
     let replayRequests = 0;
     const observe = (request: { url(): string }) => {
@@ -951,6 +1021,7 @@ async function runTest() {
             console.log('Configuration saved successfully.');
 
             await verifySettingsWorkspace(page);
+            await verifyFinderReloadPreview(page);
             await verifyRankingCards(page);
             await verifyFinderWorkspace(page);
             await verifyBatchCausalArms(page);

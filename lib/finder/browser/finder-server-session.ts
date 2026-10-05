@@ -72,6 +72,8 @@ export interface FinderSessionHost {
 	setRunning(running: boolean): void;
 	/** Adopt a terminal snapshot for its scope; must check ownership again. */
 	interpretTerminal(snapshot: FinderRunStatusSnapshot, persistedScope: FinderServerJobKind): void;
+	/** Bounded running preview, delivered only while this session owns the run. */
+	interpretPreview?(snapshot: FinderRunStatusSnapshot): void;
 }
 
 const POLL_INTERVAL_MS = 2000;
@@ -288,8 +290,8 @@ export class FinderServerSession {
 	 * tab reload. Called from Finder init (Finder is lazy-loaded, so reattach
 	 * begins on first Finder activation — not at global startup). Reads the
 	 * persisted active run id; if the server still has a matching job,
-	 * restores progress + Stop state, then polls summary-only status through
-	 * the shared owned-run loop until terminal. On terminal, delegates
+	 * restores progress + Stop state, then polls status with a bounded Universe
+	 * preview through the shared owned-run loop until terminal. On terminal, delegates
 	 * interpretation to `host.interpretTerminal` (which re-checks ownership),
 	 * persists through the completed-results snapshot, and clears the
 	 * active-run record.
@@ -313,7 +315,7 @@ export class FinderServerSession {
 		let initial: FinderRunStatusSnapshot | null = null;
 		let confirmedMissing = false;
 		try {
-			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
+			const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}&includePreview=1`, {
 				cache: "no-store",
 				signal: initialRequest.signal,
 			});
@@ -341,6 +343,10 @@ export class FinderServerSession {
 		// is the only cancellation signal here: the run is not adopted yet, so
 		// activeRunId is still null even when Stop already fired.
 		if (this.pollingStopped || this.activeRunId !== null) {
+			this.releaseAbortController(abortController);
+			return;
+		}
+		if (initial && initial.runId !== runId) {
 			this.releaseAbortController(abortController);
 			return;
 		}
@@ -392,6 +398,7 @@ export class FinderServerSession {
 			});
 		};
 		applyTerminalSnapshot(initial);
+		if (!initial.terminal && this.isActive(runId)) host.interpretPreview?.(initial);
 
 		if (!clearPersistedRecord) {
 			const outcome = await this.pollOwnedServerRunStatus({
@@ -406,9 +413,11 @@ export class FinderServerSession {
 					? this.timing.longPollIntervalMs
 					: this.timing.pollIntervalMs,
 				waitIntervalAfterFailure: true,
+				includePreview: true,
 				onProgress: (snapshot) => {
 					host.setProgress(true, snapshot.progressPercent, snapshot.statusText);
 					this.setStatusHost(host, `${jobLabel}: ${snapshot.statusText}`);
+					host.interpretPreview?.(snapshot);
 				},
 			});
 			// Guard the outcome-driven writes on ownership: the loop checks
@@ -492,6 +501,7 @@ export class FinderServerSession {
 		 * cadence (true).
 		 */
 		waitIntervalAfterFailure: boolean;
+		includePreview?: boolean;
 		onProgress: (snapshot: FinderRunStatusSnapshot) => void;
 	}): Promise<FinderOwnedRunPollOutcome> {
 		const { runId, abortController } = args;
@@ -512,7 +522,7 @@ export class FinderServerSession {
 			const statusRequest = createFinderStatusRequestSignal(abortController.signal, this.statusRequestTimeoutMs);
 			let snapshot: FinderRunStatusSnapshot | null = null;
 			try {
-				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}`, {
+				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}${args.includePreview ? '&includePreview=1' : ''}`, {
 					cache: "no-store",
 					signal: statusRequest.signal,
 				});
@@ -561,7 +571,7 @@ export class FinderServerSession {
 			// path above already guards, so this only fires for future code
 			// added between them.
 			if (!owned()) return { kind: "cancelled" };
-			if (!snapshot || !snapshot.ok) return { kind: "rejected" };
+			if (!snapshot || !snapshot.ok || snapshot.runId !== runId) return { kind: "rejected" };
 			consecutiveFailures = 0;
 			if (snapshot.terminal) {
 				return { kind: "terminal", snapshot };

@@ -103,6 +103,8 @@ export class FinderManager {
 		isMultiAssetScope: () => this.usesUniverseStrategySelection() || this.isAssetOpportunityScope(),
 		setRunningUI: (running) => {
 			const dom = this.getDom();
+			dom.finderScope.disabled = running;
+			dom.resetFinderSettings.disabled = running;
 			dom.runFinder.disabled = running;
 			dom.runFinder.classList.toggle('is-loading', running);
 			dom.runFinder.setAttribute('aria-busy', running ? 'true' : 'false');
@@ -192,6 +194,8 @@ export class FinderManager {
 	public init() {
 		this.controls.loadUiState();
 		const dom = this.getDom();
+		// Seed Scope before selection/render helpers read the mounted control.
+		dom.finderScope.value = this.controls.uiState.scope;
 		this.controls.bindPersistenceLifecycle();
 		this.controller.bindRunControls(dom.runFinder, dom.stopFinder);
 
@@ -329,6 +333,11 @@ export class FinderManager {
 		return this.controls.getScope();
 	}
 
+	/** An in-flight run owns its result view independently of editable controls. */
+	private getResultScope(): FinderScope {
+		return this.controller.isServerRunOwned() ? this.resultStore.latestResults.scope : this.getScope();
+	}
+
 	private isUniverseScope(): boolean {
 		return this.getScope() === "symbol_universe";
 	}
@@ -412,7 +421,7 @@ export class FinderManager {
 	/** Restore the persisted job's scope before any terminal snapshot lands. */
 	private restoreServerRunScope(scope: FinderScope): void {
 		const dom = this.getDom();
-		if (this.controls.uiState.scope !== scope) {
+		if (this.controls.uiState.scope !== scope || dom.finderScope.value !== scope) {
 			this.controls.uiState.scope = scope;
 			dom.finderScope.value = scope;
 			this.controls.applyScopeUi();
@@ -518,7 +527,19 @@ export class FinderManager {
 			resetForServerRunAdoption: () => this.resetForServerRunAdoption(),
 			setRunning: (running) => this.setServerRunRunning(running),
 			interpretTerminal: (snapshot, persistedScope) => this.interpretTerminalServerRunSnapshot(snapshot, persistedScope),
+			interpretPreview: (snapshot) => this.interpretServerRunPreview(snapshot),
 		};
+	}
+
+	private interpretServerRunPreview(snapshot: FinderRunStatusSnapshot): void {
+		if (!this.session.isActive(snapshot.runId) || snapshot.terminal || !snapshot.previewResults) return;
+		const preview = snapshot.previewResults;
+		if (snapshot.jobKind !== "symbol_universe" || preview.scope !== "symbol_universe") return;
+		this.resultStore.setLatestResults({ scope: "symbol_universe", results: preview.results.slice(0, this.resultStore.symbolUniverseDisplayLimit) }, false);
+		this.resultStore.stashRunSortBaseline();
+		this.populateResortOptions();
+		if (this.getDom().finderResort.value) this.applyResort();
+		else this.renderLatestResults();
 	}
 
 	/** Recover the server's retained full inventory when localStorage has only the bounded preview. */
@@ -699,7 +720,7 @@ export class FinderManager {
 	 */
 	private populateResortOptions(resetSelection = false): void {
 		const dom = this.getDom();
-		const scope = this.getScope();
+		const scope = this.getResultScope();
 		const options = this.resultStore.getResortOptions(scope);
 		const previousValue = dom.finderResort.value;
 		const preserveSelection = !resetSelection && this.resortOptionsScope === scope
@@ -728,7 +749,7 @@ export class FinderManager {
 	private applyResort(): void {
 		// Switching controls hides the previous scope's inventory; never sort it
 		// using the newly selected scope's metrics.
-		if (this.resultStore.latestResults.scope !== this.getScope()) return;
+		if (this.resultStore.latestResults.scope !== this.getResultScope()) return;
 		const metric = this.getDom().finderResort.value;
 		if (metric && !this.resultStore.getResortOptions().some((option) => option.value === metric)) return;
 		if (this.resultStore.latestResults.scope === "arm_performance") {
@@ -750,7 +771,7 @@ export class FinderManager {
 
 	private applyArmPerformanceDisplaySettings(): void {
 		this.armDisplayUpdateFrame.cancel();
-		if (this.getScope() !== "arm_performance" || this.resultStore.latestResults.scope !== "arm_performance") return;
+		if (this.getResultScope() !== "arm_performance" || this.resultStore.latestResults.scope !== "arm_performance") return;
 		const dom = this.getDom();
 		const minRaw = Number(dom.finderArmPerformanceMinEvents.value);
 		const maxText = dom.finderArmPerformanceMaxEvents.value.trim();
@@ -779,22 +800,23 @@ export class FinderManager {
 	}
 
 	private renderLatestResults(): void {
-		if (this.getScope() === 'symbol_universe') {
+		if (this.resortOptionsScope !== this.getResultScope()) this.populateResortOptions();
+		if (this.getResultScope() === 'symbol_universe') {
 			const results = this.resultStore.latestResults.scope === 'symbol_universe' ? this.resultStore.latestResults.results : [];
 			this.ui.renderUniverseResults(results);
 			return;
 		}
-		if (this.getScope() === 'asset_opportunity') {
+		if (this.getResultScope() === 'asset_opportunity') {
 			const results = this.resultStore.latestResults.scope === 'asset_opportunity' ? this.resultStore.latestResults.results : [];
 			this.ui.renderAssetOpportunityResults(results);
 			return;
 		}
-		if (this.getScope() === 'strategy_quality') {
+		if (this.getResultScope() === 'strategy_quality') {
 			const results = this.resultStore.latestResults.scope === 'strategy_quality' ? this.resultStore.latestResults.results : [];
 			this.ui.renderStrategyQualityResults(results);
 			return;
 		}
-		if (this.getScope() === 'arm_performance') {
+		if (this.getResultScope() === 'arm_performance') {
 			const results = this.resultStore.latestResults.scope === 'arm_performance' ? this.resultStore.latestResults.results : [];
 			const currentArm = this.getDom().finderResort.value as FinderArmPerformanceArm || 'TOP_RAW_PROFIT_NOW';
 			this.ui.renderArmPerformanceResults(
