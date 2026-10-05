@@ -57,7 +57,6 @@ import type { BacktestExecutorRequest } from "../backtest-executor";
 import type { TypescriptSimulationConcurrencyTracker } from "../backtest-endpoint-contract";
 import type { BacktestEndpointSelection } from "../strategies/backtest/backtest-engine";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
-import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { RustCapabilities, RustDiagnosticPhase } from "../rust-engine-client";
 import { resolveFinderRiskOverrides } from "./finder-runner-core";
 
@@ -125,13 +124,7 @@ export function resolveAssetCandidateBacktestSettings(args: {
     rustCapabilities?: RustCapabilities;
     exitOverride?: AssetCandidateExitOverride;
 }): BacktestSettings {
-    const rustSettings = sanitizeBacktestSettingsForRust(args.settings, args.rustCapabilities);
-    const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
-        args.settings,
-        rustSettings,
-        args.riskOverrideParams,
-        args.options,
-    );
+    const riskAdjustedSettings = resolveFinderRiskOverrides(args.settings, args.riskOverrideParams, args.options);
     return args.exitOverride
         ? {
             ...riskAdjustedSettings,

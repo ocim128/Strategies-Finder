@@ -786,12 +786,7 @@ export async function runFinderUniverseExecution(
         const { entryParams, exitParams } = plan.exitStrategyKey
             ? splitExitStrategyParams(params)
             : { entryParams: params, exitParams: undefined };
-        const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
-            input.settings,
-            rustSettings,
-            params,
-            input.options,
-        );
+        const riskAdjustedSettings = resolveFinderRiskOverrides(input.settings, params, input.options);
         const backtestSettings: BacktestSettings = plan.exitStrategyKey
             ? {
                 ...riskAdjustedSettings,

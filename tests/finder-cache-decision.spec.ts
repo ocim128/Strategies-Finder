@@ -15,6 +15,7 @@ import {
     buildFinderSearchBaseParams,
     mergeFinderRiskParamsIntoBacktestSettings,
     normalizeFinderCandidateParamSets,
+    projectRustBatchItemSettings,
     resolveFinderRiskOverrides,
 } from '../lib/finder/finder-runner-core';
 import { buildFinderResult, generateSignalsForJob } from '../lib/finder/finder-runner-shared';
@@ -245,12 +246,14 @@ describe('Finder ATR risk randomization support', () => {
             trailingAtr: 0,
         };
 
-        const resolved = resolveFinderRiskOverrides(settings, settings, { atrPeriod: 29 });
+        const resolved = resolveFinderRiskOverrides(settings, { atrPeriod: 29 });
 
-        expect(resolved.backtestSettings.atrPeriod).to.equal(29);
-        expect(resolved.rustBacktestSettings.atrPeriod).to.equal(29);
-        expect(resolved.backtestSettings.takeProfitAtr).to.equal(3);
-        expect(resolved.rustBacktestSettings.takeProfitAtr).to.equal(3);
+        expect(resolved.atrPeriod).to.equal(29);
+        expect(resolved.takeProfitAtr).to.equal(3);
+
+        const rustItemSettings = projectRustBatchItemSettings(settings, resolved);
+        expect(rustItemSettings.atrPeriod).to.equal(29);
+        expect(rustItemSettings.takeProfitAtr).to.equal(3);
     });
 
     it('omits Finder risk search params when risk management is frozen', () => {
@@ -303,10 +306,10 @@ describe('Finder ATR risk randomization support', () => {
             riskMode: 'simple',
         };
 
-        const resolved = resolveFinderRiskOverrides(settings, rustSettings, { riskMaxHoldBars: 9 });
+        const resolved = resolveFinderRiskOverrides(settings, { riskMaxHoldBars: 9 });
 
-        expect(resolved.backtestSettings.riskMaxHoldBars).to.equal(9);
-        expect('riskMaxHoldBars' in resolved.rustBacktestSettings).to.equal(false);
+        expect(resolved.riskMaxHoldBars).to.equal(9);
+        expect('riskMaxHoldBars' in projectRustBatchItemSettings(rustSettings, resolved)).to.equal(false);
     });
 
     it('ignores Finder risk overrides when risk management is frozen', () => {
@@ -319,23 +322,13 @@ describe('Finder ATR risk randomization support', () => {
             riskMaxHoldEnabled: true,
             riskMaxHoldBars: 4,
         };
-        const rustSettings: BacktestSettings = {
-            riskMode: 'percentage',
-            stopLossEnabled: true,
-            stopLossPercent: 2,
-            takeProfitEnabled: true,
-            takeProfitPercent: 6,
-        };
-
         const resolved = resolveFinderRiskOverrides(
             settings,
-            rustSettings,
             { stopLossPercent: 9, takeProfitPercent: 12, riskMaxHoldBars: 11 },
             { freezeRiskManagement: true }
         );
 
-        expect(resolved.backtestSettings).to.equal(settings);
-        expect(resolved.rustBacktestSettings).to.equal(rustSettings);
+        expect(resolved).to.equal(settings);
     });
 
     it('adds MFE bootstrap take-profit params to finder search params when mfe_bootstrap mode is active', () => {
@@ -422,12 +415,12 @@ describe('Finder ATR risk randomization support', () => {
             takeProfitPercent: 6,
         };
 
-        const resolved = resolveFinderRiskOverrides(settings, rustSettings, {
+        const resolved = resolveFinderRiskOverrides(settings, {
             takeProfitMfeBootstrapPercentile: 72.4,
         });
 
-        expect(resolved.backtestSettings.takeProfitMfeBootstrapPercentile).to.equal(72.4);
-        expect('takeProfitMfeBootstrapPercentile' in resolved.rustBacktestSettings).to.equal(false);
+        expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(72.4);
+        expect('takeProfitMfeBootstrapPercentile' in projectRustBatchItemSettings(rustSettings, resolved)).to.equal(false);
     });
 
     it('only exposes supported mode-specific take-profit params in finder search params', () => {
@@ -491,18 +484,19 @@ describe('Finder ATR risk randomization support', () => {
             takeProfitPercent: 6,
         };
 
-        const resolved = resolveFinderRiskOverrides(settings, rustSettings, {
+        const resolved = resolveFinderRiskOverrides(settings, {
             takeProfitAdaptiveLookbackTrades: 31,
             takeProfitAdaptiveGridSteps: 9,
             takeProfitAdaptiveRegimeBlend: 0.75,
         });
 
-        expect(resolved.backtestSettings.takeProfitAdaptiveLookbackTrades).to.equal(31);
-        expect(resolved.backtestSettings.takeProfitAdaptiveGridSteps).to.equal(9);
-        expect(resolved.backtestSettings.takeProfitAdaptiveRegimeBlend).to.equal(0.75);
-        expect('takeProfitAdaptiveLookbackTrades' in resolved.rustBacktestSettings).to.equal(false);
-        expect('takeProfitAdaptiveGridSteps' in resolved.rustBacktestSettings).to.equal(false);
-        expect('takeProfitAdaptiveRegimeBlend' in resolved.rustBacktestSettings).to.equal(false);
+        expect(resolved.takeProfitAdaptiveLookbackTrades).to.equal(31);
+        expect(resolved.takeProfitAdaptiveGridSteps).to.equal(9);
+        expect(resolved.takeProfitAdaptiveRegimeBlend).to.equal(0.75);
+        const adaptiveRustItem = projectRustBatchItemSettings(rustSettings, resolved);
+        expect('takeProfitAdaptiveLookbackTrades' in adaptiveRustItem).to.equal(false);
+        expect('takeProfitAdaptiveGridSteps' in adaptiveRustItem).to.equal(false);
+        expect('takeProfitAdaptiveRegimeBlend' in adaptiveRustItem).to.equal(false);
     });
 
     it('reapplies mode-specific TP params back into backtest settings when a finder row is applied', () => {
@@ -601,16 +595,16 @@ describe('Finder ATR risk randomization support', () => {
         };
         const rustSettings: BacktestSettings = {};
 
-        const resolved = resolveFinderRiskOverrides(settings, rustSettings, {
+        const resolved = resolveFinderRiskOverrides(settings, {
             pathExitMinBars: 7,
             pathExitMinMfePercent: 2.25,
             pathExitGivebackPercent: 65,
         }, { randomizePathExitParams: true });
 
-        expect(resolved.backtestSettings.pathExitMinBars).to.equal(7);
-        expect(resolved.backtestSettings.pathExitMinMfePercent).to.equal(2.25);
-        expect(resolved.backtestSettings.pathExitGivebackPercent).to.equal(65);
-        expect('pathExitMinBars' in resolved.rustBacktestSettings).to.equal(false);
+        expect(resolved.pathExitMinBars).to.equal(7);
+        expect(resolved.pathExitMinMfePercent).to.equal(2.25);
+        expect(resolved.pathExitGivebackPercent).to.equal(65);
+        expect('pathExitMinBars' in projectRustBatchItemSettings(rustSettings, resolved)).to.equal(false);
     });
 
     it('random mode can vary path-dependent exit params once they are part of the search params', () => {
@@ -828,7 +822,6 @@ describe('Finder execution-aware data', () => {
             name: strategy.name,
             params: {},
             backtestSettings: settings,
-            rustBacktestSettings: settings,
             strategy,
         }, data, '15m');
 
@@ -885,7 +878,6 @@ describe('Finder execution-aware data', () => {
             name: mainStrategy.name,
             params: { candidate: id },
             backtestSettings: settings,
-            rustBacktestSettings: settings,
             strategy: mainStrategy,
         });
 

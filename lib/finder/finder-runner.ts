@@ -226,7 +226,7 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
             }
 
             const params = plan.paramSets[paramIndex++];
-            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(settings, rustSettings, params, options);
+            const backtestSettings = resolveFinderRiskOverrides(settings, params, options);
 
             batch.push({
                 id: nextJobId++,
@@ -234,7 +234,6 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
                 name: plan.name,
                 params,
                 backtestSettings,
-                rustBacktestSettings,
                 strategy: plan.strategy,
                 exitStrategy: plan.exitStrategy,
                 exitStrategyKey: plan.exitStrategyKey,

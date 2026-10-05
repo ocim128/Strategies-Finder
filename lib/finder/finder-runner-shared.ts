@@ -63,7 +63,6 @@ export type ParamJob = {
     name: string;
     params: StrategyParams;
     backtestSettings: BacktestSettings;
-    rustBacktestSettings: BacktestSettings;
     strategy: Strategy;
     /** Pre-loaded exit strategy for Exit Strategy Override; undefined when override is off. */
     exitStrategy?: Strategy;

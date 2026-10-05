@@ -14,7 +14,6 @@ import { debugLogger } from "../debug-logger";
 
 import { compareFinderResults } from "./finder-engine";
 import { FinderResultRanker } from "./finder-result-ranker";
-import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import type { FinderRandomBenchmark, FinderResult } from "../types/finder";
 import type { CapitalSettings } from "../types/backtest";
 import {
@@ -27,6 +26,7 @@ import {
     computeFinderCompositeEdgeRatio,
     finderSortRequiresCompositeEdgeRatio,
     normalizeFinderCandidateParams,
+    projectRustBatchItemSettings,
     resolveFinderRiskOverrides,
     resolveQuickFunnelShortlistCount,
     selectPrescreenDataSlice,
@@ -303,7 +303,7 @@ async function dispatchRustBatchWithFallback(args: RustBatchDispatchArgs): Promi
     const batchItems = batchRuns.map((run) => ({
         id: run.id,
         signals: compactSignalsForRust(run.signals),
-        settings: run.job.rustBacktestSettings,
+        settings: projectRustBatchItemSettings(rustSettings, run.job.backtestSettings),
     }));
 
     const tRustStart = performance.now();
@@ -1213,7 +1213,6 @@ async function reconcileSingleTimeframeTopResults(
     const requiresTradeTimingQualitySort = finderSortRequiresTradeTimingQuality(input.options.sortPriority);
     const requiresExitAlphaSort = finderSortRequiresExitAlpha(input.options.sortPriority);
     const lastDataTime = closedData.length > 0 ? closedData[closedData.length - 1].time : null;
-    const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
     const precomputed = existingPrecomputed ?? precomputeIndicators(closedData, input.settings);
     const preparedDataCache = existingPreparedDataCache ?? new WeakMap();
     const reconciled: FinderResult[] = [];
@@ -1242,14 +1241,13 @@ async function reconcileSingleTimeframeTopResults(
                     ? { normalizeExitParams: exitStrategy.normalizeParams }
                     : undefined
             );
-            const { backtestSettings } = resolveFinderRiskOverrides(input.settings, rustSettings, normalizedParams, input.options);
+            const backtestSettings = resolveFinderRiskOverrides(input.settings, normalizedParams, input.options);
             const signals = generateSignalsForJob({
                 id: 0,
                 key: candidate.key,
                 name: candidate.name,
                 params: normalizedParams,
                 backtestSettings,
-                rustBacktestSettings: sanitizeBacktestSettingsForRust(backtestSettings),
                 strategy,
                 exitStrategy,
                 exitStrategyKey: candidate.exitStrategyKey,

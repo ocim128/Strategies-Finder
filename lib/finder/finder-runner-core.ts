@@ -84,7 +84,6 @@ export type QuickFunnelCandidate = {
         name: string;
         params: StrategyParams;
         backtestSettings: BacktestSettings;
-        rustBacktestSettings: BacktestSettings;
         strategy: Strategy;
         exitStrategy?: Strategy;
         exitStrategyKey?: string;
@@ -508,40 +507,28 @@ export function normalizeFinderCandidateParamSets(
 
 export function resolveFinderRiskOverrides(
     settings: BacktestSettings,
-    rustSettings: BacktestSettings,
     params: StrategyParams,
     options?: Pick<FinderOptions, "freezeRiskManagement" | "randomizePathExitParams">
-): { backtestSettings: BacktestSettings; rustBacktestSettings: BacktestSettings } {
+): BacktestSettings {
     if (isRiskManagementFrozen(options)) {
         // Path-exit overrides still apply under freeze when Randomize Path Exits
-        // is on (path exits force the TS engine, so only the backtest settings
-        // need updating — not the rust mirror). All other risk settings stay frozen.
+        // is on (path exits force the TS engine). All other risk settings stay
+        // frozen.
         if (shouldRandomizePathExitParams(settings, options)) {
             const backtestOverrides: Partial<BacktestSettings> = {};
             if (applyPathExitOverrides(settings, params, backtestOverrides, options)) {
-                return {
-                    backtestSettings: { ...settings, ...backtestOverrides },
-                    rustBacktestSettings: rustSettings,
-                };
+                return { ...settings, ...backtestOverrides };
             }
         }
-        return {
-            backtestSettings: settings,
-            rustBacktestSettings: rustSettings,
-        };
+        return settings;
     }
 
     let hasBacktestOverrides = false;
-    let hasRustOverrides = false;
     const backtestOverrides: Partial<BacktestSettings> = {};
-    const rustOverrides: Partial<BacktestSettings> = {};
 
     if (usesAtrRiskSettings(settings) && Number.isFinite(params.atrPeriod)) {
-        const normalized = clampAtrPeriod(Number(params.atrPeriod));
-        backtestOverrides.atrPeriod = normalized;
-        rustOverrides.atrPeriod = normalized;
+        backtestOverrides.atrPeriod = clampAtrPeriod(Number(params.atrPeriod));
         hasBacktestOverrides = true;
-        hasRustOverrides = true;
     }
 
     if (settings.riskMaxHoldEnabled && Number.isFinite(params.riskMaxHoldBars)) {
@@ -551,35 +538,61 @@ export function resolveFinderRiskOverrides(
 
     if (settings.riskMode !== "percentage") {
         hasBacktestOverrides = applyPathExitOverrides(settings, params, backtestOverrides, options) || hasBacktestOverrides;
-        return {
-            backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
-            rustBacktestSettings: hasRustOverrides ? { ...rustSettings, ...rustOverrides } : rustSettings,
-        };
+        return hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings;
     }
 
     if (settings.stopLossEnabled && Number.isFinite(params.stopLossPercent)) {
-        const normalized = clampPercentValue(Number(params.stopLossPercent), 0, 15);
-        backtestOverrides.stopLossPercent = normalized;
-        rustOverrides.stopLossPercent = normalized;
+        backtestOverrides.stopLossPercent = clampPercentValue(Number(params.stopLossPercent), 0, 15);
         hasBacktestOverrides = true;
-        hasRustOverrides = true;
     }
 
     if (settings.takeProfitEnabled && Number.isFinite(params.takeProfitPercent)) {
-        const normalized = clampPercentValue(Number(params.takeProfitPercent), 0, 100);
-        backtestOverrides.takeProfitPercent = normalized;
-        rustOverrides.takeProfitPercent = normalized;
+        backtestOverrides.takeProfitPercent = clampPercentValue(Number(params.takeProfitPercent), 0, 100);
         hasBacktestOverrides = true;
-        hasRustOverrides = true;
     }
 
     hasBacktestOverrides = applyModeSpecificTakeProfitOverrides(settings, params, backtestOverrides) || hasBacktestOverrides;
     hasBacktestOverrides = applyPathExitOverrides(settings, params, backtestOverrides, options) || hasBacktestOverrides;
 
-    return {
-        backtestSettings: hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings,
-        rustBacktestSettings: hasRustOverrides ? { ...rustSettings, ...rustOverrides } : rustSettings,
-    };
+    return hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings;
+}
+
+/**
+ * Rust request projection for one batch item, called only at submission
+ * packing (`dispatchRustBatchWithFallback`). Preserves the historical mirror
+ * contract: only an eligible ATR-period override and enabled percentage
+ * SL/TP candidate overrides reach the Rust request; candidate riskMaxHoldBars,
+ * path-exit, and adaptive-TP differences stay out. Candidates whose resolved
+ * values match the sanitized run base reuse the run-level object itself, so
+ * uncomplicated batches keep sharing one settings reference.
+ */
+export function projectRustBatchItemSettings(
+    rustSettings: BacktestSettings,
+    candidateSettings: BacktestSettings,
+): BacktestSettings {
+    const overrides: Partial<BacktestSettings> = {};
+    if (
+        usesAtrRiskSettings(rustSettings)
+        && Number.isFinite(candidateSettings.atrPeriod)
+        && candidateSettings.atrPeriod !== rustSettings.atrPeriod
+    ) {
+        overrides.atrPeriod = candidateSettings.atrPeriod;
+    }
+    if (
+        rustSettings.stopLossEnabled === true
+        && Number.isFinite(candidateSettings.stopLossPercent)
+        && candidateSettings.stopLossPercent !== rustSettings.stopLossPercent
+    ) {
+        overrides.stopLossPercent = candidateSettings.stopLossPercent;
+    }
+    if (
+        rustSettings.takeProfitEnabled === true
+        && Number.isFinite(candidateSettings.takeProfitPercent)
+        && candidateSettings.takeProfitPercent !== rustSettings.takeProfitPercent
+    ) {
+        overrides.takeProfitPercent = candidateSettings.takeProfitPercent;
+    }
+    return Object.keys(overrides).length > 0 ? { ...rustSettings, ...overrides } : rustSettings;
 }
 
 export function mergeFinderRiskParamsIntoBacktestSettings<

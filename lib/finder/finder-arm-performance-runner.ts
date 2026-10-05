@@ -8,7 +8,6 @@ import type {
 } from "../types/finder";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import { resolveBacktestSettingsFromRaw } from "../backtest-settings-resolver";
-import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import {
     buildFinderCandidatePlans,
     type FinderCandidatePlan,
@@ -191,18 +190,17 @@ function resolveCandidateSettings(
     const { entryParams } = plan.exitStrategyKey
         ? splitExitStrategyParams(plan.params)
         : { entryParams: plan.params };
-    const rustSettings = sanitizeBacktestSettingsForRust(input.settings);
-    const risk = resolveFinderRiskOverrides(input.settings, rustSettings, plan.params, input.options);
+    const candidateBaseSettings = resolveFinderRiskOverrides(input.settings, plan.params, input.options);
     const candidateSettings: BacktestSettings = plan.exitStrategyKey
         ? {
-            ...risk.backtestSettings,
+            ...candidateBaseSettings,
             disableSignalExits: true,
             exitStrategyOverrideEnabled: true,
             exitStrategyKey: plan.exitStrategyKey,
             exitStrategyParams: { ...(plan.exitStrategyParams ?? {}) },
         }
         : {
-            ...risk.backtestSettings,
+            ...candidateBaseSettings,
             exitStrategyOverrideEnabled: false,
             exitStrategyKey: "",
             exitStrategyParams: {},

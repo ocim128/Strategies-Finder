@@ -55,7 +55,6 @@ import { resolveFinderRiskOverrides } from "./finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
-import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import { resolveOosDataSlice, sliceFinderDataWindow } from "./finder-manager-logic";
 import {
     buildFinderPairNeutralMetrics,
@@ -178,7 +177,6 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
     const minActiveSymbols = options.universe?.minActiveSymbols ?? 1;
     const perSymbolMinTrades = UNIVERSE_OOS_PER_SYMBOL_MIN_TRADES;
     const requiresExitAlpha = options.universe?.sortPriority.includes("medianExitAlpha") === true;
-    const rustSettings = sanitizeBacktestSettingsForRust(deps.settings, deps.rustCapabilities);
     const preResolvedCapital = resolveCapitalSettingsFromRaw(
         deps.capitalSettings as unknown as Record<string, unknown>,
     );
@@ -231,12 +229,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
         const { entryParams } = candidate.exitStrategyKey
             ? splitExitStrategyParams(combinedParams)
             : { entryParams: combinedParams };
-        const { backtestSettings: riskAdjustedSettings } = resolveFinderRiskOverrides(
-            deps.settings,
-            rustSettings,
-            combinedParams,
-            options,
-        );
+        const riskAdjustedSettings = resolveFinderRiskOverrides(deps.settings, combinedParams, options);
         const oosBacktestSettings: BacktestSettings = candidate.exitStrategyKey
             ? {
                 ...riskAdjustedSettings,

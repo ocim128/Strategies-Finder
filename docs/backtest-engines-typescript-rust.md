@@ -366,6 +366,16 @@ sanitizer is a wire-safety measure, not proof that an ignored setting is
 semantically supported. A new setting must be added to both the capability
 fence and the sanitizer only after parity is established.
 
+Finder batch requests carry one sanitized run-level settings object plus one
+settings object per batch item. The per-item objects are a compatibility
+projection, not mirrors of the candidates' full resolved settings: built at
+submission packing by `projectRustBatchItemSettings`, they copy exactly the
+eligible ATR-period and enabled percentage SL/TP candidate overrides onto the
+run base and omit candidate max-hold, path-exit, and adaptive-TP differences
+(those keys are either capability-gated away or TypeScript-only). Candidate
+signal generation and TypeScript replay always use the candidates' full
+resolved settings.
+
 ### Protocol-v2 execution semantics
 
 For the capability-gated single-position profile, `barsInTrade` starts at zero

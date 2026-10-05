@@ -798,10 +798,18 @@ IBKR fallback loads prefer valid imports and seed CSVs before persisted
 caches; server CSV loaders retain their mtime freshness checks. See
 [price-data contracts](price-data.md) for the provider-specific rules.
 
-Backtest settings are part of Finder's result meaning. If a setting is not
-supported by Rust, strip it consistently in both `lib/backtest-service.ts` and
-`lib/finder-manager.ts`. If a setting changes entry timing, fills, exits,
-drawdown, or Sharpe, check the browser and server paths together.
+Backtest settings are part of Finder's result meaning. Candidates resolve ONE
+canonical `BacktestSettings` object through `resolveFinderRiskOverrides` in
+`lib/finder/finder-runner-core.ts`; there is no candidate-level Rust mirror.
+The Rust request projection for each batch item is derived only at submission
+packing (`projectRustBatchItemSettings` inside
+`dispatchRustBatchWithFallback`): exactly the eligible ATR-period and enabled
+percentage SL/TP candidate overrides are copied onto the sanitized run base,
+and candidates without a projected difference share the run-level object. If
+a setting is not supported by Rust, strip it consistently in both
+`lib/backtest-service.ts` and `lib/finder-manager.ts`. If a setting changes
+entry timing, fills, exits, drawdown, or Sharpe, check the browser and server
+paths together.
 
 ## Source map
 

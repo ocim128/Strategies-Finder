@@ -4,6 +4,7 @@ import type { BacktestSettings, Strategy } from '../lib/types/strategies';
 import {
     buildFinderSearchBaseParams,
     mergeFinderRiskParamsIntoBacktestSettings,
+    projectRustBatchItemSettings,
     resolveFinderRiskOverrides,
 } from '../lib/finder/finder-runner-core';
 
@@ -82,9 +83,8 @@ describe('Finder freeze + Randomize Path Exits interplay', () => {
             // (which can't run path exits anyway) and the frozen ATR/SL/TP
             // keys must remain exactly as the user set them.
             const rustSettings: BacktestSettings = { ...PATH_EXIT_SETTINGS, atrPeriod: 99 };
-            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(
+            const backtestSettings = resolveFinderRiskOverrides(
                 PATH_EXIT_SETTINGS,
-                rustSettings,
                 { pathExitThreshold: 0.9, pathExitMinBars: 12, atrPeriod: 50, stopLossPercent: 20 },
                 { freezeRiskManagement: true, randomizePathExitParams: true },
             );
@@ -99,22 +99,24 @@ describe('Finder freeze + Randomize Path Exits interplay', () => {
             expect(backtestSettings.takeProfitPercent).to.equal(7);
             expect(backtestSettings.riskMaxHoldBars).to.equal(6);
 
-            // Rust side is untouched (path exits force TS engine; Rust never
-            // sees these overrides, and the frozen ATR must not bleed into it).
-            expect(rustBacktestSettings.atrPeriod).to.equal(99);
-            expect(rustBacktestSettings.pathExitThreshold).to.equal(0.5);
+            // Rust side is untouched (path exits force TS engine; the
+            // submission projection passes the run base through unchanged).
+            const rustItemSettings = projectRustBatchItemSettings(rustSettings, backtestSettings);
+            expect(rustItemSettings.atrPeriod).to.equal(99);
+            expect(rustItemSettings.pathExitThreshold).to.equal(0.5);
         });
 
         it('returns settings unchanged under freeze when randomize is off', () => {
-            const { backtestSettings, rustBacktestSettings } = resolveFinderRiskOverrides(
+            const rustSettings: BacktestSettings = { ...PATH_EXIT_SETTINGS, atrPeriod: 99 };
+            const backtestSettings = resolveFinderRiskOverrides(
                 PATH_EXIT_SETTINGS,
-                { ...PATH_EXIT_SETTINGS, atrPeriod: 99 },
                 { pathExitThreshold: 0.9, atrPeriod: 50 },
                 { freezeRiskManagement: true, randomizePathExitParams: false },
             );
 
             expect(backtestSettings).to.deep.equal(PATH_EXIT_SETTINGS);
-            expect(rustBacktestSettings.atrPeriod).to.equal(99);
+            expect(backtestSettings).to.equal(PATH_EXIT_SETTINGS);
+            expect(projectRustBatchItemSettings(rustSettings, backtestSettings).atrPeriod).to.equal(99);
         });
     });
 

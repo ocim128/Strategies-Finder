@@ -31,7 +31,6 @@ import type { OHLCVData, BacktestSettings, Strategy, StrategyParams } from "../t
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderOptions, FinderResult } from "../types/finder";
 import { precomputeIndicators, runBacktest } from "../strategies/index";
-import { sanitizeBacktestSettingsForRust } from "../rust-settings-sanitizer";
 import {
     resolveFinderRiskOverrides,
     normalizeFinderCandidateParams,
@@ -118,7 +117,6 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
         return { filtered: results, removedCount: 0, applied: true };
     }
 
-    const rustSettings = sanitizeBacktestSettingsForRust(settings);
     const precomputed = precomputeIndicators(deps.oosData, settings);
     const minTrades = options.tradeFilterEnabled ? options.minTrades : 0;
     const requiresExitAlpha = finderSortRequiresExitAlpha(options.sortPriority);
@@ -151,14 +149,13 @@ export async function runCandidateOosPass(deps: CandidateOosDeps): Promise<Candi
                 candidate.exitStrategyParams ?? {},
             );
             const normalizedParams = injectNormalizedParams(strategy, combinedParams, exitStrategy);
-            const { backtestSettings } = resolveFinderRiskOverrides(settings, rustSettings, normalizedParams, options);
+            const backtestSettings = resolveFinderRiskOverrides(settings, normalizedParams, options);
             const job: ParamJob = {
                 id: 0,
                 key: candidate.key,
                 name: candidate.name,
                 params: normalizedParams,
                 backtestSettings,
-                rustBacktestSettings: sanitizeBacktestSettingsForRust(backtestSettings),
                 strategy,
                 ...(candidate.exitStrategyKey && exitStrategy
                     ? { exitStrategy, exitStrategyKey: candidate.exitStrategyKey }
