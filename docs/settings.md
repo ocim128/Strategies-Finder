@@ -20,7 +20,7 @@ Deletion reports success and refreshes configuration consumers only after the st
 
 ## Compatibility-only settings
 
-Some retired controls no longer have UI or execution behavior: the advanced-risk fields (partial take-profit, break-even, time-stop, and win-streak stop-loss values), `marketMode`, and `allowSameBarExit`. The resolver (`lib/backtest-settings-resolver.ts`) still accepts these fields so older saved payloads and legacy raw JSON keep loading without a migration, but `applyRemovedBacktestSettingDefaults` forces them to fixed inert values as the final step of every resolution. They have no DOM contracts and are stripped from Rust payloads. Do not add new controls or resolver rules for them.
+Some retired controls no longer have UI or execution behavior: the advanced-risk fields (partial take-profit, break-even, time-stop, and win-streak stop-loss values), `marketMode`, and `allowSameBarExit`. The resolver (`lib/backtest-settings-resolver.ts`) still accepts these fields so older saved payloads and legacy raw JSON keep loading without a migration, but `applyRemovedBacktestSettingDefaults` forces them to fixed inert values as the final step of every resolution. None of them have DOM contracts. Their Rust wire contract is mixed: `marketMode` and the win-streak fields are stripped from Rust payloads by `lib/rust-settings-sanitizer.ts`, while `partialTakeProfitAtR`, `partialTakeProfitPercent`, `breakEvenAtR`, `breakEvenPercent`, `timeStopBars`, and `allowSameBarExit` are forwarded to the Rust engine with their inert values. Do not add new controls or resolver rules for them.
 
 ## Owners and checks
 
