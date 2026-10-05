@@ -176,6 +176,12 @@ Implementation invariants:
 - `Run Sort` restores the run-time order and then reapplies the display limit.
 - A re-sort must not mutate or discard the full source needed by a later
   re-sort.
+- The Re-Sort menu follows the selected Scope, even while results from a
+  previous scope are retained and hidden. Switching scopes or starting a new
+  run resets it to Run Sort; refreshing options within the same scope keeps a
+  valid selection. Run start and server reattach refresh the menu before any
+  candidates arrive, including Arm Performance previews. Re-Sort and Arm
+  display edits never change a hidden inventory belonging to another scope.
 
 Current Chart and Strategy Quality have their own result-retention paths. If a
 new scope is added, define explicitly which collection is full and which is

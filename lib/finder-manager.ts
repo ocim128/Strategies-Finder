@@ -156,6 +156,7 @@ export class FinderManager {
 	private readonly paramSpace = new FinderParamSpace();
 	private readonly armDisplayUpdateFrame = coalesceAnimationFrame(() => this.applyArmPerformanceDisplaySettings());
 	private dom: FinderManagerDom | null = null;
+	private resortOptionsScope: FinderScope | null = null;
 	private getDom(): FinderManagerDom {
 		return this.dom ??= createFinderManagerDom();
 	}
@@ -443,6 +444,7 @@ export class FinderManager {
 			this.clearLatestResultsSnapshot();
 			this.resultStore.setLatestResults(emptyFinderLatestResults(this.controls.uiState.scope), false);
 		}
+		this.populateResortOptions(true);
 		this.renderLatestResults();
 		if (this.controls.uiState.scope === 'arm_performance' && this.session.activeRunId) {
 			this.getDom().finderCopyDiagnostics.disabled = false;
@@ -581,7 +583,7 @@ export class FinderManager {
 			renderRandomBenchmark: (mode, payload) => this.ui.renderRandomBenchmark(mode, payload as never),
 			renderLatestResults: () => this.renderLatestResults(),
 			stashAndResetResort: () => this.stashAndResetResort(),
-			populateResortOptions: () => this.populateResortOptions(),
+			populateResortOptions: (resetSelection) => this.populateResortOptions(resetSelection),
 			showDiagnosticsAvailability: (available) => {
 				this.getDom().finderCopyDiagnostics.disabled = !available;
 			},
@@ -695,22 +697,27 @@ export class FinderManager {
 	 * Populate the post-run re-sort dropdown options for the current scope.
 	 * Metric availability comes from the result store; this only writes the DOM.
 	 */
-	private populateResortOptions(): void {
+	private populateResortOptions(resetSelection = false): void {
 		const dom = this.getDom();
-		const options = this.resultStore.getResortOptions();
-		// Preserve the current selection if it's still valid for this scope.
+		const scope = this.getScope();
+		const options = this.resultStore.getResortOptions(scope);
 		const previousValue = dom.finderResort.value;
-		dom.finderResort.innerHTML = '<option value="">Run Sort</option>';
+		const preserveSelection = !resetSelection && this.resortOptionsScope === scope
+			&& options.some((option) => option.value === previousValue);
+		const runSort = document.createElement("option");
+		runSort.value = "";
+		runSort.textContent = "Run Sort";
+		dom.finderResort.replaceChildren(runSort);
 		for (const opt of options) {
 			const el = document.createElement("option");
 			el.value = opt.value;
 			el.textContent = opt.label;
 			dom.finderResort.appendChild(el);
 		}
-		// Reset to default on scope change; the previous metric may not apply.
-		dom.finderResort.value = "";
+		// A new scope/run starts at Run Sort; same-scope refreshes keep valid metrics.
+		dom.finderResort.value = preserveSelection ? previousValue : "";
 		dom.finderResort.disabled = false;
-		void previousValue;
+		this.resortOptionsScope = scope;
 	}
 
 	/**
@@ -719,7 +726,11 @@ export class FinderManager {
 	 * ordering from the stashed snapshot.
 	 */
 	private applyResort(): void {
+		// Switching controls hides the previous scope's inventory; never sort it
+		// using the newly selected scope's metrics.
+		if (this.resultStore.latestResults.scope !== this.getScope()) return;
 		const metric = this.getDom().finderResort.value;
+		if (metric && !this.resultStore.getResortOptions().some((option) => option.value === metric)) return;
 		if (this.resultStore.latestResults.scope === "arm_performance") {
 			this.applyArmPerformanceDisplaySettings();
 			return;
@@ -739,7 +750,7 @@ export class FinderManager {
 
 	private applyArmPerformanceDisplaySettings(): void {
 		this.armDisplayUpdateFrame.cancel();
-		if (this.resultStore.latestResults.scope !== "arm_performance") return;
+		if (this.getScope() !== "arm_performance" || this.resultStore.latestResults.scope !== "arm_performance") return;
 		const dom = this.getDom();
 		const minRaw = Number(dom.finderArmPerformanceMinEvents.value);
 		const maxText = dom.finderArmPerformanceMaxEvents.value.trim();
@@ -763,8 +774,7 @@ export class FinderManager {
 	 * as the run-time baseline. Called at run completion.
 	 */
 	private stashAndResetResort(): void {
-		const dom = this.getDom();
-		dom.finderResort.value = "";
+		this.populateResortOptions(true);
 		this.resultStore.stashRunSortBaseline();
 	}
 

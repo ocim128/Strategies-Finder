@@ -20,7 +20,7 @@ export interface FinderRunHost {
 	renderRandomBenchmark(mode: FinderOptions["mode"], payload?: unknown): void;
 	renderLatestResults(): void;
 	stashAndResetResort(): void;
-	populateResortOptions(): void;
+	populateResortOptions(resetSelection?: boolean): void;
 	/** Enable Copy Diagnostics when any diagnostics are available. */
 	showDiagnosticsAvailability(available: boolean): void;
 }

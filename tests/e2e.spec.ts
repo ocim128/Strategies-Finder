@@ -240,6 +240,27 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
             const typesPath = '/lib/batch-backtest/open-score-replay/types.ts';
             const { finderManager: manager } = await import(managerPath);
             const { createEmptyRankingMeasurement } = await import(typesPath);
+            // Keep a previous Universe inventory while switching scopes, as
+            // happens before a new run starts streaming its first candidate.
+            manager.resultStore.setLatestResults({ scope: 'symbol_universe', results: [] }, false);
+            const scopeControl = document.getElementById('finderScope') as HTMLSelectElement;
+            const resortControl = document.getElementById('finderResort') as HTMLSelectElement;
+            for (let repeat = 0; repeat < 2; repeat += 1) {
+                for (const scope of ['symbol_universe', 'arm_performance', 'strategy_quality', 'asset_opportunity', 'current_chart']) {
+                    scopeControl.value = scope;
+                    scopeControl.dispatchEvent(new Event('change', { bubbles: true }));
+                    const expected = ['', ...manager.resultStore.getResortOptions(scope).map((option: any) => option.value)];
+                    const actual = Array.from(resortControl.options).map((option) => option.value);
+                    if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error('Stale Re-Sort options for ' + scope);
+                    if (resortControl.value !== '') throw new Error('Scope change did not reset Re-Sort for ' + scope);
+                    resortControl.value = expected[1]!;
+                    manager.controls.applyScopeUi();
+                    if (resortControl.value !== expected[1]) throw new Error('Same-scope refresh lost the selected sort');
+                    const retained = manager.resultStore.latestResults;
+                    resortControl.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (scope !== 'symbol_universe' && manager.resultStore.latestResults !== retained) throw new Error('Re-Sort changed another scope inventory');
+                }
+            }
             for (const [id, value] of [
                 ['finderScope', 'arm_performance'],
                 ['finderArmPerformanceMeasurement', 'ranking_consistency'],

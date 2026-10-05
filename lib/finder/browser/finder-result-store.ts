@@ -61,6 +61,7 @@ import type {
 	FinderAssetOpportunityResult,
 	FinderLatestResults,
 	FinderMetric,
+	FinderScope,
 	FinderStrategyQualityMetric,
 	FinderUniverseCandidate,
 	FinderUniverseMetric,
@@ -387,13 +388,12 @@ export class FinderResultStore {
 	}
 
 	/**
-	 * Post-run re-sort dropdown options for the current scope. Each scope
+	 * Post-run re-sort dropdown options for the requested scope. Each scope
 	 * offers the same metrics its pre-run sort offers, minus metrics whose
 	 * values the retained inventory cannot supply.
 	 */
-	getResortOptions(): Array<{ value: string; label: string }> {
+	getResortOptions(scope: FinderScope = this.latestResults.scope): Array<{ value: string; label: string }> {
 		const options: Array<{ value: string; label: string }> = [];
-		const scope = this.latestResults.scope;
 		if (scope === 'symbol_universe') {
 			const results = this.symbolUniverseRunResults.length > 0
 				? this.symbolUniverseRunResults

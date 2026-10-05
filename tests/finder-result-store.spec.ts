@@ -584,6 +584,18 @@ describe("FinderResultStore", () => {
         expect(armOptions).to.include("TOP_RAW_PROFIT_NOW");
     });
 
+    it("offers the requested scope's metrics while retaining another scope's results", () => {
+        const { store } = makeStore();
+        store.adoptSymbolUniverseResults([makeCandidate({ threshold: 1 }, 10)], false);
+        const retained = store.latestResults;
+
+        const armOptions = store.getResortOptions("arm_performance").map((option) => option.value);
+        expect(armOptions).to.include("TOP_RAW");
+        expect(armOptions).not.to.include("robustUniverseScore");
+        expect(store.getResortOptions("current_chart").map((option) => option.value)).to.include("netProfit");
+        expect(store.latestResults).to.equal(retained);
+    });
+
     it("clears inventories between runs without touching display limits", () => {
         const { store } = makeStore();
         store.setRunDisplayLimits(7);

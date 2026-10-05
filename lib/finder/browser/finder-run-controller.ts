@@ -194,6 +194,7 @@ export class FinderRunController {
 		} else {
 			this.deps.store().setLatestResults(emptyFinderLatestResults(options.scope ?? 'current_chart'), false);
 		}
+		host.populateResortOptions(true);
 		host.renderLatestResults();
 
 		let progressFinalized = false;

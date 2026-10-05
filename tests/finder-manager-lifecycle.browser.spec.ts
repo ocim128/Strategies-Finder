@@ -1847,6 +1847,84 @@ function makeStubControllerDeps(host: FinderRunHost, overrides: Partial<FinderRu
     };
 }
 
+describe("Finder Re-Sort scope transitions", () => {
+    beforeEach(() => {
+        resetFacadeCollaborators();
+        manager().dom = createFakeFinderManagerDom();
+        manager().resortOptionsScope = null;
+    });
+
+    after(() => { manager().dom = null; });
+
+    it("updates options for every scope change while preserving the previous inventory", () => {
+        const m = manager();
+        m.resultStore.adoptSymbolUniverseResults([makeCandidate()], false);
+        const retained = m.resultStore.latestResults;
+        const representatives: Array<[FinderScope, string]> = [
+            ["symbol_universe", "robustUniverseScore"],
+            ["arm_performance", "TOP_RAW"],
+            ["strategy_quality", "averageExpectancy"],
+            ["asset_opportunity", "netProfit"],
+            ["current_chart", "netProfit"],
+        ];
+        for (const [scope, metric] of representatives) {
+            const select = m.getDom().finderResort;
+            select.value = "netProfit";
+            m.controls.uiState.scope = scope;
+            m.controls.applyScopeUi();
+            expect(select.children.map((option: any) => option.value), scope).to.include(metric);
+            expect(select.value, scope).to.equal("");
+            expect(m.resultStore.latestResults).to.equal(retained);
+        }
+    });
+
+    it("preserves a valid selection when options refresh within the same scope", () => {
+        const m = manager();
+        m.controls.uiState.scope = "arm_performance";
+        m.populateResortOptions();
+        m.getDom().finderResort.value = "TOP_RAW";
+        m.controls.applyScopeUi();
+        expect(m.getDom().finderResort.value).to.equal("TOP_RAW");
+    });
+
+    it("does not apply a selected scope's metric to a hidden inventory from another scope", () => {
+        const m = manager();
+        const lower = makeCandidate({ threshold: 1 }, 10);
+        const higher = makeCandidate({ threshold: 2 }, 100);
+        m.resultStore.adoptSymbolUniverseResults([lower, higher], false);
+        const retained = m.resultStore.latestResults;
+        m.controls.uiState.scope = "current_chart";
+        m.controls.applyScopeUi();
+        m.getDom().finderResort.value = "netProfit";
+        m.applyResort();
+        expect(m.resultStore.latestResults).to.equal(retained);
+    });
+
+    it("refreshes and resets Re-Sort before the first candidate of a new run", async () => {
+        const m = manager();
+        m.controls.uiState.scope = "arm_performance";
+        m.resultStore.adoptSymbolUniverseResults([makeCandidate()], false);
+        m.populateResortOptions();
+        m.getDom().finderResort.value = "TOP_RAW";
+        let checked = false;
+        const controller = new FinderRunController(makeStubControllerDeps(m.runHost(), {
+            store: () => m.resultStore,
+            prepareRun: () => m.resultStore.resetForNewRun(),
+            readOptions: () => ({ scope: "arm_performance", mode: "random", topN: 5 }) as any,
+            getUniverseSelectedStrategies: async () => {
+                const select = m.getDom().finderResort;
+                expect(select.children.map((option: any) => option.value)).to.include("TOP_RAW");
+                expect(select.children.map((option: any) => option.value)).not.to.include("robustUniverseScore");
+                expect(select.value).to.equal("");
+                checked = true;
+                return [];
+            },
+        }));
+        await controller.runFinder();
+        expect(checked).to.equal(true);
+    });
+});
+
 describe("Copy Diagnostics availability transitions", () => {
     beforeEach(() => {
         resetFacadeCollaborators();
