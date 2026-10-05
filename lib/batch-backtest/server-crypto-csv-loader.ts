@@ -4,6 +4,9 @@ import { resolve, sep } from "node:path";
 import { isMainThread } from "node:worker_threads";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { PointBoundedParsedCache } from "../data/point-bounded-parsed-cache";
+// Shared six-column pack/materialize primitives: one columnar representation
+// for the IBKR and crypto CSV loaders and the IBKR seed sidecar.
+import { candlesFromColumns, columnsFromCandles, type OhlcvColumns } from "../data/ohlcv-columns";
 import type { OHLCVData } from "../types/strategies";
 
 const MAX_CANDLES_PER_SERIES = 100_000;
@@ -12,61 +15,13 @@ const CRYPTO_SYMBOL_PATTERN = /^[A-Z0-9]{2,30}$/;
 
 // Parsed-CSV cache shared by main thread and workers. Entries are COLUMNAR
 // (six Float64Arrays; candle objects materialized per hit) so a worker-sized
-// cache stays off the V8 object graph — an object cache at this capacity
-// poisoned major-GC in TOP_MEAN workers (see the IBKR loader's audit comment).
+// cache stays off the V8 object graph — see lib/data/ohlcv-columns.ts for the
+// GC audit rationale behind the columnar shape.
 const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
 // Six Float64 columns per point: cap retained backing arrays at 384 MB.
 const PARSED_CSV_CACHE_MAX_POINTS = 8_000_000;
 
-interface ParsedSeedColumns {
-    time: Float64Array;
-    open: Float64Array;
-    high: Float64Array;
-    low: Float64Array;
-    close: Float64Array;
-    volume: Float64Array;
-}
-
-function columnsFromCandles(candles: OHLCVData[]): ParsedSeedColumns {
-    const n = candles.length;
-    const columns: ParsedSeedColumns = {
-        time: new Float64Array(n),
-        open: new Float64Array(n),
-        high: new Float64Array(n),
-        low: new Float64Array(n),
-        close: new Float64Array(n),
-        volume: new Float64Array(n),
-    };
-    for (let i = 0; i < n; i += 1) {
-        const bar = candles[i]!;
-        columns.time[i] = Number(bar.time);
-        columns.open[i] = bar.open;
-        columns.high[i] = bar.high;
-        columns.low[i] = bar.low;
-        columns.close[i] = bar.close;
-        columns.volume[i] = bar.volume;
-    }
-    return columns;
-}
-
-function candlesFromColumns(columns: ParsedSeedColumns, limitBars?: number): OHLCVData[] {
-    const n = columns.time.length;
-    const start = limitBars === undefined ? 0 : Math.max(0, n - limitBars);
-    const candles: OHLCVData[] = new Array(n - start);
-    for (let i = start; i < n; i += 1) {
-        candles[i - start] = {
-            time: columns.time[i]! as OHLCVData["time"],
-            open: columns.open[i]!,
-            high: columns.high[i]!,
-            low: columns.low[i]!,
-            close: columns.close[i]!,
-            volume: columns.volume[i]!,
-        };
-    }
-    return candles;
-}
-
-const parsedCsvCache = new PointBoundedParsedCache<{ mtimeMs: number; columns: ParsedSeedColumns }>(
+const parsedCsvCache = new PointBoundedParsedCache<{ mtimeMs: number; columns: OhlcvColumns }>(
     PARSED_CSV_CACHE_MAX_POINTS, PARSED_CSV_CACHE_MAX_ENTRIES,
 );
 
@@ -169,7 +124,8 @@ async function getCachedCandles(filePath: string, limitBars?: number): Promise<O
         if (mtimeMs === cached.mtimeMs) {
             parsedCsvCache.delete(filePath);
             parsedCsvCache.set(filePath, cached);
-            return candlesFromColumns(cached.columns, limitBars);
+            const n = cached.columns.time.length;
+            return candlesFromColumns(cached.columns, limitBars === undefined ? 0 : Math.max(0, n - limitBars));
         }
     } catch {
         // The caller will retry the normal read path below.

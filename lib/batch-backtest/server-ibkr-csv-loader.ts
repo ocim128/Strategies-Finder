@@ -6,6 +6,9 @@ import { debugLogger } from "../debug-logger";
 import { extractCandlesFromCsvPayload } from "../candle-cache";
 import { normalizeIbkrCandles } from "../data/data-interval-utils";
 import { PointBoundedParsedCache } from "../data/point-bounded-parsed-cache";
+// Shared six-column pack/materialize primitives: one columnar representation
+// for the IBKR and crypto CSV loaders and the seed sidecar.
+import { candlesFromColumns, columnsFromCandles, type OhlcvColumns } from "../data/ohlcv-columns";
 import { isIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import type { OHLCVData } from "../types/strategies";
 
@@ -45,53 +48,6 @@ const PARSED_DAILY_TARGET_CACHE_MAX_ENTRIES = 8_192;
 // Six Float64 columns per candle: at most 384 MB of backing arrays.
 const PARSED_DAILY_TARGET_CACHE_MAX_POINTS = 8_000_000;
 
-interface ParsedSeedColumns {
-    time: Float64Array;
-    open: Float64Array;
-    high: Float64Array;
-    low: Float64Array;
-    close: Float64Array;
-    volume: Float64Array;
-}
-
-function columnsFromCandles(candles: OHLCVData[]): ParsedSeedColumns {
-    const n = candles.length;
-    const columns: ParsedSeedColumns = {
-        time: new Float64Array(n),
-        open: new Float64Array(n),
-        high: new Float64Array(n),
-        low: new Float64Array(n),
-        close: new Float64Array(n),
-        volume: new Float64Array(n),
-    };
-    for (let i = 0; i < n; i += 1) {
-        const bar = candles[i]!;
-        columns.time[i] = Number(bar.time);
-        columns.open[i] = bar.open;
-        columns.high[i] = bar.high;
-        columns.low[i] = bar.low;
-        columns.close[i] = bar.close;
-        columns.volume[i] = bar.volume;
-    }
-    return columns;
-}
-
-function candlesFromColumns(columns: ParsedSeedColumns): OHLCVData[] {
-    const n = columns.time.length;
-    const candles: OHLCVData[] = new Array(n);
-    for (let i = 0; i < n; i += 1) {
-        candles[i] = {
-            time: columns.time[i]! as OHLCVData["time"],
-            open: columns.open[i]!,
-            high: columns.high[i]!,
-            low: columns.low[i]!,
-            close: columns.close[i]!,
-            volume: columns.volume[i]!,
-        };
-    }
-    return candles;
-}
-
 /**
  * Materialize only the trailing {@link limitBars} candles from columnar cache
  * entries. Bars are contiguous by index, so a tail slice is a cheap inner-loop
@@ -99,24 +55,12 @@ function candlesFromColumns(columns: ParsedSeedColumns): OHLCVData[] {
  * consume the newest `sourceBars` candles, so a tail is exactly what they need;
  * standalone targets (limitBars undefined) still materialize the full series.
  */
-function candlesFromColumnsTail(columns: ParsedSeedColumns, limitBars: number): OHLCVData[] {
+function candlesFromColumnsTail(columns: OhlcvColumns, limitBars: number): OHLCVData[] {
     const n = columns.time.length;
-    const start = n > limitBars ? n - limitBars : 0;
-    const candles: OHLCVData[] = new Array(n - start);
-    for (let i = start; i < n; i += 1) {
-        candles[i - start] = {
-            time: columns.time[i]! as OHLCVData["time"],
-            open: columns.open[i]!,
-            high: columns.high[i]!,
-            low: columns.low[i]!,
-            close: columns.close[i]!,
-            volume: columns.volume[i]!,
-        };
-    }
-    return candles;
+    return candlesFromColumns(columns, n > limitBars ? n - limitBars : 0);
 }
 
-type ParsedCsvCache = Map<string, { mtimeMs: number; columns: ParsedSeedColumns }>;
+type ParsedCsvCache = Map<string, { mtimeMs: number; columns: OhlcvColumns }>;
 
 const parsedCsvCache: ParsedCsvCache = new Map();
 // The coordinator replays thousands of standalone 4h targets across annual
@@ -125,7 +69,7 @@ const parsedCsvCache: ParsedCsvCache = new Map();
 const parsed4hTargetCache: ParsedCsvCache = new Map();
 // Main-thread daily targets are revisited by causal scoring, switch fills,
 // ranking and later candidates. Keep compact columns, never candle objects.
-const parsedDailyTargetCache = new PointBoundedParsedCache<{ mtimeMs: number; columns: ParsedSeedColumns }>(PARSED_DAILY_TARGET_CACHE_MAX_POINTS);
+const parsedDailyTargetCache = new PointBoundedParsedCache<{ mtimeMs: number; columns: OhlcvColumns }>(PARSED_DAILY_TARGET_CACHE_MAX_POINTS);
 const dailyCacheCounters = { hits: 0, misses: 0 };
 
 export function getParsedIbkrDailyCacheStats() {
@@ -135,7 +79,7 @@ export function getParsedIbkrDailyCacheStats() {
 interface CacheCheck {
     filePath: string;
     mtimeMs: number;
-    columns: ParsedSeedColumns;
+    columns: OhlcvColumns;
 }
 
 function checkParsedCsvCache(filePath: string, cache: ParsedCsvCache, mtimeMs: number): CacheCheck | null {
@@ -159,7 +103,7 @@ function checkParsedCsvCache(filePath: string, cache: ParsedCsvCache, mtimeMs: n
 function storeParsedCsvColumns(
     filePath: string,
     mtimeMs: number,
-    columns: ParsedSeedColumns,
+    columns: OhlcvColumns,
     cache: ParsedCsvCache,
     maxEntries: number,
 ): void {
@@ -180,7 +124,7 @@ export function clearParsedIbkrCsvCache(): void {
 }
 
 export const __testInternals = {
-    PointBoundedParsedCache: PointBoundedParsedCache<{ mtimeMs: number; columns: ParsedSeedColumns }>,
+    PointBoundedParsedCache: PointBoundedParsedCache<{ mtimeMs: number; columns: OhlcvColumns }>,
 };
 
 // ============================================================================
@@ -216,7 +160,7 @@ const SEED_SIDECAR_HEADER_BYTES = 32;
 const SEED_SIDECAR_COLUMN_COUNT = 6;
 
 interface SeedSidecarHit {
-    columns: ParsedSeedColumns;
+    columns: OhlcvColumns;
 }
 
 function isSeedSidecarDisabled(): boolean {
@@ -228,7 +172,7 @@ function seedSidecarPathForCsv(filePath: string): string {
     return `${filePath.replace(`${sep}csv${sep}`, `${sep}seed-cache${sep}`)}.bin`;
 }
 
-function seedSidecarBuffer(columns: ParsedSeedColumns, mtimeMs: number, sizeBytes: number): Buffer {
+function seedSidecarBuffer(columns: OhlcvColumns, mtimeMs: number, sizeBytes: number): Buffer {
     const count = columns.time.length;
     const out = Buffer.alloc(SEED_SIDECAR_HEADER_BYTES + count * 8 * SEED_SIDECAR_COLUMN_COUNT);
     out.write(SEED_SIDECAR_MAGIC, 0, "latin1");
@@ -324,7 +268,7 @@ async function readSeedSidecar(
     }
 }
 
-function writeSeedSidecarSync(filePath: string, mtimeMs: number, sizeBytes: number, columns: ParsedSeedColumns): void {
+function writeSeedSidecarSync(filePath: string, mtimeMs: number, sizeBytes: number, columns: OhlcvColumns): void {
     try {
         const payload = seedSidecarBuffer(columns, mtimeMs, sizeBytes);
         const sidecarPath = seedSidecarPathForCsv(filePath);
@@ -341,7 +285,7 @@ function writeSeedSidecarSync(filePath: string, mtimeMs: number, sizeBytes: numb
     }
 }
 
-async function writeSeedSidecarAsync(filePath: string, mtimeMs: number, sizeBytes: number, columns: ParsedSeedColumns): Promise<void> {
+async function writeSeedSidecarAsync(filePath: string, mtimeMs: number, sizeBytes: number, columns: OhlcvColumns): Promise<void> {
     try {
         const payload = seedSidecarBuffer(columns, mtimeMs, sizeBytes);
         const sidecarPath = seedSidecarPathForCsv(filePath);

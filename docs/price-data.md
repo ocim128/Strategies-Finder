@@ -131,6 +131,15 @@ are rejected. An Origin or Referer claiming localhost is insufficient.
 
 ## Server crypto CSV tails
 
+Both server CSV loaders share their columnar representation in
+`lib/data/ohlcv-columns.ts`: one six-column `OhlcvColumns` shape, one
+`columnsFromCandles` packer, and one `candlesFromColumns(columns, startIndex)`
+materializer that returns fresh candle objects. The IBKR seed sidecar uses the
+same shape without changing its binary format. Provider loaders keep their own
+limit normalization and bounds: crypto clamps `limitBars` before materializing
+and applies the limit on cold reads too, while IBKR cold text reads return the
+full parsed series and warm/sidecar hits materialize the requested tail.
+
 `loadFreshCryptoCandlesFromDisk` accepts an optional `limitBars` after
 `baseDir`. Batch and Finder historical callers pass their requested bar limit.
 Cache hits materialize only that trailing range into fresh candle objects.
