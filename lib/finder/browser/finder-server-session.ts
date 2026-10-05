@@ -264,6 +264,7 @@ export class FinderServerSession {
 				// Recovery's first request is immediate: the stream just died.
 				initialDelayMs: null,
 				nextRequestDelayMs: () => this.timing.pollIntervalMs,
+				waitIntervalAfterFailure: false,
 				onProgress: (snapshot) => {
 					host.setProgress(true, snapshot.progressPercent, snapshot.statusText);
 					host.setStatus(`${label}: ${snapshot.statusText}`);
@@ -398,11 +399,13 @@ export class FinderServerSession {
 				abortController,
 				logEvent: "finder.server.reattach_poll_failed",
 				// Adopted reattach waits before subsequent requests, then
-				// steps down after `fastPollCount` polls.
+				// steps down after `fastPollCount` polls, and re-waits the
+				// interval after every failure backoff before retrying.
 				initialDelayMs: this.timing.pollIntervalMs,
 				nextRequestDelayMs: (pollIndex) => pollIndex >= this.timing.fastPollCount
 					? this.timing.longPollIntervalMs
 					: this.timing.pollIntervalMs,
+				waitIntervalAfterFailure: true,
 				onProgress: (snapshot) => {
 					host.setProgress(true, snapshot.progressPercent, snapshot.statusText);
 					this.setStatusHost(host, `${jobLabel}: ${snapshot.statusText}`);
@@ -476,8 +479,19 @@ export class FinderServerSession {
 		logEvent: string;
 		/** Delay before the first request; null issues it immediately. */
 		initialDelayMs: number | null;
-		/** Delay before the request that follows the pollIndex-th cycle. */
+		/**
+		 * Delay before the request that follows the pollIndex-th completed
+		 * cycle (pollIndex has already been incremented for the upcoming
+		 * request, so the delay before request N uses N-1).
+		 */
 		nextRequestDelayMs: (pollIndex: number) => number;
+		/**
+		 * Retry-delay policy after a failure backoff: recovery's retry follows
+		 * the backoff directly (false); adopted reattach additionally re-waits
+		 * the polling interval before retrying, matching its pre-consolidation
+		 * cadence (true).
+		 */
+		waitIntervalAfterFailure: boolean;
 		onProgress: (snapshot: FinderRunStatusSnapshot) => void;
 	}): Promise<FinderOwnedRunPollOutcome> {
 		const { runId, abortController } = args;
@@ -528,6 +542,14 @@ export class FinderServerSession {
 				if (!await this.waitWithAbort(this.timing.failureBackoffMs[backoffIndex]!, abortController.signal)) {
 					return { kind: "cancelled" };
 				}
+				// Per-caller retry cadence: recovery fetches right after the
+				// backoff; adopted reattach re-waits the polling interval first
+				// (its pre-consolidation sequence: backoff, then interval).
+				if (args.waitIntervalAfterFailure) {
+					if (!await this.waitWithAbort(args.nextRequestDelayMs(pollIndex), abortController.signal)) {
+						return { kind: "cancelled" };
+					}
+				}
 				// Retries never advance the interval step-down counter.
 				continue;
 			} finally {
@@ -545,10 +567,14 @@ export class FinderServerSession {
 				return { kind: "terminal", snapshot };
 			}
 			args.onProgress(snapshot);
+			// Advance the counter BEFORE selecting the next delay so the wait
+			// before request N uses pollIndex = N-1 — exactly the pre-shared
+			// reattach semantics (long-poll step-down after fastPollCount
+			// completed polls, i.e. before request fastPollCount + 2).
+			pollIndex += 1;
 			if (!await this.waitWithAbort(args.nextRequestDelayMs(pollIndex), abortController.signal)) {
 				return { kind: "cancelled" };
 			}
-			pollIndex += 1;
 		}
 	}
 

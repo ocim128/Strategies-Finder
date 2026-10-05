@@ -497,6 +497,25 @@ function fastTiming(session: FinderServerSession): void {
     };
 }
 
+/**
+ * Pass-through setTimeout recorder for delay-sequence tests: real timers keep
+ * running, but every scheduled delay is recorded so the poll loop's wait
+ * sequence can be asserted deterministically. Filter recordings with
+ * `sentinelDelays` because unrelated timers (waitFor polling) are captured.
+ */
+function recordSetTimeoutDelays(): { delays: number[]; restore: () => void } {
+    const delays: number[] = [];
+    const original = globalThis.setTimeout;
+    (globalThis as any).setTimeout = ((handler: any, timeout?: number, ...args: any[]) => {
+        delays.push(timeout ?? 0);
+        return (original as any)(handler, timeout, ...args);
+    }) as any;
+    return {
+        delays,
+        restore: () => { (globalThis as any).setTimeout = original; },
+    };
+}
+
 // ---------------------------------------------------------------------------
 // Recording run host for workflow/controller tests
 // ---------------------------------------------------------------------------
@@ -963,6 +982,109 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         expect(readFinderActiveServerRun()?.runId).to.equal("flaky-run");
         expect(session.activeRunId).to.equal(null);
         expect(host.calls.setRunning[host.calls.setRunning.length - 1]).to.equal(false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Delay-sequence contracts: the shared poll loop must preserve each
+// caller's pre-consolidation retry cadence and the exact long-poll
+// step-down boundary. Sentinels make the scheduled-delay sequence
+// deterministic without fake timers.
+// ---------------------------------------------------------------------------
+
+describe("FinderServerSession poll delay sequences", () => {
+    const POLL = 11;
+    const LONG = 23;
+    const BACKOFF = 7;
+    const SENTINELS = new Set([POLL, LONG, BACKOFF]);
+
+    function sentinelTiming(session: FinderServerSession): void {
+        session.timing = {
+            pollIntervalMs: POLL,
+            longPollIntervalMs: LONG,
+            fastPollCount: 2,
+            failureBackoffMs: [BACKOFF],
+            maxConsecutiveFailures: 3,
+        };
+    }
+
+    function sentinelDelays(recorder: { delays: number[] }): number[] {
+        return recorder.delays.filter((delay) => SENTINELS.has(delay));
+    }
+
+    it("recovery retries after the failure backoff alone (no polling interval)", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        sentinelTiming(session);
+        session.activeRunId = "run-a";
+        const recorder = recordSetTimeoutDelays();
+        try {
+            const recovery = session.recoverActiveServerRun("run-a", "symbol_universe", host);
+            await waitFor(() => mockFetch.requests.length >= 1);
+            mockFetch.rejectFirst(new Error("boom"));
+            await waitFor(() => mockFetch.requests.length >= 1); // the retry
+            mockFetch.resolveFirst(terminalDoneSnapshot("run-a", [makeCandidate()]));
+
+            const recovered = await recovery;
+            expect(recovered?.terminal).to.equal(true);
+            expect(sentinelDelays(recorder), "recovery retry: backoff only, no interval re-wait")
+                .to.deep.equal([BACKOFF]);
+        } finally {
+            recorder.restore();
+        }
+    });
+
+    it("reattach retries after the failure backoff plus the polling interval", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        sentinelTiming(session);
+        persistActiveServerRun("retry-cadence");
+        const recorder = recordSetTimeoutDelays();
+        try {
+            const reattach = session.reattachToActiveServerRun(host);
+            mockFetch.resolveFirst(runningSnapshot("retry-cadence")); // probe adopts
+            await waitFor(() => session.activeRunId === "retry-cadence");
+            await waitFor(() => mockFetch.requests.length >= 1); // poll #1 (after the initial wait)
+            mockFetch.rejectFirst(new Error("boom"));
+            await waitFor(() => mockFetch.requests.length >= 1); // the retry
+            mockFetch.resolveFirst(terminalDoneSnapshot("retry-cadence", [makeCandidate()]));
+
+            await reattach;
+            // Initial interval, backoff, then the interval again before the
+            // retry — the pre-consolidation reattach sequence.
+            expect(sentinelDelays(recorder), "reattach retry: backoff, then the polling interval")
+                .to.deep.equal([POLL, BACKOFF, POLL]);
+        } finally {
+            recorder.restore();
+        }
+    });
+
+    it("steps down to the long interval exactly after fastPollCount completed polls", async () => {
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        sentinelTiming(session);
+        persistActiveServerRun("step-down");
+        const recorder = recordSetTimeoutDelays();
+        try {
+            const reattach = session.reattachToActiveServerRun(host);
+            mockFetch.resolveFirst(runningSnapshot("step-down")); // probe adopts
+            await waitFor(() => session.activeRunId === "step-down");
+            // fastPollCount=2: delays before polls #1..#2 use the fast
+            // interval (pollIndex 0 and 1), the delay before poll #3 uses the
+            // long interval (pollIndex 2).
+            for (const terminal of [false, false, true]) {
+                await waitFor(() => mockFetch.requests.length >= 1);
+                mockFetch.resolveFirst(terminal
+                    ? terminalDoneSnapshot("step-down", [makeCandidate()])
+                    : runningSnapshot("step-down"));
+            }
+
+            await reattach;
+            expect(sentinelDelays(recorder), "long interval begins before request fastPollCount + 2")
+                .to.deep.equal([POLL, POLL, LONG]);
+        } finally {
+            recorder.restore();
+        }
     });
 });
 

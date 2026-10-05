@@ -740,17 +740,22 @@ infer server ownership for another Finder mode from the shared result types.
   `lib/finder/browser/finder-server-session.ts`
   (`pollOwnedServerRunStatus`): it fetches and parses the scoped status
   snapshot, waits abort-aware between requests (Stop / a new run unblock a
-  pending sleep or backoff immediately), retries through the failure backoff
-  (2s→15s, terminating after more than 20 consecutive failures), and returns
-  an internal outcome (terminal / job gone / rejected / cancelled / connection
-  lost). The callers keep their distinct responsibilities: reattach owns the
-  initial persisted-run probe, scope/UI adoption, and whether the persisted
-  record is cleared (confirmed completion/Stop and confirmed missing jobs
-  clear it; transient failures retain it); recovery only interprets the
-  terminal snapshot for the workflow that still owns the run. Ownership
-  (`activeRunId`) is re-checked after every await, so a stale response can
-  never update a newer run's UI, and a reattach teardown reverts the run UI
-  only when no newer run owns it.
+  pending sleep or backoff immediately), and returns an internal outcome
+  (terminal / job gone / rejected / cancelled / connection lost). Retry
+  cadence preserves each caller's pre-consolidation policy: recovery's first
+  request is immediate and a retry follows the failure backoff (2s→15s)
+  directly; adopted reattach waits the polling interval before each request,
+  steps from 2s to 5s after 150 completed polls, and re-waits the interval
+  after every backoff before retrying. Both terminate after more than 20
+  consecutive failures. The callers keep their distinct responsibilities:
+  reattach owns the initial persisted-run probe, scope/UI adoption, and
+  whether the persisted record is cleared (confirmed completion/Stop and
+  confirmed missing jobs clear it; transient failures retain it); recovery
+  only interprets the terminal snapshot for the workflow that still owns the
+  run. Ownership (`activeRunId`) is re-checked after every await — before
+  HTTP status interpretation, progress updates, or terminal adoption — so a
+  stale response (404 included) can never update a newer run's UI, and a
+  reattach teardown reverts the run UI only when no newer run owns it.
 - The shared browser reader (`lib/ndjson-stream.ts`) dispatches the final JSON
   record at clean EOF even without a trailing newline, including Finder's
   configured terminal event types. Malformed final records fail with their
