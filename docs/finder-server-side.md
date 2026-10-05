@@ -845,7 +845,12 @@ For offline-first leg and target loads, the server wrapper reads synced IBKR
 and crypto CSVs directly with bounded mtime-aware parsed-file caches. Missing
 crypto files retain the existing `DataFetcher` fallback path. A present crypto
 CSV is also accepted when its history is naturally shorter than the generic
-deep-history threshold, avoiding a redundant SQLite/provider retry.
+deep-history threshold, avoiding a redundant SQLite/provider retry. The
+disk-first routing itself (`fetchServerHistoricalDataWithFetcher` /
+`fetchServerDetachedDataWithFetcher` in
+`lib/data/server-data-fetcher-factory.ts`) is shared verbatim with the Batch
+server loader; each loader still retains its own `DataFetcher` identity, loader
+LRUs, and invalidation policy.
 
 Diagnostics are combined server-side by the leaf
 `buildCombinedUniverseDiagnostics(...)` (the prior `FinderManager` combiners,

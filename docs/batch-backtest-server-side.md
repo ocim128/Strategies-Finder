@@ -663,7 +663,14 @@ applicable, `archiveDir` or `archiveError`. Archive writes remain best-effort,
 and saved archives have no TTL or cleanup sweep.
 
 For cold runs, worker threads read synced IBKR and crypto CSVs directly from
-disk rather than routing local files through the Vite HTTP server. Worker-thread
+disk rather than routing local files through the Vite HTTP server. The
+disk-first routing itself (`fetchServerHistoricalDataWithFetcher` /
+`fetchServerDetachedDataWithFetcher` in
+`lib/data/server-data-fetcher-factory.ts`) is shared verbatim with the Finder
+server loader; each loader still retains its own `DataFetcher` identity, loader
+LRUs, fingerprint memo, and invalidation policy (Batch relies on CSV mtime
+invalidation, while Finder additionally clears parsed CSV caches between
+runs). Worker-thread
 reads and synthetic-cache writes use their thread as the blocking boundary,
 avoiding Node's shared filesystem thread-pool bottleneck. Hosts with at least 48 GiB of
 RAM automatically raise each server loader's leg/pair LRUs from the 24/16

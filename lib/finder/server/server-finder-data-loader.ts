@@ -34,11 +34,15 @@ import {
     loadCachedSyntheticPair,
     storeSyntheticPair,
 } from "../../batch-backtest/synthetic-pair-disk-cache";
-import { clearServerDataCache, createServerDataFetcher } from "../../data/server-data-fetcher-factory";
-import { isIbkrSymbol } from "../../local-daily-datasets";
+import {
+    clearServerDataCache,
+    createServerDataFetcher,
+    fetchServerDetachedDataWithFetcher,
+    fetchServerHistoricalDataWithFetcher,
+} from "../../data/server-data-fetcher-factory";
 import { resolveServerBatchCacheBudget } from "../../batch-backtest/server-batch-cache-budget";
-import { clearParsedIbkrCsvCache, loadFreshIbkrCandlesFromDisk } from "../../batch-backtest/server-ibkr-csv-loader";
-import { clearParsedCryptoCsvCache, getCryptoCsvMtimeMs, loadFreshCryptoCandlesFromDisk } from "../../batch-backtest/server-crypto-csv-loader";
+import { clearParsedIbkrCsvCache } from "../../batch-backtest/server-ibkr-csv-loader";
+import { clearParsedCryptoCsvCache, getCryptoCsvMtimeMs } from "../../batch-backtest/server-crypto-csv-loader";
 import { normalizeSyntheticPairProviderMarkers } from "../../synthetic-pair-token";
 import { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-capacity";
 
@@ -84,15 +88,7 @@ async function fetchServerDetachedData(
     interval: string,
     options?: { signal?: AbortSignal; offline?: boolean },
 ): Promise<OHLCVData[]> {
-    if (isIbkrSymbol(symbol)) {
-        const ibkrCandles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal);
-        if (ibkrCandles) return ibkrCandles;
-    }
-    if (options?.offline === true) {
-        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal);
-        if (cryptoCandles) return cryptoCandles;
-    }
-    return serverDataFetcher.fetchDataDetached(symbol, interval, options);
+    return fetchServerDetachedDataWithFetcher(serverDataFetcher, symbol, interval, options);
 }
 
 async function fetchServerHistoricalData(
@@ -101,20 +97,7 @@ async function fetchServerHistoricalData(
     limit: number,
     options?: { signal?: AbortSignal; offline?: boolean },
 ): Promise<OHLCVData[]> {
-    if (isIbkrSymbol(symbol)) {
-        // limitBars tail-materializes cached columnar seeds directly; the
-        // slice below becomes a no-op but stays as the correctness backstop.
-        const candles = await loadFreshIbkrCandlesFromDisk(symbol, interval, options?.signal, undefined, limit);
-        if (!candles) return [];
-        return candles.length > limit ? candles.slice(-limit) : candles;
-    }
-    if (options?.offline === true) {
-        const cryptoCandles = await loadFreshCryptoCandlesFromDisk(symbol, interval, options.signal, undefined, limit);
-        if (cryptoCandles) {
-            return cryptoCandles.length > limit ? cryptoCandles.slice(-limit) : cryptoCandles;
-        }
-    }
-    return serverDataFetcher.fetchHistoricalData(symbol, interval, limit, options);
+    return fetchServerHistoricalDataWithFetcher(serverDataFetcher, symbol, interval, limit, options);
 }
 
 const loader = createBatchDatasetLoaderCore({
