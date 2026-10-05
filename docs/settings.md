@@ -18,6 +18,10 @@ After saving or applying a named configuration, the menu tracks the effective st
 
 Deletion reports success and refreshes configuration consumers only after the storage write succeeds. If browser storage rejects the write or the selected configuration is no longer saved, the menu reports a failure and keeps the selection available for retry. A failed storage write preserves the saved configuration and its tracking state.
 
+## Compatibility-only settings
+
+Some retired controls no longer have UI or execution behavior: the advanced-risk fields (partial take-profit, break-even, time-stop, and win-streak stop-loss values), `marketMode`, and `allowSameBarExit`. The resolver (`lib/backtest-settings-resolver.ts`) still accepts these fields so older saved payloads and legacy raw JSON keep loading without a migration, but `applyRemovedBacktestSettingDefaults` forces them to fixed inert values as the final step of every resolution. They have no DOM contracts and are stripped from Rust payloads. Do not add new controls or resolver rules for them.
+
 ## Owners and checks
 
 - Markup: `html-partials/tab-settings-*.html`; required workspace IDs: `lib/ui-manager-dom.ts`.

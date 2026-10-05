@@ -91,11 +91,7 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
 type ResolverGuardName =
     | "useAtrRisk"
     | "usePercentRisk"
-    | "useAdvancedRisk"
-    | "useRiskManagement"
-    | "useRiskMinHold"
-    | "useRiskMaxHold"
-    | "useRiskCooldown";
+    | "useRiskManagement";
 
 type ResolverGuardState = Record<ResolverGuardName, boolean>;
 
@@ -104,11 +100,6 @@ type NumericResolverKey =
     | "stopLossAtr"
     | "takeProfitAtr"
     | "trailingAtr"
-    | "partialTakeProfitAtR"
-    | "partialTakeProfitPercent"
-    | "breakEvenAtR"
-    | "breakEvenPercent"
-    | "timeStopBars"
     | "stopLossPercent"
     | "takeProfitPercent"
     | "takeProfitMfeBootstrapPercentile"
@@ -124,8 +115,6 @@ type NumericResolverKey =
     | "riskCooldownBars"
     | "riskEntryConfirmationPercent"
     | "riskEntryConfirmationBars"
-    | "riskWinStreakStopLossAfterWins"
-    | "riskWinStreakStopLossPercent"
     | "confirmationWindowBars"
     | "slippageBps"
     | "maxOpenTrades"
@@ -146,9 +135,7 @@ type BooleanResolverKey =
     | "riskCooldownEnabled"
     | "riskEntryConfirmationEnabled"
     | "entryTimeFilterEnabled"
-    | "riskWinStreakStopLossEnabled"
     | "invertSignals"
-    | "allowSameBarExit"
     | "strategyTimeframeEnabled"
     | "disableSignalExits"
     | "confirmationSignalExitsEnabled"
@@ -177,11 +164,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     { key: "stopLossAtr", guard: "useAtrRisk", disabledValue: 0 },
     { key: "takeProfitAtr", guard: "useAtrRisk", disabledValue: 0 },
     { key: "trailingAtr", guard: "useAtrRisk", disabledValue: 0 },
-    { key: "partialTakeProfitAtR", guard: "useAdvancedRisk", disabledValue: 0 },
-    { key: "partialTakeProfitPercent", guard: "useAdvancedRisk", disabledValue: 0 },
-    { key: "breakEvenAtR", guard: "useAdvancedRisk", disabledValue: 0 },
-    { key: "breakEvenPercent", guard: "useAdvancedRisk", disabledValue: 0 },
-    { key: "timeStopBars", guard: "useAdvancedRisk", disabledValue: 0 },
     { key: "stopLossPercent", guard: "usePercentRisk", disabledValue: 0 },
     { key: "takeProfitPercent", guard: "usePercentRisk", disabledValue: 0 },
     {
@@ -226,14 +208,14 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
     },
     {
         key: "riskMinHoldBars",
-        guard: "useRiskMinHold",
+        guard: "useRiskManagement",
         disabledValue: 0,
         resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskMinHoldBars"))),
     },
-    { key: "riskMaxHoldBars", guard: "useRiskMaxHold", disabledValue: 0 },
+    { key: "riskMaxHoldBars", guard: "useRiskManagement", disabledValue: 0 },
     {
         key: "riskCooldownBars",
-        guard: "useRiskCooldown",
+        guard: "useRiskManagement",
         disabledValue: 0,
         resolve: (raw) => Math.max(0, Math.round(readDefaultedNumber(raw, "riskCooldownBars"))),
     },
@@ -248,18 +230,6 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
         guard: "useRiskManagement",
         disabledValue: 0,
         resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskEntryConfirmationBars"))),
-    },
-    {
-        key: "riskWinStreakStopLossAfterWins",
-        guard: "useAdvancedRisk",
-        disabledValue: EFFECTIVE_BACKTEST_DEFAULTS.riskWinStreakStopLossAfterWins,
-        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskWinStreakStopLossAfterWins"))),
-    },
-    {
-        key: "riskWinStreakStopLossPercent",
-        guard: "useAdvancedRisk",
-        disabledValue: 0,
-        resolve: (raw) => Math.max(0, readDefaultedNumber(raw, "riskWinStreakStopLossPercent")),
     },
     { key: "slippageBps" },
     {
@@ -284,9 +254,9 @@ const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
 const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
     { key: "stopLossEnabled", keys: ["stopLossEnabled", "stopLossToggle"], guard: "usePercentRisk", disabledValue: false },
     { key: "takeProfitEnabled", keys: ["takeProfitEnabled", "takeProfitToggle"], guard: "usePercentRisk", disabledValue: false },
-    { key: "riskMinHoldEnabled", keys: ["riskMinHoldEnabled", "riskMinHoldToggle"], guard: "useRiskMinHold", disabledValue: false },
-    { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskMaxHold", disabledValue: false },
-    { key: "riskCooldownEnabled", keys: ["riskCooldownEnabled", "riskCooldownToggle"], guard: "useRiskCooldown", disabledValue: false },
+    { key: "riskMinHoldEnabled", keys: ["riskMinHoldEnabled", "riskMinHoldToggle"], guard: "useRiskManagement", disabledValue: false },
+    { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskManagement", disabledValue: false },
+    { key: "riskCooldownEnabled", keys: ["riskCooldownEnabled", "riskCooldownToggle"], guard: "useRiskManagement", disabledValue: false },
     {
         key: "riskEntryConfirmationEnabled",
         keys: ["riskEntryConfirmationEnabled", "riskEntryConfirmationToggle"],
@@ -299,14 +269,7 @@ const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
         guard: "useRiskManagement",
         disabledValue: false,
     },
-    {
-        key: "riskWinStreakStopLossEnabled",
-        keys: ["riskWinStreakStopLossEnabled", "riskWinStreakStopLossToggle"],
-        guard: "useAdvancedRisk",
-        disabledValue: false,
-    },
     { key: "invertSignals", keys: ["invertSignals", "invertSignalsToggle"] },
-    { key: "allowSameBarExit", keys: ["allowSameBarExit", "allowSameBarExitToggle"] },
     { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
     { key: "disableSignalExits", keys: ["disableSignalExits"] },
     { key: "confirmationSignalExitsEnabled", keys: ["confirmationSignalExitsEnabled", "confirmationSignalExitsToggle"] },
@@ -662,10 +625,6 @@ export function resolveBacktestSettingsFromRaw(
             : EFFECTIVE_BACKTEST_DEFAULTS.riskMode;
     const useAtrRisk = riskEnabled && riskMode === "simple";
     const usePercentRisk = riskEnabled && riskMode === "percentage";
-    const useAdvancedRisk = false;
-    const useRiskMinHold = riskEnabled;
-    const useRiskMaxHold = riskEnabled;
-    const useRiskCooldown = riskEnabled;
 
     const rawConfirmationStrategies = readStringArray(raw["confirmationStrategies"]);
     const confirmationStrategiesEnabled = readBoolean(
@@ -692,15 +651,10 @@ export function resolveBacktestSettingsFromRaw(
     const tradeDirection = readTradeDirection(raw["tradeDirection"], EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection);
     const entryTimeFilter = resolveEntryTimeFilter(raw["entryTimeFilter"] ?? raw["riskEntryTimeFilter"]);
 
-    const marketMode: MarketMode = EFFECTIVE_BACKTEST_DEFAULTS.marketMode;
     const guards: ResolverGuardState = {
         useAtrRisk,
         usePercentRisk,
-        useAdvancedRisk,
         useRiskManagement: riskEnabled,
-        useRiskMinHold,
-        useRiskMaxHold,
-        useRiskCooldown,
     };
     const numericSettings = resolveNumericSettingRules(raw, guards);
     const booleanSettings = resolveBooleanSettingRules(raw, guards);
@@ -714,7 +668,6 @@ export function resolveBacktestSettingsFromRaw(
         ...booleanSettings,
         riskEntryConfirmationMove: resolveEntryConfirmationMove(raw["riskEntryConfirmationMove"]),
         entryTimeFilter,
-        marketMode,
         trendEmaPeriod: 0,
         trendEmaSlopeBars: 0,
         atrPercentMin: 0,
