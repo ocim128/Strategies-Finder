@@ -1037,6 +1037,45 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.riskEntryConfirmationPercent).to.equal(100);
     });
 
+    it('resolves toggle aliases with first-present-key precedence on the UI path', () => {
+        // Each setting lists its canonical key first and its legacy toggle
+        // alias second; the first PRESENT key with a parseable value wins.
+        const resolved = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            stopLossEnabled: false,
+            stopLossToggle: true,
+            entryTimeFilterEnabled: true,
+            riskEntryTimeFilterToggle: false,
+            confirmationSignalExitsEnabled: false,
+            confirmationSignalExitsToggle: true,
+            stopLossPercent: 4,
+        } as unknown as BacktestSettings);
+        expect(resolved.stopLossEnabled).to.equal(false);
+        expect(resolved.entryTimeFilterEnabled).to.equal(true);
+        expect(resolved.confirmationSignalExitsEnabled).to.equal(false);
+
+        // Toggle-only payloads resolve through the alias...
+        const toggleOnly = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            stopLossToggle: 'true',
+            stopLossPercent: 4,
+        } as unknown as BacktestSettings);
+        expect(toggleOnly.stopLossEnabled).to.equal(true);
+
+        // ...and an unparseable canonical value falls through to the next
+        // present alias instead of resolving to the fallback.
+        const fallthrough = resolveBacktestSettingsFromRaw({
+            riskSettingsToggle: true,
+            riskMode: 'percentage',
+            stopLossEnabled: 'not-a-boolean',
+            stopLossToggle: 'false',
+            stopLossPercent: 4,
+        } as unknown as BacktestSettings);
+        expect(fallthrough.stopLossEnabled).to.equal(false);
+    });
+
     it('keeps minimum hold on the TypeScript-only path when enabled', () => {
         const resolved = resolveBacktestSettingsFromRaw({
             riskSettingsToggle: true,

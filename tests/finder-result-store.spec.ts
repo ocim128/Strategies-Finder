@@ -187,6 +187,71 @@ describe("FinderResultStore", () => {
         store.flushPendingDisplayPersistence();
     });
 
+    it("Arm Run Sort restores the original empty view when the default arm filters to zero rows", () => {
+        // Characterization: with an event filter that the default arm's rows
+        // cannot satisfy, the default view is EMPTY at adoption. Switching to
+        // an arm whose rows clear the filter shows them, and Run Sort must
+        // fall back to the stashed original (the empty default view) — not to
+        // the other arm's rows and not to the unfiltered inventory. The
+        // guard is the filtered default view's availability, never the
+        // unfiltered inventory length.
+        const { store } = makeStore();
+        const rows = [makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2), makeArmCandidate(2, 3, 12)].map((row) => ({
+            ...row,
+            metrics: {
+                ...row.metrics!,
+                TOP_RAW_PROFIT_NOW: { ...row.metrics!.TOP_RAW_PROFIT_NOW, events: 1 },
+                TOP_RAW: { ...row.metrics!.TOP_RAW, events: 9 },
+            },
+        }));
+        const filter = {
+            measurement: "return" as const,
+            rankingSort: "overall_ordering" as const,
+            rankingHorizon: null,
+            basis: "raw" as const,
+            eventFilterEnabled: true,
+            minEvents: 5,
+            maxEvents: null,
+        };
+        store.initializeArmPerformanceDisplayFilter(filter);
+        store.armPerformanceDisplayLimit = 10;
+        store.adoptArmPerformanceResults(rows, null, true);
+        expect(store.latestResults.results).to.deep.equal([], "the default arm's filtered view is empty");
+        expect(store.armPerformanceDefaultResults).to.deep.equal([]);
+        store.stashRunSortBaseline();
+
+        expect(store.setArmPerformanceDisplayFilter(filter, "TOP_RAW")).to.equal(true);
+        expect(store.latestResults.results).to.have.length(3, "the TOP_RAW arm's rows clear the event filter");
+        expect(store.setArmPerformanceDisplayFilter(filter, "TOP_RAW")).to.equal(
+            false,
+            "duplicate control events still describe the rendered view",
+        );
+
+        store.restoreRunSort();
+        expect(store.latestResults.results).to.deep.equal(
+            [],
+            "Run Sort restores the stashed original empty default view",
+        );
+        expect(store.latestResults.scope).to.equal("arm_performance");
+    });
+
+    it("re-sorts an incomplete bounded preview without waiting for terminal adoption", () => {
+        const { store } = makeStore();
+        store.armPerformanceDisplayLimit = 10;
+        store.adoptArmPerformanceResults([makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2)], null, false);
+        expect(store.latestResults.scope === "arm_performance" && store.latestResults.inventoryComplete).to.equal(false);
+        store.setArmPerformanceDisplayFilter({ basis: "raw" }, "TOP_RAW");
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(
+            0,
+            "TOP_RAW ranks by raw (8 beats 2)",
+        );
+        store.restoreRunSort();
+        expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(
+            1,
+            "Run Sort returns to the TOP_RAW_PROFIT_NOW default (9 beats 1)",
+        );
+    });
+
     it("commits terminal results immediately and discards superseded display checkpoints", () => {
         const { store, writes } = makeStore();
         const rows = [makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2)];
