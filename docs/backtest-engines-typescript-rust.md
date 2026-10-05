@@ -154,12 +154,17 @@ or an OOS trade history.
 The single-position Finder fast path only engages when the caller opts out of
 the RETURNED equity curve (`options.omitEquityCurve === true`) and passes
 every per-feature blocker (`maxOpenTrades === 1`, no trailing ATR, no adaptive
-percentage take profit, no entry-time filter, and the remaining eligibility
+percentage take profit, and the remaining eligibility
 fences). Scalar Sharpe remains supported on the fast path: when
 `includeSharpeRatio` is not disabled, the fast path fills its typed equity
 buffer and computes Sharpe from it, even though no object equity curve is
 returned. The narrower signal-only scan (`canUseSignalOnlyFinderFastPath`)
 additionally requires drawdown skipping (`skipDrawdown`) and Sharpe disabled.
+Daily entry-time filters work on both fast-path scans: only opening a position
+checks the actual execution bar with the shared `isEntryBarAllowed` helper.
+Signal exits and exit-only override signals remain available on other bars.
+The sparse scan updates the current bar for cooldowns and counts minimum-hold
+bars before the current bar increment for `next_open`, matching the fallback.
 Every configuration outside these fences executes ONE shared fallback
 simulation, `runFallbackPositionSimulation()` in `backtest-engine.ts`, used
 by both `runBacktest()` and `runBacktestCompact()`.
@@ -195,7 +200,7 @@ to both wrappers. Cancellation behavior is unchanged: both wrappers throw
 
 The fallback loops are the hottest TypeScript simulation path for Finder
 configurations that block the fast path (overlap, trailing exits, adaptive
-take profit, entry-time filters). Baseline wall-clock/heap measurements for a
+take profit). Baseline wall-clock/heap measurements for a
 20,000-bar seeded dataset with ~4,000 signals and overlapping positions
 (`npm run bench:backtest-fallback`, October 2026, idle machine, medians of
 three invocations), with the shared-simulation medians from the same machine

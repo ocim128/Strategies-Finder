@@ -791,6 +791,20 @@ Engine eligibility is still decided by the backtest executor; a preference is
 not proof that Rust was used. Preserve this field when changing the request
 body or server runner.
 
+Daily entry-time filters still require TypeScript, but are supported by its
+single-position Finder fast path. The filter gates entries at the actual fill
+bar and leaves exits unrestricted. Eligible runs retain the indexed signal
+preparation and typed Sharpe buffer even with `day_open` or `day_close` enabled.
+
+For a repeatable local comparison, run
+`npm exec -- esno scripts/bench-finder-entry-time.ts <configuration.json> <label> [symbolCount]`.
+This benchmarks 4h Symbol Universe with a fixed random seed, discards one warmup,
+then records three runs and candidate-result hashes under
+`artifacts/finder-entry-time-bench/`. It uses the captured exit override; copied
+UI configurations do not include the checked list of sampled exit strategies,
+so it cannot reconstruct that part of a historical random run. Compare hashes
+as well as durations, on unchanged local histories and an idle machine.
+
 For large server-owned runs, use the documented Node heap budget, for example:
 
 ```powershell

@@ -506,7 +506,6 @@ function getSinglePositionFinderFastPathBlockers(
     if (config.breakEvenAtR !== 0) blockers.push("break_even_atr");
     if (config.breakEvenPercent !== 0) blockers.push("break_even_percent");
     if (config.riskWinStreakStopLossEnabled) blockers.push("win_streak_stop_loss");
-    if (config.entryTimeFilterEnabled) blockers.push("entry_time_filter");
     return blockers;
 }
 
@@ -832,6 +831,11 @@ function runSinglePositionFinderFastPath(args: {
     };
 
     const openSignalPosition = (signal: Signal, barIndex: number): PositionState | null => {
+        // Gate only entries at the execution bar. Opposite/override signals
+        // must still close positions outside the selected daily entry window.
+        if (config.entryTimeFilterEnabled && !isEntryBarAllowed(data, barIndex, config.entryTimeFilter)) {
+            return null;
+        }
         diagnostics && diagnostics.counts.entriesAttempted++;
         const opened = buildPositionFromSignal({
             signal,
@@ -954,7 +958,9 @@ function runSinglePositionFinderFastPath(args: {
 
     const syncSparseBarsInTrade = (barIndex: number): void => {
         if (!position || positionEntryBarIndex < 0) return;
-        position.barsInTrade = Math.max(position.barsInTrade, barIndex - positionEntryBarIndex);
+        // next_open signals run before this bar increments the hold counter.
+        const beforeBarIncrement = config.executionModel === "next_open" ? 1 : 0;
+        position.barsInTrade = Math.max(0, barIndex - positionEntryBarIndex - beforeBarIncrement);
     };
 
     const tradeSimulationStartedAt = performance.now();
@@ -969,6 +975,7 @@ function runSinglePositionFinderFastPath(args: {
             const candle = data[barIndex];
             if (!candle) continue;
 
+            currentBarIndex = barIndex;
             syncSparseBarsInTrade(barIndex);
             diagnostics && diagnostics.counts.barsScanned++;
             handleSignal(getPreparedSignal(i, barIndex), barIndex, candle);

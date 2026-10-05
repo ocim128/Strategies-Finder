@@ -457,7 +457,7 @@ describe('Backtesting Engine - fallback characterization (full vs compact)', () 
         expect(compact.trades).to.deep.equal(full.trades);
     });
 
-    it('runs the fallback for entry-time filtering and matches retained trades exactly', () => {
+    it('matches the full entry-time filter through the compact fast path', () => {
         const data = makeData(60).map((bar, index) => ({ ...bar, time: (1700000000 + index * 3600) as Time }));
         const signals = buyEveryNSignal(data, 5);
         const settings = {
@@ -471,7 +471,7 @@ describe('Backtesting Engine - fallback characterization (full vs compact)', () 
         const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
 
         assertFallbackUsed(full);
-        assertFallbackUsed(compact);
+        expect(compact.diagnostics?.fastPath?.used).to.equal(true);
         expect(full.totalTrades).to.be.greaterThan(0);
         assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
         expect(compact.trades).to.deep.equal(full.trades);
