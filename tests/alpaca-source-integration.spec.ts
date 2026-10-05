@@ -20,6 +20,7 @@ import assert from "node:assert/strict";
 import {
     __acquireIbkrSyncOwnerForTests,
     __getIbkrCatalogWriteCountForTests,
+    __getIbkrSyncRunStateForTests,
     __resetIbkrSyncStateForTests,
     assertSourceConstraints,
     mapAlpacaStopReason,
@@ -30,6 +31,8 @@ import {
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
 import { HttpStatusError } from "../lib/vite-http-utils";
 import type { AlpacaConfig } from "../lib/ibkr-data/alpaca-fetcher";
+import { waitFor } from "./helpers/wait-for";
+import { withTimeout } from "./helpers/with-timeout";
 
 // Minimal AlpacaConfig for the injected worker (creds are not used in the
 // source-guard path — the worker rejects before any fetch).
@@ -748,5 +751,342 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
         const done = events[events.length - 1]!;
         assert.equal(done.type, "done");
         assert.equal(done.cancelled, true);
+    });
+});
+
+/**
+ * Characterization tests for `processSyncBatch`'s settlement and release
+ * timing, recorded against the recursive dispatch/inFlight scheduler before
+ * the worker-loop simplification. They lock the behaviors the plain
+ * concurrency test cannot see: the batch promise can settle BEFORE sibling
+ * fetches finish; a release-time writer failure rejects the awaited promise
+ * while sibling fetches keep running (their outcomes are dropped, never
+ * unhandled rejections); a returned cancellation without a signal abort
+ * leaves a permanent index gap that strands every later outcome while the
+ * sibling release paths still dispatch the remaining queue (a known lifecycle
+ * wart, kept verbatim by the simplification and deliberately NOT corrected
+ * here); and a bare AbortError from a fetcher is batch cancellation, not
+ * per-symbol failure accounting.
+ */
+describe("alpaca processSyncBatch settlement characterization", () => {
+    beforeEach(() => __resetIbkrSyncStateForTests());
+    afterEach(() => __resetIbkrSyncStateForTests());
+
+    function makeDeferredAlpacaFetcher(options?: {
+        onCall?: (symbol: string) => void;
+    }): {
+        fetcher: AlpacaFetcher;
+        deferred: Map<string, () => void>;
+        calls: string[];
+    } {
+        const deferred = new Map<string, () => void>();
+        const calls: string[] = [];
+        const fetcher = (async (_cat: unknown, symbol: string) => {
+            calls.push(symbol);
+            options?.onCall?.(symbol);
+            await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
+            deferred.delete(symbol);
+            return alpacaResult(symbol);
+        }) as AlpacaFetcher;
+        return { fetcher, deferred, calls };
+    }
+
+    it("settles the batch promise while in-window siblings are unresolved when a returned cancellation releases first", async () => {
+        // A returned cancellation (result.cancelled, no signal abort) at index 0
+        // releases the cancelled outcome, marks the run cancelled, and settles
+        // the batch while the rest of the dispatch window is still in flight.
+        const { fetcher, deferred } = makeDeferredAlpacaFetcher();
+        const events: Array<Record<string, unknown>> = [];
+        let callCount = 0;
+        const countingFetcher = (async (...args: Parameters<AlpacaFetcher>) => {
+            callCount += 1;
+            if (callCount === 1) {
+                return { ...alpacaResult("R0"), cancelled: true, complete: false, stopReason: "cancelled" };
+            }
+            return fetcher(...args);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols: ["R0", "R1", "R2"], interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: countingFetcher as never },
+        );
+        await withTimeout(run, 5000, "the batch to settle at the cancelled release");
+
+        const done = events[events.length - 1]!;
+        assert.equal(done.type, "done");
+        assert.equal(done.cancelled, true);
+        assert.equal(done.ok, false);
+        assert.equal(callCount, 3, "the whole first window was dispatched before the cancellation released");
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"], "no per-symbol events: R1/R2 never released");
+        assert.equal(deferred.size, 2, "the run promise settled while two sibling fetches were still unresolved");
+
+        // Settle the orphans: their outcomes buffer behind the cancelled
+        // release's index gap and are silently dropped — no events, no writes.
+        for (const [, resolveFetch] of [...deferred]) resolveFetch();
+        await waitFor(() => deferred.size === 0, 2000, "orphan fetches to settle");
+        assert.equal(__getIbkrCatalogWriteCountForTests(), 0, "dropped outcomes never reach the catalog");
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"]);
+    });
+
+    it("still dispatches the remaining queue after a returned cancellation but never releases the outcomes stranded behind it", async () => {
+        // Characterizes the concurrent returned-cancellation flow: index 0
+        // returns cancelled without any signal abort, so wasCancelled() stays
+        // false for the sibling release paths. The batch settles at the
+        // cancelled release; the deferred siblings still dispatch the rest of
+        // the queue (P3/P4 ARE fetched), but the cancelled release leaves an
+        // index gap that no later outcome can cross, so nothing emits after
+        // done. The post-cancellation dispatch of never-released symbols is
+        // the documented wart this suite locks.
+        const symbols = ["P0", "P1", "P2", "P3", "P4"];
+        const events: Array<Record<string, unknown>> = [];
+        let firstReturned = false;
+        const { fetcher, deferred } = makeDeferredAlpacaFetcher();
+        const wrapperCalls: string[] = [];
+        const alpacaFetcher = (async (...args: Parameters<AlpacaFetcher>) => {
+            wrapperCalls.push(args[1]!);
+            if (!firstReturned) {
+                firstReturned = true;
+                return { ...alpacaResult("P0"), cancelled: true, complete: false, stopReason: "cancelled" };
+            }
+            return fetcher(...args);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
+        );
+        // P0 returns its cancellation immediately, so the initial window is
+        // P0..P2 with P1/P2 still deferred; the cancelled release settles the
+        // batch without dispatching P3/P4 yet.
+        await waitFor(
+            () => deferred.size === 2 && events.some((e) => e.type === "done"),
+            2000,
+            "the batch to settle with the deferred siblings (P1, P2) still in flight",
+        );
+        await withTimeout(run, 5000, "the settled batch promise to resolve");
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"]);
+
+        // Drain the deferred siblings and whatever they dispatch next: the
+        // sibling release paths keep claiming work (wasCancelled() is false),
+        // so P3/P4 get fetched, but none of the buffered outcomes can cross
+        // the index-0 gap left by the cancelled release.
+        let drained = 0;
+        while (drained < symbols.length - 1) {
+            await waitFor(() => deferred.size > 0, 2000, "in-flight siblings to drain");
+            for (const [symbol, resolveFetch] of [...deferred]) {
+                deferred.delete(symbol);
+                resolveFetch();
+                drained += 1;
+            }
+        }
+        await waitFor(() => deferred.size === 0, 2000, "every dispatched symbol to settle");
+        assert.deepEqual(wrapperCalls, symbols, "siblings still dispatch the remaining queue after a returned cancellation");
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"], "no outcome releases after the cancelled index gap");
+    });
+
+    it("rejects the batch when the writer fails while siblings are unresolved, drops their outcomes, and never emits done", async () => {
+        const symbols = ["W0", "W1", "W2"];
+        const events: Array<Record<string, unknown>> = [];
+        const writer = (event: Record<string, unknown>): void => {
+            events.push(event);
+            if (event.type === "symbol") {
+                throw new Error("ndjson socket died mid-write");
+            }
+        };
+        const { fetcher, deferred, calls } = makeDeferredAlpacaFetcher();
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            writer as never,
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: fetcher as never },
+        );
+        await waitFor(() => deferred.size === 3, 2000, "the whole window to be in flight");
+        // Settle W0: its release reaches the writer, which throws fatally.
+        deferred.get("W0")!();
+        await assert.rejects(
+            withTimeout(run, 5000, "the batch to reject after the writer failure"),
+            /ndjson socket died mid-write/,
+        );
+        assert.equal(events.some((e) => e.type === "done"), false, "a fatal release error must skip the done event");
+        const symbolEventsBefore = events.filter((e) => e.type === "symbol").length;
+
+        // The sibling fetches are still unresolved when the batch promise
+        // rejects. Settling them afterwards must drop their outcomes quietly:
+        // no further writer events, no unhandled rejections, no new dispatch.
+        for (const [, resolveFetch] of [...deferred]) resolveFetch();
+        await waitFor(() => deferred.size === 0, 2000, "deferred siblings to drain");
+        // Flush every pending microtask chain before asserting the absence of
+        // further releases (the sibling continuations are pure microtasks).
+        await new Promise((flushMicrotasks) => setImmediate(flushMicrotasks));
+        assert.equal(events.filter((e) => e.type === "symbol").length, symbolEventsBefore, "no events after the fatal release");
+        assert.deepEqual(calls, symbols, "no further symbols are dispatched after the fatal release");
+    });
+
+    it("treats abort-during-flight as cancellation: an unresolved earlier index never emits and later symbols stay undispatched", async () => {
+        const symbols = ["X0", "X1", "X2", "X3"];
+        const events: Array<Record<string, unknown>> = [];
+        const controller = new AbortController();
+        const { fetcher, deferred, calls } = makeDeferredAlpacaFetcher();
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { signal: controller.signal, alpacaFetcher: fetcher as never },
+        );
+        await waitFor(() => deferred.size === 3, 2000, "the first window to be in flight");
+        controller.abort();
+        // Resolve the in-flight symbols with SUCCESS results; the scheduler's
+        // post-await cancellation check must still drop them (the real worker
+        // additionally refuses to write when the signal is already aborted —
+        // this pins the scheduler-side guarantee alone).
+        for (const [, resolveFetch] of [...deferred]) resolveFetch();
+        await withTimeout(run, 5000, "the aborted batch to settle");
+
+        assert.deepEqual(calls, ["X0", "X1", "X2"], "symbols past the in-flight window stay undispatched after abort");
+        assert.deepEqual(events.filter((e) => e.type === "symbol"), [], "aborted in-flight results never emit symbol events");
+        assert.equal(__getIbkrCatalogWriteCountForTests(), 0, "aborted symbols never write the catalog");
+        const done = events[events.length - 1]!;
+        assert.equal(done.type, "done");
+        assert.equal(done.cancelled, true);
+        assert.equal(done.ok, false);
+        const runState = __getIbkrSyncRunStateForTests();
+        assert.equal(runState?.cancelled, true);
+        assert.equal(runState?.completed, 0);
+        assert.equal(runState?.failed, 0);
+    });
+
+    it("releases mixed success/failure/warning outcomes in original index order regardless of completion order", async () => {
+        const symbols = ["M0", "M1", "M2", "M3", "M4", "M5"];
+        const events: Array<Record<string, unknown>> = [];
+        const deferred = new Map<string, () => void>();
+        const alpacaFetcher = (async (_cat: unknown, symbol: string) => {
+            await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
+            deferred.delete(symbol);
+            if (symbol === "M2") throw new Error("provider exploded");
+            if (symbol === "M4") {
+                return {
+                    ...alpacaResult(symbol),
+                    complete: false,
+                    stopReason: "chunk_limit",
+                    warning: "Hit the maximum chunk ceiling before the full history was covered.",
+                };
+            }
+            return alpacaResult(symbol);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
+        );
+        await waitFor(() => deferred.size === 3, 2000, "the first window to be in flight");
+        // Settle out of order: M2 (fail) first, then M0 (success), M1 (success)
+        // — the release loop must hold M2 until the consecutive prefix can
+        // flush. Then keep draining whichever window is in flight.
+        const settleOrder = ["M2", "M0", "M1"];
+        for (const symbol of settleOrder) {
+            deferred.get(symbol)!();
+            deferred.delete(symbol);
+        }
+        let drained = 3;
+        while (drained < symbols.length) {
+            await waitFor(() => deferred.size > 0, 2000, "the next window to be in flight");
+            for (const [symbol, resolveFetch] of [...deferred]) {
+                deferred.delete(symbol);
+                resolveFetch();
+                drained += 1;
+            }
+        }
+        await withTimeout(run, 5000, "the mixed batch to settle");
+
+        const orderedTypes = events.map((e) => `${e.type}:${e.symbol ?? ""}`);
+        assert.deepEqual(orderedTypes, [
+            "start:",
+            "symbol:M0",
+            "symbol:M1",
+            "symbol_failed:M2",
+            "symbol:M3",
+            "symbol:M4",
+            "symbol_warning:M4",
+            "symbol:M5",
+            "done:",
+        ]);
+        const done = events[events.length - 1]!;
+        assert.equal(done.type, "done");
+        assert.equal(done.ok, false, "failed symbols make the run not ok even when others succeed");
+        assert.equal(done.cancelled, false);
+        assert.deepEqual(done.failed as Array<{ symbol: string; error: string }>, [
+            { symbol: "M2", error: "provider exploded" },
+        ]);
+        assert.deepEqual((done.results as Array<{ markedSymbol: string }>).map((r) => r.markedSymbol), [
+            "IBKR:M0",
+            "IBKR:M1",
+            "IBKR:M3",
+            "IBKR:M4",
+            "IBKR:M5",
+        ]);
+        const runState = __getIbkrSyncRunStateForTests();
+        assert.equal(runState?.completed, 5);
+        assert.equal(runState?.failed, 1);
+        assert.deepEqual(runState?.failedSymbols, [{ symbol: "M2", error: "provider exploded" }]);
+        assert.equal(runState?.currentSymbol, null);
+        // Catalog writes are fire-and-forget through the serialized chain;
+        // wait for the chain to flush before counting.
+        await waitFor(
+            () => __getIbkrCatalogWriteCountForTests() === 5,
+            2000,
+            "one serialized catalog checkpoint per landed result (including the warned one)",
+        );
+    });
+
+    it("treats a bare AbortError from a fetcher as batch cancellation: the run settles early and strands later outcomes", async () => {
+        // Abort-as-cancellation is not per-symbol failure accounting: a
+        // fetcher rejecting with AbortError (no batch signal) buffers a
+        // cancelled outcome whose release marks the run cancelled, settles
+        // the batch, and leaves the permanent index gap that strands every
+        // later outcome — exactly like a returned cancellation.
+        const symbols = ["A0", "A1", "A2"];
+        const events: Array<Record<string, unknown>> = [];
+        const deferred = new Map<string, () => void>();
+        const alpacaFetcher = (async (_cat: unknown, symbol: string) => {
+            if (symbol === "A0") throw new DOMException("Aborted", "AbortError");
+            await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
+            deferred.delete(symbol);
+            return alpacaResult(symbol);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
+        );
+        await withTimeout(run, 5000, "the aborted batch to settle");
+
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"]);
+        const done = events[events.length - 1]!;
+        assert.equal(done.cancelled, true);
+        assert.equal(done.ok, false);
+        assert.deepEqual(done.failed as unknown[], [], "the AbortError is cancellation, not failure accounting");
+        // The in-window orphans are stranded: settle them and confirm silence.
+        for (const [, resolveFetch] of [...deferred]) resolveFetch();
+        await waitFor(() => deferred.size === 0, 2000, "orphan fetches to settle");
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"]);
+        const runState = __getIbkrSyncRunStateForTests();
+        assert.equal(runState?.cancelled, true);
+        assert.equal(runState?.completed, 0);
+        assert.equal(runState?.failed, 0);
     });
 });

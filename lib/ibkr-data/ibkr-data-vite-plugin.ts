@@ -2843,90 +2843,112 @@ export async function processSyncBatch(
     };
 
     try {
-        let dispatchCursor = 0;
-        let inFlight = 0;
-        // A throw while releasing an outcome (e.g. the NDJSON socket died
-        // mid-write) is surfaced through the awaited batch promise so the
-        // caller's fatal path runs — the sequential loop propagated writer
-        // errors the same way. Never left as an unhandled rejection.
+        // Fixed worker loops over a shared next-index cursor replace the
+        // recursive dispatch/inFlight machinery (same shape as
+        // lib/async-pool.ts, kept local because ordered release and early
+        // settlement are specific to this scheduler). Ordinary completion is
+        // all workers draining; the explicit `settle` signal exists only for
+        // the characterized early-settlement cases (cancellation at release
+        // and fatal release errors), where the batch promise must not wait
+        // for the remaining in-flight fetches.
+        let nextDispatchIndex = 0;
         let releaseError: unknown = null;
-        // Resolves when every dispatched symbol has been released in order, or
-        // when cancellation stops dispatching. `currentSymbol` tracks the
-        // dispatch frontier (the lowest undispatched symbol) — with in-flight
-        // work there is no single "current" symbol, so the frontier is the
-        // honest, documented choice.
+        const markCancelled = (): void => {
+            cancelled = true;
+            if (syncRunState === runState) runState.cancelled = true;
+        };
         await new Promise<void>((resolveBatch) => {
-            const maybeFinish = (): void => {
-                if (inFlight === 0 && dispatchCursor >= symbols.length) resolveBatch();
+            let settled = false;
+            let finishedWorkers = 0;
+            const settle = (): void => {
+                if (settled) return;
+                settled = true;
+                resolveBatch();
             };
-            const dispatch = (): void => {
-                while (inFlight < concurrency && dispatchCursor < symbols.length) {
+            const workerLoop = async (): Promise<void> => {
+                while (true) {
+                    // Pre-dispatch cancellation check: a Stop abort or a newer
+                    // sync stops this worker before any new fetch starts.
                     if (wasCancelled()) {
-                        cancelled = true;
-                        if (syncRunState === runState) runState.cancelled = true;
-                        resolveBatch();
+                        markCancelled();
+                        settle();
                         return;
                     }
-                    const index = dispatchCursor;
-                    dispatchCursor += 1;
-                    inFlight += 1;
+                    const index = nextDispatchIndex;
+                    if (index >= symbols.length) return;
+                    nextDispatchIndex += 1;
+                    const symbol = symbols[index]!;
                     if (syncRunState === runState) {
                         runState.index = index;
-                        runState.currentSymbol = symbols[index]!;
+                        runState.currentSymbol = symbol;
                     }
-                    const symbol = symbols[index]!;
-                    fetcher(catalog, symbol, interval, period, syncOnly, signal)
-                        .then((result) => {
-                            inFlight -= 1;
-                            // Re-check ownership/abort after the await: a Stop
-                            // or newer sync may have arrived mid-fetch. Drop
-                            // the result without recording it — the new owner
-                            // owns the catalog. syncOneAlpacaSymbol mirrors
-                            // this: it aborts BEFORE any CSV/catalog write, so
-                            // nothing lands for in-flight symbols.
-                            if (wasCancelled() || (result as Record<string, unknown>).cancelled === true) {
-                                pending.set(index, { kind: "cancelled", index });
-                            } else {
-                                pending.set(index, { kind: "result", index, symbol, result });
-                            }
-                        })
-                        .catch((error: unknown) => {
-                            inFlight -= 1;
-                            // Abort during a fetch: cancelled, not failed.
-                            if (wasCancelled() || signal?.aborted || isAbortError(error)) {
-                                pending.set(index, { kind: "cancelled", index });
-                                return;
-                            }
-                            const message = error instanceof Error ? error.message : String(error);
-                            pending.set(index, { kind: "failed", index, symbol, message });
-                        })
-                        .finally(() => {
-                            if (releaseError !== null) {
-                                // A sibling release already failed fatally:
-                                // surface nothing further, dispatch nothing
-                                // further (the sequential loop aborted the
-                                // whole batch on a writer throw).
-                                maybeFinish();
-                                return;
-                            }
-                            try {
-                                if (!releaseOutcomes()) {
-                                    // Cancellation observed at release: stop
-                                    // dispatching new work.
-                                    resolveBatch();
-                                    return;
-                                }
-                                dispatch();
-                                maybeFinish();
-                            } catch (error) {
-                                releaseError = error;
-                                resolveBatch();
-                            }
-                        });
+                    let outcome: SymbolOutcome;
+                    try {
+                        const result = await fetcher(catalog, symbol, interval, period, syncOnly, signal);
+                        // Re-check ownership/abort after the await: a Stop
+                        // or newer sync may have arrived mid-fetch. Drop
+                        // the result without recording it — the new owner
+                        // owns the catalog. syncOneAlpacaSymbol mirrors
+                        // this: it aborts BEFORE any CSV/catalog write, so
+                        // nothing lands for in-flight symbols.
+                        outcome = wasCancelled() || (result as Record<string, unknown>).cancelled === true
+                            ? { kind: "cancelled", index }
+                            : { kind: "result", index, symbol, result };
+                    } catch (error) {
+                        // Abort during a fetch: cancelled, not failed.
+                        outcome = wasCancelled() || signal?.aborted || isAbortError(error)
+                            ? { kind: "cancelled", index }
+                            : {
+                                kind: "failed",
+                                index,
+                                symbol,
+                                message: error instanceof Error ? error.message : String(error),
+                            };
+                    }
+                    pending.set(index, outcome);
+                    // A sibling release already failed fatally: drop the
+                    // outcome without releasing it — surface nothing further,
+                    // claim nothing further (the sequential loop aborted the
+                    // whole batch on a writer throw too).
+                    if (releaseError !== null) return;
+                    try {
+                        if (!releaseOutcomes()) {
+                            // Cancellation observed at release: settle the
+                            // batch now — the reader has stopped — and stop
+                            // claiming. Sibling workers keep their own
+                            // wasCancelled() checks.
+                            settle();
+                            return;
+                        }
+                    } catch (error) {
+                        // A throw while releasing an outcome (e.g. the NDJSON
+                        // socket died mid-write) is surfaced through the
+                        // awaited batch promise so the caller's fatal path
+                        // runs — the sequential loop propagated writer
+                        // errors the same way.
+                        releaseError = error;
+                        settle();
+                        return;
+                    }
                 }
-                maybeFinish();
             };
-            dispatch();
+            for (let worker = 0; worker < concurrency; worker += 1) {
+                void workerLoop().then(
+                    () => {
+                        finishedWorkers += 1;
+                        if (finishedWorkers === concurrency) settle();
+                    },
+                    (error: unknown) => {
+                        // Fetch failures are converted to outcomes above, so a
+                        // rejection here is unexpected scheduler-machinery
+                        // failure. Observe it — never an unhandled rejection,
+                        // even when the batch has already settled — and
+                        // propagate the first one.
+                        if (releaseError === null) releaseError = error;
+                        settle();
+                    },
+                );
+            }
         });
         if (releaseError !== null) throw releaseError;
         // Cancellation at the end of the stream of outcomes: mirror the

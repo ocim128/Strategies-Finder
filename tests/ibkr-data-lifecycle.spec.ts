@@ -14,11 +14,14 @@
  */
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { expect } from "chai";
+import assert from "node:assert/strict";
 import {
     __acquireIbkrSyncOwnerForTests,
+    __getIbkrSyncRunStateForTests,
     __resetIbkrSyncStateForTests,
     processSyncBatch,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
+import { HttpStatusError } from "../lib/vite-http-utils";
 import { isAllowedLocalRequest } from "../lib/local-route-authorization";
 
 // Signature the injected fetcher must satisfy (matches `syncOneSymbol`).
@@ -270,5 +273,57 @@ describe("ibkr processSyncBatch lifecycle", () => {
         const warnings = events.filter((e) => e.type === "symbol_warning");
         expect(warnings).to.have.length(1);
         expect((warnings[0]!).reason).to.include("chunk");
+    });
+
+    // Characterization: an empty batch is rejected at the request boundary
+    // before any snapshot or stream state exists.
+    it("rejects an empty symbol list before any work starts", async () => {
+        let fetcherCalls = 0;
+        const fetcher = (async () => {
+            fetcherCalls += 1;
+            return goodResult("AAPL");
+        }) as Fetcher;
+        await assert.rejects(
+            processSyncBatch(
+                { symbols: [], interval: "1d" },
+                false,
+                () => {},
+                __acquireIbkrSyncOwnerForTests(),
+                { fetcher: fetcher as never },
+            ),
+            (error: unknown) => error instanceof HttpStatusError && /At least one symbol/.test(error.message),
+        );
+        expect(fetcherCalls).to.equal(0);
+        expect(__getIbkrSyncRunStateForTests()).to.equal(null);
+    });
+
+    // Characterization: a writer throw during the first release rejects the
+    // awaited batch promise (the caller's fatal path) instead of resolving,
+    // and the sequential loop never dispatches later symbols. The writer error
+    // must surface as a rejection, not a done event.
+    it("rejects the batch when the writer throws on the first symbol release", async () => {
+        const events: Array<Record<string, unknown>> = [];
+        const seen: string[] = [];
+        const fetcher = (async (_cat, symbol) => {
+            seen.push(symbol);
+            return goodResult(symbol);
+        }) as Fetcher;
+        const writer = (event: Record<string, unknown>): void => {
+            events.push(event);
+            if (event.type === "symbol") throw new Error("ndjson socket died mid-write");
+        };
+        await assert.rejects(
+            processSyncBatch(
+                { symbols: ["AAPL", "MSFT"], interval: "1d" },
+                false,
+                writer as never,
+                __acquireIbkrSyncOwnerForTests(),
+                { fetcher: fetcher as never },
+            ),
+            /ndjson socket died mid-write/,
+        );
+        expect(seen).to.deep.equal(["AAPL"], "no further dispatch after the fatal release");
+        expect(events.some((e) => e.type === "done")).to.equal(false);
+        expect(events.some((e) => e.type === "symbol")).to.equal(true, "the throwing release still buffered its event locally");
     });
 });

@@ -138,6 +138,31 @@ seed CSVs take precedence and skip SQLite/IndexedDB fallback reads. See the
 - The source selector and all mutation routes remain in the local IBKR Data
   server workflow; there is no browser credential path.
 
+## Batch scheduling and settlement ownership
+
+`processSyncBatch` runs one bounded worker loop per slot: three for Alpaca
+(`ALPACA_SYNC_CONCURRENCY`, the sliding in-flight limit) and one for IBKR,
+whose session-based gateway pipeline is inherently serial. Each loop claims
+the next index from a shared cursor, updates the run snapshot's dispatch
+frontier, awaits its fetcher, converts the outcome (result / failed /
+cancelled), and claims again. Fetch failures become per-symbol outcomes;
+only release-time failures (an NDJSON write throwing) are fatal and reject
+the awaited batch promise for `handleSyncRequest`'s fatal path.
+
+Event emission stays ordered: outcomes buffer in `pending` and release in
+ascending original index order as `symbol` / `symbol_warning` /
+`symbol_failed`, with one serialized catalog checkpoint per landed result.
+A cancelled outcome's release settles the batch promise immediately — it
+does not wait for sibling fetches — and leaves a permanent index gap:
+outcomes behind the gap never release and never emit, and (without a signal
+abort or ownership loss) sibling paths still dispatch the remaining queue
+whose fetches are then silently dropped. A bare `AbortError` from a fetcher
+is batch cancellation under the same rule, not per-symbol failure
+accounting. These settlement behaviors are deliberate compatibility, locked
+by the characterization tests in `tests/alpaca-source-integration.spec.ts`;
+correcting the gap/dispatch wart is a separate behavior change, not part of
+the scheduler's structure.
+
 ## Validation
 
 Focused tests cover the fetcher, source routing and source guards, aggregation
