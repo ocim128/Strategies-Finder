@@ -47,14 +47,16 @@ export function columnsFromCandles(candles: OHLCVData[]): OhlcvColumns {
 /**
  * Materialize fresh candle objects from `startIndex` onward. Bars are
  * contiguous by index, so a tail read passes the computed start instead of
- * copying columns; the default materializes the full series.
+ * copying columns; the default materializes the full series. The start index
+ * is the caller's bounds policy — no normalization happens here, so an
+ * out-of-range start surfaces `Array`'s RangeError (the IBKR loader relies on
+ * that throw for its null contract on invalid limits).
  */
 export function candlesFromColumns(columns: OhlcvColumns, startIndex = 0): OHLCVData[] {
     const n = columns.time.length;
-    const start = Math.max(0, Math.min(startIndex, n));
-    const candles: OHLCVData[] = new Array(n - start);
-    for (let i = start; i < n; i += 1) {
-        candles[i - start] = {
+    const candles: OHLCVData[] = new Array(n - startIndex);
+    for (let i = startIndex; i < n; i += 1) {
+        candles[i - startIndex] = {
             time: columns.time[i]! as OHLCVData["time"],
             open: columns.open[i]!,
             high: columns.high[i]!,

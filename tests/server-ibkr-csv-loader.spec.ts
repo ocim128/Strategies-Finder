@@ -282,10 +282,40 @@ async function main(): Promise<void> {
         // Warm hits materialize the requested bounds; a zero limit reads none.
         assert.deepEqual(await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 0), []);
         assert.deepEqual(await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 99), full);
+        // Invalid limits keep the loader's baseline contract: the out-of-range
+        // tail start throws and the loader converts that to null rather than a
+        // silent empty read. The failed read must not poison the warm cache.
+        assert.equal(
+            await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, -1),
+            null,
+            "negative finite limit on a warm-cache read returns null",
+        );
+        assert.equal(
+            await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, Number.NEGATIVE_INFINITY),
+            null,
+            "negative-infinite limit on a warm-cache read returns null",
+        );
+        assert.deepEqual(await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir), full,
+            "a valid read after invalid limits still serves the cached columns");
         // A sidecar hit with a cold memory cache still materializes the tail.
         clearParsedIbkrCsvCache();
         const sidecarTail = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 1);
         assert.deepEqual(sidecarTail, full!.slice(-1), "sidecar hits materialize the requested tail");
+        // Sidecar reads enforce the same invalid-limit contract.
+        clearParsedIbkrCsvCache();
+        assert.equal(
+            await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, -1),
+            null,
+            "negative finite limit on a sidecar read returns null",
+        );
+        clearParsedIbkrCsvCache();
+        assert.equal(
+            await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, Number.NEGATIVE_INFINITY),
+            null,
+            "negative-infinite limit on a sidecar read returns null",
+        );
+        assert.deepEqual(await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir), full,
+            "a valid read after invalid sidecar reads still serves the columns");
         // Returned candles are fresh objects: mutating a hit never leaks into
         // the cached columns or the next materialization.
         sidecarTail![0]!.close = -1;
