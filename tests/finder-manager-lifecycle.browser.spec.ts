@@ -1237,7 +1237,6 @@ describe("Finder facade terminal adoption (integration)", () => {
         // Simulate a new Finder manager instance restoring the local preview.
         manager().resultStore.latestResults = { scope: "current_chart", results: [] };
         manager().resultStore.armPerformanceRunResults = [];
-        manager().resultStore.armPerformanceDefaultResults = [];
         manager().resultStore.armPerformanceRunContext = null;
         manager().resultStore.armPerformanceInventoryComplete = true;
         manager().loadPersistedLatestResults();
@@ -1366,7 +1365,6 @@ describe("Finder facade terminal adoption (integration)", () => {
         m.controls.uiState.scope = "arm_performance";
         m.getDom().finderScope.value = "arm_performance";
         m.resultStore.armPerformanceRunResults = [...results];
-        m.resultStore.armPerformanceDefaultResults = [...results];
         m.resultStore.armPerformanceInventoryComplete = false;
         m.resultStore.setArmPerformanceLatestResults(results, false, 20, false);
         m.populateResortOptions();

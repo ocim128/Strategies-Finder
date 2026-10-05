@@ -368,7 +368,6 @@ export class FinderManager {
 			this.resultStore.assetOpportunityDefaultResults = [...restoredResults.results];
 		} else if (restoredResults.scope === 'arm_performance') {
 			this.resultStore.armPerformanceRunResults = [...restoredResults.results];
-			this.resultStore.armPerformanceDefaultResults = [...restoredResults.results];
 			this.resultStore.armPerformanceRunContext = restoredResults.runContext;
 			this.resultStore.armPerformanceInventoryComplete = restoredResults.inventoryComplete;
 			this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.controls.uiState.topN);
@@ -442,7 +441,6 @@ export class FinderManager {
 			// Keep the last bounded checkpoint for this exact server run visible
 			// while counts-only status polling waits for the authoritative result.
 			this.resultStore.armPerformanceRunResults = [...armPreview.results];
-			this.resultStore.armPerformanceDefaultResults = [...armPreview.results];
 			this.resultStore.armPerformanceRunContext = armPreview.runContext;
 			this.resultStore.armPerformanceInventoryComplete = false;
 			this.resultStore.armPerformanceDisplayLimit = Math.max(1, this.controls.uiState.topN);

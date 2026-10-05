@@ -220,7 +220,6 @@ describe("FinderResultStore", () => {
         store.armPerformanceDisplayLimit = 10;
         store.adoptArmPerformanceResults(rows, null, true);
         expect(store.latestResults.results).to.deep.equal([], "the default arm's filtered view is empty");
-        expect(store.armPerformanceDefaultResults).to.deep.equal([]);
         store.stashRunSortBaseline();
 
         expect(store.setArmPerformanceDisplayFilter(filter, "TOP_RAW")).to.equal(true);
@@ -444,7 +443,6 @@ describe("FinderResultStore", () => {
         store.resetForNewRun();
 
         expect(store.armPerformanceRunResults).to.deep.equal([]);
-        expect(store.armPerformanceDefaultResults).to.deep.equal([]);
         expect(store.armPerformanceRunContext).to.equal(null);
         expect(store.armPerformanceApplyContext).to.equal(null);
         expect(store.armPerformanceInventoryComplete).to.equal(true);

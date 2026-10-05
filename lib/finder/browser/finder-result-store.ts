@@ -77,7 +77,6 @@ export class FinderResultStore {
 	assetOpportunityDefaultResults: FinderAssetOpportunityResult[] = [];
 	/** Full compact Arm Performance inventory for every post-run arm sort. */
 	armPerformanceRunResults: FinderArmPerformanceCandidate[] = [];
-	armPerformanceDefaultResults: FinderArmPerformanceCandidate[] = [];
 	armPerformanceRunContext: FinderArmPerformanceRunContext | null = null;
 	armPerformanceApplyContext: Pick<FinderArmPerformanceRunContext, "interval" | "uiBacktestSettings" | "capitalSettings"> | null = null;
 	armPerformanceDisplayLimit = DEFAULT_FINDER_UI_STATE.topN;
@@ -182,12 +181,16 @@ export class FinderResultStore {
 				maxEvents: armOptions?.maxEvents ?? null,
 			};
 		}
-		this.armPerformanceDefaultResults = sortFinderArmPerformanceResults(
-			this.armPerformanceRunResults,
-			'TOP_RAW_PROFIT_NOW',
-			this.armPerformanceDisplayFilter,
+		this.setArmPerformanceLatestResults(
+			sortFinderArmPerformanceResults(
+				this.armPerformanceRunResults,
+				'TOP_RAW_PROFIT_NOW',
+				this.armPerformanceDisplayFilter,
+			),
+			persist,
+			this.armPerformanceDisplayLimit,
+			complete,
 		);
-		this.setArmPerformanceLatestResults(this.armPerformanceDefaultResults, persist, this.armPerformanceDisplayLimit, complete);
 	}
 
 	/** Clear retained inventories between runs; display limits are set separately. */
@@ -199,7 +202,6 @@ export class FinderResultStore {
 		this.assetOpportunityRunResults = [];
 		this.assetOpportunityDefaultResults = [];
 		this.armPerformanceRunResults = [];
-		this.armPerformanceDefaultResults = [];
 		this.armPerformanceRunContext = null;
 		this.armPerformanceApplyContext = null;
 		this.armPerformanceInventoryComplete = true;
@@ -228,19 +230,13 @@ export class FinderResultStore {
 			&& this.lastArmDisplayUpdate.results === this.latestResults
 			&& this.lastArmDisplayUpdate.key === key) return false;
 		this.armPerformanceDisplayFilter = { ...filter };
-		this.armPerformanceDefaultResults = sortFinderArmPerformanceResults(
+		// Sort only the arm the user selected; the default view is derived on
+		// demand by restoreRunSort.
+		this.setArmPerformanceLatestResults(sortFinderArmPerformanceResults(
 			this.armPerformanceRunResults,
-			"TOP_RAW_PROFIT_NOW",
+			selectedArm,
 			this.armPerformanceDisplayFilter,
-		);
-		const sorted = selectedArm === "TOP_RAW_PROFIT_NOW"
-			? this.armPerformanceDefaultResults
-			: sortFinderArmPerformanceResults(
-				this.armPerformanceRunResults,
-				selectedArm,
-				this.armPerformanceDisplayFilter,
-			);
-		this.setArmPerformanceLatestResults(sorted, false);
+		), false);
 		this.lastArmDisplayUpdate = { inventory: this.armPerformanceRunResults, results: this.latestResults, key };
 		this.persistDisplayResultsDebounced(this.latestResults);
 		return true;
@@ -271,12 +267,21 @@ export class FinderResultStore {
 				scope: 'symbol_universe',
 				results: this.symbolUniverseRunResults.slice(0, Math.max(1, this.symbolUniverseDisplayLimit)),
 			});
-		} else if (scope === 'arm_performance' && this.armPerformanceDefaultResults.length > 0) {
-			this.setArmPerformanceLatestResults(sortFinderArmPerformanceResults(
+		} else if (scope === 'arm_performance') {
+			// The default view is the DEFAULT ARM under the CURRENT display
+			// filter; availability is the filtered view's length, never the
+			// unfiltered inventory. This treats incomplete previews and
+			// terminal results identically.
+			const defaultView = sortFinderArmPerformanceResults(
 				this.armPerformanceRunResults,
 				"TOP_RAW_PROFIT_NOW",
 				this.armPerformanceDisplayFilter,
-			));
+			);
+			if (defaultView.length > 0) {
+				this.setArmPerformanceLatestResults(defaultView);
+			} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
+				this.setLatestResults(this.originalLatestResults);
+			}
 		} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
 			this.setLatestResults(this.originalLatestResults);
 		}
