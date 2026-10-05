@@ -1318,4 +1318,144 @@ describe('backtest settings Rust-support contract audit', () => {
         expect(coerceBacktestDomSettingValue(contract!, 'MFE_GIVEBACK')).to.equal('mfe_giveback');
         expect(coerceBacktestDomSettingValue(contract!, 'invalid-mode')).to.equal('off');
     });
+
+    it('agrees between the DOM coercer and the raw resolver for shared enum and string-list parsers', () => {
+        const pathExitContract = getBacktestDomSettingContract('pathExitMode');
+        const confirmationModeContract = getBacktestDomSettingContract('confirmationMode');
+        const entryMoveContract = getBacktestDomSettingContract('riskEntryConfirmationMove');
+        const strategiesContract = getBacktestDomSettingContract('confirmationStrategies');
+        expect(pathExitContract).to.not.equal(undefined);
+        expect(confirmationModeContract).to.not.equal(undefined);
+        expect(entryMoveContract).to.not.equal(undefined);
+        expect(strategiesContract).to.not.equal(undefined);
+
+        // The two paths must also agree on WHERE malformed values fall back,
+        // not only on accepted values, so pin both fallback sources as equal.
+        expect(DEFAULT_BACKTEST_SETTINGS.pathExitMode).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMode);
+        expect(DEFAULT_BACKTEST_SETTINGS.confirmationMode).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.confirmationMode);
+        expect(DEFAULT_BACKTEST_SETTINGS.riskEntryConfirmationMove).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationMove);
+
+        const resolveRaw = (raw: Record<string, unknown>) =>
+            resolveBacktestSettingsFromRaw(raw as unknown as BacktestSettings);
+
+        const pathExitCases: Array<[string, unknown, string]> = [
+            // All nine supported modes, verbatim.
+            ['off', 'off', 'off'],
+            ['mfe_giveback', 'mfe_giveback', 'mfe_giveback'],
+            ['momentum_deceleration', 'momentum_deceleration', 'momentum_deceleration'],
+            ['capitulation_exhaustion', 'capitulation_exhaustion', 'capitulation_exhaustion'],
+            ['squeeze_pressure', 'squeeze_pressure', 'squeeze_pressure'],
+            ['conditional_hazard', 'conditional_hazard', 'conditional_hazard'],
+            ['triple_barrier_meta', 'triple_barrier_meta', 'triple_barrier_meta'],
+            ['structure_reclaim', 'structure_reclaim', 'structure_reclaim'],
+            ['profit_compression', 'profit_compression', 'profit_compression'],
+            // Mixed case and surrounding whitespace normalize.
+            ['padded upper', '  MFE_Giveback  ', 'mfe_giveback'],
+            ['upper off', 'OFF', 'off'],
+            ['upper structure', 'Structure_Reclaim', 'structure_reclaim'],
+            // Malformed types and unknown strings fall back to 'off'.
+            ['unknown string', 'giveback', 'off'],
+            ['empty string', '', 'off'],
+            ['number', 42, 'off'],
+            ['boolean', true, 'off'],
+            ['null', null, 'off'],
+            ['undefined', undefined, 'off'],
+            ['array', ['mfe_giveback'], 'off'],
+            ['object', { mode: 'mfe_giveback' }, 'off'],
+        ];
+        for (const [label, value, expected] of pathExitCases) {
+            const domValue = coerceBacktestDomSettingValue(pathExitContract!, value);
+            const rawValue = resolveRaw({ pathExitMode: value }).pathExitMode;
+            expect(domValue, `DOM pathExitMode: ${label}`).to.equal(expected);
+            expect(rawValue, `raw pathExitMode: ${label}`).to.equal(expected);
+            expect(domValue, `parity pathExitMode: ${label}`).to.equal(rawValue);
+        }
+
+        const confirmationModeCases: Array<[string, unknown, string]> = [
+            // All five supported modes, verbatim.
+            ['agree', 'agree', 'agree'],
+            ['disagree', 'disagree', 'disagree'],
+            ['veto_opposite', 'veto_opposite', 'veto_opposite'],
+            ['confirm_within_window', 'confirm_within_window', 'confirm_within_window'],
+            ['veto_within_window', 'veto_within_window', 'veto_within_window'],
+            // Mixed case and whitespace normalize.
+            ['padded disagree', '  Disagree  ', 'disagree'],
+            ['upper veto', 'VETO_WITHIN_WINDOW', 'veto_within_window'],
+            // Malformed types and unknown strings fall back to 'agree'.
+            ['unknown string', 'veto', 'agree'],
+            ['number', 7, 'agree'],
+            ['null', null, 'agree'],
+            ['array', ['agree'], 'agree'],
+        ];
+        for (const [label, value, expected] of confirmationModeCases) {
+            const domValue = coerceBacktestDomSettingValue(confirmationModeContract!, value);
+            // The raw resolver only interprets confirmationMode when a
+            // confirmation key is present, mirroring the capture gating.
+            const rawValue = resolveRaw({
+                confirmationStrategiesToggle: true,
+                confirmationStrategies: ['ema_confirmation'],
+                confirmationMode: value,
+            }).confirmationMode;
+            expect(domValue, `DOM confirmationMode: ${label}`).to.equal(expected);
+            expect(rawValue, `raw confirmationMode: ${label}`).to.equal(expected);
+            expect(domValue, `parity confirmationMode: ${label}`).to.equal(rawValue);
+        }
+
+        const entryMoveCases: Array<[string, unknown, string]> = [
+            ['down', 'down', 'down'],
+            ['up', 'up', 'up'],
+            ['both', 'both', 'both'],
+            ['padded upper', '  UP  ', 'up'],
+            ['mixed case', 'Both', 'both'],
+            ['unknown string', 'downward', 'both'],
+            ['number', 3, 'both'],
+            ['boolean', false, 'both'],
+            ['null', null, 'both'],
+            ['array', ['up'], 'both'],
+        ];
+        for (const [label, value, expected] of entryMoveCases) {
+            const domValue = coerceBacktestDomSettingValue(entryMoveContract!, value);
+            const rawValue = resolveRaw({ riskEntryConfirmationMove: value }).riskEntryConfirmationMove;
+            expect(domValue, `DOM riskEntryConfirmationMove: ${label}`).to.equal(expected);
+            expect(rawValue, `raw riskEntryConfirmationMove: ${label}`).to.equal(expected);
+            expect(domValue, `parity riskEntryConfirmationMove: ${label}`).to.equal(rawValue);
+        }
+
+        const stringArrayCases: Array<[string, unknown, string[]]> = [
+            ['comma string', 'ema_confirmation,veto_pattern_failure', ['ema_confirmation', 'veto_pattern_failure']],
+            ['array form', ['ema_confirmation', 'veto_pattern_failure'], ['ema_confirmation', 'veto_pattern_failure']],
+            ['trims items', '  ema_confirmation  ,  veto_pattern_failure  ', ['ema_confirmation', 'veto_pattern_failure']],
+            ['drops duplicates and empties', 'ema_confirmation,ema_confirmation,,veto_pattern_failure,', ['ema_confirmation', 'veto_pattern_failure']],
+            ['array duplicates and empties', ['x', 'x', '', '   ', 'y'], ['x', 'y']],
+            ['case-sensitive keys stay distinct', ['EMA_confirmation', 'ema_confirmation'], ['EMA_confirmation', 'ema_confirmation']],
+            ['non-string items filtered', ['x', 5, null, true, 'y'], ['x', 'y']],
+            ['non-array non-string types', 42, []],
+            ['null', null, []],
+            ['undefined', undefined, []],
+            ['object', { 0: 'ema_confirmation' }, []],
+            ['empty string', '', []],
+        ];
+        for (const [label, value, expected] of stringArrayCases) {
+            const domValue = coerceBacktestDomSettingValue(strategiesContract!, value);
+            const rawValue = resolveRaw({ confirmationStrategies: value }).confirmationStrategies;
+            expect(domValue, `DOM confirmationStrategies: ${label}`).to.deep.equal(expected);
+            expect(rawValue, `raw confirmationStrategies: ${label}`).to.deep.equal(expected);
+            expect(domValue, `parity confirmationStrategies: ${label}`).to.deep.equal(rawValue);
+        }
+
+        // Toggle filtering stays on the resolver side: a disabled confirmation
+        // control empties the strategy list and params but still parses the mode.
+        const disabled = resolveRaw({
+            confirmationStrategiesToggle: false,
+            confirmationStrategies: ['ema_confirmation'],
+            confirmationMode: 'veto_opposite',
+            confirmationStrategyParams: JSON.stringify({ ema_confirmation: { slowWindow: '21' } }),
+        });
+        expect(disabled.confirmationStrategies).to.deep.equal([]);
+        expect(disabled.confirmationStrategyParams).to.deep.equal({});
+        expect(disabled.confirmationMode).to.equal('veto_opposite');
+        // An absent toggle defaults to "enabled when the list is non-empty".
+        const untoggled = resolveRaw({ confirmationStrategies: ['ema_confirmation'] });
+        expect(untoggled.confirmationStrategies).to.deep.equal(['ema_confirmation']);
+    });
 });

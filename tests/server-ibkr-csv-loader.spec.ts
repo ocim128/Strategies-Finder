@@ -273,6 +273,28 @@ async function main(): Promise<void> {
         const tail = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 1);
         assert.deepEqual(tail, full!.slice(-1), "limitBars tail materialization matches the full-series tail");
 
+        // A cold TEXT parse ignores limitBars and returns the full parsed
+        // series; the routing layer applies its final limit to that result.
+        clearParsedIbkrCsvCache();
+        rmSync(sidecarPath, { force: true });
+        const coldLimited = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 1);
+        assert.deepEqual(coldLimited, full, "cold text reads return the full series even with a bar limit");
+        // Warm hits materialize the requested bounds; a zero limit reads none.
+        assert.deepEqual(await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 0), []);
+        assert.deepEqual(await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 99), full);
+        // A sidecar hit with a cold memory cache still materializes the tail.
+        clearParsedIbkrCsvCache();
+        const sidecarTail = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir, 1);
+        assert.deepEqual(sidecarTail, full!.slice(-1), "sidecar hits materialize the requested tail");
+        // Returned candles are fresh objects: mutating a hit never leaks into
+        // the cached columns or the next materialization.
+        sidecarTail![0]!.close = -1;
+        assert.deepEqual(
+            await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir),
+            full,
+            "mutating a materialized tail must not poison the cached columns",
+        );
+
         // Corrupt sidecar → fall back to the authoritative CSV parse.
         writeFileSync(sidecarPath, Buffer.alloc(10));
         clearParsedIbkrCsvCache();

@@ -44,6 +44,18 @@ async function main(): Promise<void> {
         assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir), first);
         assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 0), []);
         assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 100), first);
+        // Record the existing limit normalization: non-finite limits keep the
+        // full series, negatives clamp to an empty tail, fractions floor.
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, Number.NaN), first);
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, Number.POSITIVE_INFINITY), first);
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, -5), []);
+        assert.deepEqual(await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 1.9), first?.slice(-1));
+        // Cold text parses apply the same limit: a fresh symbol read with a
+        // tail limit returns only the newest bars, without caching a partial.
+        clearParsedCryptoCsvCache();
+        const coldLimited = await loadFreshCryptoCandlesFromDisk("BTCUSDT", "30m", undefined, baseDir, 1);
+        assert.deepEqual(coldLimited, first?.slice(-1));
+        assert.deepEqual(getParsedCryptoCsvCacheStats().points, 2, "the cached columns stay complete");
 
         const filePath = join(csvDir, "BTCUSDT.csv");
         writeFileSync(filePath, CSV.replace(",100,102,99,101,1000", ",200,202,199,201,1000"), "utf8");
