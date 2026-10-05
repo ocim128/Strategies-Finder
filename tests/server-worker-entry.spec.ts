@@ -193,10 +193,11 @@ describe("server worker entry resolution", () => {
                 outputFiles: [{ contents: new TextEncoder().encode(`exports.workerMarker = ${JSON.stringify(marker(`unmemoized-${++unmemoizedBuilds}`))};`)}],
             }),
         };
-        const unmemoizedFirst = await resolveWorkerEntryPath(unmemoizedBase);
+        await resolveWorkerEntryPath(unmemoizedBase);
         const unmemoizedSecond = await resolveWorkerEntryPath(unmemoizedBase);
         expect(unmemoizedBuilds).to.equal(2, "no memo means every resolution builds");
-        expect(unmemoizedSecond).to.equal(unmemoizedFirst);
+        // The stub's content changes per build, so each resolution publishes
+        // its own content-addressed path; both are complete and loadable.
         expect(requireFixture(unmemoizedSecond).workerMarker).to.equal(marker("unmemoized-2"));
     });
 
