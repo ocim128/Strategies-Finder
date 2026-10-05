@@ -297,6 +297,37 @@ describe("ibkr processSyncBatch lifecycle", () => {
         expect(__getIbkrSyncRunStateForTests()).to.equal(null);
     });
 
+    // Characterization: cancellation that fires during the FINAL symbol's
+    // release does not retroactively cancel a completed run. The recursive
+    // dispatcher only checked cancellation when work remained to claim, so a
+    // completed batch stayed ok; the worker loop must keep that check order
+    // (queue exhaustion before the pre-dispatch cancellation check).
+    it("keeps a completed run ok when the signal aborts during the final symbol's release", async () => {
+        const events: Array<Record<string, unknown>> = [];
+        const controller = new AbortController();
+        const fetcher = (async (_cat, symbol) => goodResult(symbol)) as Fetcher;
+        const writer = (event: Record<string, unknown>): void => {
+            events.push(event);
+            if (event.type === "symbol") controller.abort();
+        };
+        await processSyncBatch(
+            { symbols: ["AAPL"], interval: "1d" },
+            false,
+            writer as never,
+            __acquireIbkrSyncOwnerForTests(),
+            { fetcher: fetcher as never, signal: controller.signal },
+        );
+        const types = events.map((e) => e.type);
+        expect(types).to.deep.equal(["start", "symbol", "done"]);
+        const done = events[events.length - 1]!;
+        expect(done.ok).to.equal(true, "a run whose symbols all completed must stay ok");
+        expect(done.cancelled).to.equal(false, "an abort after the last release must not flip done.cancelled");
+        expect((done.results as unknown[]).length).to.equal(1);
+        const runState = __getIbkrSyncRunStateForTests();
+        expect(runState?.cancelled).to.equal(false);
+        expect(runState?.completed).to.equal(1);
+    });
+
     // Characterization: a writer throw during the first release rejects the
     // awaited batch promise (the caller's fatal path) instead of resolving,
     // and the sequential loop never dispatches later symbols. The writer error

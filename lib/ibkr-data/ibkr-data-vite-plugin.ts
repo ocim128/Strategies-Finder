@@ -2867,15 +2867,20 @@ export async function processSyncBatch(
             };
             const workerLoop = async (): Promise<void> => {
                 while (true) {
+                    // Queue-exhaustion check first: a run whose symbols all
+                    // completed stays completed even if the signal aborts
+                    // during the final symbol's release. The recursive
+                    // dispatcher only checked cancellation when work remained
+                    // to claim, and the worker loop must keep that order.
+                    const index = nextDispatchIndex;
+                    if (index >= symbols.length) return;
                     // Pre-dispatch cancellation check: a Stop abort or a newer
-                    // sync stops this worker before any new fetch starts.
+                    // sync stops claiming before any new fetch starts.
                     if (wasCancelled()) {
                         markCancelled();
                         settle();
                         return;
                     }
-                    const index = nextDispatchIndex;
-                    if (index >= symbols.length) return;
                     nextDispatchIndex += 1;
                     const symbol = symbols[index]!;
                     if (syncRunState === runState) {
@@ -2914,11 +2919,14 @@ export async function processSyncBatch(
                     try {
                         if (!releaseOutcomes()) {
                             // Cancellation observed at release: settle the
-                            // batch now — the reader has stopped — and stop
-                            // claiming. Sibling workers keep their own
-                            // wasCancelled() checks.
+                            // batch now — the reader has stopped — but KEEP
+                            // claiming. Without a signal abort or ownership
+                            // loss the old dispatcher replenished every free
+                            // slot from any release path, so this worker must
+                            // keep feeding the shared cursor; exiting here
+                            // would permanently shrink the sliding window.
                             settle();
-                            return;
+                            continue;
                         }
                     } catch (error) {
                         // A throw while releasing an outcome (e.g. the NDJSON

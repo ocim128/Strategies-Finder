@@ -154,14 +154,19 @@ ascending original index order as `symbol` / `symbol_warning` /
 `symbol_failed`, with one serialized catalog checkpoint per landed result.
 A cancelled outcome's release settles the batch promise immediately — it
 does not wait for sibling fetches — and leaves a permanent index gap:
-outcomes behind the gap never release and never emit, and (without a signal
-abort or ownership loss) sibling paths still dispatch the remaining queue
-whose fetches are then silently dropped. A bare `AbortError` from a fetcher
-is batch cancellation under the same rule, not per-symbol failure
-accounting. These settlement behaviors are deliberate compatibility, locked
-by the characterization tests in `tests/alpaca-source-integration.spec.ts`;
-correcting the gap/dispatch wart is a separate behavior change, not part of
-the scheduler's structure.
+outcomes behind the gap never release and never emit. Cancellation only
+stops claiming when the signal is aborted or ownership is lost; a returned
+cancellation without those keeps the freed slot replenished from the shared
+cursor, so the remaining queue still dispatches and its fetches are then
+silently dropped (a known lifecycle wart, preserved for compatibility).
+The claim loop checks queue exhaustion before cancellation, so an abort
+that fires after the final release does not retroactively cancel a
+completed run. A bare `AbortError` from a fetcher is batch cancellation
+under the same gap rule, not per-symbol failure accounting. These
+settlement behaviors are deliberate compatibility, locked by the
+characterization tests in `tests/alpaca-source-integration.spec.ts` and
+`tests/ibkr-data-lifecycle.spec.ts`; correcting the gap/dispatch wart is a
+separate behavior change, not part of the scheduler's structure.
 
 ## Validation
 

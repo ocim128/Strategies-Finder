@@ -862,10 +862,11 @@ describe("alpaca processSyncBatch settlement characterization", () => {
             { alpacaFetcher: alpacaFetcher as never },
         );
         // P0 returns its cancellation immediately, so the initial window is
-        // P0..P2 with P1/P2 still deferred; the cancelled release settles the
-        // batch without dispatching P3/P4 yet.
+        // P0..P2; the cancelled release settles the batch, and the freed slot
+        // is replenished immediately from the shared cursor (P3 claims while
+        // P1/P2 are still deferred).
         await waitFor(
-            () => deferred.size === 2 && events.some((e) => e.type === "done"),
+            () => deferred.size >= 2 && events.some((e) => e.type === "done"),
             2000,
             "the batch to settle with the deferred siblings (P1, P2) still in flight",
         );
@@ -874,8 +875,8 @@ describe("alpaca processSyncBatch settlement characterization", () => {
 
         // Drain the deferred siblings and whatever they dispatch next: the
         // sibling release paths keep claiming work (wasCancelled() is false),
-        // so P3/P4 get fetched, but none of the buffered outcomes can cross
-        // the index-0 gap left by the cancelled release.
+        // so the rest of the queue gets fetched, but none of the buffered
+        // outcomes can cross the index-0 gap left by the cancelled release.
         let drained = 0;
         while (drained < symbols.length - 1) {
             await waitFor(() => deferred.size > 0, 2000, "in-flight siblings to drain");
@@ -887,6 +888,64 @@ describe("alpaca processSyncBatch settlement characterization", () => {
         }
         await waitFor(() => deferred.size === 0, 2000, "every dispatched symbol to settle");
         assert.deepEqual(wrapperCalls, symbols, "siblings still dispatch the remaining queue after a returned cancellation");
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"], "no outcome releases after the cancelled index gap");
+    });
+
+    it("replenishes the cancelled release's slot: resolving one sibling alone dispatches the whole remaining queue", async () => {
+        // The recursive dispatcher replenished every free slot from any
+        // release path; a returned cancellation freed its slot without
+        // stopping the claim loop (no signal abort, no ownership loss). The
+        // worker loop must do the same: after P0's cancelled release settles
+        // the batch, resolving P1 ALONE — with P2 still unresolved — must
+        // leave P3 and P4 dispatched. A worker that exited on the cancelled
+        // release would strand P4 behind a shrunken window.
+        const symbols = ["P0", "P1", "P2", "P3", "P4"];
+        const events: Array<Record<string, unknown>> = [];
+        let firstReturned = false;
+        const { fetcher, deferred } = makeDeferredAlpacaFetcher();
+        const wrapperCalls: string[] = [];
+        const alpacaFetcher = (async (...args: Parameters<AlpacaFetcher>) => {
+            wrapperCalls.push(args[1]!);
+            if (!firstReturned) {
+                firstReturned = true;
+                return { ...alpacaResult("P0"), cancelled: true, complete: false, stopReason: "cancelled" };
+            }
+            return fetcher(...args);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
+        );
+        await waitFor(
+            () => events.some((e) => e.type === "done") && deferred.size > 0,
+            2000,
+            "the batch to settle while siblings are still in flight",
+        );
+        await withTimeout(run, 5000, "the settled batch promise to resolve");
+        assert.deepEqual(events.map((e) => e.type), ["start", "done"]);
+
+        // Resolve P1 ONLY. P2 stays unresolved. The claim loop must still
+        // reach P3 and P4 — P3 from the freed P0 slot, P4 from P1's release.
+        deferred.get("P1")!();
+        deferred.delete("P1");
+        await waitFor(() => wrapperCalls.length === symbols.length, 2000, "P3 and P4 to dispatch after P1 alone");
+        assert.deepEqual(wrapperCalls, symbols, "the remaining queue dispatches without waiting for every sibling");
+        assert.ok(deferred.has("P2"), "P2 remains unresolved while the queue still drains");
+
+        // Settle the rest so no fetch stays pending; outcomes behind the
+        // index-0 gap never release, so the event stream stays [start, done].
+        while (deferred.size > 0) {
+            await waitFor(() => deferred.size > 0, 2000, "remaining siblings to drain");
+            for (const [symbol, resolveFetch] of [...deferred]) {
+                deferred.delete(symbol);
+                resolveFetch();
+            }
+        }
+        await waitFor(() => deferred.size === 0, 2000, "every dispatched symbol to settle");
         assert.deepEqual(events.map((e) => e.type), ["start", "done"], "no outcome releases after the cancelled index gap");
     });
 
