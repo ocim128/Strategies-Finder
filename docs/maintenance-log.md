@@ -4,6 +4,37 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-05 — Settings/Finder simplification (resolver rules, Rust mirror, Arm default array)
+
+- **Evidence:** The review-accepted simplification plan
+  (`docs/settings-finder-simplification-plan.md`) covered three intermediate
+  representations: the settings resolver's private rule interpreter, the
+  Finder candidates' parallel `rustBacktestSettings` mirror, and the Arm
+  result store's cached `armPerformanceDefaultResults` array. Phase 0
+  characterization locked the observable baselines first: toggle-alias
+  precedence, the real per-item/run-level Rust batch payloads captured from
+  `runFinderExecution` (stubbed engine), and the Arm empty-default Run Sort
+  fallback.
+- **Change:** (1) `resolveBacktestSettingsFromRaw`'s UI branch now builds its
+  typed result directly; the guard/key unions, rule tables, and both
+  interpreters are removed. (2) `resolveFinderRiskOverrides` returns one
+  canonical `BacktestSettings`; `ParamJob`/`QuickFunnelCandidate` carry no
+  Rust mirror; per-item Rust request settings are derived only at
+  `dispatchRustBatchWithFallback` via `projectRustBatchItemSettings`
+  (eligible ATR + enabled percentage SL/TP overrides only), and single-purpose
+  run-base sanitization was dropped from TypeScript-only paths. (3)
+  `armPerformanceDefaultResults` is gone; adoption sorts once, display edits
+  sort only the selected arm, and Run Sort derives the default view under the
+  current filter — preview and terminal results now share one empty-view
+  fallback instead of the old unfiltered preview guard.
+- **Checks:** Both typechecks clean; all 47 `finder-` specs, the 11-spec
+  Phase 2 list (including the new `finder-rust-submission-settings.spec.ts`
+  wire characterization), settings/rust-parity/capital specs, and the four
+  Phase 3 specs pass; `npm run verify` (269 specs) green. Browser build/E2E
+  and Rust CI remain with the repository pipeline.
+- **Follow-up:** None pending; guides updated in `finder.md`,
+  `backtest-engines-typescript-rust.md`.
+
 ## 2026-10-04 - Un-red the CI typecheck gate (TS-version drift hid the failure locally)
 
 - **Evidence:** `gh run list` showed every CI run on this branch failing since
