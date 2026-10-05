@@ -769,6 +769,14 @@ payloads remain available through Copy Result / Copy OPEN_SCORE / the details
 panel. The diagnostic-log contract lives in
 `lib/batch-backtest/sp500-top-mean-diagnostic-log.ts`.
 
+Worker entries (`resolveTopMeanWorkerPath`, `resolveTopMeanScanWorkerPath`,
+and the generic `resolveServerWorkerEntryPath`) resolve through the shared
+helper `lib/server-worker-entry.ts` — sibling `.js` preference, then
+repository/module `.ts`, else an esbuild bundle published content-addressed
+under `os.tmpdir()` (`sp500-top-mean-workers`). No process memo is supplied:
+each `TopMeanWorkerPool` pins its resolved entry for its lifetime and a fresh
+pool resolves current sources afresh.
+
 ### Validation Commands
 
 ```bash
@@ -780,4 +788,5 @@ npm run typecheck
 ..\..\..\node_modules\.bin\esno tests\sp500-top-mean-performance.spec.ts
 ..\..\..\node_modules\.bin\esno tests\sp500-top-mean-server-plugin.spec.ts
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
+..\..\..\node_modules\.bin\esno tests\server-worker-entry.spec.ts
 ```

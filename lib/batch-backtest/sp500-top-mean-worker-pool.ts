@@ -1,9 +1,9 @@
 import { availableParallelism, totalmem } from "node:os";
-import { createHash } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { resolveWorkerEntryPath } from "../server-worker-entry";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import type { TopMeanRunManifest } from "./compact-pair-artifact";
@@ -46,63 +46,17 @@ export async function resolveTopMeanScanWorkerPath(): Promise<string> {
 /**
  * Resolve a TOP_MEAN worker entry: prefer the standalone deployment's sibling
  * .js, then the repository .ts, else esbuild-bundle the .ts to a content-
- * addressed worker.cjs. All entries share the same resolution so the backtest
- * pool and auxiliary workers (replay scan) cannot drift.
+ * addressed .cjs. All entries share the same shared-helper resolution so the
+ * backtest pool and auxiliary workers (replay scan) cannot drift. No process
+ * memo is supplied: the pool pins its resolved entry for its lifetime.
  */
 export async function resolveServerWorkerEntryPath(fileName: string): Promise<string> {
-    const fs = await import("node:fs/promises");
-    const repositorySource = resolve(process.cwd(), "lib", "batch-backtest", fileName);
-    const moduleSource = join(moduleThisFileDir(), fileName);
-    const sourcePath = await fs.access(repositorySource).then(() => repositorySource).catch(() => moduleSource);
-    const sibling = sourcePath.replace(/\.ts$/, ".js");
-    if (sourcePath.endsWith(".js") || (await fs.access(sibling).then(() => true).catch(() => false))) {
-        return sourcePath.endsWith(".js") ? sourcePath : sibling;
-    }
-    try {
-        return await bundleWorkerWithEsbuild(sourcePath, fileName.replace(/\.ts$/, ".cjs"));
-    } catch {
-        return sourcePath;
-    }
-}
-
-/**
- * Bundle the worker source and reuse the content-addressed output file.
- */
-async function bundleWorkerWithEsbuild(sourcePath: string, outfile: string): Promise<string> {
-    const fs = await import("node:fs/promises");
-    const os = await import("node:os");
-    const esbuild = (await import("esbuild")) as unknown as {
-        build: (opts: any) => Promise<{ outputFiles?: Array<{ contents: Uint8Array }> }>;
-    };
-    const tmp = os.tmpdir();
-    const root = join(tmp, "sp500-top-mean-workers");
-
-    const result = await esbuild.build({
-        entryPoints: [sourcePath],
-        bundle: true,
-        platform: "node",
-        format: "cjs",
-        target: "node18",
-        outfile,
-        write: false,
-        logLevel: "silent",
+    return resolveWorkerEntryPath({
+        repositorySourcePath: resolve(process.cwd(), "lib", "batch-backtest", fileName),
+        moduleSourcePath: join(moduleThisFileDir(), fileName),
+        temporaryNamespace: "sp500-top-mean-workers",
+        outputFileName: fileName.replace(/\.ts$/, ".cjs"),
     });
-
-    const contents = result.outputFiles?.[0]?.contents;
-    if (!contents?.byteLength) {
-        throw new Error(`esbuild produced an empty bundle for ${outfile}`);
-    }
-
-    const bundleHash = createHash("sha256").update(contents).digest("hex").slice(0, 16);
-    const dir = join(root, bundleHash);
-    const outPath = join(dir, outfile);
-    await fs.mkdir(dir, { recursive: true });
-    if (!(await fs.access(outPath).then(() => true).catch(() => false))) {
-        const temporary = join(dir, `worker.${process.pid}.${Date.now()}.tmp`);
-        await fs.writeFile(temporary, contents);
-        await fs.rename(temporary, outPath);
-    }
-    return outPath;
 }
 
 /**

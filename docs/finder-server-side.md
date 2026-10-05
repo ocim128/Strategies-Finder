@@ -685,7 +685,8 @@ The parallel contracts are locked by
 ordered release, cancel flush, fatal isolation, worker-count policy, worker
 dataset-cache semantics; in-process fake runners execute the real worker
 task core). The real-thread bootstrap (esbuild bundle + `worker_threads`
-message protocol) is covered by the manual smoke below.
+message protocol) is covered by the real-worker smokes in
+`tests/server-worker-entry.spec.ts`.
 
 ## Per-run JSONL diagnostics log
 

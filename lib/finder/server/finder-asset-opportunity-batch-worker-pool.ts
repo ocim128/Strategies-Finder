@@ -34,11 +34,11 @@
  */
 
 import { availableParallelism, totalmem } from "node:os";
-import { createHash } from "node:crypto";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { debugLogger } from "../../debug-logger";
+import { resolveWorkerEntryPath, type WorkerBundleMemoRecord } from "../../server-worker-entry";
 import {
     ASSET_OPPORTUNITY_BATCH_BYTES_PER_SYMBOL,
     resolveAssetOpportunityMemoryBudgetBytes,
@@ -169,7 +169,7 @@ export function resolveAssetOpportunityBatchWorkerCount(
 }
 
 // ---------------------------------------------------------------------------
-// Worker script resolution (pattern-mirrors sp500-top-mean-worker-pool.ts)
+// Worker script resolution (shared mechanism in lib/server-worker-entry.ts)
 // ---------------------------------------------------------------------------
 
 function moduleThisFileDir(): string {
@@ -180,90 +180,28 @@ function moduleThisFileDir(): string {
     }
 }
 
-export async function resolveAssetOpportunityBatchWorkerPath(): Promise<string> {
-    const fs = await import("node:fs/promises");
-    const repositorySource = resolve(
-        process.cwd(),
-        "lib",
-        "finder",
-        "server",
-        "finder-asset-opportunity-batch-worker.ts",
-    );
-    const moduleSource = join(moduleThisFileDir(), "finder-asset-opportunity-batch-worker.ts");
-    const sourcePath = await fs.access(repositorySource).then(() => repositorySource).catch(() => moduleSource);
-    const sibling = sourcePath.replace(/\.ts$/, ".js");
-    if (sourcePath.endsWith(".js") || (await fs.access(sibling).then(() => true).catch(() => false))) {
-        return sourcePath.endsWith(".js") ? sourcePath : sibling;
-    }
-    try {
-        return await bundleWorkerWithEsbuild(sourcePath);
-    } catch {
-        return sourcePath;
-    }
-}
-
 /**
- * Per-process cache of the last resolved worker bundle, keyed by the source
+ * Per-process memo of the last resolved worker bundle, keyed by the source
  * file's mtime + size (one esbuild.build() is 50-150ms; a cheap stat cuts
  * that back to a single filesystem access while the source is unchanged).
+ * The record is owned here and honored by the shared entry resolver.
  */
-let cachedWorkerBundle: { sourcePath: string; mtimeMs: number; size: number; outfile: string } | null = null;
+const workerBundleMemo: { record: WorkerBundleMemoRecord | null } = { record: null };
 
-async function bundleWorkerWithEsbuild(sourcePath: string): Promise<string> {
-    const fs = await import("node:fs/promises");
-    const os = await import("node:os");
-    const esbuild = (await import("esbuild")) as unknown as {
-        build: (opts: any) => Promise<{ outputFiles?: Array<{ contents: Uint8Array }> }>;
-    };
-    const tmp = os.tmpdir();
-    const root = join(tmp, "finder-asset-opportunity-batch-workers");
-
-    try {
-        const stat = await fs.stat(sourcePath);
-        if (
-            cachedWorkerBundle
-            && cachedWorkerBundle.sourcePath === sourcePath
-            && cachedWorkerBundle.mtimeMs === stat.mtimeMs
-            && cachedWorkerBundle.size === stat.size
-            && await fs.access(cachedWorkerBundle.outfile).then(() => true).catch(() => false)
-        ) {
-            return cachedWorkerBundle.outfile;
-        }
-    } catch {
-        // Stat failure: fall through to the full bundle path.
-    }
-
-    const result = await esbuild.build({
-        entryPoints: [sourcePath],
-        bundle: true,
-        platform: "node",
-        format: "cjs",
-        target: "node18",
-        outfile: "worker.cjs",
-        write: false,
-        logLevel: "silent",
+export async function resolveAssetOpportunityBatchWorkerPath(): Promise<string> {
+    return resolveWorkerEntryPath({
+        repositorySourcePath: resolve(
+            process.cwd(),
+            "lib",
+            "finder",
+            "server",
+            "finder-asset-opportunity-batch-worker.ts",
+        ),
+        moduleSourcePath: join(moduleThisFileDir(), "finder-asset-opportunity-batch-worker.ts"),
+        temporaryNamespace: "finder-asset-opportunity-batch-workers",
+        outputFileName: "worker.cjs",
+        memo: workerBundleMemo,
     });
-
-    const contents = result.outputFiles?.[0]?.contents;
-    if (!contents?.byteLength) {
-        throw new Error("esbuild produced an empty asset-opportunity batch worker bundle");
-    }
-    const bundleHash = createHash("sha256").update(contents).digest("hex").slice(0, 16);
-    const dir = join(root, bundleHash);
-    const outfile = join(dir, "worker.cjs");
-    await fs.mkdir(dir, { recursive: true });
-    if (!(await fs.access(outfile).then(() => true).catch(() => false))) {
-        const temporary = join(dir, `worker.${process.pid}.${Date.now()}.tmp`);
-        await fs.writeFile(temporary, contents);
-        await fs.rename(temporary, outfile);
-    }
-    try {
-        const stat = await fs.stat(sourcePath);
-        cachedWorkerBundle = { sourcePath, mtimeMs: stat.mtimeMs, size: stat.size, outfile };
-    } catch {
-        // Best-effort: leave the previous cache entry in place.
-    }
-    return outfile;
 }
 
 // ---------------------------------------------------------------------------
