@@ -4,6 +4,44 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-05 — Next simplifications (shared settings parsers, candle columns, Finder exit planning)
+
+- **Evidence:** The temporary plan (`docs/next-simplifications-plan.md`,
+  removed after delivery) covered three duplications at baseline `737b8421`:
+  four settings-value interpretations maintained separately by the DOM
+  contract and the raw resolver, three candle pack/materialize loops across
+  the IBKR and crypto CSV loaders, and a second sampled-exit candidate
+  construction in the current-chart Finder runner. Phase 0 characterization
+  locked the baselines first: a DOM/raw parser parity matrix (all nine path
+  modes, five confirmation modes, three entry moves, string-list shapes,
+  malformed types, disabled controls) in `settings-compat.spec.ts`; cold/warm
+  limit, sidecar, and mutation-independence cases in both loader specs; and a
+  new `finder-candidate-plans.spec.ts` pinning seeded draw sequences, lazy
+  exit generation, per-call versus run-wide RNG/cache lifetimes through
+  `runFinderExecution`, `runFinderUniverseExecution`, and
+  `buildFinderArmPerformanceCandidatePlans`.
+- **Change:** (1) `backtest-settings-resolver.ts` exports
+  `resolvePathExitMode`, `resolveEntryConfirmationMove` (now with an optional
+  fallback), `readStringArray`, and `readConfirmationMode`;
+  `backtest-settings-dom-contract.ts` calls them and its duplicated switch
+  bodies and `readStringArrayValue` are gone; numeric/JSON parameter parsing
+  stays path-specific. (2) `lib/data/ohlcv-columns.ts` owns the six-column
+  `OhlcvColumns` shape, the packer, and `candlesFromColumns(columns,
+  startIndex)`; both loaders and the IBKR seed sidecar use it while keeping
+  their own limit normalization, caching, and binary format. (3)
+  `buildFinderCandidatePlans` accepts optional `randomFn`/`exitParamSetsByKey`;
+  the current-chart runner creates both once per run, calls the planner per
+  entry strategy, and keeps only execution grouping; the fixed-exit branch,
+  Universe, Arm, and Asset Opportunity sampling are untouched.
+- **Checks:** Characterization passed on the baseline before each refactor and
+  unchanged after. Both typechecks clean; Phase 1 five-spec list,
+  Phase 2 six-spec list plus all 47 `batch-`/`data-`/`candle-cache`/`trade-ledger-`
+  selected specs, and the full 48-spec `finder-` family green;
+  `npm run verify` green. Build/E2E and Rust CI remain with the repository
+  pipeline.
+- **Follow-up:** None pending; ownership recorded in `settings.md`,
+  `price-data.md`, and `finder.md`.
+
 ## 2026-10-05 — Settings/Finder simplification (resolver rules, Rust mirror, Arm default array)
 
 - **Evidence:** The review-accepted simplification plan
