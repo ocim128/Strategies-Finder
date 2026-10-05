@@ -196,18 +196,21 @@ describe("FinderResultStore", () => {
         // guard is the filtered default view's availability, never the
         // unfiltered inventory length.
         const { store } = makeStore();
-        const rows = [makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2), makeArmCandidate(2, 3, 12)].map((row) => ({
+        const rows = [
+            makeArmCandidate(0, 1, 8),
+            makeArmCandidate(1, 9, 2),
+            makeArmCandidate(2, 3, 12),
+        ].map((row) => ({
             ...row,
             metrics: {
                 ...row.metrics!,
                 TOP_RAW_PROFIT_NOW: { ...row.metrics!.TOP_RAW_PROFIT_NOW, events: 1 },
                 TOP_RAW: { ...row.metrics!.TOP_RAW, events: 9 },
             },
-        }));
+        })) as FinderArmPerformanceCandidate[];
         const filter = {
             measurement: "return" as const,
             rankingSort: "overall_ordering" as const,
-            rankingHorizon: null,
             basis: "raw" as const,
             eventFilterEnabled: true,
             minEvents: 5,

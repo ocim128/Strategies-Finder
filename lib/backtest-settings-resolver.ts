@@ -88,230 +88,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     pathExitHorizonBars: 50,
 });
 
-type ResolverGuardName =
-    | "useAtrRisk"
-    | "usePercentRisk"
-    | "useRiskManagement";
-
-type ResolverGuardState = Record<ResolverGuardName, boolean>;
-
-type NumericResolverKey =
-    | "atrPeriod"
-    | "stopLossAtr"
-    | "takeProfitAtr"
-    | "trailingAtr"
-    | "stopLossPercent"
-    | "takeProfitPercent"
-    | "takeProfitMfeBootstrapPercentile"
-    | "takeProfitAdaptiveLookbackTrades"
-    | "takeProfitAdaptiveRecentWindow"
-    | "takeProfitAdaptiveMinMultiplier"
-    | "takeProfitAdaptiveMaxMultiplier"
-    | "takeProfitAdaptiveGridSteps"
-    | "takeProfitAdaptiveRegimeBlend"
-    | "takeProfitAdaptiveIcScale"
-    | "riskMinHoldBars"
-    | "riskMaxHoldBars"
-    | "riskCooldownBars"
-    | "riskEntryConfirmationPercent"
-    | "riskEntryConfirmationBars"
-    | "confirmationWindowBars"
-    | "slippageBps"
-    | "maxOpenTrades"
-    | "strategyTimeframeMinutes"
-    | "pathExitMinBars"
-    | "pathExitMinMfePercent"
-    | "pathExitGivebackPercent"
-    | "pathExitLookbackBars"
-    | "pathExitThreshold"
-    | "pathExitMinSamples"
-    | "pathExitHorizonBars";
-
-type BooleanResolverKey =
-    | "stopLossEnabled"
-    | "takeProfitEnabled"
-    | "riskMinHoldEnabled"
-    | "riskMaxHoldEnabled"
-    | "riskCooldownEnabled"
-    | "riskEntryConfirmationEnabled"
-    | "entryTimeFilterEnabled"
-    | "invertSignals"
-    | "strategyTimeframeEnabled"
-    | "disableSignalExits"
-    | "confirmationSignalExitsEnabled"
-    | "pathExitEnabled";
-
-type NumericResolverRule = {
-    key: NumericResolverKey;
-    guard?: ResolverGuardName;
-    disabledValue?: number;
-    resolve?: (raw: Record<string, unknown>) => number;
-};
-
-type BooleanResolverRule = {
-    key: BooleanResolverKey;
-    keys?: readonly string[];
-    guard?: ResolverGuardName;
-    disabledValue?: boolean;
-};
-
-function readDefaultedNumber(raw: Record<string, unknown>, key: NumericResolverKey): number {
-    return readNumber(raw, key, EFFECTIVE_BACKTEST_DEFAULTS[key] as number);
-}
-
-const NUMERIC_RESOLVER_RULES: readonly NumericResolverRule[] = [
-    { key: "atrPeriod" },
-    { key: "stopLossAtr", guard: "useAtrRisk", disabledValue: 0 },
-    { key: "takeProfitAtr", guard: "useAtrRisk", disabledValue: 0 },
-    { key: "trailingAtr", guard: "useAtrRisk", disabledValue: 0 },
-    { key: "stopLossPercent", guard: "usePercentRisk", disabledValue: 0 },
-    { key: "takeProfitPercent", guard: "usePercentRisk", disabledValue: 0 },
-    {
-        key: "takeProfitMfeBootstrapPercentile",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(1, Math.min(99, readDefaultedNumber(raw, "takeProfitMfeBootstrapPercentile"))),
-    },
-    {
-        key: "takeProfitAdaptiveLookbackTrades",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(5, Math.round(readDefaultedNumber(raw, "takeProfitAdaptiveLookbackTrades"))),
-    },
-    {
-        key: "takeProfitAdaptiveRecentWindow",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(3, Math.round(readDefaultedNumber(raw, "takeProfitAdaptiveRecentWindow"))),
-    },
-    {
-        key: "takeProfitAdaptiveMinMultiplier",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0.1, readDefaultedNumber(raw, "takeProfitAdaptiveMinMultiplier")),
-    },
-    {
-        key: "takeProfitAdaptiveMaxMultiplier",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0.2, readDefaultedNumber(raw, "takeProfitAdaptiveMaxMultiplier")),
-    },
-    {
-        key: "takeProfitAdaptiveGridSteps",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(3, Math.round(readDefaultedNumber(raw, "takeProfitAdaptiveGridSteps"))),
-    },
-    {
-        key: "takeProfitAdaptiveRegimeBlend",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0, Math.min(1, readDefaultedNumber(raw, "takeProfitAdaptiveRegimeBlend"))),
-    },
-    {
-        key: "takeProfitAdaptiveIcScale",
-        guard: "usePercentRisk",
-        resolve: (raw) => Math.max(0, Math.min(2, readDefaultedNumber(raw, "takeProfitAdaptiveIcScale"))),
-    },
-    {
-        key: "riskMinHoldBars",
-        guard: "useRiskManagement",
-        disabledValue: 0,
-        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskMinHoldBars"))),
-    },
-    { key: "riskMaxHoldBars", guard: "useRiskManagement", disabledValue: 0 },
-    {
-        key: "riskCooldownBars",
-        guard: "useRiskManagement",
-        disabledValue: 0,
-        resolve: (raw) => Math.max(0, Math.round(readDefaultedNumber(raw, "riskCooldownBars"))),
-    },
-    {
-        key: "riskEntryConfirmationPercent",
-        guard: "useRiskManagement",
-        disabledValue: 0,
-        resolve: (raw) => Math.max(0, Math.min(100, readDefaultedNumber(raw, "riskEntryConfirmationPercent"))),
-    },
-    {
-        key: "riskEntryConfirmationBars",
-        guard: "useRiskManagement",
-        disabledValue: 0,
-        resolve: (raw) => Math.max(1, Math.round(readDefaultedNumber(raw, "riskEntryConfirmationBars"))),
-    },
-    { key: "slippageBps" },
-    {
-        key: "maxOpenTrades",
-        // Only the explicit DOM value 3 selects unlimited overlap; any other
-        // out-of-range garbage clamps back to the conservative capped range.
-        resolve: (raw) => {
-            const value = Math.round(readDefaultedNumber(raw, "maxOpenTrades"));
-            return value === MAX_OPEN_TRADES_UNLIMITED ? value : Math.max(1, Math.min(2, value));
-        },
-    },
-    { key: "strategyTimeframeMinutes" },
-    { key: "pathExitMinBars", guard: "useRiskManagement", disabledValue: 10 },
-    { key: "pathExitMinMfePercent", guard: "useRiskManagement", disabledValue: 2.0 },
-    { key: "pathExitGivebackPercent", guard: "useRiskManagement", disabledValue: 25 },
-    { key: "pathExitLookbackBars", guard: "useRiskManagement", disabledValue: 20 },
-    { key: "pathExitThreshold", guard: "useRiskManagement", disabledValue: 0 },
-    { key: "pathExitMinSamples", guard: "useRiskManagement", disabledValue: 30 },
-    { key: "pathExitHorizonBars", guard: "useRiskManagement", disabledValue: 50 },
-] as const;
-
-const BOOLEAN_RESOLVER_RULES: readonly BooleanResolverRule[] = [
-    { key: "stopLossEnabled", keys: ["stopLossEnabled", "stopLossToggle"], guard: "usePercentRisk", disabledValue: false },
-    { key: "takeProfitEnabled", keys: ["takeProfitEnabled", "takeProfitToggle"], guard: "usePercentRisk", disabledValue: false },
-    { key: "riskMinHoldEnabled", keys: ["riskMinHoldEnabled", "riskMinHoldToggle"], guard: "useRiskManagement", disabledValue: false },
-    { key: "riskMaxHoldEnabled", keys: ["riskMaxHoldEnabled", "riskMaxHoldToggle"], guard: "useRiskManagement", disabledValue: false },
-    { key: "riskCooldownEnabled", keys: ["riskCooldownEnabled", "riskCooldownToggle"], guard: "useRiskManagement", disabledValue: false },
-    {
-        key: "riskEntryConfirmationEnabled",
-        keys: ["riskEntryConfirmationEnabled", "riskEntryConfirmationToggle"],
-        guard: "useRiskManagement",
-        disabledValue: false,
-    },
-    {
-        key: "entryTimeFilterEnabled",
-        keys: ["entryTimeFilterEnabled", "riskEntryTimeFilterToggle"],
-        guard: "useRiskManagement",
-        disabledValue: false,
-    },
-    { key: "invertSignals", keys: ["invertSignals", "invertSignalsToggle"] },
-    { key: "strategyTimeframeEnabled", keys: ["strategyTimeframeEnabled", "strategyTimeframeToggle"] },
-    { key: "disableSignalExits", keys: ["disableSignalExits"] },
-    { key: "confirmationSignalExitsEnabled", keys: ["confirmationSignalExitsEnabled", "confirmationSignalExitsToggle"] },
-    { key: "pathExitEnabled", keys: ["pathExitEnabled", "pathExitToggle"], guard: "useRiskManagement", disabledValue: false },
-] as const;
-
-function resolveNumericSettingRules(
-    raw: Record<string, unknown>,
-    guards: ResolverGuardState
-): Record<NumericResolverKey, number> {
-    const resolved = {} as Record<NumericResolverKey, number>;
-    for (const rule of NUMERIC_RESOLVER_RULES) {
-        if (rule.guard && !guards[rule.guard]) {
-            resolved[rule.key] = rule.disabledValue ?? (EFFECTIVE_BACKTEST_DEFAULTS[rule.key] as number);
-            continue;
-        }
-        resolved[rule.key] = rule.resolve
-            ? rule.resolve(raw)
-            : readDefaultedNumber(raw, rule.key);
-    }
-    return resolved;
-}
-
-function resolveBooleanSettingRules(
-    raw: Record<string, unknown>,
-    guards: ResolverGuardState
-): Record<BooleanResolverKey, boolean> {
-    const resolved = {} as Record<BooleanResolverKey, boolean>;
-    for (const rule of BOOLEAN_RESOLVER_RULES) {
-        if (rule.guard && !guards[rule.guard]) {
-            resolved[rule.key] = rule.disabledValue ?? (EFFECTIVE_BACKTEST_DEFAULTS[rule.key] as boolean);
-            continue;
-        }
-        const fallback = EFFECTIVE_BACKTEST_DEFAULTS[rule.key] as boolean;
-        const keys = rule.keys ?? [rule.key];
-        resolved[rule.key] = keys.length === 1
-            ? readBoolean(raw, keys[0], fallback)
-            : readBooleanAny(raw, [...keys], fallback);
-    }
-    return resolved;
-}
-
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_no_flip", "combined"]);
 const VALID_CONFIRMATION_MODES = new Set<ConfirmationMode>([
     "agree",
@@ -651,21 +427,135 @@ export function resolveBacktestSettingsFromRaw(
     const tradeDirection = readTradeDirection(raw["tradeDirection"], EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection);
     const entryTimeFilter = resolveEntryTimeFilter(raw["entryTimeFilter"] ?? raw["riskEntryTimeFilter"]);
 
-    const guards: ResolverGuardState = {
-        useAtrRisk,
-        usePercentRisk,
-        useRiskManagement: riskEnabled,
-    };
-    const numericSettings = resolveNumericSettingRules(raw, guards);
-    const booleanSettings = resolveBooleanSettingRules(raw, guards);
-
+    // Explicit resolution: every field's parse, guard, disabled value, and
+    // clamp reads together. Guarded fields fall back to their disabled value
+    // when the guard fails and to EFFECTIVE_BACKTEST_DEFAULTS when the key is
+    // merely absent; toggle aliases resolve first-present-key-wins.
+    const maxOpenTradesParsed = Math.round(
+        readNumber(raw, "maxOpenTrades", EFFECTIVE_BACKTEST_DEFAULTS.maxOpenTrades),
+    );
     const resolved: BacktestSettings = {
-        ...numericSettings,
+        atrPeriod: readNumber(raw, "atrPeriod", EFFECTIVE_BACKTEST_DEFAULTS.atrPeriod),
+        stopLossAtr: useAtrRisk
+            ? readNumber(raw, "stopLossAtr", EFFECTIVE_BACKTEST_DEFAULTS.stopLossAtr)
+            : 0,
+        takeProfitAtr: useAtrRisk
+            ? readNumber(raw, "takeProfitAtr", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAtr)
+            : 0,
+        trailingAtr: useAtrRisk
+            ? readNumber(raw, "trailingAtr", EFFECTIVE_BACKTEST_DEFAULTS.trailingAtr)
+            : 0,
+        stopLossPercent: usePercentRisk
+            ? readNumber(raw, "stopLossPercent", EFFECTIVE_BACKTEST_DEFAULTS.stopLossPercent)
+            : 0,
+        takeProfitPercent: usePercentRisk
+            ? readNumber(raw, "takeProfitPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent)
+            : 0,
+        takeProfitMfeBootstrapPercentile: usePercentRisk
+            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMfeBootstrapPercentile", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile,
+        takeProfitAdaptiveLookbackTrades: usePercentRisk
+            ? Math.max(5, Math.round(readNumber(raw, "takeProfitAdaptiveLookbackTrades", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveLookbackTrades)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveLookbackTrades,
+        takeProfitAdaptiveRecentWindow: usePercentRisk
+            ? Math.max(3, Math.round(readNumber(raw, "takeProfitAdaptiveRecentWindow", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRecentWindow)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRecentWindow,
+        takeProfitAdaptiveMinMultiplier: usePercentRisk
+            ? Math.max(0.1, readNumber(raw, "takeProfitAdaptiveMinMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMinMultiplier))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMinMultiplier,
+        takeProfitAdaptiveMaxMultiplier: usePercentRisk
+            ? Math.max(0.2, readNumber(raw, "takeProfitAdaptiveMaxMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMaxMultiplier))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMaxMultiplier,
+        takeProfitAdaptiveGridSteps: usePercentRisk
+            ? Math.max(3, Math.round(readNumber(raw, "takeProfitAdaptiveGridSteps", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveGridSteps)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveGridSteps,
+        takeProfitAdaptiveRegimeBlend: usePercentRisk
+            ? Math.max(0, Math.min(1, readNumber(raw, "takeProfitAdaptiveRegimeBlend", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRegimeBlend)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRegimeBlend,
+        takeProfitAdaptiveIcScale: usePercentRisk
+            ? Math.max(0, Math.min(2, readNumber(raw, "takeProfitAdaptiveIcScale", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveIcScale)))
+            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveIcScale,
+        riskMinHoldBars: riskEnabled
+            ? Math.max(1, Math.round(readNumber(raw, "riskMinHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMinHoldBars)))
+            : 0,
+        // Deliberately unrounded like the guarded path before it: max-hold
+        // stays fractional while min-hold rounds to whole bars.
+        riskMaxHoldBars: riskEnabled
+            ? readNumber(raw, "riskMaxHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldBars)
+            : 0,
+        riskCooldownBars: riskEnabled
+            ? Math.max(0, Math.round(readNumber(raw, "riskCooldownBars", EFFECTIVE_BACKTEST_DEFAULTS.riskCooldownBars)))
+            : 0,
+        riskEntryConfirmationPercent: riskEnabled
+            ? Math.max(0, Math.min(100, readNumber(raw, "riskEntryConfirmationPercent", EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationPercent)))
+            : 0,
+        riskEntryConfirmationBars: riskEnabled
+            ? Math.max(1, Math.round(readNumber(raw, "riskEntryConfirmationBars", EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationBars)))
+            : 0,
+        slippageBps: readNumber(raw, "slippageBps", EFFECTIVE_BACKTEST_DEFAULTS.slippageBps),
+        // Only the explicit DOM value 3 selects unlimited overlap; any other
+        // out-of-range garbage clamps back to the conservative capped range.
+        maxOpenTrades: maxOpenTradesParsed === MAX_OPEN_TRADES_UNLIMITED
+            ? maxOpenTradesParsed
+            : Math.max(1, Math.min(2, maxOpenTradesParsed)),
+        strategyTimeframeMinutes: readNumber(raw, "strategyTimeframeMinutes", EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes),
+        pathExitMinBars: riskEnabled
+            ? readNumber(raw, "pathExitMinBars", EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinBars)
+            : 10,
+        pathExitMinMfePercent: riskEnabled
+            ? readNumber(raw, "pathExitMinMfePercent", EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinMfePercent)
+            : 2.0,
+        pathExitGivebackPercent: riskEnabled
+            ? readNumber(raw, "pathExitGivebackPercent", EFFECTIVE_BACKTEST_DEFAULTS.pathExitGivebackPercent)
+            : 25,
+        pathExitLookbackBars: riskEnabled
+            ? readNumber(raw, "pathExitLookbackBars", EFFECTIVE_BACKTEST_DEFAULTS.pathExitLookbackBars)
+            : 20,
+        pathExitThreshold: riskEnabled
+            ? readNumber(raw, "pathExitThreshold", EFFECTIVE_BACKTEST_DEFAULTS.pathExitThreshold)
+            : 0,
+        pathExitMinSamples: riskEnabled
+            ? readNumber(raw, "pathExitMinSamples", EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinSamples)
+            : 30,
+        pathExitHorizonBars: riskEnabled
+            ? readNumber(raw, "pathExitHorizonBars", EFFECTIVE_BACKTEST_DEFAULTS.pathExitHorizonBars)
+            : 50,
         riskMode,
         takeProfitMode: usePercentRisk
             ? resolveTakeProfitMode(raw["takeProfitMode"])
             : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMode,
-        ...booleanSettings,
+        stopLossEnabled: usePercentRisk
+            ? readBooleanAny(raw, ["stopLossEnabled", "stopLossToggle"], EFFECTIVE_BACKTEST_DEFAULTS.stopLossEnabled)
+            : false,
+        takeProfitEnabled: usePercentRisk
+            ? readBooleanAny(raw, ["takeProfitEnabled", "takeProfitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.takeProfitEnabled)
+            : false,
+        riskMinHoldEnabled: riskEnabled
+            ? readBooleanAny(raw, ["riskMinHoldEnabled", "riskMinHoldToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskMinHoldEnabled)
+            : false,
+        riskMaxHoldEnabled: riskEnabled
+            ? readBooleanAny(raw, ["riskMaxHoldEnabled", "riskMaxHoldToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskMaxHoldEnabled)
+            : false,
+        riskCooldownEnabled: riskEnabled
+            ? readBooleanAny(raw, ["riskCooldownEnabled", "riskCooldownToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskCooldownEnabled)
+            : false,
+        riskEntryConfirmationEnabled: riskEnabled
+            ? readBooleanAny(raw, ["riskEntryConfirmationEnabled", "riskEntryConfirmationToggle"], EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationEnabled)
+            : false,
+        entryTimeFilterEnabled: riskEnabled
+            ? readBooleanAny(raw, ["entryTimeFilterEnabled", "riskEntryTimeFilterToggle"], EFFECTIVE_BACKTEST_DEFAULTS.entryTimeFilterEnabled)
+            : false,
+        invertSignals: readBooleanAny(raw, ["invertSignals", "invertSignalsToggle"], EFFECTIVE_BACKTEST_DEFAULTS.invertSignals),
+        strategyTimeframeEnabled: readBooleanAny(raw, ["strategyTimeframeEnabled", "strategyTimeframeToggle"], EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled),
+        disableSignalExits: readBoolean(raw, "disableSignalExits", EFFECTIVE_BACKTEST_DEFAULTS.disableSignalExits),
+        confirmationSignalExitsEnabled: readBooleanAny(
+            raw,
+            ["confirmationSignalExitsEnabled", "confirmationSignalExitsToggle"],
+            EFFECTIVE_BACKTEST_DEFAULTS.confirmationSignalExitsEnabled,
+        ),
+        pathExitEnabled: riskEnabled
+            ? readBooleanAny(raw, ["pathExitEnabled", "pathExitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.pathExitEnabled)
+            : false,
         riskEntryConfirmationMove: resolveEntryConfirmationMove(raw["riskEntryConfirmationMove"]),
         entryTimeFilter,
         trendEmaPeriod: 0,
