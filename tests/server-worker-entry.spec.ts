@@ -25,10 +25,11 @@
 
 import { expect } from "chai";
 import { createRequire } from "node:module";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync, readdirSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { after, describe, it } from "node:test";
 import { Worker } from "node:worker_threads";
 import {
@@ -52,14 +53,24 @@ describe("server worker entry resolution", () => {
     const marker = (label: string): string => `${label}-${fixtureRoot}`;
 
     let namespaceSequence = 0;
-    const nextNamespace = (): string => `server-worker-entry-spec-${++namespaceSequence}`;
+    // The execution id keeps overlapping spec executions (parallel runs,
+    // other worktrees) from sharing content-addressed namespaces: each
+    // execution publishes into and cleans ONLY its own directories.
+    const executionId = basename(fixtureRoot);
+    const usedNamespaces: string[] = [];
+    const nextNamespace = (): string => {
+        const namespace = `server-worker-entry-spec-${executionId}-${++namespaceSequence}`;
+        usedNamespaces.push(namespace);
+        return namespace;
+    };
 
     after(async () => {
         rmSync(fixtureRoot, { recursive: true, force: true });
-        for (let index = 1; index <= namespaceSequence; index += 1) {
-            // Best-effort cleanup of the spec's content-addressed roots;
-            // ignore failures from another process still reading a bundle.
-            await rm(join(tmpdir(), `server-worker-entry-spec-${index}`), { recursive: true, force: true }).catch(
+        for (const namespace of usedNamespaces) {
+            // Best-effort cleanup of this execution's content-addressed
+            // roots; ignore failures from another process still reading a
+            // bundle. Other executions' namespaces are never touched.
+            await rm(join(tmpdir(), namespace), { recursive: true, force: true }).catch(
                 () => undefined,
             );
         }
@@ -243,6 +254,65 @@ describe("server worker entry resolution", () => {
         const results = await Promise.all(Array.from({ length: 8 }, () => resolveWorkerEntryPath(base)));
         expect(new Set(results).size).to.equal(1, "all concurrent callers resolve the same entry");
         expect(requireFixture(results[0]!).workerMarker).to.equal(marker("concurrent"));
+    });
+
+    it("cleans up temporary files when the rename loses to an existing destination", async () => {
+        // Deterministic race simulation: a large bundle keeps writeFile in
+        // flight while the test interposes a DIRECTORY at the destination the
+        // moment a temporary file appears — no platform replaces a file with
+        // a directory, so the rename rejects on Windows and POSIX alike while
+        // the destination exists. The loser must still resolve to that
+        // destination (never a raw .ts fallback) and its own temporary file
+        // must be cleaned up: repeated races never accumulate .tmp copies.
+        const namespace = nextNamespace();
+        const repositorySource = join(repoDir, "race-worker.ts");
+        const moduleSource = join(moduleDir, "race-worker.ts");
+        writeFileSync(repositorySource, `export const workerMarker = ${JSON.stringify(marker("race"))};\n`);
+        writeFileSync(moduleSource, `export const workerMarker = "unused";\n`);
+        const contents = new Uint8Array(16 * 1024 * 1024);
+        const base = {
+            repositorySourcePath: repositorySource,
+            moduleSourcePath: moduleSource,
+            temporaryNamespace: namespace,
+            outputFileName: "worker.cjs",
+            build: async (): Promise<{ outputFiles?: Array<{ contents: Uint8Array }> }> => ({
+                outputFiles: [{ contents }],
+            }),
+        };
+        const bundleHash = createHash("sha256").update(contents).digest("hex").slice(0, 16);
+        const dir = join(tmpdir(), namespace, bundleHash);
+        const outfile = join(dir, "worker.cjs");
+
+        const firstPromise = resolveWorkerEntryPath(base);
+        const secondPromise = (async (): Promise<string> => {
+            const deadline = Date.now() + 10000;
+            for (;;) {
+                try {
+                    if (readdirSync(dir).some((entry) => entry.endsWith(".tmp"))) break;
+                } catch {
+                    // The content-addressed directory appears with the first
+                    // publication attempt; keep polling until then.
+                }
+                if (Date.now() >= deadline) break;
+                await new Promise((resolveDelay) => setTimeout(resolveDelay, 1));
+            }
+            try {
+                mkdirSync(outfile);
+            } catch {
+                // The first publisher already renamed its bundle into place;
+                // the second caller below then just reuses the destination.
+            }
+            return resolveWorkerEntryPath(base);
+        })();
+        const [first, second] = await Promise.all([firstPromise, secondPromise]);
+
+        // Both callers resolve the same destination path — a loser of the
+        // race accepts the destination that exists instead of failing over.
+        expect(first).to.equal(second);
+        expect(first).to.equal(outfile);
+        // This invocation's temporary file is gone: the destination holds no
+        // leftover .tmp copies from the lost race.
+        expect(readdirSync(dir).filter((entry) => entry.endsWith(".tmp"))).to.deep.equal([]);
     });
 });
 

@@ -137,13 +137,21 @@ async function bundleWorkerEntryWithEsbuild(
             dir,
             `worker.${process.pid}.${Date.now()}.${++temporaryFileSequence}.tmp`,
         );
-        await fs.writeFile(temporary, contents);
         try {
-            await fs.rename(temporary, outfile);
-        } catch (error) {
-            if (!(await fs.access(outfile).then(() => true).catch(() => false))) {
-                throw error;
+            await fs.writeFile(temporary, contents);
+            try {
+                await fs.rename(temporary, outfile);
+            } catch (error) {
+                if (!(await fs.access(outfile).then(() => true).catch(() => false))) {
+                    throw error;
+                }
             }
+        } finally {
+            // Best-effort removal of THIS invocation's temporary file: a lost
+            // rename race or a failed write must never accumulate bundle
+            // copies. A successful rename already consumed the file, and
+            // `force` no-ops then; cleanup errors never mask the outcome.
+            await fs.rm(temporary, { force: true }).catch(() => undefined);
         }
     }
     if (memo) {
