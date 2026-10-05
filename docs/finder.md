@@ -85,10 +85,14 @@ search settings retain their existing persistence behavior.
 
 Arm Performance display edits coalesce into one update per animation frame.
 Duplicate events skip sorting and rendering when the inventory, display limit,
-selected arm, and filter are unchanged. The default arm reuses its sorted
-inventory. Display snapshots debounce for 300 ms and flush on pagehide;
-terminal results still persist immediately, and starting a new run discards
-pending checkpoints from the previous run.
+selected arm, and filter are unchanged. Every accepted edit sorts ONLY the
+selected arm from the full inventory; there is no cached default array. Arm
+"Run Sort" (an empty re-sort dropdown) routes through the same display
+controls and re-applies the current filter to the default arm, so a filter
+that hides every default-arm row keeps the view empty. Display snapshots
+debounce for 300 ms and flush on pagehide; terminal results still persist
+immediately, and starting a new run discards pending checkpoints from the
+previous run.
 
 ### Search controls
 

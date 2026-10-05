@@ -256,7 +256,12 @@ export class FinderResultStore {
 		this.originalLatestResults = this.latestResults;
 	}
 
-	/** "Run Sort" — restore original run-time ordering. */
+	/**
+	 * "Run Sort" — restore original run-time ordering. Never reached for Arm
+	 * Performance: `FinderManager.applyResort` routes that scope through
+	 * `applyArmPerformanceDisplaySettings`, whose Run Sort re-applies the
+	 * current display filter to the selected (or default) arm.
+	 */
 	restoreRunSort(): void {
 		const scope = this.latestResults.scope;
 		if (scope === 'asset_opportunity' && this.assetOpportunityDefaultResults.length > 0) {
@@ -267,21 +272,6 @@ export class FinderResultStore {
 				scope: 'symbol_universe',
 				results: this.symbolUniverseRunResults.slice(0, Math.max(1, this.symbolUniverseDisplayLimit)),
 			});
-		} else if (scope === 'arm_performance') {
-			// The default view is the DEFAULT ARM under the CURRENT display
-			// filter; availability is the filtered view's length, never the
-			// unfiltered inventory. This treats incomplete previews and
-			// terminal results identically.
-			const defaultView = sortFinderArmPerformanceResults(
-				this.armPerformanceRunResults,
-				"TOP_RAW_PROFIT_NOW",
-				this.armPerformanceDisplayFilter,
-			);
-			if (defaultView.length > 0) {
-				this.setArmPerformanceLatestResults(defaultView);
-			} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
-				this.setLatestResults(this.originalLatestResults);
-			}
 		} else if (this.originalLatestResults && this.originalLatestResults.scope === scope) {
 			this.setLatestResults(this.originalLatestResults);
 		}

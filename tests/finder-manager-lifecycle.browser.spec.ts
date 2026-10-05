@@ -1378,6 +1378,86 @@ describe("Finder facade terminal adoption (integration)", () => {
         expect(m.resultStore.latestResults.results[0]!.candidateOrdinal).to.equal(1);
         expect(m.resultStore.latestResults.inventoryComplete).to.equal(false);
     });
+
+    it("browser Arm Run Sort re-applies the current filter to the default arm (terminal results)", () => {
+        // The browser routes Arm Run Sort through
+        // applyArmPerformanceDisplaySettings: an empty re-sort dropdown
+        // re-applies the CURRENT filter controls to the default arm. When a
+        // tightened event filter hides every default-arm row, Run Sort shows
+        // zero rows — it does NOT fall back to the stashed run-time ordering
+        // (that fallback is the generic restoreRunSort helper, which Arm
+        // scope never reaches).
+        const rows = [
+            makeArmCandidate(0, 10, 10),
+            makeArmCandidate(1, 10, 100),
+        ].map((row) => ({
+            ...row,
+            metrics: {
+                ...row.metrics!,
+                TOP_RAW_PROFIT_NOW: { ...row.metrics!.TOP_RAW_PROFIT_NOW, events: 1 },
+                TOP_RAW: { ...row.metrics!.TOP_RAW, events: 9 },
+            },
+        })) as FinderArmPerformanceCandidate[];
+        const m = manager();
+        m.controls.uiState.scope = "arm_performance";
+        m.getDom().finderScope.value = "arm_performance";
+        m.resultStore.adoptArmPerformanceResults(rows, null, true);
+        m.resultStore.stashRunSortBaseline();
+        m.populateResortOptions();
+
+        // Select the other arm and tighten the event filter: TOP_RAW's rows
+        // clear it (events 9 >= 5); the default arm's rows cannot (events 1).
+        m.getDom().finderResort.value = "TOP_RAW";
+        m.getDom().finderArmPerformanceEventFilterEnabled.checked = true;
+        m.getDom().finderArmPerformanceMinEvents.value = "5";
+        m.applyResort();
+        expect(m.resultStore.latestResults.results).to.have.length(2);
+
+        m.getDom().finderResort.value = "";
+        m.applyResort();
+        expect(m.resultStore.latestResults.results).to.deep.equal(
+            [],
+            "Run Sort shows the current-filter default view (zero rows), not the stashed original",
+        );
+        expect(m.resultStore.latestResults.scope).to.equal("arm_performance");
+        expect(m.resultStore.latestResults.inventoryComplete).to.equal(true);
+    });
+
+    it("browser Arm Run Sort on a reattached preview re-applies the current filter too", () => {
+        const rows = [
+            makeArmCandidate(0, 10, 10),
+            makeArmCandidate(1, 10, 100),
+        ].map((row) => ({
+            ...row,
+            metrics: {
+                ...row.metrics!,
+                TOP_RAW_PROFIT_NOW: { ...row.metrics!.TOP_RAW_PROFIT_NOW, events: 1 },
+                TOP_RAW: { ...row.metrics!.TOP_RAW, events: 9 },
+            },
+        })) as FinderArmPerformanceCandidate[];
+        const m = manager();
+        m.controls.uiState.scope = "arm_performance";
+        m.getDom().finderScope.value = "arm_performance";
+        m.resultStore.armPerformanceRunResults = [...rows];
+        m.resultStore.armPerformanceInventoryComplete = false;
+        m.resultStore.setArmPerformanceLatestResults(rows, false, 20, false);
+        m.resultStore.stashRunSortBaseline();
+        m.populateResortOptions();
+
+        m.getDom().finderResort.value = "TOP_RAW";
+        m.getDom().finderArmPerformanceEventFilterEnabled.checked = true;
+        m.getDom().finderArmPerformanceMinEvents.value = "5";
+        m.applyResort();
+        expect(m.resultStore.latestResults.results).to.have.length(2);
+
+        m.getDom().finderResort.value = "";
+        m.applyResort();
+        expect(m.resultStore.latestResults.results).to.deep.equal(
+            [],
+            "preview Run Sort behaves like terminal Run Sort: current filter, default arm",
+        );
+        expect(m.resultStore.latestResults.inventoryComplete).to.equal(false);
+    });
 });
 
 describe("FinderManager Asset Opportunity stream contracts", () => {

@@ -23,14 +23,21 @@ repeating the same investigation.
   `dispatchRustBatchWithFallback` via `projectRustBatchItemSettings`
   (eligible ATR + enabled percentage SL/TP overrides only), and single-purpose
   run-base sanitization was dropped from TypeScript-only paths. (3)
-  `armPerformanceDefaultResults` is gone; adoption sorts once, display edits
-  sort only the selected arm, and Run Sort derives the default view under the
-  current filter — preview and terminal results now share one empty-view
-  fallback instead of the old unfiltered preview guard.
+  `armPerformanceDefaultResults` is gone; adoption sorts once and display
+  edits sort only the selected arm. Arm "Run Sort" behavior was already
+  authoritative in the browser — `FinderManager.applyResort` routes that
+  scope through `applyArmPerformanceDisplaySettings`, which re-applies the
+  current filter to the selected (or default) arm and never reaches
+  `restoreRunSort` — so the store's unused Arm branch was removed rather
+  than rewritten, and manager-level tests now pin the browser path for
+  terminal and reattached-preview states.
 - **Checks:** Both typechecks clean; all 47 `finder-` specs, the 11-spec
   Phase 2 list (including the new `finder-rust-submission-settings.spec.ts`
-  wire characterization), settings/rust-parity/capital specs, and the four
-  Phase 3 specs pass; `npm run verify` (269 specs) green. Browser build/E2E
+  client-submission characterization: direct and cached batches, short and
+  next_close settings, successful-Rust ranking ownership, capability-shaped
+  projections), settings/rust-parity/capital specs, and the Phase 3 specs
+  pass; `npm run verify` (270 specs) green. Client-submission tests observe
+  Rust client arguments, not serialized HTTP payloads. Browser build/E2E
   and Rust CI remain with the repository pipeline.
 - **Follow-up:** None pending; guides updated in `finder.md`,
   `backtest-engines-typescript-rust.md`.

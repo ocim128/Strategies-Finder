@@ -167,7 +167,10 @@ describe("FinderResultStore", () => {
         expect(writes).to.deep.equal([store.latestResults]);
         expect(writes[0]!.results).to.have.length(1);
         expect(store.armPerformanceRunResults).to.deep.equal(rows);
-        store.restoreRunSort();
+        // Browser-equivalent Arm Run Sort: re-apply the current filter to the
+        // default arm (FinderManager routes Arm scope away from
+        // restoreRunSort).
+        store.setArmPerformanceDisplayFilter(filter, "TOP_RAW_PROFIT_NOW");
         expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(1);
     });
 
@@ -187,14 +190,14 @@ describe("FinderResultStore", () => {
         store.flushPendingDisplayPersistence();
     });
 
-    it("Arm Run Sort restores the original empty view when the default arm filters to zero rows", () => {
-        // Characterization: with an event filter that the default arm's rows
-        // cannot satisfy, the default view is EMPTY at adoption. Switching to
-        // an arm whose rows clear the filter shows them, and Run Sort must
-        // fall back to the stashed original (the empty default view) — not to
-        // the other arm's rows and not to the unfiltered inventory. The
-        // guard is the filtered default view's availability, never the
-        // unfiltered inventory length.
+    it("the Arm default view stays empty while the store helper's generic Run Sort falls back to the stashed original", () => {
+        // Helper-level characterization (the browser routes Arm Run Sort
+        // through FinderManager.applyArmPerformanceDisplaySettings — see the
+        // manager lifecycle spec): with an event filter that the default
+        // arm's rows cannot satisfy, the default view is EMPTY at adoption,
+        // and switching to an arm whose rows clear the filter shows them.
+        // The store's generic restoreRunSort fallback then restores the
+        // stashed original (the empty default view).
         const { store } = makeStore();
         const rows = [
             makeArmCandidate(0, 1, 8),
@@ -232,25 +235,29 @@ describe("FinderResultStore", () => {
         store.restoreRunSort();
         expect(store.latestResults.results).to.deep.equal(
             [],
-            "Run Sort restores the stashed original empty default view",
+            "the generic Run Sort fallback restores the stashed original empty default view",
         );
         expect(store.latestResults.scope).to.equal("arm_performance");
     });
 
-    it("re-sorts an incomplete bounded preview without waiting for terminal adoption", () => {
+    it("re-sorts an incomplete bounded preview and returns it to the default arm under the current filter", () => {
+        // Browser-equivalent Run Sort for Arm: re-applying the current filter
+        // to the default arm (what applyArmPerformanceDisplaySettings does
+        // when the dropdown is empty) — restoreRunSort is not on the Arm path.
         const { store } = makeStore();
         store.armPerformanceDisplayLimit = 10;
         store.adoptArmPerformanceResults([makeArmCandidate(0, 1, 8), makeArmCandidate(1, 9, 2)], null, false);
         expect(store.latestResults.scope === "arm_performance" && store.latestResults.inventoryComplete).to.equal(false);
-        store.setArmPerformanceDisplayFilter({ basis: "raw" }, "TOP_RAW");
+        const filter = { basis: "raw" as const };
+        store.setArmPerformanceDisplayFilter(filter, "TOP_RAW");
         expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(
             0,
             "TOP_RAW ranks by raw (8 beats 2)",
         );
-        store.restoreRunSort();
+        store.setArmPerformanceDisplayFilter(filter, "TOP_RAW_PROFIT_NOW");
         expect((store.latestResults.results as FinderArmPerformanceCandidate[])[0]!.candidateOrdinal).to.equal(
             1,
-            "Run Sort returns to the TOP_RAW_PROFIT_NOW default (9 beats 1)",
+            "returning to the default arm re-ranks by TOP_RAW_PROFIT_NOW (9 beats 1)",
         );
     });
 
