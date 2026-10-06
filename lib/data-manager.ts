@@ -26,6 +26,7 @@ import {
 import { getIntervalSeconds } from "./dataProviders/utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { toTimeKey } from "./time-key";
+import { chartManager } from "./chart-manager";
 import { countRealtimeGapBars } from "./realtime-gap-utils";
 import { clearLocalDailyCsvCachesForSymbols, mergeCandles } from "./candle-cache";
 import { clearCachedCandlesDatabase } from "./candle-cache";
@@ -723,6 +724,7 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
 
         const currentData = state.ohlcvData;
         let changed = false;
+        let evictedHead = false;
         let gapBars = 0;
         if (currentData.length === 0) {
             commitOhlcvData([updatedCandle], 'realtime_replace_empty');
@@ -757,6 +759,10 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
                     for (const candle of removed) {
                         state._ohlcvTimeMap.delete(toTimeKey(candle.time));
                     }
+                    // Removing the head re-seeds derived series (Heikin Ashi
+                    // open chaining), so the chart must rebuild instead of
+                    // taking the constant-time live tail update.
+                    evictedHead = true;
                 }
                 changed = true;
             }
@@ -770,8 +776,16 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
         // the bar entirely (new-bar push) until the next full commit.
         state._ohlcvTimeMap.set(toTimeKey(updatedCandle.time), updatedCandle);
 
+        // Chart display is chart-manager owned: candlestick mode keeps the
+        // incremental raw update; Heikin Ashi mode computes only the
+        // transformed tail so displayed values always match a full redraw.
+        // Raw lookup/persistence updates above are untouched by this.
         if (state.candlestickSeries) {
-            state.candlestickSeries.update(updatedCandle);
+            if (evictedHead) {
+                chartManager.rebuildChartDataAfterEviction();
+            } else {
+                chartManager.updateLiveCandle(updatedCandle);
+            }
         }
 
         const persistedData = state.ohlcvData;
