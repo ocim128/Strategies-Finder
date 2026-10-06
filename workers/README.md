@@ -154,6 +154,22 @@ applying `0006`:
 - If you add or rename a built-in strategy, run `npm run strategies:sync-manifest` and redeploy the Worker after the manifest change or subscriptions can fail with `worker_strategy_not_supported:<key>`.
 - `GET /health` exposes the worker's current supported strategy keys so the UI can detect an outdated deployment.
 
+## Exit Notifications
+
+With `notifyExit` enabled on a subscription, an exit message is sent when the
+notified entry's position actually closes in the worker's evaluation: matching
+is by executed entry identity (entry time and direction); legacy stored
+payloads without an entry time match through the configured execution shift
+applied to their stored source signal time. `end_of_data` closures count as
+still-open positions and never notify, a partial exit alone never sends a
+full-position close message, and ordinary opposite-signal closes, stop-loss,
+take-profit, and time closes all notify with the actual exit fill price and
+time. Delivery is best effort: the dedupe key in the status
+(`;exit_alert:...`) is persisted only after a successful Telegram send, and
+failures are logged without fabricating success so the next evaluation
+retries. Status-based dedupe does not guarantee exactly-once notification
+under concurrent cron/manual runs.
+
 ## Telegram (Optional)
 
 Set worker secrets:
