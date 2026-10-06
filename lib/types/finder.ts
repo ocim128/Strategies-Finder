@@ -224,7 +224,6 @@ export interface FinderOptions {
     minTrades: number;
     maxTrades: number;
     freezeRiskManagement?: boolean;
-    randomizePathExitParams?: boolean;
     exitStrategyOverrideEnabled?: boolean;
     /** Registry key of the strategy whose signals act as close-only exits. */
     exitStrategyKey?: string;

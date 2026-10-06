@@ -28,7 +28,6 @@ export interface FinderOptionsInput {
     minTrades: number;
     maxTrades: number;
     freezeRiskManagement: boolean;
-    randomizePathExitParams?: boolean;
     exitStrategyOverrideEnabled?: boolean;
     exitStrategyKey?: string;
     exitStrategyBaseParams?: import("../types/strategies").StrategyParams;
@@ -279,7 +278,6 @@ export function buildFinderOptions(input: FinderOptionsInput): FinderOptions {
         minTrades,
         maxTrades,
         freezeRiskManagement: input.freezeRiskManagement,
-        randomizePathExitParams: input.randomizePathExitParams === true,
         exitStrategyOverrideEnabled: input.exitStrategyOverrideEnabled === true,
         exitStrategyKey: input.exitStrategyOverrideEnabled === true ? input.exitStrategyKey : undefined,
         exitStrategyBaseParams: input.exitStrategyOverrideEnabled === true ? input.exitStrategyBaseParams : undefined,

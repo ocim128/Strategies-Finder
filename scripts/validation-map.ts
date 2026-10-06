@@ -198,7 +198,7 @@ export const VALIDATION_RULES: readonly ValidationRule[] = [
             "lib/strategies/entry-eval.ts",
         ],
         directories: ["lib/strategies/backtest/"],
-        guides: ["docs/backtest-engines-typescript-rust.md", "docs/settings.md", "docs/path-dependent-exits.md"],
+        guides: ["docs/backtest-engines-typescript-rust.md", "docs/settings.md"],
         testFilters: [],
         checks: ["full-js"],
     },

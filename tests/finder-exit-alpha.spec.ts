@@ -54,7 +54,6 @@ const baseSettings = {
     riskMode: "percentage" as const,
     stopLossEnabled: false,
     takeProfitEnabled: false,
-    pathExitEnabled: false,
     riskMaxHoldEnabled: false,
 };
 
@@ -155,16 +154,6 @@ describe("Finder Exit Alpha", () => {
             takeProfitPercent: 5,
         }, undefined, undefined, { forceDisableSignalExits: true });
         expect(takeProfit.trades[0]?.exitReason).to.equal("take_profit");
-
-        const pathExit = runBacktest(makeData([100, 109, 105]), [{ time: 1 as Time, type: "buy", price: 100 }], 1_000, 100, 0, {
-            ...baseSettings,
-            pathExitEnabled: true,
-            pathExitMode: "mfe_giveback",
-            pathExitMinBars: 1,
-            pathExitMinMfePercent: 5,
-            pathExitGivebackPercent: 40,
-        }, undefined, undefined, { forceDisableSignalExits: true });
-        expect(pathExit.trades[0]?.exitReason).to.equal("path_exit");
 
         const holdData = makeData([100, 101, 102, 103]);
         const timeStop = runBacktest(holdData, [{ time: 1 as Time, type: "buy", price: 100 }], 1_000, 100, 0, {

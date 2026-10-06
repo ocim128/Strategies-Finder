@@ -15,7 +15,7 @@ Use this file as a short task router. Read the guide and tests for the feature y
 | --- | --- | --- |
 | UI structure or DOM ids | [UI Structure](README.md#ui-structure); the owning feature's local DOM contract and **html-partials/** | **npm run test -- feature-dom-contracts.spec.ts** |
 | Built-in strategy | [Strategy Authoring](docs/strategy-authoring.md) | **npm run strategies:sync-manifest** after source changes; run **npm run test -- new-strategy-lib-smoke.spec.ts** |
-| Backtest fills, exits, or TypeScript/Rust behavior | [Backtest engine guide](docs/backtest-engines-typescript-rust.md), [Path-dependent exits](docs/path-dependent-exits.md) | Focused backtest spec; check long/short and affected execution models |
+| Backtest fills, exits, or TypeScript/Rust behavior | [Backtest engine guide](docs/backtest-engines-typescript-rust.md) | Focused backtest spec; check long/short and affected execution models |
 | Finder | [Finder guide](docs/finder.md), [Finder server guide](docs/finder-server-side.md) | Focused **finder-*.spec.ts** tests |
 | Batch Backtest or TOP_MEAN | [Batch server guide](docs/batch-backtest-server-side.md), [research findings](docs/mine-timing-validation-findings.md) | Focused **batch-*.spec.ts** or **sp500-top-mean-*.spec.ts** tests |
 | Synthetic pairs or IBKR data | [Synthetic pairs](docs/synthetic-pairs.md), [Alpaca / IBKR sync](docs/alpaca-ibkr-sync.md) | Focused data or loader-parity spec |

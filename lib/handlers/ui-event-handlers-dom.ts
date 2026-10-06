@@ -177,16 +177,6 @@ export type UiEventHandlersDom = UiEventRequiredDom & {
     exitStrategyKey: HTMLSelectElement | null;
     exitStrategyParamsContainer: HTMLElement | null;
     exitStrategyParams: HTMLInputElement | null;
-    pathExitEnabled: HTMLInputElement | null;
-    pathExitConfig: HTMLElement | null;
-    pathExitMode: HTMLSelectElement | null;
-    pathExitMinBars: HTMLInputElement | null;
-    pathExitMinMfePercent: HTMLInputElement | null;
-    pathExitGivebackPercent: HTMLInputElement | null;
-    pathExitLookbackBars: HTMLInputElement | null;
-    pathExitThreshold: HTMLInputElement | null;
-    pathExitMinSamples: HTMLInputElement | null;
-    pathExitHorizonBars: HTMLInputElement | null;
 };
 
 export function createUiEventHandlersDom(): UiEventHandlersDom {
@@ -217,16 +207,6 @@ export function createUiEventHandlersDom(): UiEventHandlersDom {
         exitStrategyKey: getOptionalElement<HTMLSelectElement>("exitStrategyKey"),
         exitStrategyParamsContainer: getOptionalElement("exitStrategyParamsContainer"),
         exitStrategyParams: getOptionalElement<HTMLInputElement>("exitStrategyParams"),
-        pathExitEnabled: getOptionalElement<HTMLInputElement>("pathExitEnabled"),
-        pathExitConfig: getOptionalElement("pathExitConfig"),
-        pathExitMode: getOptionalElement<HTMLSelectElement>("pathExitMode"),
-        pathExitMinBars: getOptionalElement<HTMLInputElement>("pathExitMinBars"),
-        pathExitMinMfePercent: getOptionalElement<HTMLInputElement>("pathExitMinMfePercent"),
-        pathExitGivebackPercent: getOptionalElement<HTMLInputElement>("pathExitGivebackPercent"),
-        pathExitLookbackBars: getOptionalElement<HTMLInputElement>("pathExitLookbackBars"),
-        pathExitThreshold: getOptionalElement<HTMLInputElement>("pathExitThreshold"),
-        pathExitMinSamples: getOptionalElement<HTMLInputElement>("pathExitMinSamples"),
-        pathExitHorizonBars: getOptionalElement<HTMLInputElement>("pathExitHorizonBars"),
     };
 }
 

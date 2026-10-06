@@ -74,10 +74,6 @@ export function getTypescriptEngineRequirementReasons(
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
 
     const usesDisableSignalExits = settings.disableSignalExits === true;
-    const usesPathExit =
-        settings.pathExitEnabled === true
-        && settings.pathExitMode !== undefined
-        && settings.pathExitMode !== 'off';
     const usesSlippage = (settings.slippageBps ?? 0) > 0;
 
     const reasons: string[] = [];
@@ -107,7 +103,6 @@ export function getTypescriptEngineRequirementReasons(
     if (usesAdaptivePercentageTakeProfit) reasons.push('adaptive take profit is enabled');
     if (usesMultiPosition) reasons.push('multiple open positions are enabled');
     if (usesDisableSignalExits) reasons.push('signal exits are disabled');
-    if (usesPathExit) reasons.push('path exits are enabled');
     if (usesSlippage) reasons.push('slippage is enabled');
     return reasons;
 }
@@ -129,15 +124,6 @@ export function hasCapabilityIndependentTypescriptRequirement(settings: Backtest
 }
 
 export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
-    "pathExitEnabled",
-    "pathExitMode",
-    "pathExitMinBars",
-    "pathExitMinMfePercent",
-    "pathExitGivebackPercent",
-    "pathExitLookbackBars",
-    "pathExitThreshold",
-    "pathExitMinSamples",
-    "pathExitHorizonBars",
     "maxOpenTrades",
     "marketMode",
     "riskMinHoldBars",

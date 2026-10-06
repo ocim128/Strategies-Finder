@@ -128,7 +128,7 @@ describe("Finder manager logic", () => {
         })).to.deep.equal(["entryScore", "exitScore", "expectancy"]);
     });
 
-    it("keeps path-exit randomization even when risk settings are frozen", () => {
+    it("passes freeze risk setting through to Finder options", () => {
         const base = {
             useAdvancedSort: false,
             advancedSortValues: [],
@@ -149,18 +149,12 @@ describe("Finder manager logic", () => {
         expect(buildFinderOptions({
             ...base,
             freezeRiskManagement: false,
-            randomizePathExitParams: true,
-        }).randomizePathExitParams).to.equal(true);
+        }).freezeRiskManagement).to.equal(false);
 
-        // Freeze does not force randomize off: users can freeze the
-        // ATR/SL/TP/maxHold risk controls and still let Finder vary path-exit
-        // controls. The runner-core functions gate the path-exit pathway
-        // themselves; the options flag must pass through.
         expect(buildFinderOptions({
             ...base,
             freezeRiskManagement: true,
-            randomizePathExitParams: true,
-        }).randomizePathExitParams).to.equal(true);
+        }).freezeRiskManagement).to.equal(true);
 
     });
 

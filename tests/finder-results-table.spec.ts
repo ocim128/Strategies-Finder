@@ -37,7 +37,6 @@ describe("Finder collapsed setting summaries", () => {
         const summaries = ["risk", "exit", "trades", "universe"].map((key) => ({ dataset: { finderSettingSummary: key }, textContent: "" }));
         dom.finderConfiguration.querySelectorAll = (() => summaries) as unknown as typeof dom.finderConfiguration.querySelectorAll;
         dom.finderFreezeRiskManagementToggle.checked = true;
-        dom.finderRandomizePathExitToggle.checked = true;
         dom.finderExitStrategyOverrideToggle.checked = true;
         dom.finderTradesToggle.checked = true;
         dom.finderTradesMin.value = "40";
@@ -46,7 +45,7 @@ describe("Finder collapsed setting summaries", () => {
         dom.finderUniverseMinTotalTrades.value = "50";
         dom.finderUniverseMinProfitableActiveRatio.value = "0.6";
         refreshFinderSettingsSummaries(dom);
-        assert.equal(summaries[0].textContent, "Risk settings fixed · Path exit search selected");
+        assert.equal(summaries[0].textContent, "Risk settings fixed");
         assert.equal(summaries[1].textContent, "Override search selected");
         assert.equal(summaries[2].textContent, "40–unlimited trades");
         assert.equal(summaries[3].textContent, "Active ≥ 3 · Trades ≥ 50 · Profitable ratio ≥ 0.6");

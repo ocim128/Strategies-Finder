@@ -161,7 +161,7 @@ export function buildFinderArmSpeedReport(args: {
             plannedCandidates: c.plannedCandidateCount, requestedEngine: c.requestedEngineMode,
             actualEngines: c.actualEngineModes, mode: c.searchOptions.mode, runsPerStrategy: c.searchOptions.maxRuns,
             executionModel: c.backtestSettings.executionModel, direction: c.backtestSettings.tradeDirection,
-            stopLossPercent: c.backtestSettings.stopLossPercent, pathExitMode: c.backtestSettings.pathExitMode,
+            stopLossPercent: c.backtestSettings.stopLossPercent,
             exitOverride: c.searchOptions.exitStrategyOverrideEnabled, commission: c.capitalSettings.commission,
             sizingMode: c.capitalSettings.sizingMode, confirmationStrategies: c.backtestSettings.confirmationStrategies?.length ?? 0,
             selectionCooldown: c.searchOptions.armPerformance?.selectionCooldownEnabled ?? false,

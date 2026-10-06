@@ -26,7 +26,6 @@ import {
     updateAdaptiveTakeProfitPosition,
     updateAdaptiveTakeProfitHistory,
 } from './adaptive-take-profit';
-import { PathExitEvaluationContext, PathExitLearningState, learnFromClosedTrade } from './path-exit-rules';
 import { isEntryBarAllowed } from '../../entry-time-filter';
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
@@ -530,8 +529,7 @@ function hasBarBasedExitRules(config: NormalizedSettings): boolean {
         || config.breakEvenAtR > 0
         || config.breakEvenPercent > 0
         || hasRiskMaxHold
-        || config.timeStopBars > 0
-        || (config.pathExitEnabled && config.pathExitMode !== 'off');
+        || config.timeStopBars > 0;
 }
 
 function canUseSignalOnlyFinderFastPath(
@@ -712,10 +710,6 @@ function runSinglePositionFinderFastPath(args: {
     const endpointLastDataTime = options?.endpointSelectionLastDataTime ?? null;
     const endpointAccumulator = endpointEnabled ? createEndpointSelectionAccumulator() : undefined;
     const trades: Trade[] = [];
-    const learningState: PathExitLearningState = {
-        hazardSamples: new Map(),
-        barrierSamples: new Map(),
-    };
     diagnostics && (diagnostics.counts.fastPathRuns = 1);
     let capital = initialCapital;
     let peakEquity = initialCapital;
@@ -811,17 +805,6 @@ function runSinglePositionFinderFastPath(args: {
             if (isEntryCooldownEnabled(config)) {
                 signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(currentBarIndex, config.riskCooldownBars);
             }
-            if (config.pathExitEnabled && (config.pathExitMode === 'conditional_hazard' || config.pathExitMode === 'triple_barrier_meta')) {
-                learnFromClosedTrade(
-                    pos,
-                    pos.openedBarIndex ?? positionEntryBarIndex ?? 0,
-                    currentBarIndex,
-                    exitPrice,
-                    data,
-                    learningState,
-                    config
-                );
-            }
             if (position === pos) {
                 position = null;
                 positionEntryBarIndex = -1;
@@ -871,13 +854,7 @@ function runSinglePositionFinderFastPath(args: {
         options?: Parameters<typeof processPositionExits>[4]
     ): boolean => {
         if (!position) return false;
-        const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
-            data,
-            barIndex,
-            atrValue: indicatorSeries.atr ? indicatorSeries.atr[barIndex] : null,
-            learningState,
-        } : undefined;
-        const exitTrigger = processPositionExits(candle, position, config, slippageRate, options, pathExitContext, barIndex);
+        const exitTrigger = processPositionExits(candle, position, config, slippageRate, options, barIndex);
         if (!exitTrigger) return false;
         return recordExit(position, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason).fullyClosed;
     };
@@ -1712,7 +1689,7 @@ type FallbackSimulationAggregate = {
  * transitions: pending adaptive exits at the open, `next_open` open-only
  * exits + signal scan, backward position iteration with close-based exits,
  * signal entries/exits with re-entry and cooldown rules, end-of-bar
- * adaptive-history flushing, and end-of-data liquidation. Path-exit causality
+ * adaptive-history flushing, and end-of-data liquidation. Exit causality
  * (decisions from data at or before the deciding bar) is preserved by the
  * shared exit handler.
  *
@@ -1771,10 +1748,6 @@ function runFallbackPositionSimulation(args: {
     const equityCurve: { time: Time; value: number }[] = [];
     let tradeId = 0;
     let currentBarIndex = 0;
-    const learningState: PathExitLearningState = {
-        hazardSamples: new Map(),
-        barrierSamples: new Map(),
-    };
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
     const winStreakRisk = createWinStreakRiskState();
@@ -1825,17 +1798,6 @@ function runFallbackPositionSimulation(args: {
             sizingMode,
             advancedSizing
         );
-        if (config.pathExitEnabled && (config.pathExitMode === 'conditional_hazard' || config.pathExitMode === 'triple_barrier_meta')) {
-            learnFromClosedTrade(
-                position,
-                position.openedBarIndex ?? 0,
-                currentBarIndex,
-                exitPrice,
-                data,
-                learningState,
-                config
-            );
-        }
     };
 
     const flushAdaptiveTakeProfitUpdates = () => {
@@ -1921,13 +1883,7 @@ function runFallbackPositionSimulation(args: {
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-        const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
-            data,
-            barIndex,
-            atrValue: indicatorSeries.atr[barIndex],
-            learningState,
-        } : undefined;
-        const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext, barIndex);
+        const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, barIndex);
         let fullyClosed = false;
         if (exitTrigger) {
             ({ fullyClosed } = recordExit(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));
@@ -1948,7 +1904,7 @@ function runFallbackPositionSimulation(args: {
             return;
         }
 
-        const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, undefined, barIndex);
+        const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, barIndex);
         if (stopLossTrigger) {
             const { fullyClosed } = recordExit(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
             if (fullyClosed) {
@@ -2069,7 +2025,7 @@ function runFallbackPositionSimulation(args: {
         if (config.executionModel === 'next_open') {
             for (let p = positions.length - 1; p >= 0; p--) {
                 const pos = positions[p]!;
-                const openExitTrigger = processPositionExits(candle, pos, config, slippageRate, OPEN_ONLY_POSITION_EXIT_OPTIONS, undefined, i);
+                const openExitTrigger = processPositionExits(candle, pos, config, slippageRate, OPEN_ONLY_POSITION_EXIT_OPTIONS, i);
                 if (!openExitTrigger) {
                     continue;
                 }
@@ -2158,7 +2114,7 @@ function runFallbackPositionSimulation(args: {
             }
 
             if (config.executionModel === 'next_open' && openedThisBar && !config.allowSameBarExit) {
-                const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, undefined, i);
+                const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, i);
                 if (stopLossTrigger) {
                     const { fullyClosed } = recordExit(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
                     if (fullyClosed) {
@@ -2169,13 +2125,7 @@ function runFallbackPositionSimulation(args: {
             }
 
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-            const pathExitContext: PathExitEvaluationContext | undefined = config.pathExitEnabled ? {
-                data,
-                barIndex: i,
-                atrValue: indicatorSeries.atr[i],
-                learningState,
-            } : undefined;
-            const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, pathExitContext, i);
+            const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, i);
             let fullyClosed = false;
             if (exitTrigger) {
                 ({ fullyClosed } = recordExit(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));

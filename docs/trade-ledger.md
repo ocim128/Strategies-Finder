@@ -54,7 +54,6 @@ must not depend on prior accepted-trade history. Archives record
 
 - **Adaptive take-profit** â€” any `takeProfitMode` other than `fixed`
   (`adaptive_take_profit:<mode>`).
-- **Path exits** â€” `pathExitEnabled` with a mode other than `off` (`path_exit:<mode>`).
 - **Partial take-profit** â€” `partialTakeProfitAtR > 0` (an as-if trade can have only
   one exit).
 - **Win-streak stop-loss** â€” `riskWinStreakStopLossEnabled` (depends on prior accepted

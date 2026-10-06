@@ -99,7 +99,6 @@ if (trades.length === 0) {
             partial: { label: 'Partial', className: 'exit-reason-badge--partial', icon: '1/2' },
             probation_fail: { label: 'Guard', className: 'exit-reason-badge--probation-fail', icon: 'GRD' },
             end_of_data: { label: 'EOD', className: 'exit-reason-badge--end-of-data', icon: 'EOD' },
-            path_exit: { label: 'Path Exit', className: 'exit-reason-badge--path-exit', icon: 'PTH' },
         };
 
         const info = reasonMap[exitReason];

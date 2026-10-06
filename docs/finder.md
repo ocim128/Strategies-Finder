@@ -751,10 +751,6 @@ disabled or ignored.
 then searches strategy parameters only, and applying a result does not replace
 the frozen risk settings.
 
-`Randomize Path Exits` varies the numeric controls for the selected
-path-dependent exit mode. It may vary path-exit controls even when other risk
-settings are frozen; other risk controls remain fixed.
-
 ### Exit Strategy Override
 
 `Exit Strategy Override` requires Disable Exit Signal plus a configured exit
@@ -904,7 +900,7 @@ mutable state of its own beyond the retained run context
 | Copy payloads (top results, run configuration, Arm/Asset diagnostics), clipboard | `lib/finder/browser/finder-export.ts` | `tests/finder-export-diagnostics.spec.ts`, `tests/finder-config-capture.spec.ts` |
 | Failure/fallback/quality diagnostics builders, engine-mode label | `lib/finder/browser/finder-run-diagnostics.ts` | `tests/finder-export-diagnostics.spec.ts`, `tests/finder-diagnostics.spec.ts` |
 | Result inventories, display limits, re-sort and Run Sort restoration, Arm run/apply context | `lib/finder/browser/finder-result-store.ts` — owns every Asset Opportunity inventory transition (adopt/provisional/restore); Arm default views are derived from the full inventory under the current display filter (`TOP_RAW_PROFIT_NOW` + filter); there is no cached default array | `tests/finder-result-store.spec.ts`, `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-all-resorts.spec.ts` |
-| Candidate Apply flows, apply-in-flight guard, backtest-settings merge | `lib/finder/browser/finder-result-actions.ts` | `tests/finder-selection-apply.browser.spec.ts`, `tests/finder-arm-performance-settings.spec.ts`, `tests/finder-freeze-randomize-path-exit.spec.ts` |
+| Candidate Apply flows, apply-in-flight guard, backtest-settings merge | `lib/finder/browser/finder-result-actions.ts` | `tests/finder-selection-apply.browser.spec.ts`, `tests/finder-arm-performance-settings.spec.ts` |
 | Strategy selection sets, toggle maps, filter/range/bulk selection | `lib/finder/browser/finder-strategy-selection.ts` | `tests/finder-selection-apply.browser.spec.ts` |
 | Server run ownership, scoped Stop, one shared owned-run poll loop (reattach + recovery) | `lib/finder/browser/finder-server-session.ts` | `tests/finder-manager-lifecycle.browser.spec.ts` |
 | Scope workflows (current chart, universe, asset single/batch, arm, quality) | `lib/finder/browser/workflows/*` | `tests/finder-manager-lifecycle.browser.spec.ts`, `tests/finder-asset-opportunity-stream.spec.ts` |

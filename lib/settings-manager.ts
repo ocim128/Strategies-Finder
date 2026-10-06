@@ -593,8 +593,7 @@ class SettingsManager {
             'riskMaxHoldToggle',
             'riskEntryConfirmationToggle',
             'riskEntryTimeFilterToggle',
-            'riskEntryTimeFilter',
-            'pathExitEnabled'
+            'riskEntryTimeFilter'
         ];
 
         triggerSettingsChangeEvents(toggleIds);

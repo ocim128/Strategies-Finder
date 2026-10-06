@@ -25,7 +25,6 @@ const EXIT_REASON_LABELS: Record<string, string> = {
     partial: "Partial",
     probation_fail: "Weak-Start Guard",
     end_of_data: "End of Data",
-    path_exit: "Path Exit",
 };
 
 export function buildPostEntryPathStats(

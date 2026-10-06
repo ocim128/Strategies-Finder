@@ -15,7 +15,6 @@ export function getSettingsSectionSummary(section: string, s: BacktestSettingsDa
                 ? `SL ${s.stopLossEnabled ? `${s.stopLossPercent}%` : "off"} · TP ${s.takeProfitEnabled ? `${s.takeProfitPercent}% (${s.takeProfitMode.replaceAll("_", " ")})` : "off"}`
                 : `ATR · SL ${s.stopLossAtr}× · TP ${s.takeProfitAtr}× · Trail ${s.trailingAtr}×`];
             if (s.riskSettingsToggle && s.disableSignalExits) parts.push(s.exitStrategyOverrideEnabled ? "Exit strategy override" : "Signal exits off");
-            if (s.riskSettingsToggle && s.pathExitEnabled) parts.push(`Path exit: ${s.pathExitMode.replaceAll("_", " ")}`);
             return parts.join(" · ");
         }
         case "sizing": {

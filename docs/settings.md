@@ -24,7 +24,7 @@ Some retired controls no longer have UI or execution behavior: the advanced-risk
 
 ## Shared value parsers
 
-Four setting-value interpretations have one owner in `lib/backtest-settings-resolver.ts`: path-exit mode (`resolvePathExitMode`), entry-confirmation move (`resolveEntryConfirmationMove`, with an optional fallback so callers keep their own default), confirmation mode (`readConfirmationMode`), and strategy-name lists (`readStringArray`). Both the raw resolver and the DOM settings contract (`lib/backtest-settings-dom-contract.ts`) call these helpers, so an accepted mode or list rule changes in one place. Their toggle gating, fallback sources, and storage/DOM responsibilities stay separate; numeric and JSON parameter parsing intentionally differs between the capture and DOM paths and is not shared. `settings-compat.spec.ts` pins the DOM/raw parity for all supported enum values and list shapes.
+Three setting-value interpretations have one owner in `lib/backtest-settings-resolver.ts`: entry-confirmation move (`resolveEntryConfirmationMove`, with an optional fallback so callers keep their own default), confirmation mode (`readConfirmationMode`), and strategy-name lists (`readStringArray`). Both the raw resolver and the DOM settings contract (`lib/backtest-settings-dom-contract.ts`) call these helpers, so an accepted mode or list rule changes in one place. Their toggle gating, fallback sources, and storage/DOM responsibilities stay separate; numeric and JSON parameter parsing intentionally differs between the capture and DOM paths and is not shared. `settings-compat.spec.ts` pins the DOM/raw parity for all supported enum values and list shapes.
 
 ## Owners and checks
 

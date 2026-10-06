@@ -227,7 +227,6 @@ applyPersistedUiStateToDom(): void {
 	dom.finderRange.value = String(this.uiState.rangePercent);
 	dom.finderSteps.value = String(this.uiState.steps);
 	dom.finderFreezeRiskManagementToggle.checked = this.uiState.freezeRiskManagement;
-	dom.finderRandomizePathExitToggle.checked = this.uiState.randomizePathExitParams;
 	dom.finderExitStrategyOverrideToggle.checked = this.uiState.exitStrategyOverrideEnabled;
 	dom.finderTradesToggle.checked = this.uiState.tradeFilterEnabled;
 	dom.finderTradesMin.value = String(this.uiState.minTrades);
@@ -682,7 +681,6 @@ initFinderSettingsPersistenceUI(): void {
 		dom.finderRange,
 		dom.finderSteps,
 		dom.finderFreezeRiskManagementToggle,
-		dom.finderRandomizePathExitToggle,
 		dom.finderExitStrategyOverrideToggle,
 		dom.finderTradesToggle,
 		dom.finderTradesMin,
@@ -744,7 +742,6 @@ captureFinderUiState(persist = true): void {
 	this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
 	this.uiState.steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
 	this.uiState.freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
-	this.uiState.randomizePathExitParams = dom.finderRandomizePathExitToggle.checked;
 	this.uiState.exitStrategyOverrideEnabled = dom.finderExitStrategyOverrideToggle.checked;
 	this.uiState.tradeFilterEnabled = dom.finderTradesToggle.checked;
 	this.uiState.minTrades = Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0));
@@ -931,7 +928,6 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 		? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 		: Number.POSITIVE_INFINITY;
 	const freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
-	const randomizePathExitParams = dom.finderRandomizePathExitToggle.checked;
 	const finderExitStrategyToggleOn = dom.finderExitStrategyOverrideToggle.checked;
 	const exitStrategyOverrideEnabled = finderExitStrategyToggleOn
 		&& backtestSettings.disableSignalExits === true
@@ -953,7 +949,6 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 		minTrades,
 		maxTrades,
 		freezeRiskManagement,
-		randomizePathExitParams,
 		exitStrategyOverrideEnabled,
 	});
 

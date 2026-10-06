@@ -25,7 +25,6 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 - [pairlist-pools.md](pairlist-pools.md) - committed, hash-locked pair-list pools for S&P-500 TOP_MEAN campaigns: registry schema, generation scripts, archive stamping, and the integrity test.
 - [synthetic-pairs.md](synthetic-pairs.md) - synthetic pair generation and supported surfaces.
 - [rank-pairs.md](rank-pairs.md) - Rank Pairs regime classification: anchored sampling, metrics, labels, thresholds, and copy contract.
-- [path-dependent-exits.md](path-dependent-exits.md) - Risk Management path-exit modes and TypeScript/Rust compatibility.
 
 ## Research Surfaces and Records
 

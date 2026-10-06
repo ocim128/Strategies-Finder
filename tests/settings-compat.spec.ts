@@ -732,13 +732,6 @@ describe('Backtest settings compatibility', () => {
             slippageBps: 3,
             maxOpenTrades: 2,
             strategyTimeframeMinutes: 120,
-            pathExitMinBars: 10,
-            pathExitMinMfePercent: 2,
-            pathExitGivebackPercent: 25,
-            pathExitLookbackBars: 20,
-            pathExitThreshold: 0,
-            pathExitMinSamples: 30,
-            pathExitHorizonBars: 50,
             riskMode: 'percentage',
             takeProfitMode: 'fixed',
             stopLossEnabled: true,
@@ -752,7 +745,6 @@ describe('Backtest settings compatibility', () => {
             strategyTimeframeEnabled: false,
             disableSignalExits: false,
             confirmationSignalExitsEnabled: true,
-            pathExitEnabled: false,
             riskEntryConfirmationMove: 'both',
             entryTimeFilter: 'day_open',
             trendEmaPeriod: 0,
@@ -771,7 +763,6 @@ describe('Backtest settings compatibility', () => {
             exitStrategyOverrideEnabled: false,
             exitStrategyKey: '',
             exitStrategyParams: {},
-            pathExitMode: 'off',
             partialTakeProfitAtR: 0,
             partialTakeProfitPercent: 0,
             breakEvenAtR: 0,
@@ -828,8 +819,6 @@ describe('Backtest settings compatibility', () => {
             exitStrategyOverrideEnabled: false,
             exitStrategyKey: '',
             exitStrategyParams: {},
-            pathExitEnabled: false,
-            pathExitMode: 'off',
             riskMode: 'simple',
             partialTakeProfitPercent: 0,
             breakEvenAtR: 0,
@@ -878,13 +867,6 @@ describe('Backtest settings compatibility', () => {
             slippageBps: 5,
             maxOpenTrades: 1,
             strategyTimeframeMinutes: 120,
-            pathExitMinBars: 10,
-            pathExitMinMfePercent: 2,
-            pathExitGivebackPercent: 25,
-            pathExitLookbackBars: 20,
-            pathExitThreshold: 0,
-            pathExitMinSamples: 30,
-            pathExitHorizonBars: 50,
             riskMode: 'simple',
             takeProfitMode: 'fixed',
             stopLossEnabled: false,
@@ -898,7 +880,6 @@ describe('Backtest settings compatibility', () => {
             strategyTimeframeEnabled: false,
             disableSignalExits: false,
             confirmationSignalExitsEnabled: true,
-            pathExitEnabled: false,
             riskEntryConfirmationMove: 'both',
             entryTimeFilter: 'day_open',
             trendEmaPeriod: 0,
@@ -917,7 +898,6 @@ describe('Backtest settings compatibility', () => {
             exitStrategyOverrideEnabled: false,
             exitStrategyKey: '',
             exitStrategyParams: {},
-            pathExitMode: 'off',
             partialTakeProfitAtR: 0,
             partialTakeProfitPercent: 0,
             breakEvenAtR: 0,
@@ -968,13 +948,6 @@ describe('Backtest settings compatibility', () => {
             slippageBps: 5,
             maxOpenTrades: 1,
             strategyTimeframeMinutes: 120,
-            pathExitMinBars: 10,
-            pathExitMinMfePercent: 2,
-            pathExitGivebackPercent: 25,
-            pathExitLookbackBars: 20,
-            pathExitThreshold: 0,
-            pathExitMinSamples: 30,
-            pathExitHorizonBars: 50,
             riskMode: 'simple',
             takeProfitMode: 'fixed',
             stopLossEnabled: false,
@@ -988,7 +961,6 @@ describe('Backtest settings compatibility', () => {
             strategyTimeframeEnabled: false,
             disableSignalExits: false,
             confirmationSignalExitsEnabled: true,
-            pathExitEnabled: false,
             riskEntryConfirmationMove: 'both',
             entryTimeFilter: 'day_open',
             trendEmaPeriod: 0,
@@ -1007,7 +979,6 @@ describe('Backtest settings compatibility', () => {
             exitStrategyOverrideEnabled: false,
             exitStrategyKey: '',
             exitStrategyParams: {},
-            pathExitMode: 'off',
             partialTakeProfitAtR: 0,
             partialTakeProfitPercent: 0,
             breakEvenAtR: 0,
@@ -1282,94 +1253,21 @@ describe('backtest settings Rust-support contract audit', () => {
         expect(conflicting).to.deep.equal([]);
     });
 
-    it('normalizes path-dependent exit settings and forces TypeScript fallback when enabled', () => {
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitEnabled).to.equal(false);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMode).to.equal('off');
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinBars).to.equal(10);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinMfePercent).to.equal(2.0);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitGivebackPercent).to.equal(25);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitLookbackBars).to.equal(20);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitThreshold).to.equal(0);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinSamples).to.equal(30);
-        expect(EFFECTIVE_BACKTEST_DEFAULTS.pathExitHorizonBars).to.equal(50);
-
-        const resolved = resolveBacktestSettingsFromRaw({
-            pathExitEnabled: true,
-            pathExitMode: 'mfe_giveback',
-            disableSignalExits: true,
-        } as unknown as BacktestSettings);
-        expect(resolved.pathExitEnabled).to.equal(true);
-        expect(resolved.pathExitMode).to.equal('mfe_giveback');
-        expect(resolved.disableSignalExits).to.equal(true);
-        expect(normalizeBacktestSettings(resolved).disableSignalExits).to.equal(true);
-
-        expect(requiresTypescriptEngine(resolved)).to.equal(true);
-        expect('pathExitEnabled' in sanitizeBacktestSettingsForRust(resolved)).to.equal(false);
-
-        const inert = resolveBacktestSettingsFromRaw({
-            pathExitEnabled: true,
-            pathExitMode: 'off',
-            disableSignalExits: true,
-        } as unknown as BacktestSettings);
-        expect(inert.disableSignalExits).to.equal(false);
-
-        const contract = getBacktestDomSettingContract('pathExitMode');
-        expect(contract).to.not.equal(undefined);
-        expect(coerceBacktestDomSettingValue(contract!, 'MFE_GIVEBACK')).to.equal('mfe_giveback');
-        expect(coerceBacktestDomSettingValue(contract!, 'invalid-mode')).to.equal('off');
-    });
-
     it('agrees between the DOM coercer and the raw resolver for shared enum and string-list parsers', () => {
-        const pathExitContract = getBacktestDomSettingContract('pathExitMode');
         const confirmationModeContract = getBacktestDomSettingContract('confirmationMode');
         const entryMoveContract = getBacktestDomSettingContract('riskEntryConfirmationMove');
         const strategiesContract = getBacktestDomSettingContract('confirmationStrategies');
-        expect(pathExitContract).to.not.equal(undefined);
         expect(confirmationModeContract).to.not.equal(undefined);
         expect(entryMoveContract).to.not.equal(undefined);
         expect(strategiesContract).to.not.equal(undefined);
 
         // The two paths must also agree on WHERE malformed values fall back,
         // not only on accepted values, so pin both fallback sources as equal.
-        expect(DEFAULT_BACKTEST_SETTINGS.pathExitMode).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.pathExitMode);
         expect(DEFAULT_BACKTEST_SETTINGS.confirmationMode).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.confirmationMode);
         expect(DEFAULT_BACKTEST_SETTINGS.riskEntryConfirmationMove).to.equal(EFFECTIVE_BACKTEST_DEFAULTS.riskEntryConfirmationMove);
 
         const resolveRaw = (raw: Record<string, unknown>) =>
             resolveBacktestSettingsFromRaw(raw as unknown as BacktestSettings);
-
-        const pathExitCases: Array<[string, unknown, string]> = [
-            // All nine supported modes, verbatim.
-            ['off', 'off', 'off'],
-            ['mfe_giveback', 'mfe_giveback', 'mfe_giveback'],
-            ['momentum_deceleration', 'momentum_deceleration', 'momentum_deceleration'],
-            ['capitulation_exhaustion', 'capitulation_exhaustion', 'capitulation_exhaustion'],
-            ['squeeze_pressure', 'squeeze_pressure', 'squeeze_pressure'],
-            ['conditional_hazard', 'conditional_hazard', 'conditional_hazard'],
-            ['triple_barrier_meta', 'triple_barrier_meta', 'triple_barrier_meta'],
-            ['structure_reclaim', 'structure_reclaim', 'structure_reclaim'],
-            ['profit_compression', 'profit_compression', 'profit_compression'],
-            // Mixed case and surrounding whitespace normalize.
-            ['padded upper', '  MFE_Giveback  ', 'mfe_giveback'],
-            ['upper off', 'OFF', 'off'],
-            ['upper structure', 'Structure_Reclaim', 'structure_reclaim'],
-            // Malformed types and unknown strings fall back to 'off'.
-            ['unknown string', 'giveback', 'off'],
-            ['empty string', '', 'off'],
-            ['number', 42, 'off'],
-            ['boolean', true, 'off'],
-            ['null', null, 'off'],
-            ['undefined', undefined, 'off'],
-            ['array', ['mfe_giveback'], 'off'],
-            ['object', { mode: 'mfe_giveback' }, 'off'],
-        ];
-        for (const [label, value, expected] of pathExitCases) {
-            const domValue = coerceBacktestDomSettingValue(pathExitContract!, value);
-            const rawValue = resolveRaw({ pathExitMode: value }).pathExitMode;
-            expect(domValue, `DOM pathExitMode: ${label}`).to.equal(expected);
-            expect(rawValue, `raw pathExitMode: ${label}`).to.equal(expected);
-            expect(domValue, `parity pathExitMode: ${label}`).to.equal(rawValue);
-        }
 
         const confirmationModeCases: Array<[string, unknown, string]> = [
             // All five supported modes, verbatim.

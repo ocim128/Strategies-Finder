@@ -2,7 +2,6 @@
 import { OHLCVData, Trade } from '../../types/index';
 import { NormalizedSettings, PositionState } from '../../types/backtest';
 import { applySlippage, directionFactorFor, exitSideForDirection } from './backtest-utils';
-import { evaluatePathExit, PathExitEvaluationContext } from './path-exit-rules';
 
 export interface PositionExitTrigger {
     exitPrice: number;
@@ -104,7 +103,6 @@ export function processPositionExits(
     config: NormalizedSettings,
     slippageRate: number,
     options: PositionExitOptions = DEFAULT_POSITION_EXIT_OPTIONS,
-    pathExitContext?: PathExitEvaluationContext,
     currentBarIndex?: number
 ): PositionExitTrigger | null {
     const isShortPosition = position.direction === 'short';
@@ -168,18 +166,6 @@ export function processPositionExits(
                     exitReason: 'partial',
                 };
             }
-        }
-    }
-
-    // Path-dependent exits
-    if (config.pathExitEnabled && pathExitContext) {
-        const pathExit = evaluatePathExit(candle, position, config, pathExitContext);
-        if (pathExit) {
-            return {
-                exitPrice: applySlippage(pathExit.exitPrice, exitSide, slippageRate),
-                exitSize: pathExit.exitSize,
-                exitReason: 'path_exit',
-            };
         }
     }
 

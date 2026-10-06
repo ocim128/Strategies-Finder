@@ -11,7 +11,7 @@ import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
 import { coerceAdaptiveTakeProfitFieldValue, resolveTakeProfitMode } from "./take-profit-settings";
 
-import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection, PathExitMode, EntryTimeFilter } from "./types/strategies";
+import type { BacktestSettings, ConfirmationMode, ExecutionModel, MarketMode, PercentageTakeProfitMode, StrategyParams, TradeDirection, EntryTimeFilter } from "./types/strategies";
 import { isTradeSizingMode, type AdvancedSizingSettings, type TradeSizingMode } from "./types/backtest";
 import {
     CAPITAL_DEFAULTS,
@@ -102,15 +102,6 @@ export interface BacktestSettingsData {
     exitStrategyKey: string;
     /** Params for the exit strategy referenced by exitStrategyKey. */
     exitStrategyParams: Record<string, number>;
-    pathExitEnabled: boolean;
-    pathExitMode: PathExitMode;
-    pathExitMinBars: number;
-    pathExitMinMfePercent: number;
-    pathExitGivebackPercent: number;
-    pathExitLookbackBars: number;
-    pathExitThreshold: number;
-    pathExitMinSamples: number;
-    pathExitHorizonBars: number;
     marketMode: MarketMode;
 
     // Trade direction
@@ -190,17 +181,6 @@ export const DEFAULT_BACKTEST_SETTINGS: BacktestSettingsData = {
     exitStrategyOverrideEnabled: false,
     exitStrategyKey: "",
     exitStrategyParams: {},
-
-    // Path-dependent exits
-    pathExitEnabled: false,
-    pathExitMode: "off",
-    pathExitMinBars: 10,
-    pathExitMinMfePercent: 2.0,
-    pathExitGivebackPercent: 25,
-    pathExitLookbackBars: 20,
-    pathExitThreshold: 0,
-    pathExitMinSamples: 30,
-    pathExitHorizonBars: 50,
 
     // Signal confirmation
     confirmationStrategiesToggle: false,

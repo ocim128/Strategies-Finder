@@ -227,7 +227,6 @@ function getExitReasonBadge(exitReason: string | null | undefined): string {
         partial: { label: "Partial", className: "exit-reason-badge--partial" },
         probation_fail: { label: "Weak-Start Guard", className: "exit-reason-badge--probation-fail" },
         end_of_data: { label: "End of Data", className: "exit-reason-badge--end-of-data" },
-        path_exit: { label: "Path Exit", className: "exit-reason-badge--path-exit" },
     };
 
     const info = reasonMap[exitReason];

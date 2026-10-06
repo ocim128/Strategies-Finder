@@ -367,7 +367,6 @@ These are intentionally narrower than the repo itself:
 - `docs/rank-pairs.md`: Rank Pairs regime classification contract
 - `docs/alpaca-ibkr-sync.md`: Alpaca-backed IBKR Data workflow, source guards, and aggregation
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
-- `docs/path-dependent-exits.md`: path-dependent Risk Management exits
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
 - `docs/mine-timing-validation-findings.md`: historical negative findings behind the removal of Mine/selection diagnostic surfaces
 - `docs/pairlist-selection-research.md`: completed preregistered pool-selection research record (candidate failed its adoption rule)

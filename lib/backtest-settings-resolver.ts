@@ -5,7 +5,6 @@ import type {
     MarketMode,
     StrategyParams,
     TradeDirection,
-    PathExitMode,
     EntryConfirmationMove,
 } from "./types/strategies";
 import { MAX_OPEN_TRADES_UNLIMITED } from "./types/backtest";
@@ -77,15 +76,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     maxOpenTrades: 1,
     strategyTimeframeEnabled: false,
     strategyTimeframeMinutes: 120,
-    pathExitEnabled: false,
-    pathExitMode: "off" as PathExitMode,
-    pathExitMinBars: 10,
-    pathExitMinMfePercent: 2.0,
-    pathExitGivebackPercent: 25,
-    pathExitLookbackBars: 20,
-    pathExitThreshold: 0,
-    pathExitMinSamples: 30,
-    pathExitHorizonBars: 50,
 });
 
 const VALID_TRADE_DIRECTIONS = new Set<TradeDirection>(["long", "short", "both", "both_no_flip", "combined"]);
@@ -119,31 +109,6 @@ function coerceDeepValue(rawValue: unknown): unknown {
         return normalized;
     }
     return coerceScalar(rawValue);
-}
-
-/**
- * Shared pure parser for path-exit mode values (trim + lowercase, falling
- * back to "off"). The DOM settings contract reuses this instead of keeping a
- * second copy of the accepted-mode list.
- */
-export function resolvePathExitMode(rawValue: unknown): PathExitMode {
-    if (typeof rawValue === "string") {
-        const mode = rawValue.trim().toLowerCase() as PathExitMode;
-        if (
-            mode === "off" ||
-            mode === "mfe_giveback" ||
-            mode === "momentum_deceleration" ||
-            mode === "capitulation_exhaustion" ||
-            mode === "squeeze_pressure" ||
-            mode === "conditional_hazard" ||
-            mode === "triple_barrier_meta" ||
-            mode === "structure_reclaim" ||
-            mode === "profit_compression"
-        ) {
-            return mode;
-        }
-    }
-    return "off";
 }
 
 /**
@@ -298,16 +263,11 @@ function hasActiveChartTakeProfitOrStopLoss(settings: Record<string, unknown>): 
         || (toFiniteNumber(settings.takeProfitAtr) ?? 0) > 0;
 }
 
-function hasActivePathExit(settings: Record<string, unknown>): boolean {
-    return settings.pathExitEnabled === true && resolvePathExitMode(settings.pathExitMode) !== "off";
-}
-
 function applyDerivedBacktestSettingGuards(settings: Record<string, unknown>): Record<string, unknown> {
     // Keep disableSignalExits only when another chart-managed exit can close the trade.
     if (
         settings.disableSignalExits === true
         && !hasActiveChartTakeProfitOrStopLoss(settings)
-        && !hasActivePathExit(settings)
         && !settings.exitStrategyOverrideEnabled
     ) {
         settings.disableSignalExits = false;
@@ -354,6 +314,16 @@ function applyRemovedBacktestSettingDefaults(settings: Record<string, unknown>):
     delete settings.historicalLevelTakeProfitEnabled;
     delete settings.historicalLevelStopLossEnabled;
     delete settings.historicalLevelLookbackBars;
+    delete settings.pathExitToggle;
+    delete settings.pathExitEnabled;
+    delete settings.pathExitMode;
+    delete settings.pathExitMinBars;
+    delete settings.pathExitMinMfePercent;
+    delete settings.pathExitGivebackPercent;
+    delete settings.pathExitLookbackBars;
+    delete settings.pathExitThreshold;
+    delete settings.pathExitMinSamples;
+    delete settings.pathExitHorizonBars;
     return settings;
 }
 
@@ -385,8 +355,6 @@ export function resolveBacktestSettingsFromRaw(
         coerced.exitStrategyOverrideEnabled = readBoolean(raw, "exitStrategyOverrideEnabled", false);
         coerced.exitStrategyKey = typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "";
         coerced.exitStrategyParams = readStrategyParams(raw["exitStrategyParams"]);
-        coerced.pathExitEnabled = readBoolean(raw, "pathExitEnabled", EFFECTIVE_BACKTEST_DEFAULTS.pathExitEnabled);
-        coerced.pathExitMode = resolvePathExitMode(raw["pathExitMode"]);
         if ("confirmationStrategies" in raw || "confirmationStrategiesToggle" in raw) {
             const rawConfirmationStrategies = readStringArray(raw["confirmationStrategies"]);
             const confirmationStrategiesEnabled = readBoolean(
@@ -516,27 +484,6 @@ export function resolveBacktestSettingsFromRaw(
             ? maxOpenTradesParsed
             : Math.max(1, Math.min(2, maxOpenTradesParsed)),
         strategyTimeframeMinutes: readNumber(raw, "strategyTimeframeMinutes", EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes),
-        pathExitMinBars: riskEnabled
-            ? readNumber(raw, "pathExitMinBars", EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinBars)
-            : 10,
-        pathExitMinMfePercent: riskEnabled
-            ? readNumber(raw, "pathExitMinMfePercent", EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinMfePercent)
-            : 2.0,
-        pathExitGivebackPercent: riskEnabled
-            ? readNumber(raw, "pathExitGivebackPercent", EFFECTIVE_BACKTEST_DEFAULTS.pathExitGivebackPercent)
-            : 25,
-        pathExitLookbackBars: riskEnabled
-            ? readNumber(raw, "pathExitLookbackBars", EFFECTIVE_BACKTEST_DEFAULTS.pathExitLookbackBars)
-            : 20,
-        pathExitThreshold: riskEnabled
-            ? readNumber(raw, "pathExitThreshold", EFFECTIVE_BACKTEST_DEFAULTS.pathExitThreshold)
-            : 0,
-        pathExitMinSamples: riskEnabled
-            ? readNumber(raw, "pathExitMinSamples", EFFECTIVE_BACKTEST_DEFAULTS.pathExitMinSamples)
-            : 30,
-        pathExitHorizonBars: riskEnabled
-            ? readNumber(raw, "pathExitHorizonBars", EFFECTIVE_BACKTEST_DEFAULTS.pathExitHorizonBars)
-            : 50,
         riskMode,
         takeProfitMode: usePercentRisk
             ? resolveTakeProfitMode(raw["takeProfitMode"])
@@ -570,9 +517,6 @@ export function resolveBacktestSettingsFromRaw(
             ["confirmationSignalExitsEnabled", "confirmationSignalExitsToggle"],
             EFFECTIVE_BACKTEST_DEFAULTS.confirmationSignalExitsEnabled,
         ),
-        pathExitEnabled: riskEnabled
-            ? readBooleanAny(raw, ["pathExitEnabled", "pathExitToggle"], EFFECTIVE_BACKTEST_DEFAULTS.pathExitEnabled)
-            : false,
         riskEntryConfirmationMove: resolveEntryConfirmationMove(raw["riskEntryConfirmationMove"]),
         entryTimeFilter,
         trendEmaPeriod: 0,
@@ -591,9 +535,6 @@ export function resolveBacktestSettingsFromRaw(
         exitStrategyOverrideEnabled: readBoolean(raw, "exitStrategyOverrideEnabled", false),
         exitStrategyKey: typeof raw["exitStrategyKey"] === "string" ? raw["exitStrategyKey"].trim() : "",
         exitStrategyParams: readStrategyParams(raw["exitStrategyParams"]),
-        pathExitMode: riskEnabled
-            ? resolvePathExitMode(raw["pathExitMode"])
-            : "off",
     };
 
     return applyDerivedBacktestSettingGuards(

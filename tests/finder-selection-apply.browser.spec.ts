@@ -6,8 +6,7 @@
  * Covers scope selection restoration, filtered/bulk/range (shift-click)
  * selection, the duplicate-Apply exclusion guard, and the Arm Apply
  * saved-context fallback. Frozen risk/exit settings construction stays
- * covered by finder-freeze-randomize-path-exit.spec.ts and
- * finder-arm-performance-settings.spec.ts.
+ * covered by finder-arm-performance-settings.spec.ts.
  */
 import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";

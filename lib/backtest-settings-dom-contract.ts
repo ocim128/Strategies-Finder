@@ -30,7 +30,6 @@ import {
     readConfirmationMode,
     readStringArray,
     resolveEntryConfirmationMove,
-    resolvePathExitMode,
 } from "./backtest-settings-resolver";
 import type { BacktestSettings, StrategyParams } from "./types/strategies";
 
@@ -56,8 +55,7 @@ export type BacktestDomSettingParser =
     | "martingaleBaseSize"
     | "secureFMethod"
     | "strategyKey"
-    | "strategyParams"
-    | "pathExitMode";
+    | "strategyParams";
 
 export type SettingSupportLevel = "supported" | "unsupported" | "conditional" | "ui_only";
 
@@ -126,8 +124,6 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
             return "martingaleBaseSize";
         case "secureFMethod":
             return "secureFMethod";
-        case "pathExitMode":
-            return "pathExitMode";
         default: {
             const fallback = (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[settingKey];
             if (typeof fallback === "number") {
@@ -291,20 +287,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("exitStrategyOverrideEnabled", { rustSupport: "unsupported" }),
     createField("exitStrategyKey", { rustSupport: "unsupported" }),
     createField("exitStrategyParams", { rustSupport: "unsupported" }),
-    createField("pathExitEnabled", {
-        settingKey: "pathExitEnabled",
-        parser: "boolean",
-        legacyAliases: ["pathExitToggle"],
-        rustSupport: "unsupported",
-    }),
-    createField("pathExitMode", { parser: "pathExitMode", rustSupport: "unsupported" }),
-    createField("pathExitMinBars", { rustSupport: "unsupported" }),
-    createField("pathExitMinMfePercent", { rustSupport: "unsupported" }),
-    createField("pathExitGivebackPercent", { rustSupport: "unsupported" }),
-    createField("pathExitLookbackBars", { rustSupport: "unsupported" }),
-    createField("pathExitThreshold", { rustSupport: "unsupported" }),
-    createField("pathExitMinSamples", { rustSupport: "unsupported" }),
-    createField("pathExitHorizonBars", { rustSupport: "unsupported" }),
     createField("tradeDirection", {
         parser: "tradeDirection",
         rustSupport: "conditional",
@@ -479,8 +461,6 @@ export function coerceBacktestDomSettingValue(
             return resolveMartingaleBaseSize(value);
         case "secureFMethod":
             return resolveSecureFMethod(value);
-        case "pathExitMode":
-            return resolvePathExitMode(value);
         case "boolean":
             return readBooleanValue(value, Boolean(contract.fallbackValue ?? (DEFAULT_BACKTEST_SETTINGS as unknown as Record<string, unknown>)[contract.settingKey] ?? false));
         case "string": {

@@ -50,7 +50,6 @@ export type FinderPersistedUiState = {
 	rangePercent: number;
 	steps: number;
 	freezeRiskManagement: boolean;
-	randomizePathExitParams: boolean;
 	exitStrategyOverrideEnabled: boolean;
 	tradeFilterEnabled: boolean;
 	minTrades: number;
@@ -108,7 +107,6 @@ export const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	rangePercent: 555,
 	steps: 3,
 	freezeRiskManagement: false,
-	randomizePathExitParams: false,
 	exitStrategyOverrideEnabled: false,
 	tradeFilterEnabled: true,
 	minTrades: 40,
@@ -346,7 +344,6 @@ export function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		rangePercent: normalizeNumber(source.rangePercent, DEFAULT_FINDER_UI_STATE.rangePercent, 0),
 		steps: Math.round(normalizeNumber(source.steps, DEFAULT_FINDER_UI_STATE.steps, 2)),
 		freezeRiskManagement: source.freezeRiskManagement === true,
-		randomizePathExitParams: source.randomizePathExitParams === true,
 		exitStrategyOverrideEnabled: source.exitStrategyOverrideEnabled === true,
 		tradeFilterEnabled: source.tradeFilterEnabled !== false,
 		minTrades: Math.round(normalizeNumber(source.minTrades, DEFAULT_FINDER_UI_STATE.minTrades, 0)),

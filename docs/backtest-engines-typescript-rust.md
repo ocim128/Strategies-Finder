@@ -114,7 +114,7 @@ without improving the measured end-to-end workload.
 `runBacktest()` cleans the input data, resolves indicators, prepares signals,
 scans candles, manages positions, builds trade history and an equity curve, and
 calculates metrics. It supports the broad settings model, including execution
-timing, slippage, multiple positions, hold/cooldown controls, path exits,
+timing, slippage, multiple positions, hold/cooldown controls,
 adaptive take profit, confirmation logic, and TypeScript smart sizing.
 
 The executor also performs work around the simulation that is not part of the
@@ -172,7 +172,7 @@ It is the single implementation of the trading-state transitions — pending
 adaptive exits at the open, `next_open` open-only exits + signal scan,
 backward position iteration with close-based exits, signal entries/exits with
 re-entry and cooldown rules, end-of-bar adaptive-history flushing, and
-end-of-data liquidation — with path-exit causality preserved by the shared
+end-of-data liquidation — with exit causality preserved by the shared
 exit handler. Combined-book orchestration, input preprocessing (full runs
 still call `ensureCleanData`; compact keeps its caller-provides-clean-data
 contract), signal preparation, and the fast path stay with the wrappers.
@@ -389,8 +389,7 @@ semantics Rust does not represent, including:
 - enabled entry cooldown without `backtest.risk_cooldown.v1`;
 - behavior-bearing optional signal fields;
 - adaptive percentage take profit;
-- disabled signal exits;
-- active path exits.
+- disabled signal exits.
 
 The current Rust kernel has parity coverage for non-zero slippage: it applies
 slippage to entries and ordinary exits with direction-correct sides, leaves the
@@ -410,7 +409,7 @@ settings object per batch item. The per-item objects are a compatibility
 projection, not mirrors of the candidates' full resolved settings: built at
 submission packing by `projectRustBatchItemSettings`, they copy exactly the
 eligible ATR-period and enabled percentage SL/TP candidate overrides onto the
-run base and omit candidate max-hold, path-exit, and adaptive-TP differences
+run base and omit candidate max-hold and adaptive-TP differences
 (those keys are either capability-gated away or TypeScript-only). Candidate
 signal generation and TypeScript replay always use the candidates' full
 resolved settings.

@@ -28,7 +28,7 @@ export interface Trade {
     size: number;
     fees?: number;
     /** Exit reason: how the trade was closed */
-exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data' | 'path_exit';
+exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data';
     /** Stop-loss price level for the active position targets when available */
     stopLossPrice?: number | null;
     /** Take-profit price level for the active position targets when available */
@@ -276,17 +276,6 @@ export type PercentageTakeProfitMode =
     | 'serial_dependency'
     | 'minimum_surprisal';
 
-export type PathExitMode =
-    | 'off'
-    | 'mfe_giveback'
-    | 'momentum_deceleration'
-    | 'capitulation_exhaustion'
-    | 'squeeze_pressure'
-    | 'conditional_hazard'
-    | 'triple_barrier_meta'
-    | 'structure_reclaim'
-    | 'profit_compression';
-
 export type EntryConfirmationMove = 'down' | 'up' | 'both';
 
 export interface BacktestSettings {
@@ -361,16 +350,6 @@ export interface BacktestSettings {
     exitStrategyKey?: string;
     /** Params for the exit strategy referenced by exitStrategyKey. */
     exitStrategyParams?: Record<string, number>;
-
-    pathExitEnabled?: boolean;
-    pathExitMode?: PathExitMode;
-    pathExitMinBars?: number;
-    pathExitMinMfePercent?: number;
-    pathExitGivebackPercent?: number;
-    pathExitLookbackBars?: number;
-    pathExitThreshold?: number;
-    pathExitMinSamples?: number;
-    pathExitHorizonBars?: number;
 
     trendEmaPeriod?: number;
     trendEmaSlopeBars?: number;
