@@ -2,6 +2,19 @@
 // Indicator Calculations
 // ============================================================================
 
+/**
+ * Retained-period capacity for the EMA/ATR/ADX period maps. Parameter sweeps
+ * walk many periods per dataset, and the dataset-keyed WeakMaps keep every
+ * computed series alive for the dataset's lifetime, so the period map is
+ * bounded: hits refresh recency (Map delete/set) and insertion evicts the
+ * least-recently used period. This named internal policy is adjustable for
+ * measurement; it is not a saved setting or UI control. Evicted series stay
+ * valid for callers that still hold them, and consumers such as
+ * indicator-precompute's per-dataset bundles retain their own independent
+ * bound — the union of references, not this constant, bounds retained heap.
+ */
+export const INDICATOR_PERIOD_CACHE_CAPACITY = 32;
+
 export function calculateSMA(data: number[], period: number): (number | null)[] {
     return getOrCompute(__smaCache, data, period, () => {
         const result: (number | null)[] = new Array(data.length).fill(null);
@@ -67,13 +80,33 @@ const __ichimokuCache: WeakMap<number[], WeakMap<number[], WeakMap<number[], Map
     lagging: (number | null)[];
 }>>>> = new WeakMap();
 
-function getOrCompute<D extends object, K, V>(cache: WeakMap<D, Map<K, V>>, data: D, key: K, compute: () => V): V {
+function getOrCompute<D extends object, K, V>(
+    cache: WeakMap<D, Map<K, V>>,
+    data: D,
+    key: K,
+    compute: () => V,
+    capacity?: number
+): V {
     let m = cache.get(data);
     if (!m) { m = new Map(); cache.set(data, m); }
     const cached = m.get(key);
-    if (cached) return cached;
+    if (cached) {
+        if (capacity !== undefined) {
+            // Refresh recency so hot keys survive insertion-driven eviction.
+            m.delete(key);
+            m.set(key, cached);
+        }
+        return cached;
+    }
     const result = compute();
     m.set(key, result);
+    if (capacity !== undefined) {
+        while (m.size > capacity) {
+            const oldestKey = m.keys().next().value;
+            if (oldestKey === undefined) break;
+            m.delete(oldestKey);
+        }
+    }
     return result;
 }
 
@@ -83,7 +116,8 @@ function getOrComputeOHLC(
     low: number[],
     close: number[],
     period: number,
-    compute: () => (number | null)[]
+    compute: () => (number | null)[],
+    periodCapacity?: number
 ): (number | null)[] {
     let byLow = cache.get(high);
     if (!byLow) {
@@ -104,10 +138,24 @@ function getOrComputeOHLC(
     }
 
     const cached = byPeriod.get(period);
-    if (cached) return cached;
+    if (cached) {
+        if (periodCapacity !== undefined) {
+            // Refresh recency so hot periods survive insertion-driven eviction.
+            byPeriod.delete(period);
+            byPeriod.set(period, cached);
+        }
+        return cached;
+    }
 
     const result = compute();
     byPeriod.set(period, result);
+    if (periodCapacity !== undefined) {
+        while (byPeriod.size > periodCapacity) {
+            const oldestPeriod = byPeriod.keys().next().value;
+            if (oldestPeriod === undefined) break;
+            byPeriod.delete(oldestPeriod);
+        }
+    }
     return result;
 }
 
@@ -261,7 +309,7 @@ export function calculateEMA(data: number[], period: number): (number | null)[] 
             prevEMA = currentEMA;
         }
         return result;
-    });
+    }, INDICATOR_PERIOD_CACHE_CAPACITY);
 }
 
 export function calculateATR(
@@ -292,7 +340,7 @@ export function calculateATR(
             }
         }
         return atr;
-    });
+    }, INDICATOR_PERIOD_CACHE_CAPACITY);
 }
 
 export function calculateKeltnerChannels(
@@ -379,7 +427,7 @@ export function calculateADX(
             adx[i] = prevADX;
         }
         return adx;
-    });
+    }, INDICATOR_PERIOD_CACHE_CAPACITY);
 }
 
 export function calculateCMF(
