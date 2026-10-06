@@ -15,6 +15,7 @@ import {
     type UiBacktestEndpointSnapshot,
 } from "../lib/backtest-endpoint-copy";
 import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS } from "../lib/backtest-endpoint-contract";
+import { createEndpointCopySnapshot } from "../lib/backtest-endpoint-facade";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 
@@ -251,5 +252,39 @@ describe("backtest endpoint copy helpers", () => {
             ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS,
             fixedTradeAmount: 500,
         }), false);
+    });
+
+    it("builds the snapshot from the captured request identity, not current UI state", () => {
+        const candles = buildCandles();
+        const snapshot = createEndpointCopySnapshot({
+            symbol: "BTCUSDT",
+            interval: "5m",
+            strategyKey: defaultStrategyKey,
+            strategyParams: { ...defaultStrategyParams, tuning: 3 },
+            backtestSettings: {
+                executionModel: "next_open",
+                tradeDirection: "short",
+            },
+            capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
+            engineUsed: "typescript",
+            nowSec: 1775400000,
+            blockRange: { from: 1775390000, to: 1775400000 },
+            datasetForFingerprint: candles,
+        });
+
+        assert.strictEqual(snapshot.symbol, "BTCUSDT");
+        assert.strictEqual(snapshot.interval, "5m");
+        assert.strictEqual(snapshot.strategyKey, defaultStrategyKey);
+        assert.strictEqual(snapshot.engineUsed, "typescript");
+        assert.strictEqual(snapshot.nowSec, 1775400000);
+        assert.deepStrictEqual(snapshot.blockRange, { from: 1775390000, to: 1775400000 });
+        assert.strictEqual(snapshot.strategyParams.tuning, 3);
+        // Input objects are copied, not aliased.
+        assert.notStrictEqual(snapshot.strategyParams, defaultStrategyParams);
+        assert.notStrictEqual(snapshot.blockRange, { from: 1775390000, to: 1775400000 });
+        assert.strictEqual(
+            snapshot.datasetFingerprint,
+            computeBacktestEndpointDatasetFingerprint(candles),
+        );
     });
 });

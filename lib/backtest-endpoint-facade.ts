@@ -18,29 +18,38 @@ import { toCompactMetrics } from "./backtest-endpoint-contract";
 import { executeBacktest } from "./backtest-executor";
 import { commitBacktestResult } from "./state-actions";
 
-export function createEndpointCopySnapshot(
-    strategyParams: StrategyParams,
-    backtestSettings: BacktestSettings,
-    capitalSettings: CapitalSettings,
-    engineUsed: 'rust' | 'typescript',
-    nowSec: number,
-    blockRange: { from: number; to: number } | null,
-    datasetForFingerprint: OHLCVData[] = state.ohlcvData
-): UiBacktestEndpointSnapshot {
+/**
+ * Build the endpoint copy snapshot from an explicitly captured request
+ * identity. Callers must pass the symbol/interval/strategy the result was
+ * actually computed for — never current UI state, which may already describe
+ * a different market by the time the result is published.
+ */
+export function createEndpointCopySnapshot(args: {
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    strategyParams: StrategyParams;
+    backtestSettings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    engineUsed: 'rust' | 'typescript';
+    nowSec: number;
+    blockRange: { from: number; to: number } | null;
+    datasetForFingerprint?: OHLCVData[];
+}): UiBacktestEndpointSnapshot {
     return {
-        symbol: state.currentSymbol,
-        interval: state.currentInterval,
-        strategyKey: state.currentStrategyKey,
-        strategyParams: { ...strategyParams },
-        backtestSettings: { ...backtestSettings },
+        symbol: args.symbol,
+        interval: args.interval,
+        strategyKey: args.strategyKey,
+        strategyParams: { ...args.strategyParams },
+        backtestSettings: { ...args.backtestSettings },
         capitalSettings: {
-            ...capitalSettings,
-            advancedSizing: capitalSettings.advancedSizing ? { ...capitalSettings.advancedSizing } : undefined,
+            ...args.capitalSettings,
+            advancedSizing: args.capitalSettings.advancedSizing ? { ...args.capitalSettings.advancedSizing } : undefined,
         },
-        nowSec,
-        blockRange: blockRange ? { ...blockRange } : null,
-        engineUsed,
-        datasetFingerprint: computeBacktestEndpointDatasetFingerprint(datasetForFingerprint),
+        nowSec: args.nowSec,
+        blockRange: args.blockRange ? { ...args.blockRange } : null,
+        engineUsed: args.engineUsed,
+        datasetFingerprint: computeBacktestEndpointDatasetFingerprint(args.datasetForFingerprint ?? []),
     };
 }
 
@@ -99,8 +108,15 @@ export async function runLatestUiBacktestEndpointPreview(): Promise<{
     const endpointRun = await executeBacktest({
         ...buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles),
     });
-    const matchesCurrentUiResult = compactMetricResultsMatch(currentResult, endpointRun.result);
 
+    // Ownership check after the await: a result clear, a newer manual run,
+    // or a competing preview invalidates this preview's publication even if
+    // its own cancellation never arrived.
+    if (state.currentBacktestResult !== currentResult || !canUseCurrentChartForEndpointCopy(snapshot)) {
+        return null;
+    }
+
+    const matchesCurrentUiResult = compactMetricResultsMatch(currentResult, endpointRun.result);
     commitBacktestResult(endpointRun.result, "endpoint_preview", {
         reason: "endpoint_preview",
         endpointCopySnapshot: snapshot,

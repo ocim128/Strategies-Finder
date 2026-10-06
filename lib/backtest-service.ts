@@ -20,6 +20,7 @@ import {
 } from "./backtest-settings-resolver";
 import { resolveSubscriptionExecutionBacktestSettings } from "./alert-subscription-utils";
 import type { CapitalSettings } from "./types/backtest";
+import type { BinanceMarketType } from "./binance-market";
 import {
     createDomBacktestRunHandle,
     delayBacktestUi,
@@ -28,7 +29,7 @@ import {
     updateDomBacktestRunProgress,
     type BacktestRunHandle,
 } from "./backtest-run-presenter";
-import { commitBacktestResult } from "./state-actions";
+import { commitBacktestResult, getBacktestPublicationRevision } from "./state-actions";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 import {
     getCapitalSettings as readCapitalSettings,
@@ -55,6 +56,28 @@ type CurrentBacktestExecution = {
     };
 };
 
+/**
+ * The full request identity of one interactive backtest, captured before the
+ * first UI delay. Live candle arrays mutate in place (raw ticks) and the user
+ * can switch symbol/interval/strategy/block range mid-run, so publication
+ * ownership is decided against this capture instead of current UI state.
+ * Candle copies are shallow: the Time shape (string or number) is preserved
+ * because the spread copies property values as-is.
+ */
+type CapturedBacktestRequest = {
+    binanceMarketType: BinanceMarketType;
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    params: StrategyParams;
+    settings: BacktestSettings;
+    capitalSettings: CapitalSettings;
+    blockRange: { from: number; to: number } | null;
+    nowSec: number;
+    candles: OHLCVData[];
+    publicationRevision: number;
+};
+
 type RunCurrentBacktestOptions = {
     dataOverride?: OHLCVData[];
     reason?: string;
@@ -77,6 +100,31 @@ export class BacktestService {
         return runId === this.interactiveRunSequence;
     }
 
+    private blockRangeMatchesCaptured(
+        current: { from: number; to: number } | null,
+        captured: { from: number; to: number } | null
+    ): boolean {
+        if (current === captured) return true;
+        if (!current || !captured) return false;
+        return current.from === captured.from && current.to === captured.to;
+    }
+
+    /**
+     * Whether this run may still publish: it must be the newest interactive
+     * run, the publication revision must be unchanged since capture, and the
+     * live context must still describe the captured request. Revision
+     * advancement also covers change-away-and-back (BTC -> ETH -> BTC).
+     */
+    private ownsPublication(runId: number, captured: CapturedBacktestRequest): boolean {
+        if (!this.isLatestInteractiveRun(runId)) return false;
+        if (getBacktestPublicationRevision() !== captured.publicationRevision) return false;
+        return state.currentSymbol === captured.symbol
+            && state.currentInterval === captured.interval
+            && state.currentStrategyKey === captured.strategyKey
+            && state.binanceMarketType === captured.binanceMarketType
+            && this.blockRangeMatchesCaptured(state.blockRange, captured.blockRange);
+    }
+
     public async runCurrentBacktest(options: RunCurrentBacktestOptions = {}) {
         const runId = this.beginInteractiveRun();
 
@@ -91,26 +139,42 @@ export class BacktestService {
         const runUi = createDomBacktestRunHandle('runBacktest', 'Running backtest...', true);
         let shouldDelayHide = false;
         const sourceStrategyKey = state.currentStrategyKey;
+        const strategy = strategyRegistry.get(sourceStrategyKey);
+        if (!strategy) {
+            debugLogger.error("backtest.strategy_not_found", { strategyKey: sourceStrategyKey });
+            runUi.setStatus('Strategy not found');
+            return;
+        }
+
+        // Capture the whole request before the first UI delay. Everything the
+        // publication decision needs is frozen here; the run itself executes
+        // against the live dataset so raw tick mutations stay visible to it.
+        const params = paramManager.getValues(strategy);
+        const capitalSettings = this.getCapitalSettings();
+        const settings = this.getBacktestSettings();
+        const sourceData = options.dataOverride ?? state.ohlcvData;
+        const capturedRequest: CapturedBacktestRequest = {
+            binanceMarketType: state.binanceMarketType,
+            symbol: state.currentSymbol,
+            interval: state.currentInterval,
+            strategyKey: sourceStrategyKey,
+            params: { ...params },
+            settings: { ...settings },
+            capitalSettings: {
+                ...capitalSettings,
+                advancedSizing: capitalSettings.advancedSizing ? { ...capitalSettings.advancedSizing } : undefined,
+            },
+            blockRange: state.blockRange ? { ...state.blockRange } : null,
+            nowSec: Math.floor(Date.now() / 1000),
+            candles: sourceData.map((candle) => ({ ...candle })),
+            publicationRevision: getBacktestPublicationRevision(),
+        };
 
         try {
             await updateDomBacktestRunProgress(runUi, '20%', 'Calculating indicators...', 100);
-
-            const strategy = strategyRegistry.get(sourceStrategyKey);
-            if (!strategy) {
-                debugLogger.error("backtest.strategy_not_found", { strategyKey: sourceStrategyKey });
-                runUi.setStatus('Strategy not found');
-                return;
-            }
-
-            const params = paramManager.getValues(strategy);
-            const capitalSettings = this.getCapitalSettings();
-            const settings = this.getBacktestSettings();
-            const sourceData = options.dataOverride ?? state.ohlcvData;
-            const sourceSymbol = state.currentSymbol;
-            const sourceInterval = state.currentInterval;
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
-let { result, engineUsed, requestContext } = await this.executeBacktest(
+            const { result, engineUsed, requestContext } = await this.executeBacktest(
                 runUi,
                 strategy,
                 params,
@@ -118,12 +182,13 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
                 capitalSettings,
                 false,
                 sourceData,
-                sourceSymbol,
-                sourceInterval,
-                sourceStrategyKey
+                capturedRequest.symbol,
+                capturedRequest.interval,
+                sourceStrategyKey,
+                { nowSec: capturedRequest.nowSec, blockRange: capturedRequest.blockRange }
             );
 
-            if (!this.isLatestInteractiveRun(runId)) {
+            if (!this.ownsPublication(runId, capturedRequest)) {
                 debugLogger.event('backtest.stale_ignored', {
                     strategy: sourceStrategyKey,
                     runId,
@@ -135,15 +200,12 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
             commitBacktestResult(result, 'backtest', {
                 reason: options.reason ?? 'manual_backtest',
                 endpointCopySnapshot: this.createEndpointCopySnapshot(
-                    params,
-                    settings,
-                    capitalSettings,
+                    capturedRequest,
                     engineUsed,
                     requestContext.nowSec,
-                    requestContext.blockRange,
-                    sourceData
+                    requestContext.blockRange
                 ),
-                endpointCopyCandles: sourceData,
+                endpointCopyCandles: capturedRequest.candles,
             });
 
             await updateDomBacktestRunProgress(runUi, '100%', 'Complete!');
@@ -161,7 +223,7 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
             // Enable replay button if there are results
             setReplayStartButtonDisabled(result.totalTrades === 0);
         } catch (error) {
-            if (!this.isLatestInteractiveRun(runId)) {
+            if (!this.ownsPublication(runId, capturedRequest)) {
                 debugLogger.event('backtest.stale_ignored', {
                     strategy: sourceStrategyKey,
                     runId,
@@ -182,6 +244,9 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
             if (shouldDelayHide && this.isLatestInteractiveRun(runId)) {
                 await delayBacktestUi(500);
             }
+            // Keep presenter finish/cleanup for obsolete runs so the shared
+            // run indicator never sticks; only the publication/UI changes are
+            // gated by ownership.
             runUi.finish();
         }
     }
@@ -231,7 +296,11 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
         ohlcvData: OHLCVData[] = state.ohlcvData,
         symbol: string = state.currentSymbol,
         interval: string = state.currentInterval,
-        strategyKey: string = state.currentStrategyKey
+        strategyKey: string = state.currentStrategyKey,
+        requestContext?: {
+            nowSec: number;
+            blockRange: { from: number; to: number } | null;
+        }
     ): Promise<CurrentBacktestExecution> {
         await updateDomBacktestRunProgress(runUi, '60%', 'Running backtest...', 100);
         const singleRun = await this.runBacktestForData(
@@ -243,7 +312,8 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
             params,
             settings,
             capitalSettings,
-            forceTypescript
+            forceTypescript,
+            requestContext
         );
 
         return {
@@ -263,7 +333,11 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
         params: StrategyParams,
         settings: BacktestSettings,
         capitalSettings: CapitalSettings,
-        forceTypescript: boolean
+        forceTypescript: boolean,
+        requestContext?: {
+            nowSec: number;
+            blockRange: { from: number; to: number } | null;
+        }
     ): Promise<{
         result: BacktestResult;
         engineUsed: 'rust' | 'typescript';
@@ -275,8 +349,12 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
     }> {
         const captureTiming = this.shouldCaptureTimingBreakdown();
         const runStart = captureTiming ? performance.now() : 0;
-        const nowSec = Math.floor(Date.now() / 1000);
-        const blockRange = state.blockRange ? { ...state.blockRange } : null;
+        // Interactive runs pass their captured evaluation time and block range
+        // so the executor consumes exactly the captured request context.
+        const nowSec = requestContext?.nowSec ?? Math.floor(Date.now() / 1000);
+        const blockRange = requestContext
+            ? requestContext.blockRange
+            : state.blockRange ? { ...state.blockRange } : null;
         const run = await executeBacktest({
             ohlcvData,
             interval,
@@ -459,15 +537,25 @@ let { result, engineUsed, requestContext } = await this.executeBacktest(
     }
 
     private createEndpointCopySnapshot(
-        strategyParams: StrategyParams,
-        backtestSettings: BacktestSettings,
-        capitalSettings: CapitalSettings,
+        captured: CapturedBacktestRequest,
         engineUsed: 'rust' | 'typescript',
         nowSec: number,
-        blockRange: { from: number; to: number } | null,
-        datasetForFingerprint?: OHLCVData[]
+        blockRange: { from: number; to: number } | null
     ) {
-return createEndpointCopySnapshot(strategyParams, backtestSettings, capitalSettings, engineUsed, nowSec, blockRange, datasetForFingerprint);
+        // Identity comes from the captured request, never current UI state:
+        // by commit time the user may already describe a different market.
+        return createEndpointCopySnapshot({
+            symbol: captured.symbol,
+            interval: captured.interval,
+            strategyKey: captured.strategyKey,
+            strategyParams: captured.params,
+            backtestSettings: captured.settings,
+            capitalSettings: captured.capitalSettings,
+            engineUsed,
+            nowSec,
+            blockRange,
+            datasetForFingerprint: captured.candles,
+        });
     }
 }
 

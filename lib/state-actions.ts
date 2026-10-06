@@ -52,14 +52,17 @@ export function bindChartRuntime(runtime: {
 }
 
 export function setCurrentSymbol(symbol: string): void {
+    advanceBacktestPublicationRevision('current_symbol');
     state.set('currentSymbol', symbol);
 }
 
 export function setCurrentInterval(interval: string): void {
+    advanceBacktestPublicationRevision('current_interval');
     state.set('currentInterval', interval);
 }
 
 export function setBinanceMarketType(marketType: BinanceMarketType): void {
+    advanceBacktestPublicationRevision('binance_market_type');
     state.set('binanceMarketType', marketType);
 }
 
@@ -77,6 +80,7 @@ export function setMarketSelection(selection: {
     if (selection.binanceMarketType !== undefined) {
         state.set('binanceMarketType', selection.binanceMarketType);
     }
+    advanceBacktestPublicationRevision('market_selection');
 }
 
 export function setChartMode(mode: ChartMode): void {
@@ -96,6 +100,7 @@ export function setMarkersPlugin(markersPlugin: ISeriesMarkersPluginApi<Time> | 
 }
 
 export function setCurrentStrategyKey(strategyKey: string): void {
+    advanceBacktestPublicationRevision('current_strategy_key');
     state.set('currentStrategyKey', strategyKey);
 }
 
@@ -104,11 +109,35 @@ export function setDarkTheme(isDarkTheme: boolean): void {
 }
 
 export function setBlockRange(blockRange: { from: number; to: number } | null): void {
+    advanceBacktestPublicationRevision('block_range');
     state.set('blockRange', blockRange);
 }
 
 export function clearBlockRange(): void {
     setBlockRange(null);
+}
+
+/**
+ * Transient publication-ownership counter for interactive backtest runs. Any
+ * state change that could make an in-flight run's output obsolete advances
+ * it: market/symbol/interval/strategy/block-range context changes (including
+ * change-away-and-back), explicit result clears, replacement datasets, and
+ * each committed result. Runs capture the value with their request and
+ * re-check it before publishing. Transient by design — no localStorage.
+ */
+let backtestPublicationRevision = 0;
+
+export function getBacktestPublicationRevision(): number {
+    return backtestPublicationRevision;
+}
+
+export function advanceBacktestPublicationRevision(reason: string): number {
+    backtestPublicationRevision += 1;
+    debugLogger.event('state.advance.backtest_publication_revision', {
+        revision: backtestPublicationRevision,
+        reason,
+    });
+    return backtestPublicationRevision;
 }
 
 export function setStrategyTimeframeSettings(settings: {
@@ -125,6 +154,7 @@ export function setStrategyTimeframeSettings(settings: {
 
 export function clearBacktestResults(reason?: string): void {
     debugLogger.event('state.clear.backtest_result', { reason });
+    advanceBacktestPublicationRevision('clear_backtest_results');
     clearCurrentUiBacktestEndpointSnapshot();
     state.set('currentBacktestResult', null);
     state.set('currentBacktestResultSource', 'backtest');
@@ -144,6 +174,9 @@ export function commitBacktestResult(
         trades: result.totalTrades,
         reason: options?.reason,
     });
+    // Competing result commits own publication from here on: an older run
+    // that captured the previous revision must not publish over this one.
+    advanceBacktestPublicationRevision(`commit_backtest_result:${source}`);
     if (options?.endpointCopySnapshot) {
         setCurrentUiBacktestEndpointSnapshot(options.endpointCopySnapshot);
         setCurrentUiBacktestEndpointCandles(options.endpointCopyCandles ?? null);
@@ -164,6 +197,7 @@ export function commitOhlcvData(
         candles: data.length,
         reason,
     });
+    advanceBacktestPublicationRevision('commit_ohlcv_data');
     state.set('ohlcvData', data);
     syncDataManagerCache(state.currentSymbol, state.currentInterval, data);
 }
