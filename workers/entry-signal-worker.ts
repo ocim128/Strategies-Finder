@@ -1,4 +1,6 @@
 import { evaluateLatestEntrySignal } from "../lib/signal-entry-evaluator";
+import type { EvaluatedExecutedExit } from "../lib/signal-entry-evaluator";
+import { normalizeBacktestSettings, getExecutionShift } from "../lib/strategies/backtest/backtest-utils";
 import "../lib/strategies/library";
 import type { BacktestSettings, OHLCVData, Time } from "../lib/types/strategies";
 import {
@@ -217,6 +219,13 @@ interface ProcessSignalResult {
      * batched state endpoint without re-running evaluateLatestEntrySignal.
      */
     latestTrade?: SubscriptionStateResult["latestTrade"];
+    /**
+     * Bounded closure summary of the most recent simulated position, from the
+     * same evaluation run. Null while that position is still open (including
+     * end_of_data closures). Lets exit notifications fire on the actual
+     * executed close instead of requiring an opposite executed entry.
+     */
+    executedExit?: EvaluatedExecutedExit | null;
     /**
      * Compact per-trade direction windows [entrySec, exitSec, dirSign] used by
      * the Signal Committee chart overlay to forward-fill historical votes.
@@ -872,6 +881,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
             rawSignalCount: evaluation.rawSignalCount,
             preparedSignalCount: evaluation.preparedSignalCount,
             latestTrade: evaluation.latestTrade ?? null,
+            executedExit: evaluation.executedExit ?? null,
             tradeWindows: evaluation.tradeWindows ?? null,
         };
     }
@@ -890,6 +900,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 preparedSignalCount: evaluation.preparedSignalCount,
                 latestEntry: evaluation.latestEntry,
                 latestTrade: evaluation.latestTrade ?? null,
+                executedExit: evaluation.executedExit ?? null,
                 tradeWindows: evaluation.tradeWindows ?? null,
                 latestEvaluatedEntry: {
                     direction: evaluation.latestEntry.direction,
@@ -919,6 +930,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
                 rawSignalCount: evaluation.rawSignalCount,
                 preparedSignalCount: evaluation.preparedSignalCount,
                 latestTrade: evaluation.latestTrade ?? null,
+                executedExit: evaluation.executedExit ?? null,
                 tradeWindows: evaluation.tradeWindows ?? null,
                 latestEvaluatedEntry: {
                     direction: evaluation.latestEntry.direction,
@@ -1051,6 +1063,7 @@ async function processSignalPayload(payload: ProcessSignalPayload, env: Env): Pr
         rawSignalCount: evaluation.rawSignalCount,
         preparedSignalCount: evaluation.preparedSignalCount,
         latestTrade: evaluation.latestTrade ?? null,
+        executedExit: evaluation.executedExit ?? null,
         tradeWindows: evaluation.tradeWindows ?? null,
         latestEvaluatedEntry: evaluation.latestEntry
             ? {
@@ -1775,46 +1788,79 @@ async function runSubscription(
             env
         );
 
-        // Exit signal detection: if no new entry and exit alerts enabled,
-        // check if the last entry's opposite signal has fired.
-        // Uses cached evaluation result (fixes race condition) and ignores freshness (exit alerts always fire).
+        // Exit notification: when no new entry fired, check whether the
+        // stored actionable entry's position actually closed in this
+        // evaluation's simulation. Matching uses the executed entry identity
+        // (entry time + direction); legacy payloads without an entry time
+        // match through the execution shift applied to their source signal
+        // time instead of equating it with the fill time. Open trades
+        // (`end_of_data`) and partial closures never send a full-position
+        // exit message. Uses cached evaluation result (fixes race condition)
+        // and ignores freshness (exit alerts always fire).
         if (result.ok && !result.newEntry && subscription.notify_exit === 1 && subscription.notify_telegram === 1) {
             try {
                 const lastEntry = await env.SIGNALS_DB.prepare(
                     buildLatestActionableEntrySignalQuery("payload_json")
                 ).bind(streamId.toLowerCase(), PENDING_ENTRY_SIGNAL_REASON).first<{ payload_json: string }>();
-                if (lastEntry) {
+                const exit = result.executedExit;
+                if (lastEntry && exit && exit.fullyClosed) {
                     const lastPayload = safeJsonParse(lastEntry.payload_json, null as StoredSignalPayload | null);
-                    // Use cached latestEvaluatedEntry from result instead of re-evaluating (Issue #1 fix)
-                    // Exit alerts ignore freshness - they fire regardless of signal age (Issue #2 fix)
-                    if (
-                        lastPayload &&
-                        result.preparedSignalCount > 0 &&
-                        result.latestEvaluatedEntry &&
-                        result.latestEvaluatedEntry.direction !== lastPayload.direction &&
-                        result.latestEvaluatedEntry.signalTimeSec > lastPayload.signalTimeSec
-                    ) {
-                        const exitAlertKey = `${lastPayload.fingerprint}:${result.latestEvaluatedEntry.fingerprint}`;
-                        if (persistedExitAlertKey !== exitAlertKey) {
-                            const exitMsg = buildExitTelegramMessage(
-                                lastPayload.direction,
-                                subscription.symbol,
-                                subscription.interval,
-                                subscription.strategy_key,
-                                parseConfigNameFromStreamId(streamId),
-                                result.latestEvaluatedEntry.signal.price,
-                                result.latestEvaluatedEntry.signalTimeSec
+                    if (lastPayload && exit.direction === lastPayload.direction) {
+                        let entryIdentityMatches = false;
+                        if (typeof lastPayload.entryTimeSec === "number") {
+                            entryIdentityMatches = exit.entryTimeSec === lastPayload.entryTimeSec;
+                        } else {
+                            // Legacy payload: recover the executed entry time
+                            // from the stored source signal time plus the
+                            // configured execution shift.
+                            const storedSettings = resolveSubscriptionExecutionBacktestSettings(
+                                safeJsonParse(
+                                    subscription.backtest_settings_json,
+                                    {} as BacktestSettings
+                                )
                             );
-                            try {
-                                await sendTelegramText(env, exitMsg);
-                                persistedExitAlertKey = exitAlertKey;
-                            } catch {
-                                // Exit alerts are best effort.
+                            const shiftBars = getExecutionShift(normalizeBacktestSettings(storedSettings));
+                            const intervalSec = intervalToSeconds(subscription.interval) ?? 0;
+                            entryIdentityMatches = intervalSec > 0
+                                && exit.entryTimeSec === lastPayload.signalTimeSec + shiftBars * intervalSec;
+                        }
+                        if (entryIdentityMatches) {
+                            const exitAlertKey = `${lastPayload.fingerprint}:exit:${exit.exitTimeSec}:${Number(exit.exitPrice.toFixed(8))}:${exit.exitReason}`;
+                            if (persistedExitAlertKey !== exitAlertKey) {
+                                const exitMsg = buildExitTelegramMessage(
+                                    exit.direction,
+                                    subscription.symbol,
+                                    subscription.interval,
+                                    subscription.strategy_key,
+                                    parseConfigNameFromStreamId(streamId),
+                                    exit.exitPrice,
+                                    exit.exitTimeSec
+                                );
+                                try {
+                                    await sendTelegramText(env, exitMsg);
+                                    persistedExitAlertKey = exitAlertKey;
+                                } catch (error) {
+                                    // Exit alerts are best effort: log the
+                                    // delivery failure without fabricating
+                                    // success so the next run retries.
+                                    const detail = error instanceof Error ? error.message : String(error);
+                                    console.error(JSON.stringify({
+                                        event: "exit_alert_send_failed",
+                                        streamId,
+                                        exitAlertKey,
+                                        error: detail,
+                                    }));
+                                }
                             }
                         }
                     }
                 }
-            } catch { /* exit alerts are best effort */ }
+            } catch (error) {
+                // Exit alerts are best effort: surface the failure in logs but
+                // never fail the subscription run over it.
+                const detail = error instanceof Error ? error.message : String(error);
+                console.error(JSON.stringify({ event: "exit_alert_check_failed", streamId, error: detail }));
+            }
         }
 
         if (result.ok && result.newEntry) {

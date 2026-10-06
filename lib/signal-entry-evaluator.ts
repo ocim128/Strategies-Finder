@@ -75,6 +75,24 @@ export interface EvaluatedLatestTradeContext {
     stopLossPercent: number | null;
 }
 
+/**
+ * Bounded summary of the latest executed position closure, derived from the
+ * same simulation as the entry evaluation. Exposed so the Worker can notify
+ * on an actual close without re-running the strategy or receiving a full
+ * trade ledger. `end_of_data` closures are excluded: the evaluator
+ * intentionally treats those as still-open positions.
+ */
+export interface EvaluatedExecutedExit {
+    direction: "long" | "short";
+    entryTimeSec: number;
+    entryPrice: number;
+    exitTimeSec: number;
+    exitPrice: number;
+    exitReason: string;
+    /** False when this exit event closed only part of the position. */
+    fullyClosed: boolean;
+}
+
 export interface EntrySignalEvaluationResult {
     ok: boolean;
     reason?:
@@ -87,6 +105,12 @@ export interface EntrySignalEvaluationResult {
     preparedSignalCount: number;
     latestEntry: EvaluatedEntrySignal | null;
     latestTrade: EvaluatedLatestTradeContext | null;
+    /**
+     * Closure of the most recent simulated position, when it actually closed
+     * during the data (never `end_of_data`). Null while the latest position
+     * is still open or no trade has closed.
+     */
+    executedExit?: EvaluatedExecutedExit | null;
     /**
      * Compact per-trade direction windows, used by chart
      * overlay to forward-fill trade direction across the visible chart
@@ -590,6 +614,7 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
             takeProfitPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.takeProfitPrice),
             stopLossPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.stopLossPrice),
         },
+        executedExit: deriveExecutedExit(backtestResult.trades),
         tradeWindows: compressTradeWindows(backtestResult.trades),
     };
 }
@@ -611,6 +636,40 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
  * larger cap does not regress chart-overlay render time.
  */
 const TRADE_WINDOWS_CAP = 5000;
+
+/**
+ * Summarize the closure of the most recent simulated position. The engine's
+ * trade list ends with the latest exit event; `end_of_data` marks a position
+ * the evaluator intentionally treats as still open, so it produces no exit
+ * summary. A position that closes partially before the data ends always
+ * terminates in an `end_of_data` liquidation, so the latest non-`end_of_data`
+ * event is the final (full) closure of its position.
+ */
+function deriveExecutedExit(trades: Trade[]): EvaluatedExecutedExit | null {
+    if (trades.length === 0) return null;
+    const latest = trades[trades.length - 1]!;
+    if (latest.exitReason === "end_of_data") return null;
+    const entryTimeSec = toUnixSeconds(latest.entryTime);
+    const exitTimeSec = toUnixSeconds(latest.exitTime);
+    if (entryTimeSec === null || exitTimeSec === null) return null;
+
+    const lastIndex = trades.length - 1;
+    const fullyClosed = !trades.some((trade, index) =>
+        index > lastIndex
+        && trade.type === latest.type
+        && toUnixSeconds(trade.entryTime) === entryTimeSec
+    );
+
+    return {
+        direction: latest.type,
+        entryTimeSec,
+        entryPrice: latest.entryPrice,
+        exitTimeSec,
+        exitPrice: latest.exitPrice,
+        exitReason: latest.exitReason ?? "signal",
+        fullyClosed,
+    };
+}
 
 function compressTradeWindows(trades: Trade[]): Array<[number, number | null, 1 | -1]> | null {
     if (!Array.isArray(trades) || trades.length === 0) return null;
