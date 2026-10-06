@@ -76,6 +76,7 @@ import {
 } from "./finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
+import { computeExitSignalDataIdentity } from "../backtest-executor";
 import {
     runAssetCandidateBacktest,
     type AssetCandidateExitSignalCache,
@@ -1048,6 +1049,10 @@ async function searchOneAsset(args: {
         input.capitalSettings as unknown as Record<string, unknown>,
     );
     const exitSignalCache = input.exitSignalCache ?? new Map();
+    // Exit-signal caching only engages when candidates carry an Exit Strategy
+    // Override; identities for window-owned datasets are computed lazily only
+    // under the same condition.
+    const exitStrategyActive = (input.exitStrategyCandidates?.length ?? 0) > 0;
     const preparedDataCache: FinderPreparedDataCache = new WeakMap();
     const preparedStrategy = createPreparedFinderStrategy(
         selectedStrategy.key,
@@ -1242,6 +1247,11 @@ async function searchOneAsset(args: {
     // execution-aware recheck path because signal-only reuse cannot see
     // position-capacity or cooldown gates.
     const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
+    // The full closed window is immutable for this asset pass; its identity
+    // fingerprints once and serves full-window next-exit replays.
+    const fullClosedIdentity = exitSignalCache && exitStrategyActive
+        ? computeExitSignalDataIdentity(fullClosed)
+        : undefined;
     const searchWindowEndsAtBoundary = slicedHistorical.length > 0
         && recheckData.length >= slicedHistorical.length
         && timeKey(slicedHistorical[slicedHistorical.length - 1]!.time)
@@ -1668,6 +1678,7 @@ async function searchOneAsset(args: {
     const oosStartedAt = performance.now();
     let oosWindowData: OHLCVData[] = [];
     let oosWindowDataBuilt = false;
+    let oosWindowDataIdentity: string | undefined;
     let oosSliceWindow: OHLCVData[] = [];
     if (input.options.oosValidationEnabled) {
         const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
@@ -2043,6 +2054,7 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
+                ...(fullClosedIdentity !== undefined ? { fullClosedIdentity } : {}),
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "next_exit",
                 rustCapabilities: input.rustCapabilities,
@@ -2068,6 +2080,11 @@ async function searchOneAsset(args: {
         if (!oosWindowDataBuilt) {
             oosWindowData = buildFinderEvaluationData(oosSliceWindow, input.interval, input.settings);
             oosWindowDataBuilt = true;
+            // The built OOS window is immutable for the rest of this asset
+            // pass, so fingerprint it once at preparation.
+            oosWindowDataIdentity = exitSignalCache && exitStrategyActive
+                ? computeExitSignalDataIdentity(oosWindowData)
+                : undefined;
             diagnostics.oosBars = Math.max(diagnostics.oosBars, oosWindowData.length);
         }
         // The pre-deferral gate ran on the BUILT window's length; a closed
@@ -2093,6 +2110,9 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
+                ...(oosWindowDataIdentity !== undefined
+                    ? { exitSignalDataIdentity: oosWindowDataIdentity }
+                    : {}),
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "complementary_oos",
                 rustCapabilities: input.rustCapabilities,
@@ -2406,6 +2426,7 @@ async function regenerateSignalsAndDetectFresh(args: {
     primarySignalPrefilter?: boolean;
     /** Reject a sole signal-close candidate with no boundary entry before simulation. */
     screenSignalCloseReplay?: boolean;
+    exitSignalDataIdentity?: string;
 }): Promise<AssetFreshEvaluation> {
     const includeOpenPositions = args.options.assetOpportunity?.includeOpenPositions === true;
     const needsExecutableFreshRecheck = args.options.assetOpportunity?.oosMeasurementMode === "next_exit";
@@ -2469,6 +2490,9 @@ async function regenerateSignalsAndDetectFresh(args: {
             signal: args.signal,
             signalOnly: true,
             ignoreExitOverride: true,
+            ...(args.exitSignalDataIdentity !== undefined && replayData === signalData
+                ? { exitSignalDataIdentity: args.exitSignalDataIdentity }
+                : {}),
         });
         const primarySignals = alignSignalsToBoundary(primary.signals, args.fullClosed, signalData);
         const possibleFreshEntry = detectFreshEntry({
@@ -2511,6 +2535,9 @@ async function regenerateSignalsAndDetectFresh(args: {
         rustDiagnosticPhase: args.rustDiagnosticPhase,
         rustCapabilities: args.rustCapabilities,
         signal: args.signal,
+        ...(args.exitSignalDataIdentity !== undefined && replayData === signalData
+            ? { exitSignalDataIdentity: args.exitSignalDataIdentity }
+            : {}),
         ...(preGeneratedSignals ? { preGeneratedSignals } : {}),
         signalOnly: args.settings.executionModel !== "signal_close"
             && !needsExecutableFreshRecheck
@@ -2631,6 +2658,7 @@ async function executeAssetCandidate(args: {
     ignoreExitOverride?: boolean;
     preGeneratedSignals?: Signal[];
     fullAnalytics?: boolean;
+    exitSignalDataIdentity?: string;
 }): Promise<{
     result: BacktestResult;
     candles: OHLCVData[];
@@ -2680,6 +2708,9 @@ async function executeAssetCandidate(args: {
             }
             : {}),
         ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
+        ...(args.exitSignalDataIdentity !== undefined
+            ? { exitSignalDataIdentity: args.exitSignalDataIdentity }
+            : {}),
         signal: args.signal,
         useRustEnginePreference: args.useRustEnginePreference,
         rustDiagnosticPhase: args.rustDiagnosticPhase,
@@ -2730,6 +2761,8 @@ async function runCandidateNextExitOnAsset(args: {
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
+    /** Content identity of `fullClosed`; used only when replaying the full closed window. */
+    fullClosedIdentity?: string;
     useRustEnginePreference?: boolean;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     rustCapabilities?: RustCapabilities;
@@ -2754,6 +2787,9 @@ async function runCandidateNextExitOnAsset(args: {
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,
+            ...(args.replayData === undefined && args.fullClosedIdentity !== undefined
+                ? { exitSignalDataIdentity: args.fullClosedIdentity }
+                : {}),
             useRustEnginePreference: args.useRustEnginePreference,
             rustDiagnosticPhase: args.rustDiagnosticPhase,
             rustCapabilities: args.rustCapabilities,
@@ -2812,6 +2848,7 @@ async function runCandidateOosOnAsset(args: {
     options: FinderOptions;
     exitStrategyCandidates?: FinderSelectedStrategy[];
     exitSignalCache?: AssetCandidateExitSignalCache;
+    exitSignalDataIdentity?: string;
     useRustEnginePreference?: boolean;
     rustDiagnosticPhase?: RustDiagnosticPhase;
     rustCapabilities?: RustCapabilities;
@@ -2834,6 +2871,9 @@ async function runCandidateOosOnAsset(args: {
             options: args.options,
             exitStrategyCandidates: args.exitStrategyCandidates,
             exitSignalCache: args.exitSignalCache,
+            ...(args.exitSignalDataIdentity !== undefined
+                ? { exitSignalDataIdentity: args.exitSignalDataIdentity }
+                : {}),
             useRustEnginePreference: args.useRustEnginePreference,
             rustDiagnosticPhase: args.rustDiagnosticPhase,
             rustCapabilities: args.rustCapabilities,

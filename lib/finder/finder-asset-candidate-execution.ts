@@ -210,6 +210,13 @@ export async function runAssetCandidateBacktest(args: {
     minimumPotentialEntrySignals?: number;
     /** Per-asset cache for deterministic Exit Strategy Override signals. */
     exitSignalCache?: AssetCandidateExitSignalCache;
+    /**
+     * Precomputed exit-window content identity for `data` (see
+     * {@link computeExitSignalDataIdentity}). Only honored when
+     * `closedCandleDataOverride` carries the same array; otherwise the
+     * executor rehashes the window itself. Internal execution plumbing only.
+     */
+    exitSignalDataIdentity?: string;
     needs: AssetCandidateBacktestNeeds;
 }): Promise<AssetCandidateBacktestOutput> {
     const backtestSettings = resolveAssetCandidateBacktestSettings({
@@ -270,6 +277,9 @@ export async function runAssetCandidateBacktest(args: {
         ...(args.confirmationDataOverride ? { confirmationDataOverride: args.confirmationDataOverride } : {}),
         ...(args.preGeneratedSignals ? { preGeneratedSignals: args.preGeneratedSignals } : {}),
         ...(args.exitSignalCache ? { exitSignalCache: args.exitSignalCache } : {}),
+        ...(args.exitSignalDataIdentity !== undefined && args.closedCandleDataOverride !== undefined
+            ? { exitSignalDataIdentity: args.exitSignalDataIdentity }
+            : {}),
         backtestRunOptions,
     });
     return {

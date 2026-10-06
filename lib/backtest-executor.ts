@@ -130,11 +130,19 @@ export interface BacktestExecutorRequest {
     preGeneratedSignals?: Signal[];
     /**
      * Per-run cache for deterministic Exit Strategy Override signals. The
-     * cache is keyed by candle-window fingerprint and resolved exit
+     * cache is keyed by candle-window content identity and resolved exit
      * parameters, so callers can reuse the same exit series across candidate
      * replays even when each caller owns a sliced array instance.
      */
     exitSignalCache?: BacktestExitSignalCache;
+    /**
+     * Precomputed full-window content identity of the exit-signal dataset
+     * (see {@link computeExitSignalDataIdentity}). Only honored together with
+     * `closedCandleDataOverride`, and only when the identity was computed over
+     * exactly that array; otherwise the executor computes the digest itself.
+     * Internal execution plumbing: never persisted or serialized to a wire.
+     */
+    exitSignalDataIdentity?: string;
 }
 
 export type BacktestExitSignalCache = Map<string, Map<string, Signal[]>>;
@@ -219,14 +227,52 @@ function buildExitSignalCacheKey(args: {
     ]);
 }
 
-function buildExitSignalDataCacheKey(data: OHLCVData[]): string {
-    const first = data[0]?.time;
-    const last = data[data.length - 1]?.time;
-    return JSON.stringify([
-        data.length,
-        first === undefined ? null : timeKey(first),
-        last === undefined ? null : timeKey(last),
-    ]);
+// Scratch views for exact IEEE-754 bit mixing in computeExitSignalDataIdentity.
+const exitIdentityFloat = new Float64Array(1);
+const exitIdentityWords = new Uint32Array(exitIdentityFloat.buffer);
+
+function mixExitIdentityWord(hash: number, word: number): number {
+    const mixed = (hash ^ Math.imul(word, 0x9e3779b1)) >>> 0;
+    return (Math.imul(mixed, 0x85ebca6b) ^ (mixed >>> 13)) >>> 0;
+}
+
+/**
+ * Full-window content identity for exit-signal datasets: ordered
+ * time/open/high/low/close/volume values. Times go through timeKey so
+ * equivalent time shapes share identity; OHLCV numbers mix their exact bit
+ * pattern (no quantization), so a change below any epsilon yields a different
+ * identity. Two independent 32-bit accumulators keep accidental collisions
+ * negligible. Content-identical slices share identities; any content change
+ * produces a fresh one.
+ */
+export function computeExitSignalDataIdentity(data: OHLCVData[]): string {
+    let hashA = 0x243f6a88;
+    let hashB = 0x85a308d3;
+    const mixNumber = (value: number): void => {
+        exitIdentityFloat[0] = value;
+        hashA = mixExitIdentityWord(hashA, exitIdentityWords[0]!);
+        hashA = mixExitIdentityWord(hashA, exitIdentityWords[1]!);
+        hashB = mixExitIdentityWord(hashB, exitIdentityWords[1]!);
+        hashB = mixExitIdentityWord(hashB, exitIdentityWords[0]! ^ 0x1f8b0a00);
+    };
+    const mixToken = (token: string): void => {
+        for (let index = 0; index < token.length; index += 1) {
+            const code = token.charCodeAt(index);
+            hashA = mixExitIdentityWord(hashA, code);
+            hashB = mixExitIdentityWord(hashB, (code + index) >>> 0);
+        }
+        hashA = mixExitIdentityWord(hashA, 0xab8e2f8d);
+        hashB = mixExitIdentityWord(hashB, 0x6a09e667);
+    };
+    for (const bar of data) {
+        mixToken(timeKey(bar.time));
+        mixNumber(bar.open);
+        mixNumber(bar.high);
+        mixNumber(bar.low);
+        mixNumber(bar.close);
+        mixNumber(bar.volume);
+    }
+    return `exit-data:${data.length}:${hashA.toString(16)}:${hashB.toString(16)}`;
 }
 
 // ============================================================================
@@ -417,6 +463,12 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         forceDisableSignalExits: req.backtestRunOptions?.forceDisableSignalExits === true,
         collectTimings: executorTimings !== undefined,
         exitSignalCache: req.exitSignalCache,
+        // A threaded identity is only trustworthy when the executor consumed
+        // the caller's override array verbatim; otherwise the selected window
+        // may differ from the array the identity described.
+        dataIdentity: req.closedCandleDataOverride !== undefined
+            ? req.exitSignalDataIdentity
+            : undefined,
         primarySignalReuse: req.preGeneratedSignals === undefined
             ? {
                 strategy,
@@ -854,6 +906,12 @@ export async function resolveExitStrategyOverrideSignals(args: {
     forceDisableSignalExits?: boolean;
     collectTimings?: boolean;
     exitSignalCache?: BacktestExitSignalCache;
+    /**
+     * Caller-precomputed content identity of `args.data`. When omitted, the
+     * identity is computed here (an O(bars) digest), so immutable-window
+     * owners should thread it to avoid repaying the digest per candidate.
+     */
+    dataIdentity?: string;
     primarySignalReuse?: PrimarySignalReuse;
 }): Promise<ExitStrategyOverrideSignalResolution> {
     const timings = {
@@ -899,7 +957,9 @@ export async function resolveExitStrategyOverrideSignals(args: {
             settings: args.settings,
         })
         : null;
-    const dataCacheKey = canReuseSignals ? buildExitSignalDataCacheKey(args.data) : null;
+    const dataCacheKey = canReuseSignals
+        ? (args.dataIdentity ?? computeExitSignalDataIdentity(args.data))
+        : null;
     const datasetCache = dataCacheKey
         ? args.exitSignalCache!.get(dataCacheKey)
         : undefined;

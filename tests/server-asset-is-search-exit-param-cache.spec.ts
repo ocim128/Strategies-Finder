@@ -235,4 +235,73 @@ describe("server Asset IS search exit-param caching", () => {
         expect(afterFirstPass - before).to.equal(ENTRY_SETS);
         expect(exitSignalExecuteCalls - afterFirstPass).to.equal(0);
     });
+
+    it("does not reuse cached exit signals when an interior candle changes below 1e-6", async () => {
+        const { generator } = createCountingGenerator();
+        const exitSignalCache: AssetCandidateExitSignalCache = new Map();
+        const before = exitSignalExecuteCalls;
+
+        await runSearch(generator, makeCandles(), exitSignalCache);
+        const afterFirstPass = exitSignalExecuteCalls;
+        expect(afterFirstPass - before).to.equal(ENTRY_SETS);
+
+        // Same length, same first/last timestamps, interior change far below
+        // any sampled fingerprint quantum: the cached series is stale.
+        const mutated = makeCandles();
+        mutated[10]!.close = mutated[10]!.close + 5e-7;
+        await runSearch(generator, mutated, exitSignalCache);
+
+        expect(exitSignalExecuteCalls - afterFirstPass).to.equal(ENTRY_SETS);
+    });
+
+    it("does not share cached exit signals across datasets that only share length and boundary times", async () => {
+        const { generator } = createCountingGenerator();
+        const exitSignalCache: AssetCandidateExitSignalCache = new Map();
+        const before = exitSignalExecuteCalls;
+
+        await runSearch(generator, makeCandles(), exitSignalCache);
+        const afterFirstPass = exitSignalExecuteCalls;
+
+        // The pre-content-identity key was (length, first time, last time);
+        // these two datasets collide under it but differ in content.
+        const sibling = makeCandles();
+        sibling[7]!.high = sibling[7]!.high + 2;
+        sibling[12]!.low = sibling[12]!.low - 2;
+        await runSearch(generator, sibling, exitSignalCache);
+
+        expect(afterFirstPass - before).to.equal(ENTRY_SETS);
+        expect(exitSignalExecuteCalls - afterFirstPass).to.equal(ENTRY_SETS);
+    });
+
+    it("supports content identity across supported time shapes", async () => {
+        const { generator } = createCountingGenerator();
+        const exitSignalCache: AssetCandidateExitSignalCache = new Map();
+        const before = exitSignalExecuteCalls;
+
+        const stringTimeData = makeCandles().map((candle) => ({
+            ...candle,
+            time: new Date(Number(candle.time) * 1000).toISOString(),
+        }));
+        await runSearch(generator, stringTimeData, exitSignalCache);
+        const afterFirstPass = exitSignalExecuteCalls;
+        expect(afterFirstPass - before).to.equal(ENTRY_SETS);
+
+        // Identical string-shaped windows reuse; content changes re-derive.
+        await runSearch(generator, stringTimeData.map((candle) => ({ ...candle })), exitSignalCache);
+        expect(exitSignalExecuteCalls - afterFirstPass).to.equal(0);
+
+        const businessDayData = makeCandles().map((candle) => {
+            const date = new Date(Number(candle.time) * 1000);
+            return {
+                ...candle,
+                time: {
+                    year: date.getUTCFullYear(),
+                    month: date.getUTCMonth() + 1,
+                    day: date.getUTCDate(),
+                },
+            };
+        });
+        await runSearch(generator, businessDayData, exitSignalCache);
+        expect(exitSignalExecuteCalls - afterFirstPass).to.equal(ENTRY_SETS);
+    });
 });

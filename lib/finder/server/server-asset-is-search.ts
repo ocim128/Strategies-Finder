@@ -59,6 +59,7 @@ import {
     resolveAssetCandidateBacktestSettings,
     type AssetCandidateExitSignalCache,
 } from "../finder-asset-candidate-execution";
+import { computeExitSignalDataIdentity } from "../../backtest-executor";
 import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-filter";
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { RustCapabilities } from "../../rust-engine-client";
@@ -453,6 +454,12 @@ export async function runServerAssetIsSearch(
     const minimumTrades = canPrefilterTradeCount
         ? Math.max(0, input.options.minTrades)
         : 0;
+    // The historical search window is immutable for this pass (the caller
+    // sliced it before invoking the search), so its content identity is
+    // computed once here instead of once per candidate inside the executor.
+    const exitWindowIdentity = input.exitSignalCache
+        ? computeExitSignalDataIdentity(input.ohlcvData)
+        : undefined;
 
     for (let index = 0; index < paramSets.length; index++) {
         throwIfAborted(input.abortSignal);
@@ -582,6 +589,7 @@ export async function runServerAssetIsSearch(
                 ...(confirmationData ? { confirmationDataOverride: confirmationData } : {}),
                 ...(candidateSignals ? { preGeneratedSignals: candidateSignals } : {}),
                 ...(input.exitSignalCache ? { exitSignalCache: input.exitSignalCache } : {}),
+                ...(exitWindowIdentity !== undefined ? { exitSignalDataIdentity: exitWindowIdentity } : {}),
                 ...(canPrefilterTradeCount
                     ? { minimumPotentialEntrySignals: minimumTrades }
                     : {}),
