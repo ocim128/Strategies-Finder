@@ -1,6 +1,5 @@
 import { evaluateLatestEntrySignal } from "../lib/signal-entry-evaluator";
 import type { EvaluatedExecutedExit } from "../lib/signal-entry-evaluator";
-import { normalizeBacktestSettings, getExecutionShift } from "../lib/strategies/backtest/backtest-utils";
 import "../lib/strategies/library";
 import type { BacktestSettings, OHLCVData, Time } from "../lib/types/strategies";
 import {
@@ -1792,11 +1791,12 @@ async function runSubscription(
         // stored actionable entry's position actually closed in this
         // evaluation's simulation. Matching uses the executed entry identity
         // (entry time + direction); legacy payloads without an entry time
-        // match through the execution shift applied to their source signal
-        // time instead of equating it with the fill time. Open trades
-        // (`end_of_data`) and partial closures never send a full-position
-        // exit message. Uses cached evaluation result (fixes race condition)
-        // and ignores freshness (exit alerts always fire).
+        // match through the evaluator's actual source-signal/execution
+        // mapping (candle indexes), never by assuming contiguous
+        // timestamps. Open trades (`end_of_data`) and partial closures never
+        // send a full-position exit message. Uses cached evaluation result
+        // (fixes race condition) and ignores freshness (exit alerts always
+        // fire).
         if (result.ok && !result.newEntry && subscription.notify_exit === 1 && subscription.notify_telegram === 1) {
             try {
                 const lastEntry = await env.SIGNALS_DB.prepare(
@@ -1809,20 +1809,14 @@ async function runSubscription(
                         let entryIdentityMatches = false;
                         if (typeof lastPayload.entryTimeSec === "number") {
                             entryIdentityMatches = exit.entryTimeSec === lastPayload.entryTimeSec;
-                        } else {
-                            // Legacy payload: recover the executed entry time
-                            // from the stored source signal time plus the
-                            // configured execution shift.
-                            const storedSettings = resolveSubscriptionExecutionBacktestSettings(
-                                safeJsonParse(
-                                    subscription.backtest_settings_json,
-                                    {} as BacktestSettings
-                                )
-                            );
-                            const shiftBars = getExecutionShift(normalizeBacktestSettings(storedSettings));
-                            const intervalSec = intervalToSeconds(subscription.interval) ?? 0;
-                            entryIdentityMatches = intervalSec > 0
-                                && exit.entryTimeSec === lastPayload.signalTimeSec + shiftBars * intervalSec;
+                        } else if (exit.sourceSignalTimeSec !== null) {
+                            // Legacy payload: match the stored source signal
+                            // time against the executed entry's actual source
+                            // signal, recovered from candle indexes — robust
+                            // to missing candles and session gaps where
+                            // "signal time + shift × interval" would point at
+                            // the wrong bar.
+                            entryIdentityMatches = exit.sourceSignalTimeSec === lastPayload.signalTimeSec;
                         }
                         if (entryIdentityMatches) {
                             const exitAlertKey = `${lastPayload.fingerprint}:exit:${exit.exitTimeSec}:${Number(exit.exitPrice.toFixed(8))}:${exit.exitReason}`;

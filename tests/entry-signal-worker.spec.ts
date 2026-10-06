@@ -808,6 +808,7 @@ describe('Entry signal worker executed-close exit notifications', () => {
         backtestSettings?: Record<string, unknown>;
         telegramStatus?: number;
         withTelegramSecrets?: boolean;
+        dropKlineOriginalIndexes?: number[];
     }): ExitFixture {
         const subscription: Record<string, unknown> = {
             id: 1,
@@ -844,7 +845,9 @@ describe('Entry signal worker executed-close exit notifications', () => {
 
         const klines: Array<[number, string, string, string, string, string]> = [];
         const baseOpenSec = timeAt(0);
+        const dropped = new Set(options?.dropKlineOriginalIndexes ?? []);
         for (let i = 0; i < BAR_COUNT; i++) {
+            if (dropped.has(i)) continue;
             const p = closeAt(i);
             klines.push([
                 (baseOpenSec + i * STEP_SEC) * 1000,
@@ -1096,6 +1099,50 @@ describe('Entry signal worker executed-close exit notifications', () => {
                 expect(body.status).to.contain(';exit_alert:');
                 expect(fixture.telegramTexts).to.have.length(1);
                 expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('matches legacy payloads across a missing candle where wall-clock math fails', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            // The candle right after the entry signal is missing, so the
+            // next_open fill happens two intervals after the signal time.
+            // The old "signal time + shift x interval" formula pointed at the
+            // nonexistent slot and produced zero notifications while the
+            // modern payload still notified.
+            const legacyPayload = storedEntryPayload({ withEntryTimeSec: false });
+            const fixture = makeExitFixture({
+                storedPayload: legacyPayload,
+                backtestSettings: { tradeDirection: 'long', executionModel: 'next_open' },
+                dropKlineOriginalIndexes: [BUY_BAR + 1],
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('matches legacy payloads across a multi-candle session gap', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            // A session-sized hole between the signal and the fill: only
+            // candle-index matching can recover the source signal.
+            const legacyPayload = storedEntryPayload({ withEntryTimeSec: false });
+            const fixture = makeExitFixture({
+                storedPayload: legacyPayload,
+                backtestSettings: { tradeDirection: 'long', executionModel: 'next_open' },
+                dropKlineOriginalIndexes: [BUY_BAR + 1, BUY_BAR + 2, BUY_BAR + 3, BUY_BAR + 4],
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
             } finally {
                 fixture.restore();
             }

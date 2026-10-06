@@ -91,6 +91,13 @@ export interface EvaluatedExecutedExit {
     exitReason: string;
     /** False when this exit event closed only part of the position. */
     fullyClosed: boolean;
+    /**
+     * Source-signal time of the executed entry that produced this exit,
+     * recovered through the same prepared/source signal matching the entry
+     * path uses (candle indexes, gap-safe). Null when the entry cannot be
+     * mapped to a source signal.
+     */
+    sourceSignalTimeSec: number | null;
 }
 
 export interface EntrySignalEvaluationResult {
@@ -614,7 +621,13 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
             takeProfitPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.takeProfitPrice),
             stopLossPercent: toTargetPercent(latestTrade.entryPrice, latestTrade.stopLossPrice),
         },
-        executedExit: deriveExecutedExit(backtestResult.trades),
+        executedExit: deriveExecutedExit({
+            trades: backtestResult.trades,
+            preparedEntrySignals: entrySignals,
+            sourceEntrySignals: request.sourceEntrySignals,
+            candles: request.candles,
+            settings,
+        }),
         tradeWindows: compressTradeWindows(backtestResult.trades),
     };
 }
@@ -638,36 +651,73 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
 const TRADE_WINDOWS_CAP = 5000;
 
 /**
- * Summarize the closure of the most recent simulated position. The engine's
- * trade list ends with the latest exit event; `end_of_data` marks a position
- * the evaluator intentionally treats as still open, so it produces no exit
- * summary. A position that closes partially before the data ends always
- * terminates in an `end_of_data` liquidation, so the latest non-`end_of_data`
- * event is the final (full) closure of its position.
+ * Summarize the closure of the most recently closed position. The trade list
+ * interleaves exits from every open position, and a position still open at
+ * data end terminates in a synthetic `end_of_data` liquidation — so the
+ * final record can belong to a different position and must not hide the
+ * latest real exit. The candidate is therefore the newest non-`end_of_data`
+ * exit event, and it counts as a full close only when no `end_of_data`
+ * liquidation exists for the same entry identity (a remainder at data end
+ * always produces one; chained partial exits do not).
  */
-function deriveExecutedExit(trades: Trade[]): EvaluatedExecutedExit | null {
+function deriveExecutedExit(args: {
+    trades: Trade[];
+    preparedEntrySignals: Signal[];
+    sourceEntrySignals: Signal[] | undefined;
+    candles: OHLCVData[];
+    settings: BacktestSettings;
+}): EvaluatedExecutedExit | null {
+    const { trades } = args;
     if (trades.length === 0) return null;
-    const latest = trades[trades.length - 1]!;
-    if (latest.exitReason === "end_of_data") return null;
-    const entryTimeSec = toUnixSeconds(latest.entryTime);
-    const exitTimeSec = toUnixSeconds(latest.exitTime);
+
+    let candidateIndex = -1;
+    for (let i = trades.length - 1; i >= 0; i--) {
+        if (trades[i]!.exitReason !== "end_of_data") {
+            candidateIndex = i;
+            break;
+        }
+    }
+    if (candidateIndex < 0) return null;
+
+    const candidate = trades[candidateIndex]!;
+    const entryTimeSec = toUnixSeconds(candidate.entryTime);
+    const exitTimeSec = toUnixSeconds(candidate.exitTime);
     if (entryTimeSec === null || exitTimeSec === null) return null;
 
-    const lastIndex = trades.length - 1;
-    const fullyClosed = !trades.some((trade, index) =>
-        index > lastIndex
-        && trade.type === latest.type
+    const fullyClosed = !trades.some((trade) =>
+        trade.type === candidate.type
         && toUnixSeconds(trade.entryTime) === entryTimeSec
+        && trade.exitReason === "end_of_data"
     );
 
-    return {
-        direction: latest.type,
+    // Recover the source-signal time of this exit's executed entry through
+    // the same prepared/source matching the entry path uses. Only the
+    // source-matched time is exposed: a prepared signal's own time is the
+    // execution-bar time and must never stand in for the source signal.
+    const matchedPrepared = findPreparedSignalForTradeEntry(
+        args.preparedEntrySignals,
+        candidate.type,
         entryTimeSec,
-        entryPrice: latest.entryPrice,
+        candidate.entryPrice
+    );
+    const matchedSource = findSourceSignalForTradeEntry(
+        args.candles,
+        args.sourceEntrySignals,
+        matchedPrepared,
+        candidate.type,
+        args.settings
+    );
+    const sourceSignalTimeSec = matchedSource ? toUnixSeconds(matchedSource.time) : null;
+
+    return {
+        direction: candidate.type,
+        entryTimeSec,
+        entryPrice: candidate.entryPrice,
         exitTimeSec,
-        exitPrice: latest.exitPrice,
-        exitReason: latest.exitReason ?? "signal",
+        exitPrice: candidate.exitPrice,
+        exitReason: candidate.exitReason ?? "signal",
         fullyClosed,
+        sourceSignalTimeSec,
     };
 }
 

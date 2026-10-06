@@ -347,6 +347,7 @@ describe('Executed exit summaries from the entry evaluation', () => {
             expect(result.executedExit!.exitPrice).to.equal(candles[3].close);
             expect(result.executedExit!.exitReason).to.equal('signal');
             expect(result.executedExit!.fullyClosed).to.equal(true);
+            expect(result.executedExit!.sourceSignalTimeSec).to.equal(Number(candles[1].time));
         });
     });
 
@@ -431,9 +432,12 @@ describe('Executed exit summaries from the entry evaluation', () => {
             });
 
             expect(result.ok).to.equal(true);
-            // The partial exit closed only half the position; the remainder
-            // was liquidated as end_of_data, so no full-close summary exists.
-            expect(result.executedExit).to.equal(null);
+            // The partial exit is surfaced with fullyClosed false: the
+            // remainder was liquidated as end_of_data, so the worker must not
+            // send a full-position close message for it.
+            expect(result.executedExit).to.not.equal(null);
+            expect(result.executedExit!.fullyClosed).to.equal(false);
+            expect(result.executedExit!.exitReason).to.equal('signal');
         });
     });
 
@@ -461,6 +465,161 @@ describe('Executed exit summaries from the entry evaluation', () => {
             expect(result.executedExit).to.not.equal(null);
             expect(result.executedExit!.direction).to.equal('short');
             expect(result.executedExit!.exitTimeSec).to.equal(Number(candles[3].time));
+        });
+    });
+
+    it('recovers the notified position exit behind another position end_of_data liquidation', () => {
+        // maxOpenTrades 2 reproduction: A enters at 100, B enters at 120, the
+        // fall stops B while A stays open. The final record is A's synthetic
+        // end_of_data liquidation; the exit summary must be B's real stop.
+        const key = '__test_exit_overlap__';
+        withStrategy(key, {
+            name: 'Exit Overlap',
+            description: 'Enters twice long; the second entry is stopped by the drawdown.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [
+                { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                { time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 },
+            ],
+        }, () => {
+            const candles: OHLCVData[] = [];
+            // Rise into the second entry, then fall back near the first
+            // entry: stops B (2% below 120) but not A (2% below 100).
+            const path = [100, 101, 110, 120, 112, 105, 100.5, 100.2];
+            for (let i = 0; i < path.length; i++) {
+                const close = path[i]!;
+                candles.push({
+                    time: (1_700_000_000 + i * 60) as Time,
+                    open: i === 0 ? close : path[i - 1]!,
+                    high: Math.max(close, path[i - 1] ?? close) + 0.5,
+                    low: Math.min(close, path[i - 1] ?? close) - 0.5,
+                    close,
+                    volume: 1000,
+                });
+            }
+            const result = evaluateLatestEntrySignal({
+                strategyKey: key,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 2,
+                    maxOpenTrades: 2,
+                },
+                freshnessBars: 20,
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.executedExit).to.not.equal(null);
+            expect(result.executedExit!.direction).to.equal('long');
+            expect(result.executedExit!.exitReason).to.equal('stop_loss');
+            expect(result.executedExit!.fullyClosed).to.equal(true);
+            // The exit belongs to the second entry (around 120), not to A.
+            expect(result.executedExit!.entryPrice).to.be.greaterThan(110);
+            expect(result.executedExit!.sourceSignalTimeSec).to.equal(Number(candles[3].time));
+        });
+    });
+
+    it('summarizes the latest closure when several positions closed in differing order', () => {
+        const key = '__test_exit_order__';
+        withStrategy(key, {
+            name: 'Exit Order',
+            description: 'Two long entries; each exits on the opposite signal.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [
+                { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                { time: data[2].time, type: 'sell', price: data[2].close, barIndex: 2 },
+                { time: data[3].time, type: 'buy', price: data[3].close, barIndex: 3 },
+                { time: data[5].time, type: 'sell', price: data[5].close, barIndex: 5 },
+            ],
+        }, () => {
+            const candles = buildCandles(8);
+            const result = evaluateLatestEntrySignal({
+                strategyKey: key,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    maxOpenTrades: 2,
+                },
+                freshnessBars: 20,
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.executedExit).to.not.equal(null);
+            // The most recent real exit wins regardless of interleaving.
+            expect(result.executedExit!.exitTimeSec).to.equal(Number(candles[5].time));
+            expect(result.executedExit!.fullyClosed).to.equal(true);
+        });
+    });
+
+    it('marks a chained full close as fully closed even when another position ends open', () => {
+        const key = '__test_exit_chain__';
+        withStrategy(key, {
+            name: 'Exit Chain',
+            description: 'First position partial-exits then fully exits; second stays open.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [
+                { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                { time: data[2].time, type: 'sell', price: data[2].close, barIndex: 2, sizeFraction: 0.5 },
+                { time: data[3].time, type: 'sell', price: data[3].close, barIndex: 3 },
+                { time: data[4].time, type: 'buy', price: data[4].close, barIndex: 4 },
+            ],
+        }, () => {
+            const candles = buildCandles(8);
+            const result = evaluateLatestEntrySignal({
+                strategyKey: key,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    maxOpenTrades: 2,
+                },
+                freshnessBars: 20,
+            });
+
+            expect(result.ok).to.equal(true);
+            // The second position is still open (end_of_data is the final
+            // record); the first position's full close is the exit summary,
+            // and its earlier partial exit does not make it "not fully
+            // closed".
+            expect(result.executedExit).to.not.equal(null);
+            expect(result.executedExit!.exitTimeSec).to.equal(Number(candles[3].time));
+            expect(result.executedExit!.fullyClosed).to.equal(true);
+        });
+    });
+
+    it('recovers the source signal time across next-open execution', () => {
+        const key = '__test_exit_next_open_source__';
+        withStrategy(key, {
+            name: 'Exit Next Open Source',
+            description: 'Buys at bar 1, sells at bar 3 under next_open execution.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [
+                { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                { time: data[3].time, type: 'sell', price: data[3].close, barIndex: 3 },
+            ],
+        }, () => {
+            const candles = buildCandles(8);
+            const result = evaluateLatestEntrySignal({
+                strategyKey: key,
+                candles,
+                backtestSettings: { tradeDirection: 'long', executionModel: 'next_open' },
+                freshnessBars: 20,
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.executedExit).to.not.equal(null);
+            // Entry fills one bar after the source signal; the source time
+            // must be the signal bar, never the shifted fill bar.
+            expect(result.executedExit!.entryTimeSec).to.equal(Number(candles[2].time));
+            expect(result.executedExit!.sourceSignalTimeSec).to.equal(Number(candles[1].time));
         });
     });
 });
