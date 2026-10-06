@@ -636,4 +636,32 @@ describe("Rust single-run transport budgets", () => {
 
         expect(result).to.deep.include({ ok: false, reason: "cancelled" });
     });
+
+    it("reads unlimited responses directly and keeps bounded responses off the text path", async () => {
+        let textCalls = 0;
+        const trackedResponse = (): Response => {
+            const response = new Response(JSON.stringify(emptyBacktestResponse()), { status: 200 });
+            const originalText = response.text.bind(response);
+            response.text = async () => {
+                textCalls += 1;
+                return originalText();
+            };
+            return response;
+        };
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async () => trackedResponse()));
+
+        // Unlimited: the client reads and parses the text directly.
+        const unlimited = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(unlimited.ok, JSON.stringify(unlimited)).to.equal(true);
+        expect(textCalls).to.equal(1);
+
+        // Bounded: the budget is enforced by the streamed reader path, so the
+        // client never takes the whole-body text shortcut.
+        const bounded = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, settings, undefined, undefined,
+            { maxResponseBytes: 4_096 },
+        );
+        expect(bounded.ok, JSON.stringify(bounded)).to.equal(true);
+        expect(textCalls).to.equal(1);
+    });
 });

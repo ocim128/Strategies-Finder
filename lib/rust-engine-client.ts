@@ -551,25 +551,34 @@ export class RustEngineClient {
             // runs: serialized request bytes are checked before the POST, and
             // declared plus streamed response bytes before JSON parsing. When
             // the caller supplies no limits, nothing is enforced (batch
-            // optional-limit semantics).
-            let preparedRequest: PreparedRustRequest;
-            try {
-                preparedRequest = requestOptions?.preparedRequest ?? prepareRustRequest(request);
-            } catch (error) {
-                return {
-                    ok: false,
-                    reason: 'malformed_response',
-                    message: error instanceof Error ? error.message : String(error),
-                };
+            // optional-limit semantics) and no byte-counting buffers are
+            // allocated: the request goes out as plain serialized JSON and the
+            // response is read directly.
+            let requestBody: string;
+            if (requestOptions?.preparedRequest) {
+                requestBody = requestOptions.preparedRequest.body;
+            } else {
+                try {
+                    requestBody = JSON.stringify(request);
+                } catch (error) {
+                    return {
+                        ok: false,
+                        reason: 'malformed_response',
+                        message: error instanceof Error ? error.message : String(error),
+                    };
+                }
             }
-            const requestBytes = preparedRequest.requestBytes;
-            if (requestOptions?.maxRequestBytes !== undefined && requestBytes > requestOptions.maxRequestBytes) {
-                rustLog.warn(`[RustEngine] Single backtest request exceeds ${requestOptions.maxRequestBytes} bytes`);
-                return {
-                    ok: false,
-                    reason: 'request_too_large',
-                    message: `request exceeded ${requestOptions.maxRequestBytes} bytes`,
-                };
+            if (requestOptions?.maxRequestBytes !== undefined) {
+                const requestBytes = requestOptions.preparedRequest?.requestBytes
+                    ?? new TextEncoder().encode(requestBody).byteLength;
+                if (requestBytes > requestOptions.maxRequestBytes) {
+                    rustLog.warn(`[RustEngine] Single backtest request exceeds ${requestOptions.maxRequestBytes} bytes`);
+                    return {
+                        ok: false,
+                        reason: 'request_too_large',
+                        message: `request exceeded ${requestOptions.maxRequestBytes} bytes`,
+                    };
+                }
             }
             const maxResponseBytes = requestOptions?.maxResponseBytes;
 
@@ -582,7 +591,7 @@ export class RustEngineClient {
             const response = await this.fetchImpl(`${this.baseUrl}/api/backtest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: preparedRequest.body,
+                body: requestBody,
                 signal: requestSignal,
             });
 
@@ -608,17 +617,25 @@ export class RustEngineClient {
                     message: `declared response exceeded ${maxResponseBytes} bytes`,
                 };
             }
-            const responseTextResult = await readResponseTextWithinLimit(response, maxResponseBytes);
-            if (!responseTextResult.ok) {
-                return {
-                    ok: false,
-                    reason: 'response_too_large',
-                    message: `response exceeded ${maxResponseBytes} bytes`,
-                };
+            let responseText: string;
+            if (maxResponseBytes === undefined) {
+                // No budget: parse the text directly instead of paying for a
+                // byte-count pass over the full body.
+                responseText = await response.text();
+            } else {
+                const responseTextResult = await readResponseTextWithinLimit(response, maxResponseBytes);
+                if (!responseTextResult.ok) {
+                    return {
+                        ok: false,
+                        reason: 'response_too_large',
+                        message: `response exceeded ${maxResponseBytes} bytes`,
+                    };
+                }
+                responseText = responseTextResult.text;
             }
             let responseJson: unknown;
             try {
-                responseJson = JSON.parse(responseTextResult.text);
+                responseJson = JSON.parse(responseText);
             } catch (error) {
                 rustLog.error('[RustEngine] Backtest returned unparseable JSON:', error);
                 return {
