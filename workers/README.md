@@ -104,12 +104,15 @@ Create subscription example:
 
 ## D1 Setup
 
-1. Create D1 DB and bind it as `SIGNALS_DB` in Wrangler config.
+1. Create D1 DB and bind it as `SIGNALS_DB` in Wrangler config. The checked-in
+   `workers/wrangler.toml` uses `database_name = "signal"`; if your deployment
+   binds a different database, substitute its name in the commands below
+   instead of assuming the sample name.
 2. Apply migration:
 
 ```bash
-wrangler d1 migrations apply signal --local
-wrangler d1 migrations apply signal --remote
+wrangler d1 migrations apply <SIGNALS_DB database_name> --local
+wrangler d1 migrations apply <SIGNALS_DB database_name> --remote
 ```
 
 Migration files:
@@ -118,11 +121,31 @@ Migration files:
 - `workers/migrations/0003_exit_alerts.sql`
 - `workers/migrations/0004_rename_candle_time_col.sql`
 - `workers/migrations/0005_actionable_entry_signal_index.sql`
+- `workers/migrations/0006_alert_state_schema.sql`
 
-Known gap: the worker still reads/writes a `committee_tag` column on
-`signal_subscriptions` for compatibility with older deployments, but no
-migration in this repo creates it. A D1 database built only from the
-migrations above will not have that column until one is added.
+A database initialized solely from the migrations above supports everything
+the worker reads and writes: subscription upsert (including `committee_tag`),
+cached `latest_state_json` state, and `committee_alert_rules`.
+
+### Existing deployments with manual schema changes
+
+`0006` adds `signal_subscriptions.committee_tag` and
+`signal_subscriptions.latest_state_json` with `ALTER TABLE ... ADD COLUMN`,
+which SQLite cannot make idempotent. If a deployment manually added either
+column (or created `committee_alert_rules`) before this migration existed,
+inventory its schema and migration history first and reconcile before
+applying `0006`:
+
+1. List the live schema:
+   `wrangler d1 execute <database_name> --remote --command "SELECT name, sql FROM sqlite_master WHERE type IN ('table','index') AND name NOT LIKE 'sqlite_%'"`
+   and `... --command "PRAGMA table_info(signal_subscriptions)"`.
+2. Compare column/table definitions against `0006_alert_state_schema.sql`.
+   Manually created objects whose definitions differ from the migration must
+   be reconciled (recreated or altered to match) — do not mark `0006` as
+   applied without checking the complete schema, and do not drop data.
+3. Apply additive schema changes before deploying a Worker build that requires
+   them. A Worker code rollback leaves the additive schema in place; production
+   database rollback requires a verified backup, not reverse migrations.
 
 ## Strategy Support Contract
 

@@ -2637,8 +2637,19 @@ export default {
         }));
 
         // Phase 4: opt-in committee aggregate-score alerts. Runs after the
-        // subscription pass so latest_state_json is fresh. Swallows its own
-        // errors so alert failures never block the cron.
-        await runCommitteeAlertPass(env);
+        // subscription pass so latest_state_json is fresh. The whole pass is
+        // guarded — including its initial reads — so a schema or query failure
+        // is logged with structure and never rejects an otherwise completed
+        // subscription cron pass. Endpoint upsert/read failures still surface
+        // to their callers unchanged.
+        try {
+            await runCommitteeAlertPass(env);
+        } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            console.error(JSON.stringify({
+                event: "committee_alert_pass_failed",
+                error: detail,
+            }));
+        }
     },
 };
