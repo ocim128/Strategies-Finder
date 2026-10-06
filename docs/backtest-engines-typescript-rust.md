@@ -126,6 +126,23 @@ Rust contract:
 - final market context, Sharpe, performance analytics, and trade timing
   attachment.
 
+Finalization ownership is explicit: TypeScript engine output keeps its own
+Sharpe (zero included) and populated analytics; `includeSharpeRatio: false`
+is honored as zero and `includeAdvancedAnalytics: false` stays omitted
+(advanced analytics also require enabled Sharpe, matching
+`calculateBacktestStats`). Populated analytics are preserved, and missing
+requested analytics are derived only from a usable returned equity curve.
+Rust results keep their TypeScript normalization at this boundary: the Rust
+scalar Sharpe is not trusted, and Sharpe is recomputed from the returned
+history/trade returns when Sharpe is enabled.
+
+Trade-timing attachment accepts an optional prepared movement-floor context
+(see `lib/trade-timing-quality.ts`): callers that own a reusable immutable
+window prepare the three candle-only floors once per window through the
+window-owned WeakMap accessor and thread them through finalization; callers
+without a known-immutable window compute floors fresh, and analyses without
+trades never pay for floor preparation.
+
 ### Compact execution
 
 `runBacktestCompact()` is optimized for Finder loops. Its options can omit the
@@ -337,6 +354,19 @@ transport boundary for:
 The normal batch timeout is 120 seconds. The single-run timeout is 30 seconds,
 and cache uploads use a longer 180-second budget. These are transport budgets,
 not guarantees that Rust is faster than TypeScript.
+
+Single runs enforce the same optional transport budgets as batch runs:
+callers may pass `maxRequestBytes` (checked against the serialized request
+before the POST), `maxResponseBytes` (checked against the declared
+content-length and the streamed body before JSON parsing; an oversized body
+is cancelled so the transport resource is released), `timeoutMs` (overriding
+the 30-second single-run default), and `preparedRequest` for callers that
+already serialized the request. Limits are optional — batch parity: when a
+caller supplies none, nothing is enforced, and production defaults stay
+deferred until supported large requests are measured. Rejected size, timeout,
+and malformed-JSON outcomes return `request_too_large`, `response_too_large`,
+`timeout`, or `malformed_response` and use the existing TypeScript fallback;
+caller cancellation never initiates fallback.
 
 ## Engine selection rules
 

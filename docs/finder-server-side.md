@@ -626,6 +626,21 @@ Two further production-path details:
   `lib/finder/server/server-asset-is-search.ts`), mirroring the browser and
   Universe runners. Regenerating them inside the per-candidate loop is
   O(maxRuns²).
+- Exit-signal reuse across candidates keys the executor's exit cache by a
+  full-window CONTENT identity (`computeExitSignalDataIdentity`): ordered
+  time/OHLCV values with exact numeric bit mixing, so a revised candle
+  window can never reuse another window's exit signals while
+  content-identical slices still share one series. The historical search
+  window is immutable for the pass, so the server IS search fingerprints it
+  once and threads the identity through `runAssetCandidateBacktest`
+  (`exitSignalDataIdentity`); the browser Asset Opportunity runner does the
+  same for its full-closed window, the built complementary-OOS window, and
+  the window-owned trade-timing movement floors
+  (`getTradeTimingPreparedMovementFloors`). The identity is internal
+  execution plumbing and never reaches persisted or wire data. Callers that
+  do not own an immutable window omit the identity and the executor hashes
+  the window itself; mutating callers must bypass reuse rather than trust
+  array identity, length, or boundary timestamps.
 - `asset_progress` / `asset_batch_progress` STREAM writes pass through
   `createProgressEventThrottle` (first event, ≥250 ms, ≥1% aggregate delta,
   or phase transition). The `/status` snapshot mirroring stays per-event so
