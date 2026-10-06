@@ -32,7 +32,8 @@
     "build:check": "vite build && esno scripts/check-bundle-budget.ts",
     "dev": "vite",
     "build": "vite build",
-    "bench:backtest-fallback": "esno scripts/bench-backtest-fallback.ts"
+    "bench:backtest-fallback": "esno scripts/bench-backtest-fallback.ts",
+    "bench:indicator-cache": "esno scripts/bench-indicator-cache-capacity.ts"
   },
   "devDependencies": {
     "@types/chai": "^5.2.1",

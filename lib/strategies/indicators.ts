@@ -3,17 +3,52 @@
 // ============================================================================
 
 /**
- * Retained-period capacity for the EMA/ATR/ADX period maps. Parameter sweeps
- * walk many periods per dataset, and the dataset-keyed WeakMaps keep every
- * computed series alive for the dataset's lifetime, so the period map is
- * bounded: hits refresh recency (Map delete/set) and insertion evicts the
- * least-recently used period. This named internal policy is adjustable for
- * measurement; it is not a saved setting or UI control. Evicted series stay
- * valid for callers that still hold them, and consumers such as
- * indicator-precompute's per-dataset bundles retain their own independent
- * bound — the union of references, not this constant, bounds retained heap.
+ * Retained-byte budget per dataset+family period map for the bounded
+ * EMA/ATR/ADX caches. Parameter sweeps walk many periods per dataset, and the
+ * dataset-keyed WeakMaps keep every computed series alive for the dataset's
+ * lifetime, so the period map is bounded by the bytes its series occupy:
+ * the effective period capacity is
+ * `max(1, budget / (8 * seriesLength))`, capped at
+ * {@link INDICATOR_PERIOD_CACHE_MAX_PERIODS}. The budget adapts to the real
+ * cost axis — short datasets retain every sweep period (zero churn) while
+ * long datasets keep the hottest periods — and eviction refreshes recency on
+ * hits, evicting the least-recently used period on insertion. This named
+ * internal policy is adjustable for measurement (see
+ * {@link setIndicatorPeriodCacheBudgetForMeasurement}); it is not a saved
+ * setting or UI control. Evicted series stay valid for callers that still
+ * hold them, and consumers such as indicator-precompute's per-dataset bundles
+ * retain their own independent bound — the union of references, not this
+ * budget, bounds retained heap.
  */
-export const INDICATOR_PERIOD_CACHE_CAPACITY = 32;
+export const INDICATOR_PERIOD_CACHE_BUDGET_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Absolute period cap for the bounded caches. Bounds entry overhead on very
+ * short datasets, where the byte budget alone would allow thousands of
+ * near-free entries.
+ */
+export const INDICATOR_PERIOD_CACHE_MAX_PERIODS = 128;
+
+let activeIndicatorPeriodCacheBudgetBytes: number = INDICATOR_PERIOD_CACHE_BUDGET_BYTES;
+
+/**
+ * Measurement hook for benchmarks and specs: override the retained-byte
+ * budget (pass {@link Number.POSITIVE_INFINITY} for no bound) without a saved
+ * setting or UI control. `null` restores the shipped
+ * {@link INDICATOR_PERIOD_CACHE_BUDGET_BYTES}.
+ */
+export function setIndicatorPeriodCacheBudgetForMeasurement(budgetBytes: number | null): void {
+    activeIndicatorPeriodCacheBudgetBytes = budgetBytes === null
+        ? INDICATOR_PERIOD_CACHE_BUDGET_BYTES
+        : budgetBytes;
+}
+
+/** Effective retained-period capacity for a series of `seriesLength` values. */
+export function indicatorPeriodCapacityFor(seriesLength: number): number {
+    const seriesBytes = Math.max(1, seriesLength) * Float64Array.BYTES_PER_ELEMENT;
+    const byBudget = Math.floor(activeIndicatorPeriodCacheBudgetBytes / seriesBytes);
+    return Math.max(1, Math.min(INDICATOR_PERIOD_CACHE_MAX_PERIODS, byBudget));
+}
 
 export function calculateSMA(data: number[], period: number): (number | null)[] {
     return getOrCompute(__smaCache, data, period, () => {
@@ -309,7 +344,7 @@ export function calculateEMA(data: number[], period: number): (number | null)[] 
             prevEMA = currentEMA;
         }
         return result;
-    }, INDICATOR_PERIOD_CACHE_CAPACITY);
+    }, indicatorPeriodCapacityFor(data.length));
 }
 
 export function calculateATR(
@@ -340,7 +375,7 @@ export function calculateATR(
             }
         }
         return atr;
-    }, INDICATOR_PERIOD_CACHE_CAPACITY);
+    }, indicatorPeriodCapacityFor(close.length));
 }
 
 export function calculateKeltnerChannels(
@@ -427,7 +462,7 @@ export function calculateADX(
             adx[i] = prevADX;
         }
         return adx;
-    }, INDICATOR_PERIOD_CACHE_CAPACITY);
+    }, indicatorPeriodCapacityFor(close.length));
 }
 
 export function calculateCMF(

@@ -98,6 +98,19 @@ without improving the measured end-to-end workload.
 - [`lib/strategies/backtest/indicator-precompute.ts`](../lib/strategies/backtest/indicator-precompute.ts)
   resolves and reuses indicator series where the caller has a compatible
   precomputed bundle.
+- [`lib/strategies/indicators.ts`](../lib/strategies/indicators.ts) bounds the
+  EMA/ATR/ADX period maps with a retained-byte budget
+  (`INDICATOR_PERIOD_CACHE_BUDGET_BYTES`, 16 MiB per dataset+family, capped at
+  128 periods). The effective capacity adapts to series length
+  (`max(1, budget / (8 * seriesLength))`), so short datasets retain every
+  sweep period (zero churn; a 33-period cycle over 20k bars stays fully
+  cached at ~5 MB) while long datasets keep the hottest periods. Hits refresh
+  recency and insertion evicts the least-recently used period; evicted series
+  stay valid for callers that hold them, and indicator-precompute's
+  per-dataset bundle bound remains the independent retained-reference limit.
+  Measure the policy with `npm run bench:indicator-cache` before changing the
+  budget; sweeps whose cycle exceeds the derived capacity trade warm-pass
+  recomputation for bounded memory.
 - [`lib/strategies/backtest/signal-preparation.ts`](../lib/strategies/backtest/signal-preparation.ts)
   prepares and indexes signals for execution.
 - [`lib/strategies/backtest/position-builder.ts`](../lib/strategies/backtest/position-builder.ts)
