@@ -1025,11 +1025,15 @@ pub(crate) fn run_backtest_with_market_series_options(
             let drawdown = peak_equity - equity;
             if drawdown > max_drawdown {
                 max_drawdown = drawdown;
-                max_drawdown_percent = if peak_equity > 0.0 {
-                    drawdown / peak_equity * 100.0
-                } else {
-                    0.0
-                };
+            }
+            // Dollars and percentage are maximized independently: the worst
+            // relative loss may come from a different peak than the worst
+            // dollar loss.
+            if peak_equity > 0.0 {
+                let drawdown_percent = drawdown / peak_equity * 100.0;
+                if drawdown_percent > max_drawdown_percent {
+                    max_drawdown_percent = drawdown_percent;
+                }
             }
         }
     };
@@ -1370,7 +1374,9 @@ pub(crate) fn run_backtest_with_market_series_options(
     }
     result
 }
-/// Calculate maximum drawdown from equity curve
+/// Calculate maximum drawdown from an equity curve. Dollars and percentage
+/// are maximized independently: the worst relative loss may come from a
+/// different peak than the worst dollar loss.
 #[must_use]
 pub fn calculate_max_drawdown(equity_curve: &[EquityPoint], initial_capital: f64) -> (f64, f64) {
     if equity_curve.is_empty() {
@@ -1384,14 +1390,14 @@ pub fn calculate_max_drawdown(equity_curve: &[EquityPoint], initial_capital: f64
             peak = point.value;
         }
         let drawdown = peak - point.value;
-        let drawdown_pct = if peak > 0.0 {
-            drawdown / peak * 100.0
-        } else {
-            0.0
-        };
         if drawdown > max_drawdown {
             max_drawdown = drawdown;
-            max_drawdown_percent = drawdown_pct;
+        }
+        if peak > 0.0 {
+            let drawdown_pct = drawdown / peak * 100.0;
+            if drawdown_pct > max_drawdown_percent {
+                max_drawdown_percent = drawdown_pct;
+            }
         }
     }
     (max_drawdown, max_drawdown_percent)
@@ -2158,6 +2164,50 @@ mod tests {
         let (dd, dd_pct) = calculate_max_drawdown(&equity, 10000.0);
         assert!((dd - 2000.0).abs() < 0.01);
         assert!((dd_pct - 18.18).abs() < 0.1);
+    }
+    #[test]
+    fn test_max_drawdown_percent_independent_of_dollars() {
+        // 10000 -> 5000 -> 100000 -> 90000: the worst relative loss (50%)
+        // comes from the small early peak, the worst dollar loss (10000) from
+        // the later 100000 peak.
+        let equity = vec![
+            EquityPoint {
+                time: 0,
+                value: 10000.0,
+            },
+            EquityPoint {
+                time: 1,
+                value: 5000.0,
+            },
+            EquityPoint {
+                time: 2,
+                value: 100000.0,
+            },
+            EquityPoint {
+                time: 3,
+                value: 90000.0,
+            },
+        ];
+        let (dd, dd_pct) = calculate_max_drawdown(&equity, 10000.0);
+        assert!((dd - 10000.0).abs() < 0.01);
+        assert!((dd_pct - 50.0).abs() < 0.01);
+    }
+    #[test]
+    fn test_max_drawdown_nonpositive_peak_guard() {
+        // Nonpositive peaks keep zero percentage even while dollars deepen.
+        let equity = vec![
+            EquityPoint {
+                time: 0,
+                value: -1000.0,
+            },
+            EquityPoint {
+                time: 1,
+                value: -2500.0,
+            },
+        ];
+        let (dd, dd_pct) = calculate_max_drawdown(&equity, -1000.0);
+        assert!((dd - 1500.0).abs() < 0.01);
+        assert!(dd_pct == 0.0);
     }
     #[test]
     fn test_sharpe_ratio() {

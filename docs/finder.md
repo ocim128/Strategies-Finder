@@ -27,6 +27,16 @@ and the feature DOM tests.
 
 ## User workflow
 
+> Metric semantics note: percentage drawdown is maximized independently of
+> dollar drawdown (the worst relative loss may come from a smaller early
+> peak). Results and archives produced before this correction underreported
+> `maxDrawdownPercent` whenever a larger dollar loss occurred from a higher
+> peak; persisted snapshots keep their historical scalars and cannot be
+> repaired without the original execution data, so corrected metrics require
+> reruns. Walk Forward analyses honor an active exit strategy override on the
+> same terms as the normal executor and require the chart interval in their
+> configuration when that override is active.
+
 1. Select a scope.
 2. Select one or more strategies. The bulk actions are `All`, `None`,
    `Invert`, `Visible`, `Follow`, and `Reversion`.

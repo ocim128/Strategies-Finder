@@ -5,6 +5,9 @@ import worker, {
     buildScheduledCronSummary,
     decideCommitteeAlert,
 } from '../workers/entry-signal-worker';
+import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from '../lib/strategies/built-in-catalog';
+import '../lib/strategies/library';
+import type { OHLCVData, Signal, Strategy } from '../lib/strategies/index';
 
 describe('Entry signal worker queries', () => {
     it('filters pending-entry placeholders out of latest-entry lookups', () => {
@@ -777,5 +780,536 @@ describe('buildScheduledCronSummary', () => {
         // The error reason must survive into the cron log so a failed summary
         // is still diagnosable from logs alone.
         expect(summary.error).to.equal('Missing SIGNALS_DB binding');
+    });
+});
+
+describe('Entry signal worker executed-close exit notifications', () => {
+    const STREAM_ID = 'btcusdt:5m:ema_confirmation:cfg:EXIT-1';
+    const STRATEGY_KEY = 'ema_confirmation';
+    const STEP_SEC = 300;
+    const BAR_COUNT = 120;
+    const BUY_BAR = 5;
+    const SELL_BAR = 10;
+    const closeAt = (bar: number) => 100 + bar * 0.1;
+    const timeAt = (bar: number) => Math.floor(Date.now() / 1000) - (BAR_COUNT - bar) * STEP_SEC;
+
+    type ExitFixture = {
+        env: Record<string, unknown>;
+        subscription: Record<string, unknown>;
+        updates: Array<{ sql: string; params: unknown[] }>;
+        telegramTexts: string[];
+        telegramStatus: number;
+        withTelegramSecrets: boolean;
+        restore(): void;
+    };
+
+    function makeExitFixture(options?: {
+        storedPayload?: Record<string, unknown>;
+        backtestSettings?: Record<string, unknown>;
+        telegramStatus?: number;
+        withTelegramSecrets?: boolean;
+        dropKlineOriginalIndexes?: number[];
+        pricePath?: number[];
+    }): ExitFixture {
+        const subscription: Record<string, unknown> = {
+            id: 1,
+            stream_id: STREAM_ID,
+            enabled: 1,
+            symbol: 'BTCUSDT',
+            interval: '5m',
+            strategy_key: STRATEGY_KEY,
+            strategy_params_json: '{}',
+            backtest_settings_json: JSON.stringify(options?.backtestSettings ?? { tradeDirection: 'long' }),
+            freshness_bars: 1,
+            notify_telegram: 1,
+            notify_exit: 1,
+            candle_limit: 500,
+            last_processed_candle_open_time: 0,
+            last_run_at: null,
+            last_status: 'new_entry',
+            created_at: '2026-06-20 00:00:00',
+            updated_at: '2026-06-20 00:00:00',
+            latest_state_json: null,
+            committee_tag: null,
+        };
+        const fixture = {
+            subscription,
+            env: {} as Record<string, unknown>,
+            updates: [] as Array<{ sql: string; params: unknown[] }>,
+            telegramTexts: [] as string[],
+            telegramStatus: options?.telegramStatus ?? 200,
+            withTelegramSecrets: options?.withTelegramSecrets ?? true,
+            restore() {
+                globalThis.fetch = originalFetch;
+            },
+        };
+
+        const klines: Array<[number, string, string, string, string, string]> = [];
+        const baseOpenSec = timeAt(0);
+        const dropped = new Set(options?.dropKlineOriginalIndexes ?? []);
+        for (let i = 0; i < BAR_COUNT; i++) {
+            if (dropped.has(i)) continue;
+            const p = options?.pricePath ? options.pricePath[i] ?? options.pricePath[options.pricePath.length - 1]! : closeAt(i);
+            klines.push([
+                (baseOpenSec + i * STEP_SEC) * 1000,
+                String(p), String(p * 1.01), String(p * 0.99), String(p), '1000',
+            ]);
+        }
+
+        const entryRow = options?.storedPayload
+            ? { id: 1, payload_json: JSON.stringify(options.storedPayload) }
+            : null;
+        // Emulate the dedupe_key ON CONFLICT DO NOTHING semantics: the first
+        // insert of a key reports changes 1, repeats report 0.
+        const insertedDedupeKeys = new Set<string>();
+
+        const routeFirst = (sql: string) => {
+            const normalized = sql.replace(/\s+/g, ' ');
+            if (normalized.includes('FROM signal_subscriptions WHERE stream_id')) return subscription;
+            if (normalized.includes('FROM entry_signals')) return entryRow;
+            return null;
+        };
+        const signalsDb = {
+            prepare: (sql: string) => ({
+                bind: (...params: unknown[]) => ({
+                    first: async () => routeFirst(sql),
+                    run: async () => {
+                        const normalized = sql.replace(/\s+/g, ' ').trim();
+                        console.log('TRACE-DBG run:', normalized.slice(0, 60), JSON.stringify(params).slice(0, 220));
+                        let changes = 1;
+                        if (normalized.includes('INSERT INTO entry_signals')) {
+                            const dedupeKey = String(params[1] ?? '');
+                            if (insertedDedupeKeys.has(dedupeKey)) {
+                                changes = 0;
+                            } else {
+                                insertedDedupeKeys.add(dedupeKey);
+                            }
+                        }
+                        fixture.updates.push({ sql: normalized, params });
+                        return { meta: { changes } };
+                    },
+                    all: async () => ({ results: [] }),
+                }),
+                run: async () => {
+                    fixture.updates.push({ sql: sql.replace(/\s+/g, ' ').trim(), params: [] });
+                    return { meta: { changes: 1 } };
+                },
+                first: async () => routeFirst(sql),
+                all: async () => ({ results: [] }),
+            }),
+        };
+
+        const env: Record<string, unknown> = {
+            MIN_CLOSED_CANDLES: '50',
+            MARKET_DATA_API_BASES: 'https://data-api.binance.vision',
+            SIGNALS_DB: signalsDb,
+        };
+        if (fixture.withTelegramSecrets) {
+            env.TELEGRAM_BOT_TOKEN = 'test-token';
+            env.TELEGRAM_CHAT_ID = 'test-chat';
+        }
+        fixture.env = env;
+
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = String(input);
+            if (url.startsWith('https://api.telegram.org/')) {
+                const parsed = JSON.parse(String(init?.body ?? '{}')) as { text?: string };
+                fixture.telegramTexts.push(parsed.text ?? '');
+                return new Response(JSON.stringify({ ok: fixture.telegramStatus === 200 }), {
+                    status: fixture.telegramStatus,
+                });
+            }
+            return new Response(JSON.stringify(klines), {
+                status: 200,
+                headers: { 'content-type': 'application/json' },
+            });
+        }) as typeof fetch;
+        return fixture as ExitFixture;
+    }
+
+    async function runNow(fixture: { env: Record<string, unknown> }): Promise<{ ok: boolean; status: string }> {
+        const res = await worker.fetch(
+            new Request('https://worker.test/api/subscriptions/run-now', {
+                method: 'POST',
+                body: JSON.stringify({ streamId: STREAM_ID, force: false }),
+            }),
+            fixture.env as never,
+        );
+        return (await res.json()) as { ok: boolean; status: string };
+    }
+
+    // The spec fixture strategy overrides a real manifest key so the worker's
+    // strategy-support gate accepts it; the catalog entry is restored after.
+    async function withFixtureStrategy<S>(
+        buyBar: number,
+        sellBar: number | null,
+        sellFraction: number | undefined,
+        fn: () => Promise<S>,
+        options?: {
+            secondBuyBar?: number;
+            secondSellBar?: number | null;
+            secondSellFraction?: number;
+        },
+    ): Promise<S> {
+        const secondBuyBar = options?.secondBuyBar;
+        const secondSellBar = options?.secondSellBar ?? null;
+        const fixtureStrategy: Strategy = {
+            name: 'Exit fixture',
+            description: 'Buys and optionally exits at fixed bars.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data: OHLCVData[]) => {
+                const signals: Signal[] = [];
+                const lastNeeded = Math.max(buyBar, secondBuyBar ?? 0, sellBar ?? 0, secondSellBar ?? 0);
+                if (data.length > lastNeeded + 1) {
+                    signals.push({ time: data[buyBar]!.time, type: 'buy', price: data[buyBar]!.close, barIndex: buyBar });
+                    if (secondBuyBar !== undefined) {
+                        signals.push({ time: data[secondBuyBar]!.time, type: 'buy', price: data[secondBuyBar]!.close, barIndex: secondBuyBar });
+                    }
+                    if (sellBar !== null) {
+                        signals.push({
+                            time: data[sellBar]!.time,
+                            type: 'sell',
+                            price: data[sellBar]!.close,
+                            barIndex: sellBar,
+                            ...(sellFraction !== undefined ? { sizeFraction: sellFraction } : {}),
+                        });
+                    }
+                    if (secondSellBar !== null) {
+                        signals.push({
+                            time: data[secondSellBar]!.time,
+                            type: 'sell',
+                            price: data[secondSellBar]!.close,
+                            barIndex: secondSellBar,
+                            ...(options?.secondSellFraction !== undefined ? { sizeFraction: options.secondSellFraction } : {}),
+                        });
+                    }
+                }
+                return signals;
+            },
+            metadata: { role: 'entry', direction: 'long' },
+        };
+        registerLoadedBuiltInStrategy(STRATEGY_KEY, fixtureStrategy);
+        try {
+            return await fn();
+        } finally {
+            unregisterLoadedBuiltInStrategy(STRATEGY_KEY);
+        }
+    }
+
+    function storedEntryPayload(overrides?: {
+        direction?: 'long' | 'short';
+        withEntryTimeSec?: boolean;
+        signalTimeSec?: number;
+        entryTimeSec?: number;
+        entryPrice?: number;
+    }): Record<string, unknown> {
+        const signalTimeSec = overrides?.signalTimeSec ?? timeAt(BUY_BAR);
+        return {
+            streamId: STREAM_ID,
+            symbol: 'BTCUSDT',
+            interval: '5m',
+            strategyKey: STRATEGY_KEY,
+            strategyName: 'EMA Confirmation',
+            direction: overrides?.direction ?? 'long',
+            signalTimeSec,
+            // The subscription execution defaults fill one bar after the
+            // source signal (next_open), so the executed entry identity is
+            // the fill time, not the signal time.
+            ...(overrides?.withEntryTimeSec === false
+                ? {}
+                : { entryTimeSec: overrides?.entryTimeSec ?? timeAt(BUY_BAR + 1) }),
+            signalAgeBars: 0,
+            signalPrice: overrides?.entryPrice ?? closeAt(BUY_BAR),
+            entryPrice: overrides?.entryPrice ?? closeAt(BUY_BAR),
+            signalReason: null,
+            fingerprint: 'fixture:' + (overrides?.direction ?? 'long') + ':' + String(signalTimeSec),
+        };
+    }
+
+    it('notifies when the notified long position closes on an ordinary opposite signal', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            const fixture = makeExitFixture({ storedPayload: storedEntryPayload() });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                expect(body.ok).to.equal(true);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Exit Signal');
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+                const priceLine = fixture.telegramTexts[0].split(String.fromCharCode(10)).find((line) => line.startsWith('Price: '));
+                const exitFillPrice = Number(priceLine!.slice('Price: '.length));
+                // next_open exit fills near the bar after the exit signal.
+                expect(exitFillPrice).to.be.closeTo(closeAt(SELL_BAR + 1), 0.5);
+                expect(fixture.telegramTexts[0]).to.contain(new Date(timeAt(SELL_BAR + 1) * 1000).toISOString().slice(0, 16));
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('suppresses a repeat notification for the same executed close', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            const fixture = makeExitFixture({ storedPayload: storedEntryPayload() });
+            try {
+                const first = await runNow(fixture);
+                expect(fixture.telegramTexts).to.have.length(1);
+                fixture.subscription.last_status = first.status;
+                await runNow(fixture);
+                expect(fixture.telegramTexts, 'same closure must not re-notify').to.have.length(1);
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('stays quiet while the stored position is still open at end of data', async () => {
+        await withFixtureStrategy(BUY_BAR, null, undefined, async () => {
+            const fixture = makeExitFixture({ storedPayload: storedEntryPayload() });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                expect(body.status).to.not.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(0);
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('stays quiet when only a partial exit fired and the remainder is still open', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, 0.5, async () => {
+            const fixture = makeExitFixture({ storedPayload: storedEntryPayload() });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                expect(body.status).to.not.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(0);
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('does not notify when the stored entry direction does not match the closed position', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            const fixture = makeExitFixture({ storedPayload: storedEntryPayload({ direction: 'short' }) });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                expect(body.status).to.not.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(0);
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('matches legacy payloads without an entry time through the execution shift', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            const fixture = makeExitFixture({ storedPayload: storedEntryPayload({ withEntryTimeSec: false }) });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                // signal_close storage: shift 0, entry time equals the source
+                // signal time.
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
+            } finally {
+                fixture.restore();
+            }
+        });
+
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            const fixture = makeExitFixture({
+                storedPayload: storedEntryPayload({ withEntryTimeSec: false }),
+                backtestSettings: { tradeDirection: 'long', executionModel: 'next_open' },
+            });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                // next_open: the fill happens one bar after the stored source
+                // signal; the shift-aware legacy match must still find it.
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('matches legacy payloads across a missing candle where wall-clock math fails', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            // The candle right after the entry signal is missing, so the
+            // next_open fill happens two intervals after the signal time.
+            // The old "signal time + shift x interval" formula pointed at the
+            // nonexistent slot and produced zero notifications while the
+            // modern payload still notified.
+            const legacyPayload = storedEntryPayload({ withEntryTimeSec: false });
+            const fixture = makeExitFixture({
+                storedPayload: legacyPayload,
+                backtestSettings: { tradeDirection: 'long', executionModel: 'next_open' },
+                dropKlineOriginalIndexes: [BUY_BAR + 1],
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('matches legacy payloads across a multi-candle session gap', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            // A session-sized hole between the signal and the fill: only
+            // candle-index matching can recover the source signal.
+            const legacyPayload = storedEntryPayload({ withEntryTimeSec: false });
+            const fixture = makeExitFixture({
+                storedPayload: legacyPayload,
+                backtestSettings: { tradeDirection: 'long', executionModel: 'next_open' },
+                dropKlineOriginalIndexes: [BUY_BAR + 1, BUY_BAR + 2, BUY_BAR + 3, BUY_BAR + 4],
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('notifies the newest stored entry when simultaneous stops close in reverse entry order', async () => {
+        // Reproduction: entries at 100 (bar 5) and 120 (bar 6), 10% stops,
+        // the bar-7 crash to 85 stops BOTH positions. Exit processing
+        // (backward position iteration) records the $100 position's stop
+        // last, so the final real trade record belongs to the older
+        // position. The stored actionable entry is the $120 position and its
+        // stop must drive the notification.
+        await withFixtureStrategy(BUY_BAR, null, undefined, async () => {
+            const path: number[] = new Array(BAR_COUNT).fill(86);
+            path[0] = 110; path[1] = 111; path[2] = 112; path[3] = 113; path[4] = 114;
+            path[BUY_BAR] = 100;
+            path[BUY_BAR + 1] = 120;
+            path[BUY_BAR + 2] = 85;
+            const fixture = makeExitFixture({
+                storedPayload: storedEntryPayload({
+                    signalTimeSec: timeAt(BUY_BAR + 1),
+                    entryTimeSec: timeAt(BUY_BAR + 1),
+                    entryPrice: 120,
+                }),
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 10,
+                    maxOpenTrades: 2,
+                },
+                pricePath: path,
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts, 'exactly one exit notification').to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+                expect(fixture.telegramTexts[0]).to.contain('Exit Signal');
+            } finally {
+                fixture.restore();
+            }
+        }, { secondBuyBar: BUY_BAR + 1 });
+    });
+
+    it('notifies the stored entry closure while another position remains open', async () => {
+        // The $120 position stops on the crash bar while the $100 position
+        // survives and is liquidated as end_of_data (the final trade
+        // record). The stored entry is the stopped $120 position.
+        await withFixtureStrategy(BUY_BAR, null, undefined, async () => {
+            const path: number[] = new Array(BAR_COUNT).fill(91);
+            path[0] = 110; path[1] = 111; path[2] = 112; path[3] = 113; path[4] = 114;
+            path[BUY_BAR] = 100;
+            path[BUY_BAR + 1] = 120;
+            path[BUY_BAR + 2] = 91;
+            const fixture = makeExitFixture({
+                storedPayload: storedEntryPayload({
+                    signalTimeSec: timeAt(BUY_BAR + 1),
+                    entryTimeSec: timeAt(BUY_BAR + 1),
+                    entryPrice: 120,
+                }),
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 10,
+                    maxOpenTrades: 2,
+                },
+                pricePath: path,
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts, 'exactly one exit notification').to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        }, { secondBuyBar: BUY_BAR + 1 });
+    });
+
+    it('notifies after a partial exit chains into the full close of the stored position', async () => {
+        // Half exits on bar 6, the remainder closes on bar 7: the stored
+        // position fully closed, so one exit notification fires for the
+        // final closure.
+        await withFixtureStrategy(BUY_BAR, BUY_BAR + 1, 0.5, async () => {
+            const fixture = makeExitFixture({
+                // signal_close fills on the signal bar itself.
+                storedPayload: storedEntryPayload({
+                    signalTimeSec: timeAt(BUY_BAR),
+                    entryTimeSec: timeAt(BUY_BAR),
+                }),
+                backtestSettings: { tradeDirection: 'long', executionModel: 'signal_close' },
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts, 'exactly one exit notification').to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        }, { secondSellBar: BUY_BAR + 2 });
+    });
+
+    it('logs failed deliveries without fabricating the exit_alert status', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            const fixture = makeExitFixture({
+                storedPayload: storedEntryPayload(),
+                telegramStatus: 500,
+            });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                expect(body.status).to.not.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(1);
+            } finally {
+                fixture.restore();
+            }
+        });
+    });
+
+    it('treats missing Telegram secrets as a failed best-effort delivery', async () => {
+        await withFixtureStrategy(BUY_BAR, SELL_BAR, undefined, async () => {
+            const fixture = makeExitFixture({
+                storedPayload: storedEntryPayload(),
+                withTelegramSecrets: false,
+            });
+            try {
+                const body = await runNow(fixture as { env: Record<string, unknown> });
+                expect(body.status).to.not.contain(';exit_alert:');
+                expect(fixture.telegramTexts).to.have.length(0);
+            } finally {
+                fixture.restore();
+            }
+        });
     });
 });

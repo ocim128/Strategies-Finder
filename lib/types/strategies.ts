@@ -525,6 +525,15 @@ export interface StrategyIndicator {
 
 /** Execution context bag passed as an optional argument to strategy methods. */
 export interface StrategyExecutionContext {
+    /**
+     * Captured strategy-timeframe settings. The registry's global timeframe
+     * wrapper prefers these over live UI state so an in-flight request
+     * executes with the settings it was captured with.
+     */
+    strategyTimeframe?: {
+        enabled: boolean;
+        minutes: number;
+    };
 }
 
 export interface Strategy {

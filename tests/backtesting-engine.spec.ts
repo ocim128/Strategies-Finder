@@ -3387,3 +3387,183 @@ describe('Backtesting Engine', () => {
     });
 });
 
+describe('Maximum percentage drawdown is measured independently of dollars', () => {
+    // Equity path 10000 -> 5000 -> 100000 -> 90000 built from real trades:
+    // the worst relative loss (50%) happens from a smaller early peak, while
+    // the worst dollar loss (10000) happens after the peak at 100000.
+    const drawdownData: OHLCVData[] = [
+        { time: 0 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+        { time: 1 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+        { time: 2 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+        { time: 3 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+        { time: 4 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+        { time: 5 as Time, open: 900, high: 900, low: 900, close: 900, volume: 1000 },
+    ];
+    const drawdownSignals: Signal[] = [
+        { time: 0 as Time, type: 'buy', price: 100 },
+        { time: 1 as Time, type: 'sell', price: 50 },
+        { time: 2 as Time, type: 'buy', price: 50 },
+        { time: 3 as Time, type: 'sell', price: 1000 },
+        { time: 4 as Time, type: 'buy', price: 1000 },
+        { time: 5 as Time, type: 'sell', price: 900 },
+    ];
+
+    it('full engine fallback path reports both worst dollar and worst percentage drawdown', () => {
+        const result = runBacktest(drawdownData, drawdownSignals, 10000, 100, 0);
+        expect(result.maxDrawdown).to.equal(10000);
+        expect(result.maxDrawdownPercent).to.equal(50);
+    });
+
+    it('single-position fast path reports both worst dollar and worst percentage drawdown', () => {
+        const result = runBacktestCompact(
+            drawdownData,
+            drawdownSignals,
+            10000,
+            100,
+            0,
+            {},
+            undefined,
+            undefined,
+            { omitEquityCurve: true, includeSharpeRatio: false },
+        );
+        expect(result.maxDrawdown).to.equal(10000);
+        expect(result.maxDrawdownPercent).to.equal(50);
+    });
+
+    it('combined books report both worst dollar and worst percentage drawdown', () => {
+        // Only the long book trades (buy signals never reach the short book);
+        // it dips 25% of total equity early, then loses more dollars after a
+        // much higher combined peak at the final liquidation.
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+            { time: 2 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+            { time: 3 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+            { time: 4 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+            { time: 5 as Time, open: 875, high: 875, low: 875, close: 875, volume: 1000 },
+        ];
+        const signals: Signal[] = [{ time: 0 as Time, type: 'buy', price: 100 }];
+
+        const compact = runBacktestCompact(data, signals, 10000, 100, 0, { tradeDirection: 'combined' });
+        expect(compact.maxDrawdown).to.be.closeTo(6250, 1e-6);
+        expect(compact.maxDrawdownPercent).to.be.closeTo(25, 1e-6);
+
+        const full = runBacktest(data, signals, 10000, 100, 0, { tradeDirection: 'combined' });
+        expect(full.maxDrawdown).to.be.closeTo(6250, 1e-6);
+        expect(full.maxDrawdownPercent).to.be.closeTo(25, 1e-6);
+    });
+
+    it('short book reports the worst relative loss from the smaller early peak', () => {
+        // Fixed notional lets a short book grow past its initial peak.
+        // Trade PnL sequence: -5000, +9000, +1000, +2000, -6400.
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 150, high: 150, low: 150, close: 150, volume: 1000 },
+            { time: 2 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+            { time: 3 as Time, open: 5, high: 5, low: 5, close: 5, volume: 1000 },
+            { time: 4 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 5 as Time, open: 90, high: 90, low: 90, close: 90, volume: 1000 },
+            { time: 6 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 7 as Time, open: 80, high: 80, low: 80, close: 80, volume: 1000 },
+            { time: 8 as Time, open: 125, high: 125, low: 125, close: 125, volume: 1000 },
+            { time: 9 as Time, open: 205, high: 205, low: 205, close: 205, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 0 as Time, type: 'sell', price: 100 },
+            { time: 1 as Time, type: 'buy', price: 150 },
+            { time: 2 as Time, type: 'sell', price: 50 },
+            { time: 3 as Time, type: 'buy', price: 5 },
+            { time: 4 as Time, type: 'sell', price: 100 },
+            { time: 5 as Time, type: 'buy', price: 90 },
+            { time: 6 as Time, type: 'sell', price: 100 },
+            { time: 7 as Time, type: 'buy', price: 80 },
+            { time: 8 as Time, type: 'sell', price: 125 },
+            { time: 9 as Time, type: 'buy', price: 205 },
+        ];
+        const result = runBacktest(
+            data,
+            signals,
+            10000,
+            100,
+            0,
+            { tradeDirection: 'short' },
+            { mode: 'fixed', fixedTradeAmount: 10000 },
+        );
+        expect(result.totalTrades).to.equal(5);
+        expect(result.maxDrawdown).to.equal(6400);
+        expect(result.maxDrawdownPercent).to.equal(50);
+    });
+
+    it('final liquidation fees count toward the dollar drawdown without hiding the deeper percentage', () => {
+        const data: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+            { time: 2 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+            { time: 3 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+            { time: 4 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+            { time: 5 as Time, open: 900, high: 900, low: 900, close: 900, volume: 1000 },
+        ];
+        const signals: Signal[] = [
+            { time: 0 as Time, type: 'buy', price: 100 },
+            { time: 1 as Time, type: 'sell', price: 50 },
+            { time: 2 as Time, type: 'buy', price: 50 },
+            { time: 3 as Time, type: 'sell', price: 1000 },
+            { time: 4 as Time, type: 'buy', price: 1000 },
+        ];
+        const result = runBacktest(data, signals, 10000, 100, 1);
+        expect(result.totalTrades).to.equal(3);
+        expect(result.trades[2]!.exitReason).to.equal('end_of_data');
+        expect(result.maxDrawdown).to.be.closeTo(11320.1773, 1e-3);
+        expect(result.maxDrawdownPercent).to.be.closeTo(51.4753, 1e-3);
+    });
+
+    it('skipDrawdown still reports zero drawdown metrics', () => {
+        const result = runBacktestCompact(
+            drawdownData,
+            drawdownSignals,
+            10000,
+            100,
+            0,
+            {},
+            undefined,
+            undefined,
+            { omitEquityCurve: true, includeSharpeRatio: false, skipDrawdown: true },
+        );
+        expect(result.maxDrawdown).to.equal(0);
+        expect(result.maxDrawdownPercent).to.equal(0);
+    });
+
+    it('corrected percentages change Finder ranking when sorting by maxDrawdownPercent', () => {
+        const deepEarlyDip = runBacktest(drawdownData, drawdownSignals, 10000, 100, 0);
+        // Mild alternate-loss candidate: worst relative loss 20.8%, worst
+        // dollar loss 2080.
+        const mildData: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 1 as Time, open: 80, high: 80, low: 80, close: 80, volume: 1000 },
+            { time: 2 as Time, open: 80, high: 80, low: 80, close: 80, volume: 1000 },
+            { time: 3 as Time, open: 88, high: 88, low: 88, close: 88, volume: 1000 },
+            { time: 4 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+            { time: 5 as Time, open: 90, high: 90, low: 90, close: 90, volume: 1000 },
+        ];
+        const mildSignals: Signal[] = [
+            { time: 0 as Time, type: 'buy', price: 100 },
+            { time: 1 as Time, type: 'sell', price: 80 },
+            { time: 2 as Time, type: 'buy', price: 80 },
+            { time: 3 as Time, type: 'sell', price: 88 },
+            { time: 4 as Time, type: 'buy', price: 100 },
+            { time: 5 as Time, type: 'sell', price: 90 },
+        ];
+        const mild = runBacktest(mildData, mildSignals, 10000, 100, 0);
+
+        expect(deepEarlyDip.maxDrawdownPercent).to.be.greaterThan(mild.maxDrawdownPercent);
+        expect(deepEarlyDip.maxDrawdownPercent).to.equal(50);
+        expect(mild.maxDrawdownPercent).to.equal(20.8);
+
+        const ranked = [deepEarlyDip, mild].sort(
+            (a, b) => a.maxDrawdownPercent - b.maxDrawdownPercent,
+        );
+        expect(ranked[0]).to.equal(mild);
+        expect(ranked[1]).to.equal(deepEarlyDip);
+    });
+});
+

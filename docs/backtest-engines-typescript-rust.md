@@ -198,6 +198,40 @@ forced-close no-progress guard plus the unified loop-bound phase labels
 to both wrappers. Cancellation behavior is unchanged: both wrappers throw
 `Backtest cancelled during TypeScript simulation.` from the shared loop.
 
+#### Maximum drawdown semantics
+
+Dollar and percentage drawdowns are maximized independently across every
+producing path (TypeScript fast path, shared fallback, combined books, the
+Rust streaming closure and `calculate_max_drawdown`, Monte Carlo chart paths,
+the path-dependency analyzer, and Finder synthetic pair-neutral metrics). The
+worst relative loss may therefore come from a different peak than the worst
+dollar loss: the equity path 10000 -> 5000 -> 100000 -> 90000 reports
+`maxDrawdown = 10000` and `maxDrawdownPercent = 50` (the 50% loss from the
+10000 peak), not the 10% loss from the 100000 peak. The percentage divide
+stays guarded by a nonpositive-peak check (0% while the running peak is zero
+or negative). Regression results computed before this correction underreported
+percentage drawdown whenever a larger dollar loss occurred from a higher peak;
+persisted Finder/Batch snapshots and archives retain those historical scalars
+and cannot be repaired without the original execution data, so corrected
+metrics require reruns.
+
+#### Walk Forward exit-override parity
+
+Walk Forward analysis (`lib/strategies/walk-forward.ts`) executes every window
+through the same exit-override resolution as the shared executor:
+`prepareWindowBacktest` awaits `resolveExitStrategyOverrideSignals` on buffered
+history ending at the window boundary, merges the tagged exit-only series via
+`mergeExitStrategySignals`, and filters the merged stream to the window. The
+chart interval travels through the optional `chartInterval` config field on
+`WalkForwardConfig` / `FixedParamWalkForwardConfig` (and `quickWalkForward`'s
+trailing parameter); an active override without it fails clearly instead of
+guessing an interval for irregular data. The configured exit strategy is
+preloaded and validated before candidate scoring so a load failure surfaces as
+an analysis error rather than an empty override inside the optimizer's
+catch/continue, and the resolved exit series is cached on the per-window
+context so it is resolved once per window and released with it. The
+autosuggest trade-frequency estimator uses the same preparation.
+
 The fallback loops are the hottest TypeScript simulation path for Finder
 configurations that block the fast path (overlap, trailing exits, adaptive
 take profit). Baseline wall-clock/heap measurements for a

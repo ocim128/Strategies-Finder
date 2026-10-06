@@ -97,7 +97,15 @@ export function buildFinderPairNeutralMetrics(
         const drawdown = peakCapital - neutralCapital;
         if (drawdown > maxDrawdown) {
             maxDrawdown = drawdown;
-            maxDrawdownPercent = peakCapital > 0 ? (drawdown / peakCapital) * 100 : 0;
+        }
+        // Dollars and percentage are maximized independently: the worst
+        // relative loss may come from a different peak than the worst dollar
+        // loss.
+        if (peakCapital > 0) {
+            const drawdownPercent = (drawdown / peakCapital) * 100;
+            if (drawdownPercent > maxDrawdownPercent) {
+                maxDrawdownPercent = drawdownPercent;
+            }
         }
     }
 

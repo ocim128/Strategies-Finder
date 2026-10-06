@@ -52,6 +52,20 @@ lookback. WebSocket construction starts a handshake; only a current socket's
 `open` event resets reconnect attempts and emits `data.stream.connected`.
 Failures before opening retain the existing exponential backoff and ceiling.
 
+## Chart display modes and live ticks
+
+`state.ohlcvData` always holds raw OHLCV and is the only input to strategies,
+persistence, and research paths. Chart mode (`candlestick` or `heikin-ashi`)
+is a visual transformation applied when the displayed series is built:
+`chartManager.updateChartData()` performs the full transform, and live stream
+ticks go through `chartManager.updateLiveCandle` — candlestick mode keeps the
+incremental raw update, Heikin Ashi mode recomputes only the transformed tail
+in constant time from a bounded tail state, so the displayed bar always
+matches a full redraw without a per-tick data commit. Rolling-window
+evictions re-seed the Heikin Ashi chain (the first bar anchors every later
+value), so an evicting tick rebuilds the displayed series through
+`updateChartData` with the visible range preserved.
+
 ## Stream persistence
 
 `DataPersistence.queuePersistCandles` coalesces updates for 1.2 seconds.

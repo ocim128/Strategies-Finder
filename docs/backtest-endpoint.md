@@ -46,6 +46,19 @@ There is no separate standalone backtest server in the current implementation.
 
 ## Execution Match Rules
 
+### UI copy/preview snapshot ownership
+
+The copy/preview snapshot is built from the captured request identity of the
+interactive run — symbol, interval, strategy key, params, settings, capital,
+evaluation time, block range, and a stable shallow copy of the candles — never
+from current UI state, which may already describe a different market by the
+time the result is published. Interactive runs capture the whole request
+before the first UI delay and publish only while they still own the latest
+publication (transient revision owned by `lib/state-actions.ts`, advanced by
+context changes, result clears, replacement datasets, and competing commits);
+endpoint copy/preview operations re-check that ownership after their async
+work so a clear or a newer result is never overwritten.
+
 If you want the endpoint to match the UI, keep these inputs identical:
 
 - candle array

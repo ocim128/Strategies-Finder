@@ -36,9 +36,23 @@ type IndicatorTooltipPoint = {
 // Chart Manager - Enhanced Trade Charting
 // ============================================================================
 
+/**
+ * Bounded state needed to compute the Heikin Ashi tail in constant time on
+ * live ticks: the raw source time of the tail, the HA open/close that seeds
+ * the next bar, and the transformed tail itself. No full transformed series
+ * is retained.
+ */
+type HeikinAshiLiveTail = {
+    tailSourceTime: OHLCVData['time'];
+    prevHa: { open: number; close: number } | null;
+    tailHa: { time: OHLCVData['time']; open: number; high: number; low: number; close: number };
+};
+
 export class ChartManager {
     private static readonly COMPACT_MARKER_LABEL_THRESHOLD = 100;
     private static readonly MAX_VISIBLE_TRADE_MARKERS = 250;
+
+    private heikinAshiLiveTail: HeikinAshiLiveTail | null = null;
 
     private mainChartContainer: HTMLElement | null = null;
     private equityChartContainer: HTMLElement | null = null;
@@ -670,12 +684,158 @@ export class ChartManager {
     }
 
     /**
+     * Transform one raw candle into its Heikin Ashi candle using the same
+     * formulas as {@link toHeikinAshi}. `prevHa` carries the previous HA
+     * open/close; null seeds the first bar from (open + close) / 2.
+     */
+    public computeLiveHeikinAshiCandle(
+        raw: OHLCVData,
+        prevHa: { open: number; close: number } | null
+    ): OHLCVData {
+        const haClose = (raw.open + raw.high + raw.low + raw.close) / 4;
+        const haOpen = prevHa ? (prevHa.open + prevHa.close) / 2 : (raw.open + raw.close) / 2;
+        return {
+            time: raw.time,
+            open: haOpen,
+            high: Math.max(raw.high, haOpen, haClose),
+            low: Math.min(raw.low, haOpen, haClose),
+            close: haClose,
+            volume: raw.volume,
+        };
+    }
+
+    /**
+     * Seed (or reset) the bounded tail state used by live HA updates. Called
+     * whenever the displayed history is (re)built: initial load, mode or
+     * context changes, historical replacement, and rolling-window eviction,
+     * because reseeding the first HA bar changes every later value.
+     */
+    private seedHeikinAshiLiveTail(rawData: OHLCVData[], transformed: OHLCVData[]): void {
+        const last = transformed.length - 1;
+        if (last < 0 || rawData.length !== transformed.length) {
+            this.heikinAshiLiveTail = null;
+            return;
+        }
+        this.heikinAshiLiveTail = {
+            tailSourceTime: rawData[last]!.time,
+            prevHa: last >= 1
+                ? { open: transformed[last - 1]!.open, close: transformed[last - 1]!.close }
+                : null,
+            tailHa: {
+                time: transformed[last]!.time,
+                open: transformed[last]!.open,
+                high: transformed[last]!.high,
+                low: transformed[last]!.low,
+                close: transformed[last]!.close,
+            },
+        };
+    }
+
+    /**
+     * Chart-owned live update for one stream tick. Candlestick mode keeps the
+     * existing incremental raw update. Heikin Ashi mode computes only the
+     * transformed tail in constant time from the seeded tail state and pushes
+     * exactly the values a full redraw would show; any transition this tail
+     * cannot track falls back to the full rebuild through updateChartData.
+     */
+    public updateLiveCandle(rawCandle: OHLCVData): void {
+        const series = state.candlestickSeries;
+        if (!series) return;
+        if (state.chartMode !== 'heikin-ashi') {
+            series.update(rawCandle as Parameters<typeof series.update>[0]);
+            return;
+        }
+
+        const tail = this.heikinAshiLiveTail;
+        // The tick must be the live array's tail object: the stream path
+        // replaces/pushes the candle before calling this, so a mismatch means
+        // the displayed history was replaced under us and the seeded HA state
+        // is stale.
+        const liveTail = state.ohlcvData.length > 0
+            ? state.ohlcvData[state.ohlcvData.length - 1]
+            : undefined;
+        if (
+            !tail
+            || liveTail !== rawCandle
+            || rawCandle.time < tail.tailSourceTime
+            || parseTimeToUnixSeconds(rawCandle.time) === null
+        ) {
+            // Untracked history (replacement, mode/context change, or eviction
+            // without a rebuild): recompute from the raw data.
+            this.updateChartData();
+            return;
+        }
+
+        if (rawCandle.time === tail.tailSourceTime) {
+            const ha = this.computeLiveHeikinAshiCandle(rawCandle, tail.prevHa);
+            this.heikinAshiLiveTail = {
+                tailSourceTime: rawCandle.time,
+                prevHa: tail.prevHa,
+                tailHa: {
+                    time: ha.time,
+                    open: ha.open,
+                    high: ha.high,
+                    low: ha.low,
+                    close: ha.close,
+                },
+            };
+            series.update({
+                time: ha.time,
+                open: ha.open,
+                high: ha.high,
+                low: ha.low,
+                close: ha.close,
+            });
+            return;
+        }
+
+        // Append: the previous tail seeds the next HA open, so only one new
+        // transformed candle is computed per tick.
+        const prevHa = { open: tail.tailHa.open, close: tail.tailHa.close };
+        const ha = this.computeLiveHeikinAshiCandle(rawCandle, prevHa);
+        this.heikinAshiLiveTail = {
+            tailSourceTime: rawCandle.time,
+            prevHa,
+            tailHa: {
+                time: ha.time,
+                open: ha.open,
+                high: ha.high,
+                low: ha.low,
+                close: ha.close,
+            },
+        };
+        series.update({
+            time: ha.time,
+            open: ha.open,
+            high: ha.high,
+            low: ha.low,
+            close: ha.close,
+        });
+    }
+
+    /**
+     * Full rebuild after a rolling-window eviction: removing the head re-seeds
+     * every HA value, so the chart must be rebuilt, with the visible range
+     * preserved across the setData.
+     */
+    public rebuildChartDataAfterEviction(): void {
+        const timeScale = state.chart?.timeScale();
+        const range = timeScale ? timeScale.getVisibleLogicalRange() : null;
+        this.updateChartData();
+        if (timeScale && range) {
+            timeScale.setVisibleLogicalRange(range);
+        }
+    }
+
+    /**
      * Updates chart candlestick data with appropriate transformation based on chart mode.
      * When chartMode is 'heikin-ashi', applies Heikin Ashi transformation to the raw data.
      * This is purely visual - the underlying state.ohlcvData remains unchanged for strategies.
      */
     public updateChartData() {
         const rawData = state.ohlcvData;
+        // Any full rebuild re-seeds (or clears) the live HA tail identity.
+        this.heikinAshiLiveTail = null;
         if (rawData.length === 0) return;
 
         // Apply transformation if Heikin Ashi mode is active
@@ -685,6 +845,7 @@ export class ChartManager {
 
         // Update candlestick series with transformed data
         if (state.chartMode === 'heikin-ashi') {
+            this.seedHeikinAshiLiveTail(rawData, displayData);
             state.candlestickSeries.setData(displayData.map(d => ({
                 time: d.time,
                 open: d.open,
@@ -703,6 +864,13 @@ export class ChartManager {
         const displayData = state.chartMode === 'heikin-ashi'
             ? toHeikinAshi(data)
             : data;
+        // Paper-stream data replaces the displayed history; re-seed the live
+        // HA tail identity from it so subsequent live ticks stay consistent.
+        if (state.chartMode === 'heikin-ashi') {
+            this.seedHeikinAshiLiveTail(data, displayData);
+        } else {
+            this.heikinAshiLiveTail = null;
+        }
 
         state._ohlcvTimeMap = buildOhlcvTimeMap(data);
         state.candlestickSeries.setData(displayData.map(d => ({

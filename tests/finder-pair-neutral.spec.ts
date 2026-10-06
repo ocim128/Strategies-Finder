@@ -102,4 +102,21 @@ describe("Finder synthetic-pair neutral metrics", () => {
         expect(metrics).to.not.equal(null);
         expect(metrics!.sharpeRatio).to.be.greaterThan(1);
     });
+
+    it("reports the worst relative drawdown independently of the worst dollar drawdown", () => {
+        // Neutral equity path 10000 -> 5000 -> 100000 -> 90000: the worst
+        // relative loss (50%) comes from the small early peak, the worst
+        // dollar loss (10000) from the later 100000 peak.
+        const trades = [
+            makeTrade("long", 100, 50, 1),
+            makeTrade("long", 50, 1000, 2),
+            makeTrade("long", 1000, 900, 3),
+        ];
+
+        const metrics = buildFinderPairNeutralMetrics(makeResult(trades), capital);
+
+        expect(metrics).to.not.equal(null);
+        expect(metrics!.maxDrawdown).to.equal(10000);
+        expect(metrics!.maxDrawdownPercent).to.equal(50);
+    });
 });

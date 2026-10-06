@@ -9,6 +9,8 @@ import {
     ensureConfirmationStrategiesLoaded,
 } from "./confirmation-signal-filter";
 import { applySignalPolarity, runBacktestCompact } from "./strategies/backtest";
+import { mergeExitStrategySignals } from "./exit-strategy-merge";
+import { resolveExitStrategyOverrideSignals } from "./backtest-executor";
 import { parseInputNumber } from "./dom-input-readers";
 import type { Strategy, StrategyParams, BacktestSettings, OHLCVData, BacktestResult } from "./strategies/index";
 import { sliceOhlcvByBlock } from "./block-selector";
@@ -318,22 +320,32 @@ class WalkForwardService {
         );
     }
 
-    private estimateTradeFrequency(
+    private async estimateTradeFrequency(
         data: OHLCVData[],
         strategy: Strategy,
         params: StrategyParams,
         capitalSettings: ReturnType<typeof backtestService.getCapitalSettings>,
         backtestSettings: BacktestSettings
-    ): { totalTrades: number; tradesPerBar: number } | null {
+    ): Promise<{ totalTrades: number; tradesPerBar: number } | null> {
         try {
             const signals = applyConfirmationStrategiesToSignals({
                 data,
                 baseSignals: applySignalPolarity(strategy.execute(data, params), backtestSettings),
                 settings: backtestSettings,
             });
+            // Mirror the analysis engine: honor an active exit strategy
+            // override so autosuggest thresholds reflect the same trade
+            // frequency the walk-forward windows will produce.
+            const exitOverrideResolution = await resolveExitStrategyOverrideSignals({
+                data,
+                interval: state.currentInterval,
+                settings: backtestSettings,
+                blockRange: null,
+            });
+            const preparedSignals = mergeExitStrategySignals(signals, exitOverrideResolution.signals);
             const result = runBacktestCompact(
                 data,
-                signals,
+                preparedSignals,
                 capitalSettings.initialCapital,
                 capitalSettings.positionSize,
                 capitalSettings.commission,
@@ -355,17 +367,17 @@ class WalkForwardService {
         }
     }
 
-    private autoSuggestWindowSettings(
+    private async autoSuggestWindowSettings(
         data: OHLCVData[],
         strategy: Strategy,
         params: StrategyParams,
         capitalSettings: ReturnType<typeof backtestService.getCapitalSettings>,
         backtestSettings: BacktestSettings
-    ): {
+    ): Promise<{
         minOOSTradesPerWindow: number;
         minTotalOOSTrades: number;
-    } | null {
-        const tradeStats = this.estimateTradeFrequency(data, strategy, params, capitalSettings, backtestSettings);
+    } | null> {
+        const tradeStats = await this.estimateTradeFrequency(data, strategy, params, capitalSettings, backtestSettings);
         if (!tradeStats) return null;
 
         const currentOptWindow = this.readNumberInput('wf-opt-window', Math.max(50, Math.floor(data.length * 0.2)));
@@ -416,7 +428,7 @@ class WalkForwardService {
 
             // Get current parameters
             const currentParams = this.normalizeStrategyParams(strategy, paramManager.getValues(strategy));
-            const tradeAwareThresholds = this.autoSuggestWindowSettings(
+            const tradeAwareThresholds = await this.autoSuggestWindowSettings(
                 data,
                 strategy,
                 currentParams,
@@ -459,6 +471,7 @@ class WalkForwardService {
                     stepSize,
                     fixedParams: currentParams,
                     minTrades,
+                    chartInterval: state.currentInterval,
                     onProgress: progressReporter,
                     signal
                 };
@@ -481,6 +494,7 @@ class WalkForwardService {
                 // Get config from UI
                 const config: WalkForwardConfig = {
                     ...baseConfig,
+                    chartInterval: state.currentInterval,
                     onProgress: progressReporter,
                     signal
                 };
@@ -568,6 +582,7 @@ class WalkForwardService {
                     stepSize,
                     fixedParams: currentParams,
                     minTrades: 1,
+                    chartInterval: state.currentInterval,
                     onProgress: progressReporter,
                     signal
                 };
@@ -596,6 +611,7 @@ class WalkForwardService {
                     sizing,
                     progressReporter,
                     signal,
+                    state.currentInterval,
                 );
             }
 

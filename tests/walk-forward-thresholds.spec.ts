@@ -34,4 +34,17 @@ describe('Walk-forward trade thresholds', () => {
         expect(thresholds.minTrades).to.equal(10);
         expect(thresholds.minTotalOOSTrades).to.equal(20);
     });
+
+    it('raises autosuggest thresholds when an exit override increases realized trade frequency', () => {
+        // The estimator now honors an active exit strategy override, so a
+        // strategy whose positions actually close produces the higher trade
+        // count the analysis windows will also see.
+        const withoutOverride = deriveWalkForwardTradeThresholds(3, 3 / 37_391, 200, 50);
+        const withOverride = deriveWalkForwardTradeThresholds(40, 40 / 37_391, 200, 50);
+
+        expect(withOverride.expectedOOSTradesPerWindow)
+            .to.be.greaterThan(withoutOverride.expectedOOSTradesPerWindow);
+        expect(withOverride.minTotalOOSTrades)
+            .to.be.greaterThan(withoutOverride.minTotalOOSTrades);
+    });
 });
