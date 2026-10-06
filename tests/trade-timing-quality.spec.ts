@@ -203,6 +203,33 @@ describe("trade timing quality", () => {
         expect(getTradeTimingPreparedMovementFloors(rising)).to.equal(risingFloors);
     });
 
+    it("computes each fresh floor once per analysis, shared by entry and exit passes", () => {
+        const data = Array.from({ length: 40 }, (_, index) =>
+            candle(index, 100 + index, 99, 100 + index));
+        const result = makeResult([makeTrade({})]);
+
+        // Movement floors are the only sorting work in an analysis: median
+        // movement is one sort per horizon. Counting sorts therefore counts
+        // floor preparations — three horizons must sort exactly three times
+        // across BOTH the entry and exit passes.
+        let sorts = 0;
+        const originalSort = Array.prototype.sort;
+        Array.prototype.sort = function (this: unknown[], ...args: []) {
+            sorts += 1;
+            return originalSort.apply(this, args);
+        };
+        let quality: ReturnType<typeof computeTradeTimingQuality>;
+        try {
+            quality = computeTradeTimingQuality(result, data);
+        } finally {
+            Array.prototype.sort = originalSort;
+        }
+
+        expect(sorts).to.equal(3);
+        expect(quality.entry.horizons.every((horizon) => horizon.movementFloorPct !== null)).to.equal(true);
+        expect(quality.exit.horizons.every((horizon) => horizon.movementFloorPct !== null)).to.equal(true);
+    });
+
     it("skips floor preparation for empty and entry-only results", () => {
         const data = Array.from({ length: 40 }, (_, index) =>
             candle(index, 100 + index, 99, 100 + index));

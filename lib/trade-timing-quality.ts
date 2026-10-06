@@ -72,9 +72,18 @@ export function computeTradeTimingQuality(
 ): TradeTimingQuality {
     const timeIndex = getTimeIndex(ohlcvData);
     const floors = resolvePreparedFloors(preparedFloors);
-    const movementFloors = floors?.byHorizon ?? new Map<number, number>();
-    const floorFor = (horizon: number): number => movementFloors.get(horizon)
-        ?? computeMovementFloorPct(ohlcvData, horizon);
+    // Local memo so a fresh analysis computes each horizon's candle-only floor
+    // exactly once and shares it between the entry and exit passes; prepared
+    // contexts are copied per analysis so reuse never writes through to the
+    // window-owned cache.
+    const movementFloors = new Map<number, number>(floors?.byHorizon ?? []);
+    const floorFor = (horizon: number): number => {
+        const cachedFloor = movementFloors.get(horizon);
+        if (cachedFloor !== undefined) return cachedFloor;
+        const computedFloor = computeMovementFloorPct(ohlcvData, horizon);
+        movementFloors.set(horizon, computedFloor);
+        return computedFloor;
+    };
 
     const entryHorizons = HORIZONS.map((horizon) =>
         computeEntryHorizon(result.trades, ohlcvData, timeIndex, horizon, floorFor(horizon))
