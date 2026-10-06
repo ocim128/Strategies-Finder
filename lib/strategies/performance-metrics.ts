@@ -1,6 +1,6 @@
 import type { AdvancedPerformanceAnalytics, Time } from "../types/strategies";
 import { timeToNumber } from "./backtest/backtest-utils";
-import { mean, median, percentile, sampleStdDev } from "../statistics-utils";
+import { mean, median, percentileSorted, sampleStdDev } from "../statistics-utils";
 
 export const SHARPE_MIN_SAMPLES = 5;
 const SHARPE_MIN_STD_DEV = 1e-4;
@@ -403,23 +403,15 @@ function calculateCagr(
     return Math.pow(endValue / startValue, 1 / durationYears) - 1;
 }
 
-function calculateTailRatio(
-    returns: readonly number[],
-    confidenceLevelPct: number
-): number {
-    if (returns.length === 0) return 0;
-
-    const lowerPercentile = Math.max(0, 100 - confidenceLevelPct);
-    const upper = percentile(returns, confidenceLevelPct);
-    const lower = percentile(returns, lowerPercentile);
-    const denominator = Math.abs(lower);
+function calculateTailRatio(upperPercentile: number, lowerPercentile: number): number {
+    const denominator = Math.abs(lowerPercentile);
 
     if (denominator <= EPSILON) {
-        if (upper <= EPSILON) return 0;
+        if (upperPercentile <= EPSILON) return 0;
         return Number.POSITIVE_INFINITY;
     }
 
-    return upper / denominator;
+    return upperPercentile / denominator;
 }
 
 function calculateDistributionShape(
@@ -479,11 +471,16 @@ export function calculateAdvancedPerformanceAnalyticsFromEquityCurve(
     const calmarRatio = calculateExcessReturnRatio(cagrFraction, maxDrawdownFraction);
     // Sterling's classic 10% adjustment becomes pathological below that threshold, so floor it.
     const sterlingRatio = calculateExcessReturnRatio(cagrFraction, Math.max(EPSILON, maxDrawdownFraction - 0.10));
-    const tailRatio = calculateTailRatio(returns, confidenceLevelPct);
+    // One sort serves every percentile consumer below: the tail ratio's
+    // upper/lower bounds and the VaR/CVaR threshold share the same ordering.
+    const sortedReturns = [...returns].sort((left, right) => left - right);
+    const lowerPercentile = Math.max(0, 100 - confidenceLevelPct);
+    const upperTailPercentile = percentileSorted(sortedReturns, confidenceLevelPct);
+    const lowerTailPercentile = percentileSorted(sortedReturns, lowerPercentile);
+    const tailRatio = calculateTailRatio(upperTailPercentile, lowerTailPercentile);
     const { skewness, kurtosis } = calculateDistributionShape(returns);
 
-    const lowerPercentile = Math.max(0, 100 - confidenceLevelPct);
-    const varThreshold = percentile(returns, lowerPercentile);
+    const varThreshold = lowerTailPercentile;
     const tailReturns = returns.filter((value) => value <= varThreshold);
     const varFraction = Math.max(0, -varThreshold);
     const cvarFraction = tailReturns.length > 0
