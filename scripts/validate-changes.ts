@@ -247,14 +247,19 @@ function scopePathsToAppRoot(
     gitRoot: string,
     appRoot: string,
 ): { inScope: string[]; outOfScope: string[] } {
-    if (path.resolve(gitRoot) === path.resolve(appRoot)) {
+    // Git can report the physical repository path while the caller uses a
+    // junction or Windows short path. Compare canonical roots so aliases do
+    // not incorrectly move genuine changes outside the application scope.
+    const scopedGitRoot = fs.realpathSync.native(gitRoot);
+    const scopedAppRoot = fs.realpathSync.native(appRoot);
+    if (path.relative(scopedAppRoot, scopedGitRoot) === "") {
         return { inScope: [...gitPaths].map(toPosixPath), outOfScope: [] };
     }
     const inScope: string[] = [];
     const outOfScope: string[] = [];
     for (const gitPath of gitPaths) {
-        const absolute = path.resolve(gitRoot, gitPath);
-        const relative = path.relative(appRoot, absolute);
+        const absolute = path.resolve(scopedGitRoot, gitPath);
+        const relative = path.relative(scopedAppRoot, absolute);
         if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
             outOfScope.push(toPosixPath(gitPath));
             continue;

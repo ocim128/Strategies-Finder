@@ -192,6 +192,24 @@ describe("git change collection", () => {
         assert.deepEqual(changes.paths, []);
     });
 
+    for (const nested of [false, true]) {
+        it(`scopes changes through a directory alias ${nested ? "with a nested app" : "of the repository root"}`, async () => {
+            const root = createFixtureRepo();
+            const aliasParent = fs.mkdtempSync(path.join(os.tmpdir(), "validate-changes-alias-"));
+            fixtureRoots.push(aliasParent);
+            const alias = path.join(aliasParent, "repo");
+            fs.symlinkSync(root, alias, process.platform === "win32" ? "junction" : "dir");
+
+            const appDirectory = nested ? "app" : "";
+            write(path.join(root, appDirectory, "inside.txt"), "inside\n");
+            if (nested) write(path.join(root, "outside.txt"), "outside\n");
+
+            const changes = await collectChangedPaths({ appRoot: path.join(alias, appDirectory) });
+            assert.deepEqual(changes.paths, ["inside.txt"]);
+            assert.deepEqual(changes.outOfScopePaths, nested ? ["outside.txt"] : []);
+        });
+    }
+
     it("keeps paths outside the app root out of scope", async () => {
         const root = createFixtureRepo();
         const appRoot = path.join(root, "app");

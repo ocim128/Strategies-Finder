@@ -12,6 +12,10 @@ Start with `npm run validate:changes` and inspect the feature's guide and
 callers as required by [AGENTS.md](../AGENTS.md). Its routing is advisory;
 add semantic-impact checks when shared behavior changes.
 
+Validation routing compares canonical filesystem roots, so directory junctions
+and Windows short directory names do not exclude genuine application changes.
+Paths outside a nested app remain outside its validation scope.
+
 ```bash
 npm run test -- finder-engine.spec.ts --list
 npm run --silent test -- finder-engine.spec.ts --list --json
