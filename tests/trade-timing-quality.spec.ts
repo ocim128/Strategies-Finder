@@ -1,7 +1,11 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { Time } from "lightweight-charts";
-import { computeTradeTimingQuality } from "../lib/trade-timing-quality";
+import {
+    attachTradeTimingQuality,
+    computeTradeTimingQuality,
+    getTradeTimingPreparedMovementFloors,
+} from "../lib/trade-timing-quality";
 import type { BacktestResult, OHLCVData, Trade } from "../lib/types/strategies";
 
 function candle(index: number, high: number, low: number, close: number): OHLCVData {
@@ -162,5 +166,99 @@ describe("trade timing quality", () => {
         );
         expect(shortQuality.exit.captureScore).to.be.closeTo(50, 1e-9);
         expect(shortQuality.exit.averageGivebackPct).to.be.closeTo(5, 1e-9);
+    });
+
+    it("reuses prepared movement floors without changing scores", () => {
+        const data = Array.from({ length: 40 }, (_, index) =>
+            candle(index, 100 + index, 99, 100 + index));
+        const result = makeResult([makeTrade({})]);
+
+        const fresh = computeTradeTimingQuality(result, data);
+        const prepared = getTradeTimingPreparedMovementFloors(data);
+        const reused = computeTradeTimingQuality(result, data, prepared);
+        const lazilyResolved = computeTradeTimingQuality(result, data, () => prepared);
+
+        expect(reused).to.deep.equal(fresh);
+        expect(lazilyResolved).to.deep.equal(fresh);
+        for (const horizon of fresh.entry.horizons) {
+            // Reported floors are rounded to 4 decimals; the prepared map
+            // holds the raw median value.
+            const rawFloor = prepared.byHorizon.get(horizon.bars) ?? 0;
+            expect(Math.round(rawFloor * 10000) / 10000).to.equal(horizon.movementFloorPct);
+        }
+        // The window-owned accessor is stable: repeated calls reuse one object.
+        expect(getTradeTimingPreparedMovementFloors(data)).to.equal(prepared);
+    });
+
+    it("computes separate floors for changed datasets", () => {
+        const rising = Array.from({ length: 40 }, (_, index) =>
+            candle(index, 100 + index * 2, 99 + index * 2, 100 + index * 2));
+        const flat = Array.from({ length: 40 }, (_, index) => candle(index, 100, 100, 100));
+
+        const risingFloors = getTradeTimingPreparedMovementFloors(rising);
+        const flatFloors = getTradeTimingPreparedMovementFloors(flat);
+        expect(flatFloors.byHorizon.get(3)).to.equal(0);
+        expect(risingFloors.byHorizon.get(3)).to.be.greaterThan(0);
+        // A different array is a different window identity: no cross-talk.
+        expect(getTradeTimingPreparedMovementFloors(rising)).to.equal(risingFloors);
+    });
+
+    it("skips floor preparation for empty and entry-only results", () => {
+        const data = Array.from({ length: 40 }, (_, index) =>
+            candle(index, 100 + index, 99, 100 + index));
+        let providerCalls = 0;
+        const provider = () => {
+            providerCalls += 1;
+            return getTradeTimingPreparedMovementFloors(data);
+        };
+
+        const empty = makeResult([]);
+        attachTradeTimingQuality(empty, data, provider);
+        expect(empty.tradeTimingQuality).to.equal(undefined);
+        expect(providerCalls).to.equal(0);
+
+        const entryOnly = makeResult([]);
+        entryOnly.entryStats = {
+            mode: "fan_retest",
+            totalEntries: 1,
+            wins: 0,
+            losses: 1,
+            winRate: 0,
+            avgRetestBars: 1,
+            avgRetests: 1,
+            maxBars: 5,
+            maxRetests: 1,
+            minRetestsForWin: 1,
+            entryMode: 0,
+            retestMode: 0,
+            useWick: false,
+            touchTolerancePct: 0.1,
+        };
+        attachTradeTimingQuality(entryOnly, data, provider);
+        expect(entryOnly.tradeTimingQuality).to.equal(undefined);
+        expect(providerCalls).to.equal(0);
+    });
+
+    it("shares prepared floors between original and endpoint-adjusted trades", () => {
+        const data = Array.from({ length: 40 }, (_, index) =>
+            candle(index, 100 + index, 99, 100 + index));
+        const original = makeResult([
+            makeTrade({}),
+            makeTrade({ id: 2, entryTime: 20 as Time, exitTime: 39 as Time, exitReason: "end_of_data", exitPrice: 139 }),
+        ]);
+        // Endpoint adjustment removes exits on the final data bar.
+        const adjusted = makeResult([makeTrade({})]);
+
+        const prepared = getTradeTimingPreparedMovementFloors(data);
+        attachTradeTimingQuality(original, data, prepared);
+        attachTradeTimingQuality(adjusted, data, prepared);
+
+        expect(original.tradeTimingQuality).to.not.equal(undefined);
+        expect(adjusted.tradeTimingQuality).to.not.equal(undefined);
+        const originalHorizon = original.tradeTimingQuality!.entry.horizons.find((h) => h.bars === 3)!;
+        const adjustedHorizon = adjusted.tradeTimingQuality!.entry.horizons.find((h) => h.bars === 3)!;
+        expect(originalHorizon.movementFloorPct).to.equal(adjustedHorizon.movementFloorPct);
+        const rawFloor = prepared.byHorizon.get(3) ?? 0;
+        expect(originalHorizon.movementFloorPct).to.equal(Math.round(rawFloor * 10000) / 10000);
     });
 });

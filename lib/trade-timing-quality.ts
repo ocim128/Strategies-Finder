@@ -19,21 +19,68 @@ const HORIZON_WEIGHTS = new Map<number, number>([
 const HORIZONS = [...HORIZON_WEIGHTS.keys()];
 const EPSILON = 1e-10;
 
+/**
+ * Candle-only movement floors for the timing horizons. They depend on the
+ * dataset alone — never on trades — so a caller that owns an immutable window
+ * can prepare them once and reuse them across every analysis of that window.
+ */
+export interface TradeTimingPreparedMovementFloors {
+    readonly byHorizon: ReadonlyMap<number, number>;
+}
+
+/**
+ * Either a prepared floors object or a lazy provider. Providers let
+ * entry-only/empty analyses skip floor preparation entirely (floors are only
+ * resolved when trades exist).
+ */
+export type TradeTimingPreparedFloorsSource =
+    | TradeTimingPreparedMovementFloors
+    | (() => TradeTimingPreparedMovementFloors);
+
+// Window-owned cache: entries die with their dataset array; nothing global
+// strongly retains a dataset. Only immutable-window owners may use this.
+const preparedFloorsByWindow = new WeakMap<OHLCVData[], TradeTimingPreparedMovementFloors>();
+
+/**
+ * Movement floors for a caller-owned immutable window, computed once per
+ * window. Callers MUST own the window's immutability for as long as they use
+ * the returned object (a mutated array would keep its stale floors); generic
+ * mutable callers must not use this accessor and get fresh floors by default.
+ */
+export function getTradeTimingPreparedMovementFloors(ohlcvData: OHLCVData[]): TradeTimingPreparedMovementFloors {
+    let prepared = preparedFloorsByWindow.get(ohlcvData);
+    if (!prepared) {
+        const byHorizon = new Map<number, number>();
+        for (const horizon of HORIZONS) {
+            byHorizon.set(horizon, computeMovementFloorPct(ohlcvData, horizon));
+        }
+        prepared = { byHorizon };
+        preparedFloorsByWindow.set(ohlcvData, prepared);
+    }
+    return prepared;
+}
+
+function resolvePreparedFloors(source?: TradeTimingPreparedFloorsSource): TradeTimingPreparedMovementFloors | undefined {
+    if (!source) return undefined;
+    return typeof source === "function" ? source() : source;
+}
+
 export function computeTradeTimingQuality(
     result: BacktestResult,
-    ohlcvData: OHLCVData[]
+    ohlcvData: OHLCVData[],
+    preparedFloors?: TradeTimingPreparedFloorsSource
 ): TradeTimingQuality {
     const timeIndex = getTimeIndex(ohlcvData);
-    const movementFloors = new Map<number, number>();
-    for (const horizon of HORIZONS) {
-        movementFloors.set(horizon, computeMovementFloorPct(ohlcvData, horizon));
-    }
+    const floors = resolvePreparedFloors(preparedFloors);
+    const movementFloors = floors?.byHorizon ?? new Map<number, number>();
+    const floorFor = (horizon: number): number => movementFloors.get(horizon)
+        ?? computeMovementFloorPct(ohlcvData, horizon);
 
     const entryHorizons = HORIZONS.map((horizon) =>
-        computeEntryHorizon(result.trades, ohlcvData, timeIndex, horizon, movementFloors.get(horizon) ?? 0)
+        computeEntryHorizon(result.trades, ohlcvData, timeIndex, horizon, floorFor(horizon))
     );
     const exitHorizons = HORIZONS.map((horizon) =>
-        computeExitHorizon(result.trades, ohlcvData, timeIndex, horizon, movementFloors.get(horizon) ?? 0)
+        computeExitHorizon(result.trades, ohlcvData, timeIndex, horizon, floorFor(horizon))
     );
     const capture = computeExitCapture(result.trades, ohlcvData, timeIndex);
     const postExitScore = weightedAverageScore(exitHorizons);
@@ -64,14 +111,17 @@ export function finderSortRequiresTradeTimingQuality(sortPriority: readonly stri
 
 export function attachTradeTimingQuality(
     result: BacktestResult,
-    ohlcvData: OHLCVData[]
+    ohlcvData: OHLCVData[],
+    preparedFloors?: TradeTimingPreparedFloorsSource
 ): void {
     if (!Array.isArray(result.trades) || result.trades.length === 0 || ohlcvData.length === 0 || result.entryStats) {
         result.tradeTimingQuality = undefined;
         return;
     }
 
-    result.tradeTimingQuality = computeTradeTimingQuality(result, ohlcvData);
+    // Floors resolve only here, so analyses without trades never pay for
+    // candle-only preparation.
+    result.tradeTimingQuality = computeTradeTimingQuality(result, ohlcvData, preparedFloors);
 }
 
 export function averageTradeTimingQuality(

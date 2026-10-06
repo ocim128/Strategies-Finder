@@ -19,6 +19,7 @@ import type { CapitalSettings } from "../types/backtest";
 import {
     attachTradeTimingQuality,
     finderSortRequiresTradeTimingQuality,
+    getTradeTimingPreparedMovementFloors,
 } from "../trade-timing-quality";
 import {
     buildComparableFinderResult,
@@ -96,11 +97,20 @@ function enrichFinderCandidate(args: {
     } = args;
     const normalizedResult = normalizeResultSharpe(candidate.result);
     if (requiresTradeTimingQualitySort) {
-        attachTradeTimingQuality(normalizedResult, candidateData);
+        // `candidateData` is the run's stable evaluation window, so its
+        // candle-only movement floors are prepared once (window-owned WeakMap)
+        // and shared by the original and endpoint-adjusted attachments. The
+        // lazy provider keeps entry-only candidates from paying for floors.
+        const preparedFloors = () => getTradeTimingPreparedMovementFloors(candidateData);
+        attachTradeTimingQuality(normalizedResult, candidateData, preparedFloors);
     }
     const adjustment = buildSelectionResult(normalizedResult, lastDataTime, initialCapital);
     if (requiresTradeTimingQualitySort) {
-        attachTradeTimingQuality(adjustment.result, candidateData);
+        attachTradeTimingQuality(
+            adjustment.result,
+            candidateData,
+            () => getTradeTimingPreparedMovementFloors(candidateData),
+        );
     }
 
     return buildFinderResult({

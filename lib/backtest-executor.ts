@@ -73,7 +73,7 @@ import {
 import {
     registerBacktestEdgeAnalysisInput,
 } from "./backtest-edge-analysis";
-import { attachTradeTimingQuality } from "./trade-timing-quality";
+import { attachTradeTimingQuality, type TradeTimingPreparedFloorsSource } from "./trade-timing-quality";
 import { resolveBinanceMarketType } from "./binance-market";
 import { buildSelectionResult } from "./finder/endpoint";
 
@@ -117,6 +117,14 @@ export interface BacktestExecutorRequest {
         forceDisableSignalExits?: boolean;
         /** Skip trade simulation when primary signals cannot reach this entry count. */
         minimumPotentialEntrySignals?: number;
+        /**
+         * Prepared trade-timing movement floors for a caller-owned immutable
+         * window (see {@link getTradeTimingPreparedMovementFloors}). Only pass
+         * this when the same prepared context covers every run sharing the
+         * window; otherwise finalization computes floors fresh. Internal
+         * execution plumbing: never persisted or serialized.
+         */
+        preparedTradeTimingFloors?: TradeTimingPreparedFloorsSource;
     };
     /** Pre-computed closed candle data. When provided, skips selectClosedCandleData internally. */
     closedCandleDataOverride?: OHLCVData[];
@@ -203,6 +211,12 @@ interface FinalizationAnalyticsOwnership {
     engineUsed: "rust" | "typescript";
     includeSharpeRatio?: boolean;
     includeAdvancedAnalytics?: boolean;
+    /**
+     * Prepared trade-timing movement floors for a caller-owned immutable
+     * window. Only threaded where the caller owns reuse rights; undefined
+     * computes floors fresh inside the attachment.
+     */
+    preparedTradeTimingFloors?: TradeTimingPreparedFloorsSource;
 }
 
 function haveSameStrategyParams(left: StrategyParams, right: StrategyParams): boolean {
@@ -339,6 +353,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             engineUsed,
             includeSharpeRatio: req.backtestRunOptions?.includeSharpeRatio,
             includeAdvancedAnalytics: req.backtestRunOptions?.includeAdvancedAnalytics,
+            preparedTradeTimingFloors: req.backtestRunOptions?.preparedTradeTimingFloors,
         });
         if (executorTimings) executorTimings.postProcessingMs += performance.now() - startedAt;
     };
@@ -1190,7 +1205,7 @@ function finalizeResult(
         }
         result.performanceAnalytics = resolveFinalPerformanceAnalytics(result, ownership);
     }
-    attachTradeTimingQuality(result, backtestData);
+    attachTradeTimingQuality(result, backtestData, ownership.preparedTradeTimingFloors);
 }
 
 /**
