@@ -300,6 +300,14 @@ The controls are:
 - `OOS Holdout Bars`: bars reserved for forward validation. In next-exit mode
   this label becomes `OOS Max Wait Bars`.
 - `OOS Horizons`: comma-separated fixed forward horizons, normally `1,3,5`.
+- `Forward Horizon Basis`: synthetic pair (default), `BASE long only (ignore QUOTE)`,
+  or `QUOTE short only (ignore BASE)`. For synthetic pairs, leg-only modes measure
+  the selected leg independently of the strategy direction: BASE returns use
+  `(exit - entry) / entry`, QUOTE short returns use `(entry - exit) / entry`.
+  They share the pair timeline and execution-model entry timing; missing leg
+  horizon timestamps are unavailable. Ordinary symbols retain pair measurement.
+  The basis is saved and recorded in results/archives as `pair`, `base_only`,
+  or `quote_only`. Next configured exit still replays the pair through the engine.
 - `Eval Window Bars`: limit the historical search to the last N bars before
   any holdout gap; `0` means all available bars.
 - `Batch OOS Holdout`: run an inclusive holdout range and append archive blocks

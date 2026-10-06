@@ -2481,6 +2481,80 @@ describe("Asset Opportunity base-only OOS base caching", () => {
     });
 });
 
+describe("Asset Opportunity quote-only OOS quote caching", () => {
+    it("loads a shared quote once per dataset cache across pairs and holdout iterations", async () => {
+        const loadCounts = new Map<string, number>();
+        const loadDataset = async (symbol: string): Promise<OHLCVData[]> => {
+            loadCounts.set(symbol, (loadCounts.get(symbol) ?? 0) + 1);
+            return makeCandles(Array.from({ length: 40 }, (_, i) => 100 + i));
+        };
+        const assetLoadContext = createServerFinderAssetOpportunityLoadContext(3);
+        const symbols = ["AAA+ZZZ", "QQQ+ZZZ"];
+        const buildInput = (ignoreLastBars: number, iterationIndex: number) => ({
+            runId: `quote-cache-${iterationIndex}`,
+            interval: "5m",
+            symbols,
+            options: {
+                mode: "random" as const,
+                randomSeed: 7,
+                scope: "asset_opportunity" as const,
+                sortPriority: ["netProfit" as const],
+                useAdvancedSort: false,
+                topN: 2,
+                steps: 3,
+                rangePercent: 35,
+                maxRuns: 2,
+                dataSlice: "all" as const,
+                tradeFilterEnabled: false,
+                minTrades: 0,
+                maxTrades: Number.POSITIVE_INFINITY,
+                assetOpportunity: {
+                    symbols,
+                    candidatePoolSize: 1,
+                    minFreshSupport: 1,
+                    oosMeasurementMode: "fixed_horizon" as const,
+                    oosHorizonBasis: "quote_only" as const,
+                    oosIgnoreLastBars: ignoreLastBars,
+                    oosHorizons: [1, 2, 3],
+                },
+            },
+            settings,
+            capitalSettings,
+            selectedStrategies: [{
+                key: "asset_opportunity_test_a",
+                name: "Asset Opportunity A",
+                strategy: assetOpportunityStrategy,
+            }],
+            useRustEnginePreference: false,
+            abortSignal: new AbortController().signal,
+            loadDataset,
+            candidatePoolSize: 1,
+            minFreshSupport: 1,
+            assetLoadContext,
+        });
+        for (let iterationIndex = 0; iterationIndex < 2; iterationIndex += 1) {
+            const output = await runAssetOpportunityIteration(
+                buildInput(2 + iterationIndex, iterationIndex),
+                { onProgress: () => undefined, onAssetResult: () => undefined },
+                () => false,
+            );
+            expect(output.results).to.have.length(2);
+            for (const result of output.results) {
+                expect(result.oosHorizonMetrics?.basis).to.equal("quote_only");
+                expect(result.oosHorizonMetrics?.horizons[0]?.pnlPercent)
+                    .to.be.closeTo(-100 / (137 - iterationIndex), 1e-9);
+            }
+        }
+        // Both pairs share quote ZZZUSDT: cached after the first load, so the
+        // second pair and second holdout iteration never reload it. Synthetic
+        // pair loads stay uncached by the plain dataset LRU (pair cache owns
+        // those), so each pair reloads once per iteration.
+        expect(loadCounts.get("ZZZUSDT")).to.equal(1);
+        expect(loadCounts.get("AAA+ZZZ")).to.equal(2);
+        expect(loadCounts.get("QQQ+ZZZ")).to.equal(2);
+    });
+});
+
 describe("Asset Opportunity param-set cache", () => {
     // The relaxed cache gate (mode==="random" + deterministic generator, any
     // maxRuns) must reproduce the generated candidate SEQUENCE exactly: a

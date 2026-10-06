@@ -327,11 +327,14 @@ export class FinderUI {
             freshResults.map((result) => result.oosHorizonMetrics),
         );
         if (averageForwardValidation.length > 0) {
+            const hasQuoteOnlyMetrics = freshResults.some((result) => result.oosHorizonMetrics?.basis === "quote_only");
             const hasBaseOnlyMetrics = freshResults.some((result) => result.oosHorizonMetrics?.basis === "base_only");
             fragment.appendChild(this.createAssetOosOverview(
-                hasBaseOnlyMetrics
-                    ? "Average Forward validation · fresh entries · BASE-only synthetic pairs"
-                    : "Average Forward validation · fresh entries",
+                hasQuoteOnlyMetrics
+                    ? "Average Forward validation · fresh entries · QUOTE short only"
+                    : hasBaseOnlyMetrics
+                        ? "Average Forward validation · fresh entries · BASE-only synthetic pairs"
+                        : "Average Forward validation · fresh entries",
                 averageForwardValidation,
                 results.length,
             ));
@@ -342,13 +345,18 @@ export class FinderUI {
             activePositionResults.map((result) => result.activePositionContinuationMetrics),
         );
         if (averageActiveContinuation.length > 0) {
+            const hasQuoteOnlyMetrics = activePositionResults.some(
+                (result) => result.activePositionContinuationMetrics?.basis === "quote_only",
+            );
             const hasBaseOnlyMetrics = activePositionResults.some(
                 (result) => result.activePositionContinuationMetrics?.basis === "base_only",
             );
             fragment.appendChild(this.createAssetOosOverview(
-                hasBaseOnlyMetrics
-                    ? "Average open-position continuation · BASE-only synthetic pairs"
-                    : "Average open-position continuation",
+                hasQuoteOnlyMetrics
+                    ? "Average open-position continuation · QUOTE short only"
+                    : hasBaseOnlyMetrics
+                        ? "Average open-position continuation · BASE-only synthetic pairs"
+                        : "Average open-position continuation",
                 averageActiveContinuation,
                 results.length,
             ));
@@ -1014,6 +1022,8 @@ export class FinderUI {
         if (isActivePositionContinuation) summaryParts.push("from boundary close");
         if (metrics.basis === "base_only") {
             summaryParts.push("BASE long only");
+        } else if (metrics.basis === "quote_only") {
+            summaryParts.push("QUOTE short only");
         } else if (isActivePositionContinuation && direction) {
             summaryParts.push(`PAIR ${direction}`);
         }

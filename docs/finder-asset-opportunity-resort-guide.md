@@ -20,7 +20,7 @@ Fixed-horizon OOS selection occurs at the last visible candle's close. The
 measurement entry is that boundary close for `signal_close`, the first hidden
 open for `next_open`, or the first hidden close for `next_close`. A fresh signal
 whose modeled fill was on the visible boundary must not backdate the measurement
-entry. The same rule applies to synthetic BASE-only prices. Horizon N still
+entry. The same rule applies to synthetic BASE-long-only and QUOTE-short-only prices. Horizon N still
 targets hidden candle N, so `next_close` horizon 1 is zero. These are price-return
 diagnostics; they do not replay confirmation, stop loss, take profit, or costs.
 

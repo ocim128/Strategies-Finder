@@ -328,7 +328,9 @@ export function renderLegend(
         ? "percentage points vs the block's all-candidate baseline"
         : "archived forward return, percent";
     const basisLabel = document.createElement("span");
-    basisLabel.textContent = basis ? `measured on ${basis === "pair" ? "the synthetic pair" : "the BASE leg only"}` : "measurement basis unknown (older archive)";
+    basisLabel.textContent = basis
+        ? `measured on ${basis === "pair" ? "the synthetic pair" : basis === "quote_only" ? "the QUOTE leg short only" : "the BASE leg only"}`
+        : "measurement basis unknown (older archive)";
     legend.append(negative, bar, zero, positive, unitLabel, basisLabel);
 }
 

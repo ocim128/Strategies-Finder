@@ -74,6 +74,17 @@ beforeEach(() => {
 });
 
 describe("normalizeFinderUiState", () => {
+    it("round-trips each horizon basis and preserves legacy defaults", () => {
+        for (const basis of ["pair", "base_only", "quote_only"] as const) {
+            const state = normalizeFinderUiState({ assetOpportunityOosHorizonBasis: basis });
+            writeFinderUiState(state);
+            expect(readFinderUiState().assetOpportunityOosHorizonBasis).to.equal(basis);
+        }
+        for (const basis of [undefined, "future_basis"]) {
+            expect(normalizeFinderUiState({ assetOpportunityOosHorizonBasis: basis })
+                .assetOpportunityOosHorizonBasis).to.equal("pair");
+        }
+    });
     it("returns the defaults for null, arrays, and primitives", () => {
         for (const raw of [null, undefined, [], "state", 42, true]) {
             const normalized = normalizeFinderUiState(raw);

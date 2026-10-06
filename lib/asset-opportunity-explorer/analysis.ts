@@ -51,7 +51,7 @@ export interface ExplorerViewBlock {
     /** Every horizon bar archived in this block, including unobservable entries. */
     horizonBars: number[];
     /** Explicit forward measurement basis carried by this block's rows; null = unknown. */
-    basis: "pair" | "base_only" | null;
+    basis: "pair" | "base_only" | "quote_only" | null;
     /** Rows in archive order; horizons keep observable entries only. */
     rows: Array<{
         rank: number;
@@ -171,8 +171,8 @@ function compactHorizons(row: AssetOpportunityArchiveRow): CompactHorizon[] {
     return compact;
 }
 
-function blockBasis(rows: AssetOpportunityArchiveRow[]): "pair" | "base_only" | null {
-    let basis: "pair" | "base_only" | null = null;
+function blockBasis(rows: AssetOpportunityArchiveRow[]): "pair" | "base_only" | "quote_only" | null {
+    let basis: "pair" | "base_only" | "quote_only" | null = null;
     for (const row of rows) {
         const rowBasis = row.forwardOosPerformance?.basis ?? null;
         if (rowBasis === null) continue;
@@ -369,7 +369,7 @@ export function buildHeatmapSnapshot(view: ExplorerView, params: SnapshotParams)
         blocksByCell.set(`${block.sortMetric}|${block.holdoutBars}`, block);
     }
     const cells: AssetOpportunityExplorerHeatmapCell[] = [];
-    const knownBases = new Set<"pair" | "base_only">();
+    const knownBases = new Set<"pair" | "base_only" | "quote_only">();
     let archivedRows = 0;
     let selectedRows = 0;
     let observedRows = 0;

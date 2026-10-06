@@ -67,7 +67,7 @@ export interface AssetOpportunityExplorerHeatmapResponse {
     spacing: AssetOpportunityExplorerSpacing;
     measurementMode: "fixed_horizon";
     /** Explicit measurement basis shared by all included rows; null = unknown/legacy. */
-    basis: "pair" | "base_only" | null;
+    basis: "pair" | "base_only" | "quote_only" | null;
     /** Column order is descending (older boundary first) and shared by every sort. */
     holdoutBars: number[];
     sorts: string[];

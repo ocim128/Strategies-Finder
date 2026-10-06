@@ -196,8 +196,8 @@ function findCandleIndexByTime(candles: readonly OHLCVData[], time: Time | null)
         : -1;
 }
 
-function resolveBaseOnlyOosEntryPrice(args: {
-    baseCandlesByTime: ReadonlyMap<number, OHLCVData>;
+function resolveLegOosEntryPrice(args: {
+    horizonCandlesByTime: ReadonlyMap<number, OHLCVData>;
     boundaryTime: Time | null;
     fillTiming: "signal_close" | "next_open" | "next_close";
     firstHiddenTime: Time | null;
@@ -205,7 +205,7 @@ function resolveBaseOnlyOosEntryPrice(args: {
     const resolvePrice = (time: Time | null): number => {
         const seconds = time === null ? null : parseTimeToUnixSeconds(time);
         if (seconds === null) return Number.NaN;
-        const candle = args.baseCandlesByTime.get(seconds);
+        const candle = args.horizonCandlesByTime.get(seconds);
         const price = args.fillTiming === "next_open" ? candle?.open : candle?.close;
         return typeof price === "number" && Number.isFinite(price) && price > 0
             ? price
@@ -517,6 +517,8 @@ export interface AssetOpportunityAssetInput {
     precomputedIncludeApplicationCandleInSearch?: boolean;
     /** BASE candles keyed by normalized timestamp for synthetic-pair long-only OOS metrics. */
     oosBaseCandlesByTime?: ReadonlyMap<number, OHLCVData>;
+    /** QUOTE candles keyed by normalized timestamp for synthetic-pair short-only OOS metrics. */
+    oosQuoteCandlesByTime?: ReadonlyMap<number, OHLCVData>;
 }
 
 export interface AssetOpportunityFreshEntryPrecheckResult {
@@ -1915,12 +1917,14 @@ async function searchOneAsset(args: {
         const winnerFresh = freshEvaluations[winnerIndex];
         const firstHiddenBar = fixedOosBars[0];
         const boundaryCandle = visibleValidationData[visibleValidationData.length - 1];
-        const baseOnlyCandlesByTime = oosHorizonBasis === "base_only"
+        const legCandlesByTime = oosHorizonBasis === "base_only"
             ? asset.oosBaseCandlesByTime
-            : undefined;
-        const entryPrice = baseOnlyCandlesByTime && winnerFresh
-            ? resolveBaseOnlyOosEntryPrice({
-                baseCandlesByTime: baseOnlyCandlesByTime,
+            : oosHorizonBasis === "quote_only"
+                ? asset.oosQuoteCandlesByTime
+                : undefined;
+        const entryPrice = legCandlesByTime && winnerFresh
+            ? resolveLegOosEntryPrice({
+                horizonCandlesByTime: legCandlesByTime,
                 boundaryTime: boundaryCandle?.time ?? null,
                 fillTiming: winnerFresh.fillTiming,
                 firstHiddenTime: firstHiddenBar?.time ?? null,
@@ -1940,13 +1944,15 @@ async function searchOneAsset(args: {
             diagnostics.fixedHorizonEvaluations += 1;
             const oosHorizonMetrics = calculateFinderAssetOosSignalMetrics({
                 candles: fullClosed,
-                ...(baseOnlyCandlesByTime ? { baseCandlesByTime: baseOnlyCandlesByTime } : {}),
+                ...(legCandlesByTime ? { horizonCandlesByTime: legCandlesByTime } : {}),
                 signalIndex: fixedOosSignalIndex,
                 entryPrice,
-                direction: baseOnlyCandlesByTime ? "long" : winnerFresh.direction,
+                direction: legCandlesByTime
+                    ? oosHorizonBasis === "quote_only" ? "short" : "long"
+                    : winnerFresh.direction,
                 ignoreLastBars: oosIgnoreLastBars,
                 horizons: oosHorizons,
-                basis: baseOnlyCandlesByTime ? "base_only" : "pair",
+                basis: legCandlesByTime ? oosHorizonBasis : "pair",
             });
             finalResult = {
                 ...finalResult,
@@ -1957,17 +1963,19 @@ async function searchOneAsset(args: {
     if (fixedOosBars.length > 0) {
         const winnerFresh = freshEvaluations[winnerIndex];
         const boundaryCandle = visibleValidationData[visibleValidationData.length - 1];
-        const baseOnlyCandlesByTime = oosHorizonBasis === "base_only"
+        const legCandlesByTime = oosHorizonBasis === "base_only"
             ? asset.oosBaseCandlesByTime
-            : undefined;
+            : oosHorizonBasis === "quote_only"
+                ? asset.oosQuoteCandlesByTime
+                : undefined;
         const boundaryTimeSec = boundaryCandle
             ? parseTimeToUnixSeconds(boundaryCandle.time)
             : null;
-        const baseBoundaryCandle = baseOnlyCandlesByTime && boundaryTimeSec !== null
-            ? baseOnlyCandlesByTime.get(boundaryTimeSec)
+        const legBoundaryCandle = legCandlesByTime && boundaryTimeSec !== null
+            ? legCandlesByTime.get(boundaryTimeSec)
             : undefined;
-        const entryPrice = baseOnlyCandlesByTime
-            ? baseBoundaryCandle?.close ?? Number.NaN
+        const entryPrice = legCandlesByTime
+            ? legBoundaryCandle?.close ?? Number.NaN
             : boundaryCandle?.close ?? Number.NaN;
         if (winnerFresh?.freshStatus === "active"
             && winnerFresh.isOpen
@@ -1979,13 +1987,15 @@ async function searchOneAsset(args: {
                 ...finalResult,
                 activePositionContinuationMetrics: calculateFinderAssetOosSignalMetrics({
                     candles: fullClosed,
-                    ...(baseOnlyCandlesByTime ? { baseCandlesByTime: baseOnlyCandlesByTime } : {}),
+                    ...(legCandlesByTime ? { horizonCandlesByTime: legCandlesByTime } : {}),
                     signalIndex: fixedOosSignalIndex,
                     entryPrice,
-                    direction: baseOnlyCandlesByTime ? "long" : winnerFresh.direction,
+                    direction: legCandlesByTime
+                        ? oosHorizonBasis === "quote_only" ? "short" : "long"
+                        : winnerFresh.direction,
                     ignoreLastBars: oosIgnoreLastBars,
                     horizons: oosHorizons,
-                    basis: baseOnlyCandlesByTime ? "base_only" : "pair",
+                    basis: legCandlesByTime ? oosHorizonBasis : "pair",
                 }),
             };
         }

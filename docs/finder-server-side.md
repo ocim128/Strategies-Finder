@@ -12,6 +12,13 @@ columnar loader, materializing only the newest requested bars on cache hits.
 Detached loads retain the full series. See the
 [price-data guide](price-data.md) for shared loader and freshness contracts.
 
+Asset Opportunity fixed-horizon `oosHorizonBasis` accepts `pair` (default),
+`base_only` (BASE long), and `quote_only` (QUOTE short). Single and batch runs
+load the selected synthetic leg through the run-scoped dataset cache and align
+entry/horizon candles by normalized pair timestamps. Only needed leg candles
+reach the runner; missing horizon candles remain unavailable. Ordinary symbols
+keep pair measurement, and next-exit replay does not use the leg basis.
+
 ## Arm Performance
 
 Ranking consistency is an optional measurement on the existing local route.

@@ -24,7 +24,7 @@ export const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
 
 /** Fixed-horizon price basis recorded on newer archive rows; absent = unknown legacy row. */
-export type AssetOpportunityArchiveHorizonBasis = "pair" | "base_only";
+export type AssetOpportunityArchiveHorizonBasis = "pair" | "base_only" | "quote_only";
 
 export interface ArchiveHorizon {
     bars: number;
@@ -219,7 +219,7 @@ function parseArchiveHorizonPerformance(value: unknown): ArchiveHorizonPerforman
         ignoreLastBars: asPositiveInteger(value.ignoreLastBars) ?? undefined,
         // Newer rows record the measured price series; unknown on older rows and
         // surfaced as "unknown" rather than guessed.
-        basis: value.basis === "pair" || value.basis === "base_only" ? value.basis : undefined,
+        basis: value.basis === "pair" || value.basis === "base_only" || value.basis === "quote_only" ? value.basis : undefined,
         horizons,
     };
 }

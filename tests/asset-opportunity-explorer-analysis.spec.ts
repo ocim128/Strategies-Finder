@@ -116,6 +116,23 @@ describe("Asset Opportunity Explorer analysis", () => {
         expect(records[0]!.topResults[0]!.forwardOosPerformance?.basis).to.equal("base_only");
     });
 
+    it("preserves QUOTE short basis through parsing and heatmap analysis", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-09-25T00:00:00.000Z", runId: "quote-run",
+            holdoutBars: 12, sortMetric: "expectancy",
+            rows: [archiveRow({ rank: 1, basis: "quote_only",
+                horizons: [{ bars: 12, averagePnlPercent: 20, sampleSize: 1 }] })],
+        }));
+        expect(records[0]!.topResults[0]!.forwardOosPerformance?.basis).to.equal("quote_only");
+        const view = buildExplorerView(records, "quote-run");
+        expect(view.blocks[0]!.basis).to.equal("quote_only");
+        const heatmap = buildHeatmapSnapshot(view, {
+            batchRunId: "quote-run", horizonBars: 12, topK: 1, spacing: "all", snapshotId: "quote",
+        });
+        expect(heatmap.basis).to.equal("quote_only");
+        expect(heatmap.cells[0]!.actual).to.equal(20);
+    });
+
     it("deduplicates blocks only after filtering by batch run, keeping the latest timestamp", () => {
         const records = parseAssetOpportunityArchiveText([
             block({

@@ -18,7 +18,7 @@ Run, forward horizon, top-K (bounded by the archived rank limit), actual return 
 - Holdout offsets are archive export windows in bars — not calendar dates, market decision dates, or independent samples. Windows overlap and nest.
 - The archive keeps a ranked shortlist plus aggregate baselines, not all candidate outcomes. K cannot exceed the archived rank limit and a full-universe distribution cannot be reconstructed.
 - Delta is the selected mean minus the block's all-candidate baseline in percentage points; no baseline means delta is unavailable. It is not a fee-adjusted portfolio simulation.
-- Missing `forwardOosPerformance.basis` (older rows) is labeled unknown; a run mixing explicit bases (`pair` vs `base_only`) is rejected rather than averaged. `next_exit` runs are analyzed by the holdout-analysis CLI, not this heatmap.
+- Missing `forwardOosPerformance.basis` (older rows) is labeled unknown; a run mixing explicit bases (`pair`, `base_only`, or `quote_only`) is rejected rather than averaged. `next_exit` runs are analyzed by the holdout-analysis CLI, not this heatmap.
 - Version one analyzes one batch run at a time. This deliberately differs from the CLI's combine-all-runs default, which is preserved.
 
 ## API

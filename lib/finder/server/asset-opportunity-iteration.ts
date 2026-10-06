@@ -524,7 +524,7 @@ export async function runAssetOpportunityIteration(
         const symbol = symbols[assetIndex]!;
         const assetStartedAt = performance.now();
         const currentAssetLoadMs = loadedAsset.durationMs;
-        let currentBaseDataLoadingMs = 0;
+        let currentLegDataLoadingMs = 0;
         const loadingText = `Loading ${symbol} (${assetIndex + 1}/${totalAssets})...`;
         reportProgress({
             percent: 0,
@@ -588,55 +588,60 @@ export async function runAssetOpportunityIteration(
                     }));
                 }
             }
-            let oosBaseCandlesByTime: Map<number, OHLCVData> | undefined;
+            let oosLegCandlesByTime: Map<number, OHLCVData> | undefined;
             const syntheticPair = parseSyntheticPairToken(symbol);
-            const usesBaseOnlyOos = normalizeFinderAssetOosHorizonBasis(
+            const oosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
                 input.options.assetOpportunity?.oosHorizonBasis,
-            ) === "base_only"
+            );
+            const usesLegOnlyOos = oosHorizonBasis !== "pair"
                 && normalizeFinderAssetOosMeasurementMode(
                     input.options.assetOpportunity?.oosMeasurementMode,
                 ) === "fixed_horizon"
                 && normalizeFinderAssetOosIgnoreLastBars(
                     input.options.assetOpportunity?.oosIgnoreLastBars,
                 ) > 0;
-            if (usesBaseOnlyOos && syntheticPair) {
-                const baseCacheKey = `${syntheticPair.baseSymbol}|${input.interval}`;
-                const cachedBaseData = datasetCache?.get(baseCacheKey);
-                const baseLoadStartedAt = performance.now();
-                const baseData = cachedBaseData
-                    ? await cachedBaseData
+            if (usesLegOnlyOos && syntheticPair) {
+                const legSymbol = oosHorizonBasis === "quote_only"
+                    ? syntheticPair.quoteSymbol
+                    : syntheticPair.baseSymbol;
+                const legLabel = oosHorizonBasis === "quote_only" ? "QUOTE" : "BASE";
+                const legCacheKey = `${legSymbol}|${input.interval}`;
+                const cachedLegData = datasetCache?.get(legCacheKey);
+                const legLoadStartedAt = performance.now();
+                const legData = cachedLegData
+                    ? await cachedLegData
                     : await input.loadDataset(
-                        syntheticPair.baseSymbol,
+                        legSymbol,
                         input.interval,
                         input.abortSignal,
                         assetLoadContext,
                     ).then((loaded) => {
                         if (!Array.isArray(loaded) || loaded.length === 0) {
-                            throw new Error(`no BASE data for ${syntheticPair.baseSymbol}`);
+                            throw new Error(`no ${legLabel} data for ${legSymbol}`);
                         }
-                        // Memoize the successful base load in the run-scoped
-                        // cache so pairs sharing one base load it once per
+                        // Memoize the successful leg load in the run-scoped
+                        // cache so pairs sharing one leg load it once per
                         // worker; rejected/empty promises are never stored,
                         // so failed loads stay retryable.
-                        datasetCache?.set(baseCacheKey, Promise.resolve(loaded));
+                        datasetCache?.set(legCacheKey, Promise.resolve(loaded));
                         return loaded;
                     });
-                const baseDataLoadingMs = performance.now() - baseLoadStartedAt;
-                currentBaseDataLoadingMs = baseDataLoadingMs;
-                completedAssetLoadIntervals.push([baseLoadStartedAt, performance.now()]);
-                if (!Array.isArray(baseData) || baseData.length === 0) {
-                    throw new Error(`no BASE data for ${syntheticPair.baseSymbol}`);
+                const legDataLoadingMs = performance.now() - legLoadStartedAt;
+                currentLegDataLoadingMs = legDataLoadingMs;
+                completedAssetLoadIntervals.push([legLoadStartedAt, performance.now()]);
+                if (!Array.isArray(legData) || legData.length === 0) {
+                    throw new Error(`no ${legLabel} data for ${legSymbol}`);
                 }
-                oosBaseCandlesByTime = new Map<number, OHLCVData>();
+                oosLegCandlesByTime = new Map<number, OHLCVData>();
                 const oosSignalIndex = fullClosed.length - normalizeFinderAssetOosIgnoreLastBars(
                     input.options.assetOpportunity?.oosIgnoreLastBars,
                 ) - 1;
-                const neededBaseTimes = new Set<number>();
+                const neededLegTimes = new Set<number>();
                 for (const index of [oosSignalIndex - 1, oosSignalIndex, oosSignalIndex + 1]) {
                     const time = index >= 0 && index < fullClosed.length
                         ? parseTimeToUnixSeconds(fullClosed[index]!.time)
                         : null;
-                    if (time !== null) neededBaseTimes.add(time);
+                    if (time !== null) neededLegTimes.add(time);
                 }
                 for (const horizon of normalizeFinderAssetOosHorizons(
                     input.options.assetOpportunity?.oosHorizons,
@@ -645,17 +650,17 @@ export async function runAssetOpportunityIteration(
                     const time = targetIndex >= 0 && targetIndex < fullClosed.length
                         ? parseTimeToUnixSeconds(fullClosed[targetIndex]!.time)
                         : null;
-                    if (time !== null) neededBaseTimes.add(time);
+                    if (time !== null) neededLegTimes.add(time);
                 }
-                for (const time of neededBaseTimes) {
-                    const candle = findCandleByUnixTime(baseData, time);
-                    if (candle) oosBaseCandlesByTime.set(time, candle);
+                for (const time of neededLegTimes) {
+                    const candle = findCandleByUnixTime(legData, time);
+                    if (candle) oosLegCandlesByTime.set(time, candle);
                 }
                 const boundaryTime = oosSignalIndex >= 0 && oosSignalIndex < fullClosed.length
                     ? parseTimeToUnixSeconds(fullClosed[oosSignalIndex]!.time)
                     : null;
-                if (boundaryTime === null || !oosBaseCandlesByTime.has(boundaryTime)) {
-                    throw new Error(`no timestamped BASE candles for ${syntheticPair.baseSymbol}`);
+                if (boundaryTime === null || !oosLegCandlesByTime.has(boundaryTime)) {
+                    throw new Error(`no timestamped ${legLabel} candles for ${legSymbol}`);
                 }
             }
             // Hoist the strategy-independent search windows out of the
@@ -748,7 +753,7 @@ export async function runAssetOpportunityIteration(
                         freshReplayMode: searchDiagnostics.freshReplayMode,
                         freshReplayFallbackReason: searchDiagnostics.freshReplayFallbackReason,
                         oosBars: searchDiagnostics.oosBars,
-                        dataLoadingMs: currentAssetLoadMs + currentBaseDataLoadingMs,
+                        dataLoadingMs: currentAssetLoadMs + currentLegDataLoadingMs,
                         candidatesEvaluated: searchDiagnostics.candidatesEvaluated,
                         freshEntryRechecks: searchDiagnostics.freshEntryRechecks,
                         freshEntryExecutions: searchDiagnostics.freshEntryExecutions,
@@ -831,7 +836,11 @@ export async function runAssetOpportunityIteration(
                             precomputedSlicedHistorical: precomputedWindows.slicedHistorical,
                             precomputedIncludeApplicationCandleInSearch:
                                 precomputedWindows.includeApplicationCandleInSearch,
-                            ...(oosBaseCandlesByTime ? { oosBaseCandlesByTime } : {}),
+                            ...(oosLegCandlesByTime
+                                ? oosHorizonBasis === "quote_only"
+                                    ? { oosQuoteCandlesByTime: oosLegCandlesByTime }
+                                    : { oosBaseCandlesByTime: oosLegCandlesByTime }
+                                : {}),
                         }],
                         runIsSearch: isSearch,
                     },

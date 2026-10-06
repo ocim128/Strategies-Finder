@@ -820,9 +820,10 @@ describe("Asset Opportunity runner", () => {
 
         const cases = (["next_open", "next_close"] as const).flatMap(executionModel =>
             (["long", "short"] as const).flatMap(tradeDirection =>
-                (["pair", "base_only"] as const).map(basis => ({ executionModel, tradeDirection, basis }))));
+                (["pair", "base_only", "quote_only"] as const).map(basis => ({ executionModel, tradeDirection, basis }))));
         for (const { executionModel, tradeDirection, basis } of cases) {
             const baseCandles = candles.map(candle => ({ ...candle, open: 300, close: 150 }));
+            const quoteCandles = candles.map(candle => ({ ...candle, open: 400, close: 100 }));
             const output = await runAssetOpportunitySearch(makeInput({
                 options: makeOptions({
                     assetOpportunity: {
@@ -845,6 +846,7 @@ describe("Asset Opportunity runner", () => {
                 assets: [{
                     symbol: `FIXED_BOUNDARY_${executionModel}`, data: candles,
                     ...(basis === "base_only" ? { oosBaseCandlesByTime: new Map(baseCandles.map(bar => [Number(bar.time), bar])) } : {}),
+                    ...(basis === "quote_only" ? { oosQuoteCandlesByTime: new Map(quoteCandles.map(bar => [Number(bar.time), bar])) } : {}),
                 }],
                 runIsSearch: makeRetainingStubIsSearch(),
             }), makeCallbacks());
@@ -852,7 +854,7 @@ describe("Asset Opportunity runner", () => {
             expect(output.results).to.have.length(1);
             expect(output.results[0]!.signalAgeBars).to.equal(1);
             const expectedPnl = executionModel === "next_close" ? 0
-                : basis === "base_only" ? -50 : tradeDirection === "short" ? 40 : -40;
+                : basis === "base_only" ? -50 : basis === "quote_only" ? 75 : tradeDirection === "short" ? 40 : -40;
             expect(output.results[0]!.oosHorizonMetrics?.basis).to.equal(basis);
             const horizon = output.results[0]!.oosHorizonMetrics!.horizons[0]!;
             expect(horizon.bars).to.equal(1);
@@ -860,6 +862,45 @@ describe("Asset Opportunity runner", () => {
             expect(horizon.averagePnlPercent).to.be.closeTo(expectedPnl, 1e-9);
             expect(horizon.winRatePercent).to.equal(expectedPnl > 0 ? 100 : 0);
             expect(horizon.sampleSize).to.equal(1);
+        }
+    });
+
+    it("measures QUOTE short returns from the boundary close for fresh and active selections", async () => {
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 150, 180, 190, 200]);
+        // QUOTE falls while the pair rises. The missing third-horizon timestamp
+        // must remain unavailable rather than borrowing a pair close.
+        const quoteCandles = makeCandles([100, 100, 100, 100, 100, 100, 100, 80, 120]);
+        for (const tradeDirection of ["long", "short"] as const) {
+            for (const active of [false, true]) {
+                const strategy: Strategy = {
+                    name: "Quote boundary", description: "one boundary or older entry",
+                    defaultParams: {}, paramLabels: {},
+                    execute(data) {
+                        const candle = active ? data[1] : data[data.length - 1];
+                        return candle ? [{ time: candle.time, price: candle.close,
+                            type: tradeDirection === "short" ? "sell" : "buy" }] : [];
+                    },
+                };
+                const output = await runAssetOpportunitySearch(makeInput({
+                    options: makeOptions({ assetOpportunity: {
+                        symbols: ["QUOTE_BOUNDARY"], candidatePoolSize: 1, minFreshSupport: 1,
+                        includeOpenPositions: active, oosIgnoreLastBars: 3,
+                        oosHorizons: [1, 2, 3], oosHorizonBasis: "quote_only",
+                    } }),
+                    settings: { ...settings, tradeDirection },
+                    selectedStrategy: { key: "quote_boundary", name: strategy.name, strategy },
+                    assets: [{ symbol: "QUOTE_BOUNDARY", data: candles,
+                        oosQuoteCandlesByTime: new Map(quoteCandles.map(bar => [Number(bar.time), bar])) }],
+                    runIsSearch: makeRetainingStubIsSearch(),
+                }), makeCallbacks());
+                expect(output.results).to.have.length(1);
+                const result = output.results[0]!;
+                expect(result.freshStatus).to.equal(active ? "active" : "fresh");
+                const metrics = active ? result.activePositionContinuationMetrics : result.oosHorizonMetrics;
+                expect(metrics?.basis).to.equal("quote_only");
+                expect(metrics?.horizons.map(h => h.pnlPercent)).to.deep.equal([20, -20, null]);
+                expect(metrics?.horizons.map(h => h.sampleSize)).to.deep.equal([1, 1, 0]);
+            }
         }
     });
 

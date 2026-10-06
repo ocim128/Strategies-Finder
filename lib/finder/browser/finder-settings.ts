@@ -67,7 +67,7 @@ export type FinderPersistedUiState = {
 	assetOpportunityMinFreshSupport: number;
 	assetOpportunityIncludeOpenPositions: boolean;
 	assetOpportunityOosMeasurementMode: "fixed_horizon" | "next_exit";
-	assetOpportunityOosHorizonBasis: "pair" | "base_only";
+	assetOpportunityOosHorizonBasis: "pair" | "base_only" | "quote_only";
 	assetOpportunityOosIgnoreLastBars: number;
 	assetOpportunityOosHorizons: string;
 	assetOpportunityEvalWindowMode: "fixed" | "range_bar";

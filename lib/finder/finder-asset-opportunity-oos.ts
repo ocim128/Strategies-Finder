@@ -31,7 +31,7 @@ export type FinderAssetOosNextExitUnavailableReason =
     | "replay_error";
 export type FinderAssetOosMeasurementMode = "fixed_horizon" | "next_exit";
 export type FinderAssetEvalWindowMode = "fixed" | "range_bar";
-export type FinderAssetOosHorizonBasis = "pair" | "base_only";
+export type FinderAssetOosHorizonBasis = "pair" | "base_only" | "quote_only";
 
 export interface FinderAssetOosNextExitMetrics {
     /** Number of hidden candles available as the maximum observation window. */
@@ -61,7 +61,7 @@ export function normalizeFinderAssetEvalWindowMode(value: unknown): FinderAssetE
 }
 
 export function normalizeFinderAssetOosHorizonBasis(value: unknown): FinderAssetOosHorizonBasis {
-    return value === "base_only" ? "base_only" : "pair";
+    return value === "base_only" || value === "quote_only" ? value : "pair";
 }
 
 /**
@@ -95,7 +95,7 @@ export function calculateFinderAssetOosAverageHorizonMetrics(
 
 function buildHorizonMetrics(args: {
     candles: readonly OHLCVData[];
-    baseCandlesByTime?: ReadonlyMap<number, OHLCVData>;
+    horizonCandlesByTime?: ReadonlyMap<number, OHLCVData>;
     signalIndex: number;
     entryPrice: number;
     direction: "long" | "short";
@@ -105,8 +105,8 @@ function buildHorizonMetrics(args: {
     return normalizedHorizons.map((bars) => {
         const targetCandle = args.candles[args.signalIndex + bars];
         const targetTime = targetCandle ? parseTimeToUnixSeconds(targetCandle.time) : null;
-        const targetClose = args.baseCandlesByTime
-            ? (targetTime === null ? undefined : args.baseCandlesByTime.get(targetTime)?.close)
+        const targetClose = args.horizonCandlesByTime
+            ? (targetTime === null ? undefined : args.horizonCandlesByTime.get(targetTime)?.close)
             : targetCandle?.close;
         const directionFactor = args.direction === "short" ? -1 : 1;
         const pnlPercent = typeof targetClose === "number"
@@ -250,7 +250,7 @@ export function normalizeFinderAssetOosHorizons(value: unknown): number[] {
  */
 export function calculateFinderAssetOosSignalMetrics(args: {
     candles: readonly OHLCVData[];
-    baseCandlesByTime?: ReadonlyMap<number, OHLCVData>;
+    horizonCandlesByTime?: ReadonlyMap<number, OHLCVData>;
     signalIndex: number;
     entryPrice: number;
     direction: "long" | "short";
