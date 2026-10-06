@@ -952,7 +952,15 @@ function runSinglePositionFinderFastPath(args: {
         const drawdown = peakEquity - equity;
         if (drawdown > maxDrawdown) {
             maxDrawdown = drawdown;
-            maxDrawdownPercent = peakEquity > 0 ? (drawdown / peakEquity) * 100 : 0;
+        }
+        // Dollars and percentage are maximized independently: the worst
+        // relative loss may come from a different peak than the worst dollar
+        // loss.
+        if (peakEquity > 0) {
+            const drawdownPercent = (drawdown / peakEquity) * 100;
+            if (drawdownPercent > maxDrawdownPercent) {
+                maxDrawdownPercent = drawdownPercent;
+            }
         }
     };
 
@@ -1109,7 +1117,12 @@ function runSinglePositionFinderFastPath(args: {
                 const drawdown = peakEquity - capital;
                 if (drawdown > maxDrawdown) {
                     maxDrawdown = drawdown;
-                    maxDrawdownPercent = peakEquity > 0 ? (drawdown / peakEquity) * 100 : 0;
+                }
+                if (peakEquity > 0) {
+                    const drawdownPercent = (drawdown / peakEquity) * 100;
+                    if (drawdownPercent > maxDrawdownPercent) {
+                        maxDrawdownPercent = drawdownPercent;
+                    }
                 }
             }
         }
@@ -1399,7 +1412,12 @@ function combineCompactResults(
                     const dd = peakEquity - combined;
                     if (dd > maxDrawdown) {
                         maxDrawdown = dd;
-                        maxDrawdownPercent = peakEquity > 0 ? (dd / peakEquity) * 100 : 0;
+                    }
+                    if (peakEquity > 0) {
+                        const ddPercent = (dd / peakEquity) * 100;
+                        if (ddPercent > maxDrawdownPercent) {
+                            maxDrawdownPercent = ddPercent;
+                        }
                     }
                 }
             }
@@ -1995,7 +2013,15 @@ function runFallbackPositionSimulation(args: {
             const drawdown = peakEquity - equity;
             if (drawdown > maxDrawdown) {
                 maxDrawdown = drawdown;
-                maxDrawdownPercent = peakEquity > 0 ? (drawdown / peakEquity) * 100 : 0;
+            }
+            // Dollars and percentage are maximized independently: the worst
+            // relative loss may come from a different peak than the worst
+            // dollar loss.
+            if (peakEquity > 0) {
+                const drawdownPercent = (drawdown / peakEquity) * 100;
+                if (drawdownPercent > maxDrawdownPercent) {
+                    maxDrawdownPercent = drawdownPercent;
+                }
             }
         }
     };

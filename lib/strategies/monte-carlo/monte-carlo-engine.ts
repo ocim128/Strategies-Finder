@@ -469,7 +469,15 @@ function simulateChartTradePath(
         const drawdown = peak - equity;
         if (drawdown > maxDrawdown) {
             maxDrawdown = drawdown;
-            maxDrawdownPercent = peak > 0 ? (drawdown / peak) * 100 : 0;
+        }
+        // Dollars and percentage are maximized independently: the worst
+        // relative loss may come from a different peak than the worst dollar
+        // loss.
+        if (peak > 0) {
+            const drawdownPercent = (drawdown / peak) * 100;
+            if (drawdownPercent > maxDrawdownPercent) {
+                maxDrawdownPercent = drawdownPercent;
+            }
         }
 
         if (!ruinOccurred && equity < ruinThreshold) {

@@ -759,3 +759,49 @@ describe('Backtesting Engine - fallback characterization (full vs compact)', () 
         assertMetricsParity(full, withSharpe, { netProfit: 1e-6, sharpeRatio: 1e-6 });
     });
 });
+
+describe('Backtesting Engine - drawdown percentage parity', () => {
+    // Equity path 10000 -> 5000 -> 100000 -> 90000: the worst relative loss
+    // (50%) comes from the small early peak, the worst dollar loss (10000)
+    // from the later 100000 peak.
+    const drawdownData: OHLCVData[] = [
+        { time: 0 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
+        { time: 1 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+        { time: 2 as Time, open: 50, high: 50, low: 50, close: 50, volume: 1000 },
+        { time: 3 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+        { time: 4 as Time, open: 1000, high: 1000, low: 1000, close: 1000, volume: 1000 },
+        { time: 5 as Time, open: 900, high: 900, low: 900, close: 900, volume: 1000 },
+    ];
+    const drawdownSignals: Signal[] = [
+        { time: 0 as Time, type: 'buy', price: 100 },
+        { time: 1 as Time, type: 'sell', price: 50 },
+        { time: 2 as Time, type: 'buy', price: 50 },
+        { time: 3 as Time, type: 'sell', price: 1000 },
+        { time: 4 as Time, type: 'buy', price: 1000 },
+        { time: 5 as Time, type: 'sell', price: 900 },
+    ];
+
+    it('full and compact engines agree on independent dollar/percentage maxima', () => {
+        const full = runBacktest(drawdownData, drawdownSignals, 10000, 100, 0);
+        const compact = runBacktestCompact(drawdownData, drawdownSignals, 10000, 100, 0);
+
+        expect(full.maxDrawdown).to.equal(10000);
+        expect(full.maxDrawdownPercent).to.equal(50);
+        expect(compact.maxDrawdown).to.equal(full.maxDrawdown);
+        expect(compact.maxDrawdownPercent).to.equal(full.maxDrawdownPercent);
+
+        const fastPath = runBacktestCompact(
+            drawdownData,
+            drawdownSignals,
+            10000,
+            100,
+            0,
+            {},
+            undefined,
+            undefined,
+            { omitEquityCurve: true, includeSharpeRatio: false },
+        );
+        expect(fastPath.maxDrawdown).to.equal(10000);
+        expect(fastPath.maxDrawdownPercent).to.equal(50);
+    });
+});

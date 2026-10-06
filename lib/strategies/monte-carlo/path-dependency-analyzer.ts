@@ -61,12 +61,16 @@ export function calculateMaxDrawdown(equityCurve: EquityCurvePoint[], initialCap
         const drawdown = peak - point.equity;
         // Express as percentage points (×100) to match app-wide contract
         const drawdownPercent = peak > 0 ? (drawdown / peak) * 100 : 0;
-        
+
+        // Dollars and percentage are maximized independently; drawdownStart/
+        // drawdownEnd stay anchored to the worst dollar drawdown.
         if (drawdown > maxDrawdown) {
             maxDrawdown = drawdown;
-            maxDrawdownPercent = drawdownPercent;
             drawdownStart = currentStart;
             drawdownEnd = i;
+        }
+        if (drawdownPercent > maxDrawdownPercent) {
+            maxDrawdownPercent = drawdownPercent;
         }
     }
     

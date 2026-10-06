@@ -192,4 +192,25 @@ describe("monte carlo chart sizing", () => {
             expect(Number.isFinite(result.metricSamples.maxDrawdownPercentValues[0]), mode).to.equal(true);
         }
     });
+
+    it("reports the worst relative drawdown independently of the worst dollar drawdown", async () => {
+        // Equity path 10000 -> 7500 -> 5000 -> 55000 -> 100000 -> 90000: the
+        // worst relative loss (50%) comes from the small early peak, while the
+        // worst dollar loss (10000) comes after the 100000 peak.
+        const trades = [
+            { ...createTrade(1, -25), pnl: -2500 },
+            { ...createTrade(2, -25), pnl: -2500 },
+            { ...createTrade(3, 500), pnl: 50000 },
+            { ...createTrade(4, 450), pnl: 45000 },
+            { ...createTrade(5, -100), pnl: -10000 },
+        ];
+        const backtestResult = createBacktestResult(trades);
+
+        const result = await runMonteCarloSimulation(backtestResult, createMonteCarloSettings());
+
+        expect(result.status).to.equal("success");
+        expect(result.simulations[0]!.maxDrawdown).to.equal(10000);
+        expect(result.simulations[0]!.maxDrawdownPercent).to.equal(50);
+        expect(result.metricSamples.maxDrawdownPercentValues[0]).to.equal(50);
+    });
 });

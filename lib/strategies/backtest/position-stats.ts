@@ -10,6 +10,10 @@ import { PositionState } from '../../types/backtest';
 
 /**
  * Calculates the maximum drawdown from an equity curve.
+ *
+ * Dollars and percentage are maximized independently: the worst relative loss
+ * is not necessarily measured from the same peak as the worst dollar loss
+ * (e.g. 10000 -> 5000 -> 100000 -> 90000 has maxDrawdown 10000 at 50%).
  */
 export function calculateMaxDrawdown(equityCurve: { time: Time; value: number }[], initialCapital: number) {
     let peak = initialCapital;
@@ -21,7 +25,12 @@ export function calculateMaxDrawdown(equityCurve: { time: Time; value: number }[
         const drawdown = peak - point.value;
         if (drawdown > maxDrawdown) {
             maxDrawdown = drawdown;
-            maxDrawdownPercent = peak > 0 ? (drawdown / peak) * 100 : 0;
+        }
+        if (peak > 0) {
+            const drawdownPercent = (drawdown / peak) * 100;
+            if (drawdownPercent > maxDrawdownPercent) {
+                maxDrawdownPercent = drawdownPercent;
+            }
         }
     }
 
