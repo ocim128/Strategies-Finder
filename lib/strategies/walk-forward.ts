@@ -14,6 +14,9 @@ import {
     applyConfirmationStrategiesToSignals,
     ensureConfirmationStrategiesLoaded,
 } from '../confirmation-signal-filter';
+import { ensureBuiltInStrategyLoaded } from './built-in-catalog';
+import { mergeExitStrategySignals } from '../exit-strategy-merge';
+import { resolveExitStrategyOverrideSignals } from '../backtest-executor';
 
 // ============================================================================
 // Walk-Forward Analysis (WFA) Module
@@ -55,6 +58,8 @@ export interface WalkForwardConfig {
     minOOSTradesPerWindow?: number;
     /** Minimum total OOS trades required before a result can be considered robust */
     minTotalOOSTrades?: number;
+    /** Chart interval captured by the caller; required when an exit strategy override is active. */
+    chartInterval?: string;
     /** Optional progress callback for UI feedback */
     onProgress?: (progress: WalkForwardProgress) => void;
     /** Optional AbortSignal to cancel a running analysis */
@@ -313,7 +318,82 @@ type WindowBacktestContext = {
     windowEndTime: Time;
     windowStartNumericTime: number | null;
     windowEndNumericTime: number | null;
+    /**
+     * Exit-override signals resolved once for this exact window and released
+     * with it: every candidate in the window reuses the same series, and a
+     * new window builds a fresh context so stale exit signals never leak.
+     */
+    windowExitOverrideSignals?: Signal[];
 };
+
+/** Chart interval context the pure engine needs to resolve an active exit override. */
+type WalkForwardExitOverrideContext = { interval: string };
+
+function hasActiveExitStrategyOverride(settings: BacktestSettings): boolean {
+    if (settings.exitStrategyOverrideEnabled !== true) return false;
+    if (settings.disableSignalExits !== true) return false;
+    return typeof settings.exitStrategyKey === 'string' && settings.exitStrategyKey.trim().length > 0;
+}
+
+function resolveWalkForwardExitOverrideContext(
+    backtestSettings: BacktestSettings,
+    chartInterval?: string,
+    errorPrefix = 'Walk-forward analysis',
+): WalkForwardExitOverrideContext | undefined {
+    if (!hasActiveExitStrategyOverride(backtestSettings)) return undefined;
+    const interval = typeof chartInterval === 'string' ? chartInterval.trim() : '';
+    if (!interval) {
+        throw new Error(
+            `${errorPrefix} requires chartInterval in its configuration when an exit strategy override is active.`
+            + ' Pass the captured chart interval instead of guessing one for irregular data.'
+        );
+    }
+    return { interval };
+}
+
+/**
+ * Load and validate the configured exit strategy up front so a load failure
+ * surfaces as an analysis error instead of degrading into an empty override
+ * inside the optimizer's catch/continue.
+ */
+async function preloadWalkForwardExitStrategy(
+    backtestSettings: BacktestSettings,
+    errorPrefix = 'Walk-forward analysis',
+): Promise<void> {
+    if (!hasActiveExitStrategyOverride(backtestSettings)) return;
+    const exitKey = (backtestSettings.exitStrategyKey as string).trim();
+    const exitStrategy = await ensureBuiltInStrategyLoaded(exitKey);
+    if (!exitStrategy) {
+        throw new Error(`${errorPrefix} could not load the configured exit strategy override '${exitKey}'.`);
+    }
+}
+
+/**
+ * Resolve the exit-override signal series for one window on buffered history
+ * ending at the window boundary. Cached on the window context so candidate
+ * scoring reuses one resolution and the cache dies with the window.
+ */
+async function resolveWindowExitOverrideSignals(
+    context: WindowBacktestContext,
+    backtestSettings: BacktestSettings,
+    exitOverride: WalkForwardExitOverrideContext | undefined,
+): Promise<Signal[]> {
+    if (!hasActiveExitStrategyOverride(backtestSettings)) return [];
+    if (!exitOverride) {
+        throw new Error(
+            'Walk-forward analysis requires chartInterval in its configuration when an exit strategy override is active.'
+        );
+    }
+    if (context.windowExitOverrideSignals) return context.windowExitOverrideSignals;
+    const resolution = await resolveExitStrategyOverrideSignals({
+        data: context.bufferedData,
+        interval: exitOverride.interval,
+        settings: backtestSettings,
+        blockRange: null,
+    });
+    context.windowExitOverrideSignals = resolution.signals;
+    return resolution.signals;
+}
 
 type PreparedStrategyDataCache = WeakMap<OHLCVData[], unknown>;
 
@@ -410,22 +490,28 @@ async function yieldToEventLoop(): Promise<number> {
     return performance.now();
 }
 
-function prepareWindowBacktest(
+async function prepareWindowBacktest(
     context: WindowBacktestContext,
     strategy: Strategy,
     params: StrategyParams,
     backtestSettings: BacktestSettings,
     preparedDataCache?: PreparedStrategyDataCache,
-): { windowSignals: Signal[] } {
+    exitOverride?: WalkForwardExitOverrideContext,
+): Promise<{ windowSignals: Signal[] }> {
     const preparedData = getPreparedStrategyData(strategy, context.bufferedData, backtestSettings, preparedDataCache,);
     const rawSignals = strategy.executePrepared
         ? strategy.executePrepared(preparedData, params, context.bufferedData,)
         : strategy.execute(context.bufferedData, params,);
-    const allSignals = applyConfirmationStrategiesToSignals({
+    const primarySignals = applyConfirmationStrategiesToSignals({
         data: context.bufferedData,
         baseSignals: applySignalPolarity(rawSignals, backtestSettings),
         settings: backtestSettings,
     });
+    const exitOverrideSignals = await resolveWindowExitOverrideSignals(context, backtestSettings, exitOverride);
+    // Mirror the shared executor: merge the tagged exit-only series before
+    // window filtering so exits keep their tagging and a single execution
+    // shift inside the simulation kernel.
+    const allSignals = mergeExitStrategySignals(primarySignals, exitOverrideSignals);
     const windowSignals = filterSignalsForWindow(allSignals, context);
     return { windowSignals };
 }
@@ -434,16 +520,17 @@ function prepareWindowBacktest(
  * Fast backtest runner for optimization loops.
  * Assumes data is already cleaned and indices are valid.
  */
-function runBacktestFast(
+async function runBacktestFast(
     data: OHLCVData[], startIndex: number, endIndex: number,
     strategy: Strategy, params: StrategyParams,
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
     context?: WindowBacktestContext,
     preparedDataCache?: PreparedStrategyDataCache,
-): BacktestResult {
+    exitOverride?: WalkForwardExitOverrideContext,
+): Promise<BacktestResult> {
     const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache,);
+    const { windowSignals } = await prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache, exitOverride);
 
     const fullResult = runBacktest(
         windowContext.bufferedData,
@@ -463,16 +550,17 @@ function runBacktestFast(
     return calculateBacktestStats(windowTrades, windowEquity, initialCapital, finalCapital, maxDrawdown, maxDrawdownPercent);
 }
 
-function runBacktestFastCompact(
+async function runBacktestFastCompact(
     data: OHLCVData[], startIndex: number, endIndex: number,
     strategy: Strategy, params: StrategyParams,
     initialCapital: number, positionSizePercent: number, commissionPercent: number,
     backtestSettings: BacktestSettings, sizing?: TradeSizing, lookback: number = 250,
     context?: WindowBacktestContext,
     preparedDataCache?: PreparedStrategyDataCache,
-): BacktestResult {
+    exitOverride?: WalkForwardExitOverrideContext,
+): Promise<BacktestResult> {
     const windowContext = context ?? createWindowBacktestContext(data, startIndex, endIndex, lookback);
-    const { windowSignals } = prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache,);
+    const { windowSignals } = await prepareWindowBacktest(windowContext, strategy, params, backtestSettings, preparedDataCache, exitOverride);
     return runBacktestCompact(
         windowContext.bufferedData,
         windowSignals,
@@ -532,13 +620,15 @@ async function optimizeWindow(
     topN: number,
     onProgress?: (processed: number, total: number) => void,
     signal?: AbortSignal,
+    exitOverride?: WalkForwardExitOverrideContext,
+    windowContext?: WindowBacktestContext,
 ): Promise<OptimizationResult[]> {
     const topResults: OptimizationResult[] = [];
     const BATCH_SIZE = 64;
     const YIELD_BUDGET_MS = 32;
     const YIELD_CHECK_INTERVAL = 16;
     const topCapacity = Math.max(topN, topN * 2);
-    const windowContext = createWindowBacktestContext(data, startIndex, endIndex, 250);
+    const context = windowContext ?? createWindowBacktestContext(data, startIndex, endIndex, 250);
     const preparedDataCache: PreparedStrategyDataCache = new WeakMap();
 
     const tryAddTopResult = (candidate: OptimizationResult) => {
@@ -573,7 +663,7 @@ async function optimizeWindow(
 
             try {
                 // Use compact backtest during optimization to keep memory stable.
-                const result = runBacktestFastCompact(
+                const result = await runBacktestFastCompact(
                     data,
                     startIndex,
                     endIndex,
@@ -585,8 +675,9 @@ async function optimizeWindow(
                     backtestSettings,
                     sizing,
                     250,
-                    windowContext,
+                    context,
                     preparedDataCache,
+                    exitOverride,
                 );
 
                 const score = calculateOptimizationScore(result, minTrades);
@@ -781,6 +872,7 @@ export async function runWalkForwardAnalysis(
         maxCombinations = 5000,
         minOOSTradesPerWindow = 10,
         minTotalOOSTrades = 50,
+        chartInterval,
         onProgress,
         signal
     } = config;
@@ -794,6 +886,9 @@ export async function runWalkForwardAnalysis(
     if (!Number.isFinite(stepSize) || stepSize <= 0) {
         throw new Error(`Invalid step size: ${stepSize}`);
     }
+
+    const exitOverride = resolveWalkForwardExitOverrideContext(backtestSettings, chartInterval, 'Walk-forward analysis');
+    await preloadWalkForwardExitStrategy(backtestSettings, 'Walk-forward analysis');
 
     const estimatedGridSize = estimateParameterGridSize(parameterRanges);
     const comboCap = Math.max(100, Math.floor(maxCombinations));
@@ -836,6 +931,11 @@ export async function runWalkForwardAnalysis(
             totalWindows
         });
 
+        // One context per optimization window: candidate scoring, the
+        // in-sample confirmation run, and the window's cached exit-override
+        // series all share it, and it is released when the window ends.
+        const optimizationContext = createWindowBacktestContext(data, optimizationStart, optimizationEnd, 250);
+
         const topResults = await optimizeWindow(
             data,
             optimizationStart,
@@ -858,12 +958,14 @@ export async function runWalkForwardAnalysis(
                 comboTotal: total
             }),
             signal,
+            exitOverride,
+            optimizationContext,
         );
 
         const optimizedParams = averageParameters(topResults, parameterRanges, strategy.defaultParams);
         const finalParams = normalizeStrategyParams(strategy, { ...strategy.defaultParams, ...optimizedParams });
 
-        const inSampleResult = runBacktestFastCompact(
+        const inSampleResult = await runBacktestFastCompact(
             data,
             optimizationStart,
             optimizationEnd,
@@ -875,8 +977,9 @@ export async function runWalkForwardAnalysis(
             backtestSettings,
             sizing,
             250,
+            optimizationContext,
             undefined,
-            undefined,
+            exitOverride,
         );
 
         onProgress?.({
@@ -885,7 +988,7 @@ export async function runWalkForwardAnalysis(
             totalWindows
         });
 
-        const outOfSampleDetailed = runBacktestFast(
+        const outOfSampleDetailed = await runBacktestFast(
             data,
             testStart,
             testEnd,
@@ -899,6 +1002,7 @@ export async function runWalkForwardAnalysis(
             250,
             undefined,
             undefined,
+            exitOverride,
         );
 
         if (outOfSampleDetailed.equityCurve.length > 0) {
@@ -1005,6 +1109,7 @@ export async function quickWalkForward(
     sizing?: TradeSizing,
     onProgress?: (progress: WalkForwardProgress) => void,
     signal?: AbortSignal,
+    chartInterval?: string,
 ): Promise<WalkForwardResult> {
     // Clean data at the entry point
     data = ensureCleanData(data);
@@ -1088,6 +1193,7 @@ export async function quickWalkForward(
             topN: 2,
             minTrades: 2,
             maxCombinations,
+            chartInterval,
             onProgress,
             signal
         },
@@ -1126,6 +1232,8 @@ export interface FixedParamWalkForwardConfig {
     fixedParams?: StrategyParams;
     /** Minimum trades required to consider a window valid */
     minTrades?: number;
+    /** Chart interval captured by the caller; required when an exit strategy override is active. */
+    chartInterval?: string;
     /** Optional progress callback for UI feedback */
     onProgress?: (progress: WalkForwardProgress) => void;
     /** Optional AbortSignal to cancel a running analysis */
@@ -1154,13 +1262,16 @@ export async function runFixedParamWalkForward(
     // Clean input data
     data = ensureCleanData(data);
 
-    const { testWindow, stepSize, minTrades = 1, onProgress, signal } = config;
+    const { testWindow, stepSize, minTrades = 1, chartInterval, onProgress, signal } = config;
     if (!Number.isFinite(testWindow) || testWindow <= 0) {
         throw new Error(`Invalid test window: ${testWindow}`);
     }
     if (!Number.isFinite(stepSize) || stepSize <= 0) {
         throw new Error(`Invalid step size: ${stepSize}`);
     }
+
+    const exitOverride = resolveWalkForwardExitOverrideContext(backtestSettings, chartInterval, 'Fixed-param walk-forward analysis');
+    await preloadWalkForwardExitStrategy(backtestSettings, 'Fixed-param walk-forward analysis');
 
     const totalDataLength = data.length;
 
@@ -1192,7 +1303,7 @@ export async function runFixedParamWalkForward(
 
         // PERF: Use fast backtest - data is already cleaned at entry point
         // First half = "In-Sample" (what we'd train on if we had params)
-        const inSampleResult = runBacktestFastCompact(
+        const inSampleResult = await runBacktestFastCompact(
             data,
             windowStart,
             midPoint,
@@ -1206,10 +1317,11 @@ export async function runFixedParamWalkForward(
             250,
             undefined,
             undefined,
+            exitOverride,
         );
 
         // Second half = "Out-of-Sample" (the forward test)
-        const outOfSampleDetailed = runBacktestFast(
+        const outOfSampleDetailed = await runBacktestFast(
             data,
             midPoint,
             windowEnd,
@@ -1223,6 +1335,7 @@ export async function runFixedParamWalkForward(
             250,
             undefined,
             undefined,
+            exitOverride,
         );
 
         // Update running capital for next window
