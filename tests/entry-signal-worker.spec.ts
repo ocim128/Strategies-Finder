@@ -809,6 +809,7 @@ describe('Entry signal worker executed-close exit notifications', () => {
         telegramStatus?: number;
         withTelegramSecrets?: boolean;
         dropKlineOriginalIndexes?: number[];
+        pricePath?: number[];
     }): ExitFixture {
         const subscription: Record<string, unknown> = {
             id: 1,
@@ -848,7 +849,7 @@ describe('Entry signal worker executed-close exit notifications', () => {
         const dropped = new Set(options?.dropKlineOriginalIndexes ?? []);
         for (let i = 0; i < BAR_COUNT; i++) {
             if (dropped.has(i)) continue;
-            const p = closeAt(i);
+            const p = options?.pricePath ? options.pricePath[i] ?? options.pricePath[options.pricePath.length - 1]! : closeAt(i);
             klines.push([
                 (baseOpenSec + i * STEP_SEC) * 1000,
                 String(p), String(p * 1.01), String(p * 0.99), String(p), '1000',
@@ -940,7 +941,19 @@ describe('Entry signal worker executed-close exit notifications', () => {
 
     // The spec fixture strategy overrides a real manifest key so the worker's
     // strategy-support gate accepts it; the catalog entry is restored after.
-    async function withFixtureStrategy<S>(buyBar: number, sellBar: number | null, sellFraction: number | undefined, fn: () => Promise<S>): Promise<S> {
+    async function withFixtureStrategy<S>(
+        buyBar: number,
+        sellBar: number | null,
+        sellFraction: number | undefined,
+        fn: () => Promise<S>,
+        options?: {
+            secondBuyBar?: number;
+            secondSellBar?: number | null;
+            secondSellFraction?: number;
+        },
+    ): Promise<S> {
+        const secondBuyBar = options?.secondBuyBar;
+        const secondSellBar = options?.secondSellBar ?? null;
         const fixtureStrategy: Strategy = {
             name: 'Exit fixture',
             description: 'Buys and optionally exits at fixed bars.',
@@ -948,8 +961,12 @@ describe('Entry signal worker executed-close exit notifications', () => {
             paramLabels: {},
             execute: (data: OHLCVData[]) => {
                 const signals: Signal[] = [];
-                if (data.length > Math.max(buyBar, sellBar ?? 0) + 1) {
+                const lastNeeded = Math.max(buyBar, secondBuyBar ?? 0, sellBar ?? 0, secondSellBar ?? 0);
+                if (data.length > lastNeeded + 1) {
                     signals.push({ time: data[buyBar]!.time, type: 'buy', price: data[buyBar]!.close, barIndex: buyBar });
+                    if (secondBuyBar !== undefined) {
+                        signals.push({ time: data[secondBuyBar]!.time, type: 'buy', price: data[secondBuyBar]!.close, barIndex: secondBuyBar });
+                    }
                     if (sellBar !== null) {
                         signals.push({
                             time: data[sellBar]!.time,
@@ -957,6 +974,15 @@ describe('Entry signal worker executed-close exit notifications', () => {
                             price: data[sellBar]!.close,
                             barIndex: sellBar,
                             ...(sellFraction !== undefined ? { sizeFraction: sellFraction } : {}),
+                        });
+                    }
+                    if (secondSellBar !== null) {
+                        signals.push({
+                            time: data[secondSellBar]!.time,
+                            type: 'sell',
+                            price: data[secondSellBar]!.close,
+                            barIndex: secondSellBar,
+                            ...(options?.secondSellFraction !== undefined ? { sizeFraction: options.secondSellFraction } : {}),
                         });
                     }
                 }
@@ -976,6 +1002,8 @@ describe('Entry signal worker executed-close exit notifications', () => {
         direction?: 'long' | 'short';
         withEntryTimeSec?: boolean;
         signalTimeSec?: number;
+        entryTimeSec?: number;
+        entryPrice?: number;
     }): Record<string, unknown> {
         const signalTimeSec = overrides?.signalTimeSec ?? timeAt(BUY_BAR);
         return {
@@ -989,10 +1017,12 @@ describe('Entry signal worker executed-close exit notifications', () => {
             // The subscription execution defaults fill one bar after the
             // source signal (next_open), so the executed entry identity is
             // the fill time, not the signal time.
-            ...(overrides?.withEntryTimeSec === false ? {} : { entryTimeSec: timeAt(BUY_BAR + 1) }),
+            ...(overrides?.withEntryTimeSec === false
+                ? {}
+                : { entryTimeSec: overrides?.entryTimeSec ?? timeAt(BUY_BAR + 1) }),
             signalAgeBars: 0,
-            signalPrice: closeAt(BUY_BAR),
-            entryPrice: closeAt(BUY_BAR),
+            signalPrice: overrides?.entryPrice ?? closeAt(BUY_BAR),
+            entryPrice: overrides?.entryPrice ?? closeAt(BUY_BAR),
             signalReason: null,
             fingerprint: 'fixture:' + (overrides?.direction ?? 'long') + ':' + String(signalTimeSec),
         };
@@ -1147,6 +1177,108 @@ describe('Entry signal worker executed-close exit notifications', () => {
                 fixture.restore();
             }
         });
+    });
+
+    it('notifies the newest stored entry when simultaneous stops close in reverse entry order', async () => {
+        // Reproduction: entries at 100 (bar 5) and 120 (bar 6), 10% stops,
+        // the bar-7 crash to 85 stops BOTH positions. Exit processing
+        // (backward position iteration) records the $100 position's stop
+        // last, so the final real trade record belongs to the older
+        // position. The stored actionable entry is the $120 position and its
+        // stop must drive the notification.
+        await withFixtureStrategy(BUY_BAR, null, undefined, async () => {
+            const path: number[] = new Array(BAR_COUNT).fill(86);
+            path[0] = 110; path[1] = 111; path[2] = 112; path[3] = 113; path[4] = 114;
+            path[BUY_BAR] = 100;
+            path[BUY_BAR + 1] = 120;
+            path[BUY_BAR + 2] = 85;
+            const fixture = makeExitFixture({
+                storedPayload: storedEntryPayload({
+                    signalTimeSec: timeAt(BUY_BAR + 1),
+                    entryTimeSec: timeAt(BUY_BAR + 1),
+                    entryPrice: 120,
+                }),
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 10,
+                    maxOpenTrades: 2,
+                },
+                pricePath: path,
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts, 'exactly one exit notification').to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+                expect(fixture.telegramTexts[0]).to.contain('Exit Signal');
+            } finally {
+                fixture.restore();
+            }
+        }, { secondBuyBar: BUY_BAR + 1 });
+    });
+
+    it('notifies the stored entry closure while another position remains open', async () => {
+        // The $120 position stops on the crash bar while the $100 position
+        // survives and is liquidated as end_of_data (the final trade
+        // record). The stored entry is the stopped $120 position.
+        await withFixtureStrategy(BUY_BAR, null, undefined, async () => {
+            const path: number[] = new Array(BAR_COUNT).fill(91);
+            path[0] = 110; path[1] = 111; path[2] = 112; path[3] = 113; path[4] = 114;
+            path[BUY_BAR] = 100;
+            path[BUY_BAR + 1] = 120;
+            path[BUY_BAR + 2] = 91;
+            const fixture = makeExitFixture({
+                storedPayload: storedEntryPayload({
+                    signalTimeSec: timeAt(BUY_BAR + 1),
+                    entryTimeSec: timeAt(BUY_BAR + 1),
+                    entryPrice: 120,
+                }),
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 10,
+                    maxOpenTrades: 2,
+                },
+                pricePath: path,
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts, 'exactly one exit notification').to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        }, { secondBuyBar: BUY_BAR + 1 });
+    });
+
+    it('notifies after a partial exit chains into the full close of the stored position', async () => {
+        // Half exits on bar 6, the remainder closes on bar 7: the stored
+        // position fully closed, so one exit notification fires for the
+        // final closure.
+        await withFixtureStrategy(BUY_BAR, BUY_BAR + 1, 0.5, async () => {
+            const fixture = makeExitFixture({
+                // signal_close fills on the signal bar itself.
+                storedPayload: storedEntryPayload({
+                    signalTimeSec: timeAt(BUY_BAR),
+                    entryTimeSec: timeAt(BUY_BAR),
+                }),
+                backtestSettings: { tradeDirection: 'long', executionModel: 'signal_close' },
+            });
+            try {
+                const body = await runNow(fixture);
+                expect(body.status).to.contain(';exit_alert:');
+                expect(fixture.telegramTexts, 'exactly one exit notification').to.have.length(1);
+                expect(fixture.telegramTexts[0]).to.contain('Closing: LONG position');
+            } finally {
+                fixture.restore();
+            }
+        }, { secondSellBar: BUY_BAR + 2 });
     });
 
     it('logs failed deliveries without fabricating the exit_alert status', async () => {

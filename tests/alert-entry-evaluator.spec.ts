@@ -432,12 +432,10 @@ describe('Executed exit summaries from the entry evaluation', () => {
             });
 
             expect(result.ok).to.equal(true);
-            // The partial exit is surfaced with fullyClosed false: the
-            // remainder was liquidated as end_of_data, so the worker must not
-            // send a full-position close message for it.
-            expect(result.executedExit).to.not.equal(null);
-            expect(result.executedExit!.fullyClosed).to.equal(false);
-            expect(result.executedExit!.exitReason).to.equal('signal');
+            // The selected position still has an open remainder (liquidated
+            // as end_of_data), so it has no closure summary at all and the
+            // worker cannot send a full-position close message for it.
+            expect(result.executedExit).to.equal(null);
         });
     });
 
@@ -584,13 +582,147 @@ describe('Executed exit summaries from the entry evaluation', () => {
             });
 
             expect(result.ok).to.equal(true);
-            // The second position is still open (end_of_data is the final
-            // record); the first position's full close is the exit summary,
-            // and its earlier partial exit does not make it "not fully
-            // closed".
+            // The selected (latest) entry is the second position, which is
+            // still open: the summary describes the selected entry only, so
+            // the older position's full close produces no summary here.
+            expect(result.executedExit).to.equal(null);
+        });
+    });
+
+    it('summarizes a chained partial-then-full close of the selected position', () => {
+        const key = '__test_exit_chain_selected__';
+        withStrategy(key, {
+            name: 'Exit Chain Selected',
+            description: 'One long position: partial exit then full exit.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [
+                { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+                { time: data[2].time, type: 'sell', price: data[2].close, barIndex: 2, sizeFraction: 0.5 },
+                { time: data[3].time, type: 'sell', price: data[3].close, barIndex: 3 },
+            ],
+        }, () => {
+            const candles = buildCandles(8);
+            const result = evaluateLatestEntrySignal({
+                strategyKey: key,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                },
+                freshnessBars: 20,
+            });
+
+            expect(result.ok).to.equal(true);
             expect(result.executedExit).to.not.equal(null);
+            // The final exit event of the selected position closes the
+            // remainder: the summary is the full close, not the partial.
             expect(result.executedExit!.exitTimeSec).to.equal(Number(candles[3].time));
             expect(result.executedExit!.fullyClosed).to.equal(true);
+            expect(result.executedExit!.exitReason).to.equal('signal');
+        });
+    });
+
+    it('selects the notified entry closure when simultaneous stops close in reverse entry order', () => {
+        // Exact reproduction: candles 100, 120, 85; long entries on bars 0
+        // and 1 with 10% stops; both positions stop on bar 2. Exit processing
+        // (backward position iteration) records the $100 position's stop
+        // last, but the notified entry is the $120 position and the summary
+        // must describe its stop.
+        const key = '__test_exit_identity__';
+        withStrategy(key, {
+            name: 'Exit Identity',
+            description: 'Two long entries stopped by the same bar.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [
+                { time: data[0].time, type: 'buy', price: data[0].close, barIndex: 0 },
+                { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+            ],
+        }, () => {
+            const path = [100, 120, 85];
+            const candles: OHLCVData[] = path.map((close, i) => ({
+                time: (1_700_000_000 + i * 60) as Time,
+                open: i === 0 ? close : path[i - 1]!,
+                high: Math.max(close, path[i - 1] ?? close) + 0.5,
+                low: Math.min(close, path[i - 1] ?? close) - 0.5,
+                close,
+                volume: 1000,
+            }));
+            const result = evaluateLatestEntrySignal({
+                strategyKey: key,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    maxOpenTrades: 2,
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 10,
+                    slippageBps: 0,
+                },
+                freshnessBars: 20,
+            });
+
+            expect(result.ok).to.equal(true);
+            // The latest executed entry is the $120 position.
+            expect(result.latestEntry?.entryPrice).to.equal(120);
+            expect(result.executedExit).to.not.equal(null);
+            expect(result.executedExit!.direction).to.equal('long');
+            expect(result.executedExit!.entryTimeSec).to.equal(Number(candles[1].time));
+            expect(result.executedExit!.entryPrice).to.equal(120);
+            expect(result.executedExit!.exitReason).to.equal('stop_loss');
+            expect(result.executedExit!.fullyClosed).to.equal(true);
+            expect(result.executedExit!.sourceSignalTimeSec).to.equal(Number(candles[1].time));
+        });
+    });
+
+    it('keeps the notified entry closure when another position exits later', () => {
+        // The newest entry stops first; the older position stops one bar
+        // later and owns the final trade record. The summary must still
+        // describe the notified (newest) entry.
+        const key = '__test_exit_reverse_order__';
+        withStrategy(key, {
+            name: 'Exit Reverse Order',
+            description: 'Two long entries with different stop depths.',
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => [
+                { time: data[0].time, type: 'buy', price: data[0].close, barIndex: 0 },
+                { time: data[1].time, type: 'buy', price: data[1].close, barIndex: 1 },
+            ],
+        }, () => {
+            const path = [100, 120, 105, 80];
+            const candles: OHLCVData[] = path.map((close, i) => ({
+                time: (1_700_000_000 + i * 60) as Time,
+                open: i === 0 ? close : path[i - 1]!,
+                high: Math.max(close, path[i - 1] ?? close) + 0.5,
+                low: Math.min(close, path[i - 1] ?? close) - 0.5,
+                close,
+                volume: 1000,
+            }));
+            const result = evaluateLatestEntrySignal({
+                strategyKey: key,
+                candles,
+                backtestSettings: {
+                    tradeDirection: 'long',
+                    executionModel: 'signal_close',
+                    maxOpenTrades: 2,
+                    riskMode: 'percentage',
+                    stopLossEnabled: true,
+                    stopLossPercent: 10,
+                    slippageBps: 0,
+                },
+                freshnessBars: 20,
+            });
+
+            expect(result.ok).to.equal(true);
+            expect(result.executedExit).to.not.equal(null);
+            // The $120 position stopped on bar 2 even though the $100
+            // position's stop is the final trade record.
+            expect(result.executedExit!.entryPrice).to.equal(120);
+            expect(result.executedExit!.exitTimeSec).to.equal(Number(candles[2].time));
+            expect(result.executedExit!.exitReason).to.equal('stop_loss');
         });
     });
 
