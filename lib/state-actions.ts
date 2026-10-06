@@ -203,10 +203,15 @@ export function setStrategyTimeframeSettings(settings: {
     enabled?: boolean;
     minutes?: number;
 }): void {
+    // Strategy-timeframe settings change how wrapped strategy execution
+    // resamples data, so pending backtest publications are invalidated the
+    // same way symbol/interval/strategy changes are.
     if (settings.enabled !== undefined) {
+        advanceBacktestPublicationRevision('strategy_timeframe_enabled');
         state.set('strategyTimeframeEnabled', settings.enabled);
     }
     if (settings.minutes !== undefined) {
+        advanceBacktestPublicationRevision('strategy_timeframe_minutes');
         state.set('strategyTimeframeMinutes', settings.minutes);
     }
 }

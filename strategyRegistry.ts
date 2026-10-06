@@ -118,7 +118,11 @@ class StrategyRegistryImpl implements StrategyRegistry {
                 params: StrategyParams,
                 context?: StrategyExecutionContext
             ): Signal[] => {
-                const { enabled, minutes } = this.readGlobalStrategyTfSettings();
+                // Captured execution contexts carry the timeframe settings
+                // the request was captured with; live UI state is only the
+                // fallback for callers without a captured context.
+                const { enabled, minutes } = context?.strategyTimeframe
+                    ?? this.readGlobalStrategyTfSettings();
                 if (!enabled || data.length === 0) {
                     return originalExecute(data, params, context);
                 }

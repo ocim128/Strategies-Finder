@@ -33,7 +33,11 @@ import {
     setCurrentStrategyKey,
     setBinanceMarketType,
     setBlockRange,
+    setStrategyTimeframeSettings,
 } from "../lib/state-actions";
+import { executeBacktest } from "../lib/backtest-executor";
+import { runBacktest } from "../lib/strategies/index";
+import { resampleOHLCV } from "../lib/strategies/resample-utils";
 import { waitFor } from "./helpers/wait-for";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
@@ -736,6 +740,174 @@ describe("backtest service publication ownership", () => {
             assert.notEqual(await newerPreview, null, "the newer preview publishes");
         } finally {
             fetcher.restore();
+        }
+    });
+
+    it("does not publish when the strategy timeframe is enabled mid-run", async () => {
+        const fetcher = makeDeferredFetch();
+        fetcher.install();
+        try {
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            const health = deferNextHealth(fetcher);
+            const run = backtestService.runCurrentBacktest();
+            await waitFor(() => fetcher.requests.some((url) => url.includes("/api/health")), 5_000, "health fetch");
+
+            setStrategyTimeframeSettings({ enabled: true, minutes: 120 });
+            health.resolve(new Response("{}", { status: 404 }));
+            await run;
+
+            assert.equal(state.currentBacktestResult, null, "timeframe enablement must supersede the pending run");
+            assert.equal(getCurrentUiBacktestEndpointSnapshot(), null);
+        } finally {
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            fetcher.restore();
+        }
+    });
+
+    it("does not publish when the strategy timeframe minutes change mid-run", async () => {
+        const fetcher = makeDeferredFetch();
+        fetcher.install();
+        try {
+            setStrategyTimeframeSettings({ enabled: true, minutes: 60 });
+            const health = deferNextHealth(fetcher);
+            const run = backtestService.runCurrentBacktest();
+            await waitFor(() => fetcher.requests.some((url) => url.includes("/api/health")), 5_000, "health fetch");
+
+            setStrategyTimeframeSettings({ minutes: 120 });
+            health.resolve(new Response("{}", { status: 404 }));
+            await run;
+
+            assert.equal(state.currentBacktestResult, null, "a minutes change must supersede the pending run");
+        } finally {
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            fetcher.restore();
+        }
+    });
+
+    it("does not publish for a timeframe change-away-and-back mid-run", async () => {
+        const fetcher = makeDeferredFetch();
+        fetcher.install();
+        try {
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            const health = deferNextHealth(fetcher);
+            const run = backtestService.runCurrentBacktest();
+            await waitFor(() => fetcher.requests.some((url) => url.includes("/api/health")), 5_000, "health fetch");
+
+            setStrategyTimeframeSettings({ enabled: true, minutes: 120 });
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            health.resolve(new Response("{}", { status: 404 }));
+            await run;
+
+            assert.equal(state.currentBacktestResult, null, "change-away-and-back must supersede the pending run");
+        } finally {
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            fetcher.restore();
+        }
+    });
+
+    it("executes wrapped strategies with the captured timeframe settings, not live state", async () => {
+        // A registry-wrapped fixture that buys the first supplied candle and
+        // sells the second: resampled 120m execution produces one trade over
+        // 300 one-minute candles, raw execution produces many.
+        const tfStrategyKey = "tf_spec_strategy";
+        // Alternating entries/exits: resampled 120m execution yields one
+        // trade over 300 one-minute candles, raw execution yields ~150.
+        const rawTfStrategy: Strategy = {
+            name: "TF Spec Strategy",
+            description: "Buys on even candles and sells on odd candles.",
+            defaultParams: {},
+            paramLabels: {},
+            execute: (data) => {
+                const signals: Signal[] = [];
+                for (let i = 0; i + 1 < data.length; i += 2) {
+                    signals.push({ time: data[i]!.time, type: "buy", price: data[i]!.close });
+                    signals.push({ time: data[i + 1]!.time, type: "sell", price: data[i + 1]!.close });
+                }
+                return signals;
+            },
+            metadata: { role: "entry", direction: "long" },
+        };
+        strategyRegistry.register(tfStrategyKey, rawTfStrategy);
+        const wrapped = strategyRegistry.get(tfStrategyKey)!;
+        const oneMinuteCandles: OHLCVData[] = Array.from({ length: 300 }, (_, index) => {
+            const close = 100 + index;
+            return {
+                time: (1700000000 + index * 60) as Time,
+                open: close - 0.5,
+                high: close + 0.5,
+                low: close - 0.5,
+                close,
+                volume: 10,
+            };
+        });
+        const capitalSettings = {
+            initialCapital: 10_000, positionSize: 100, commission: 0,
+            sizingMode: "percent" as const, fixedTradeAmount: 0,
+        };
+        const baseSettings = {
+            tradeDirection: "long" as const,
+            executionModel: "signal_close" as const,
+        };
+        const runExecutor = async (settings: Record<string, unknown>) => executeBacktest({
+            ohlcvData: oneMinuteCandles,
+            interval: "1m",
+            primarySymbol: BTC,
+            strategyKey: tfStrategyKey,
+            strategy: wrapped,
+            strategyParams: {},
+            backtestSettings: { ...baseSettings, ...settings } as never,
+            capitalSettings,
+            context: {
+                nowSec: Math.floor(Date.now() / 1000),
+                blockRange: null,
+                engineMode: "typescript" as const,
+            },
+        });
+
+        try {
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+
+            // Captured timeframe enabled while global state is disabled:
+            // execution must resample (one trade), proving the captured
+            // settings drive the wrapped strategy.
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            const capturedEnabled = await runExecutor({
+                strategyTimeframeEnabled: true,
+                strategyTimeframeMinutes: 120,
+            });
+            assert.equal(capturedEnabled.result.totalTrades, 1, "captured 120m timeframe must resample execution");
+
+            // Captured timeframe disabled while global state is enabled:
+            // execution must stay raw (many trades), proving live state does
+            // not leak into the captured request.
+            setStrategyTimeframeSettings({ enabled: true, minutes: 120 });
+            const capturedDisabled = await runExecutor({
+                strategyTimeframeEnabled: false,
+                strategyTimeframeMinutes: 120,
+            });
+            assert.equal(
+                capturedDisabled.result.totalTrades > 1,
+                true,
+                `captured-disabled execution must stay raw, got ${capturedDisabled.result.totalTrades}`,
+            );
+
+            // Execution and replay agree under identical settings: running
+            // the unwrapped fixture directly on the resampled data reproduces
+            // the captured-enabled outcome.
+            const resampled = resampleOHLCV(oneMinuteCandles, "120m");
+            const replay = runBacktest(
+                resampled,
+                rawTfStrategy.execute(resampled, rawTfStrategy.defaultParams),
+                10_000,
+                100,
+                0,
+                { ...baseSettings },
+            );
+            assert.equal(replay.totalTrades, capturedEnabled.result.totalTrades);
+            assert.equal(replay.netProfit, capturedEnabled.result.netProfit);
+        } finally {
+            setStrategyTimeframeSettings({ enabled: false, minutes: 120 });
+            strategyRegistry.unregister(tfStrategyKey);
         }
     });
 });

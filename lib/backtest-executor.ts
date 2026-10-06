@@ -782,14 +782,21 @@ function resolveBacktestSignalsForData(args: {
     blockRange: { from: number; to: number } | null;
     executionContext?: StrategyExecutionContext;
 }): Signal[] {
+    const wrapped = hasGlobalStrategyTimeframeWrapper(args.strategy);
+    // A registry-wrapped strategy resamples inside its own execute, which
+    // would read live UI state. Pin it to the captured request settings so
+    // execution, snapshot, and replay describe the same request.
+    const executionContext = wrapped
+        ? { ...args.executionContext, strategyTimeframe: readStrategyTimeframeFromSettings(args.settings) }
+        : args.executionContext;
     const signals = executeStrategySignals(
         args.data,
         args.strategy,
         args.params,
         args.settings,
         args.interval,
-        hasGlobalStrategyTimeframeWrapper(args.strategy),
-        args.executionContext
+        wrapped,
+        executionContext
     );
     const confirmedSignals = applyConfirmationStrategies(
         args.data,
@@ -1120,6 +1127,18 @@ function isResultConsistent(result: BacktestResult): boolean {
 
 function hasGlobalStrategyTimeframeWrapper(strategy: Strategy): boolean {
     return (strategy as Strategy & { __global_timeframe_wrapped__?: boolean }).__global_timeframe_wrapped__ === true;
+}
+
+function readStrategyTimeframeFromSettings(settings: BacktestSettings): {
+    enabled: boolean;
+    minutes: number;
+} {
+    const enabled = settings.strategyTimeframeEnabled === true;
+    const parsedMinutes = Number(settings.strategyTimeframeMinutes);
+    const minutes = Number.isFinite(parsedMinutes) && parsedMinutes > 0
+        ? Math.max(1, Math.floor(parsedMinutes))
+        : 120;
+    return { enabled, minutes };
 }
 
 function executeStrategySignals(
