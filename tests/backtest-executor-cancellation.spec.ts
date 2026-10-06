@@ -101,4 +101,70 @@ describe("backtest executor cancellation", () => {
             rustEngine.runBacktestWithStatus = original;
         }
     });
+
+    it("falls back to TypeScript when Rust rejects the request size", async () => {
+        const original = rustEngine.runBacktestWithStatus;
+        rustEngine.runBacktestWithStatus = async () => ({
+            ok: false as const,
+            reason: "request_too_large" as const,
+            message: "request exceeded 4 bytes",
+        });
+
+        try {
+            const result = await executeBacktest({
+                ohlcvData: candles,
+                interval: "1h",
+                primarySymbol: "SIZE_FALLBACK",
+                strategyKey: "size_fallback_test",
+                strategy,
+                strategyParams: {},
+                backtestSettings: settings,
+                capitalSettings: capital,
+                context: {
+                    nowSec: 9_999_999_999,
+                    blockRange: null,
+                    engineMode: "rust_preferred",
+                },
+            });
+
+            assert.strictEqual(result.engineUsed, "typescript");
+            assert.strictEqual(result.engineDiagnostics?.rustAttempted, true);
+            assert.strictEqual(result.engineDiagnostics?.typescriptReason, "request_too_large");
+            assert.ok(result.result.totalTrades >= 0);
+        } finally {
+            rustEngine.runBacktestWithStatus = original;
+        }
+    });
+
+    it("falls back to TypeScript when Rust rejects the response size", async () => {
+        const original = rustEngine.runBacktestWithStatus;
+        rustEngine.runBacktestWithStatus = async () => ({
+            ok: false as const,
+            reason: "response_too_large" as const,
+            message: "response exceeded 64 bytes",
+        });
+
+        try {
+            const result = await executeBacktest({
+                ohlcvData: candles,
+                interval: "1h",
+                primarySymbol: "RESPONSE_SIZE_FALLBACK",
+                strategyKey: "response_size_fallback_test",
+                strategy,
+                strategyParams: {},
+                backtestSettings: settings,
+                capitalSettings: capital,
+                context: {
+                    nowSec: 9_999_999_999,
+                    blockRange: null,
+                    engineMode: "rust_preferred",
+                },
+            });
+
+            assert.strictEqual(result.engineUsed, "typescript");
+            assert.strictEqual(result.engineDiagnostics?.typescriptReason, "response_too_large");
+        } finally {
+            rustEngine.runBacktestWithStatus = original;
+        }
+    });
 });

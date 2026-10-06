@@ -387,10 +387,10 @@ describe("Rust generic backtest output options", () => {
                 }), { status: 200 });
             }
             const response = new Response(JSON.stringify(emptyBacktestResponse()), { status: 200 });
-            Object.defineProperty(response, "json", {
+            Object.defineProperty(response, "text", {
                 value: async () => {
                     controller.abort();
-                    return emptyBacktestResponse();
+                    return JSON.stringify(emptyBacktestResponse());
                 },
             });
             return response;
@@ -440,6 +440,198 @@ describe("Rust generic backtest output options", () => {
             undefined,
             true,
             { signal: controller.signal },
+        );
+
+        expect(result).to.deep.include({ ok: false, reason: "cancelled" });
+    });
+});
+
+describe("Rust single-run transport budgets", () => {
+    function healthyFetch(transport: (url: string, init?: RequestInit) => Promise<Response>): typeof fetch {
+        return (async (url: RequestInfo | URL, init?: RequestInit) => {
+            if (String(url).endsWith("/api/health")) {
+                return new Response(JSON.stringify({
+                    status: "healthy",
+                    engine: "trading-engine-rust",
+                    protocolVersion: 2,
+                    capabilities: {},
+                }), { status: 200 });
+            }
+            return transport(String(url), init);
+        }) as typeof fetch;
+    }
+
+    it("accepts a request at exactly the byte limit and counts encoded bytes, not characters", async () => {
+        let postedBytes: number | undefined;
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async (_url, init) => {
+            const body = String(init?.body);
+            postedBytes = new TextEncoder().encode(body).byteLength;
+            return new Response(JSON.stringify(emptyBacktestResponse()), { status: 200 });
+        }));
+
+        // A multibyte exit key makes the JS string length diverge from the
+        // encoded byte length; the limit is byte-exact.
+        const multibyteSettings: BacktestSettings = { ...settings, exitStrategyKey: "ΩΩΩΩΩΩΩΩ" };
+        const requestBytes = new TextEncoder().encode(JSON.stringify({
+            data,
+            signals: [],
+            initialCapital: 10_000,
+            positionSizePercent: 100,
+            commissionPercent: 0.1,
+            settings: multibyteSettings,
+            sizing: undefined,
+            compact: false,
+            retainTrades: false,
+        })).byteLength;
+
+        const atLimit = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, multibyteSettings, undefined, undefined,
+            { maxRequestBytes: requestBytes },
+        );
+        expect(atLimit.ok, JSON.stringify(atLimit)).to.equal(true);
+        expect(postedBytes).to.be.greaterThan(requestBytes - 10);
+
+        const overLimit = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, multibyteSettings, undefined, undefined,
+            { maxRequestBytes: requestBytes - 1 },
+        );
+        expect(overLimit).to.deep.include({ ok: false, reason: "request_too_large" });
+    });
+
+    it("rejects oversized requests before POST", async () => {
+        let transportCalls = 0;
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async () => {
+            transportCalls += 1;
+            return new Response(JSON.stringify(emptyBacktestResponse()), { status: 200 });
+        }));
+
+        const result = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, settings, undefined, undefined,
+            { maxRequestBytes: 4 },
+        );
+
+        expect(result).to.deep.include({ ok: false, reason: "request_too_large" });
+        expect(transportCalls).to.equal(0);
+    });
+
+    it("rejects a response whose declared content length exceeds the limit without reading the body", async () => {
+        let pulls = 0;
+        let cancelled = false;
+        const body = new ReadableStream<Uint8Array>({
+            pull(controller) {
+                pulls += 1;
+                controller.enqueue(new TextEncoder().encode(JSON.stringify(emptyBacktestResponse())));
+                controller.close();
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async () => {
+            const response = new Response(body, { status: 200 });
+            Object.defineProperty(response, "headers", {
+                value: new Headers({ "content-length": String(10_000_000) }),
+            });
+            return response;
+        }));
+
+        const result = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, settings, undefined, undefined,
+            { maxResponseBytes: 128 },
+        );
+
+        expect(result).to.deep.include({ ok: false, reason: "response_too_large" });
+        // The early header rejection cancels the unread body so the transport
+        // resource is released instead of streaming to a dead reader.
+        expect(cancelled, "unread body must be cancelled").to.equal(true);
+        expect(pulls).to.be.lessThan(2);
+    });
+
+    it("cancels a chunked body that exceeds the streamed byte limit", async () => {
+        let cancelled = false;
+        const encoder = new TextEncoder();
+        const full = JSON.stringify(emptyBacktestResponse());
+        const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+                for (const chunk of [full.slice(0, 100), full.slice(100, 200), full.slice(200)]) {
+                    controller.enqueue(encoder.encode(chunk));
+                }
+                controller.close();
+            },
+            cancel() {
+                cancelled = true;
+            },
+        });
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async () => new Response(body, { status: 200 })));
+
+        const result = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, settings, undefined, undefined,
+            { maxResponseBytes: 64 },
+        );
+
+        expect(result).to.deep.include({ ok: false, reason: "response_too_large" });
+        expect(cancelled, "stream reader must cancel the oversized body").to.equal(true);
+    });
+
+    it("accepts a chunked response within the limit even with a missing content length", async () => {
+        const encoder = new TextEncoder();
+        const full = JSON.stringify(emptyBacktestResponse());
+        const chunks = [encoder.encode(full.slice(0, 50)), encoder.encode(full.slice(50))];
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async () => {
+            const response = new Response(new Blob(chunks), { status: 200 });
+            // Strip the auto content-length so the streamed path alone decides.
+            Object.defineProperty(response, "headers", { value: new Headers() });
+            return response;
+        }));
+
+        const result = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, settings, undefined, undefined,
+            { maxResponseBytes: 4_096 },
+        );
+
+        expect(result.ok, JSON.stringify(result)).to.equal(true);
+    });
+
+    it("returns malformed_response for unparseable JSON", async () => {
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async () => new Response("{not json", { status: 200 })));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("honors a timeout override below the 30-second single-run default", async () => {
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async (_url, init) => {
+            await new Promise<void>((resolve, reject) => {
+                const timer = setTimeout(resolve, 5_000);
+                init?.signal?.addEventListener("abort", () => {
+                    clearTimeout(timer);
+                    reject(new DOMException("timed out", "TimeoutError"));
+                }, { once: true });
+            });
+            return new Response(JSON.stringify(emptyBacktestResponse()), { status: 200 });
+        }));
+
+        const startedAt = Date.now();
+        const result = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, settings, undefined, undefined,
+            { timeoutMs: 25 },
+        );
+
+        expect(result).to.deep.include({ ok: false, reason: "timeout" });
+        expect(Date.now() - startedAt).to.be.lessThan(2_000);
+    });
+
+    it("gives caller cancellation precedence over size limits at every stage", async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const client = new RustEngineClient("http://127.0.0.1:3030", healthyFetch(async () => {
+            throw new Error("cancelled single run must not reach transport");
+        }));
+
+        const result = await client.runBacktestWithStatus(
+            data, [], 10_000, 100, 0.1, settings, undefined, undefined,
+            { signal: controller.signal, maxRequestBytes: 4 },
         );
 
         expect(result).to.deep.include({ ok: false, reason: "cancelled" });

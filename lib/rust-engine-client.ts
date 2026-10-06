@@ -96,6 +96,8 @@ function rejectUnsupportedRustBatchSignals(
 export type RustBacktestFailureReason =
     | 'health_unavailable'
     | 'unsupported_sizing'
+    | 'request_too_large'
+    | 'response_too_large'
     | 'http_error'
     | 'timeout'
     | 'network_error'
@@ -545,16 +547,42 @@ export class RustEngineClient {
                 ...(outputOptions?.skipSharpeRatio === true ? { skipSharpeRatio: true } : {}),
             };
 
+            // Single runs honor the same optional transport budgets as batch
+            // runs: serialized request bytes are checked before the POST, and
+            // declared plus streamed response bytes before JSON parsing. When
+            // the caller supplies no limits, nothing is enforced (batch
+            // optional-limit semantics).
+            let preparedRequest: PreparedRustRequest;
+            try {
+                preparedRequest = requestOptions?.preparedRequest ?? prepareRustRequest(request);
+            } catch (error) {
+                return {
+                    ok: false,
+                    reason: 'malformed_response',
+                    message: error instanceof Error ? error.message : String(error),
+                };
+            }
+            const requestBytes = preparedRequest.requestBytes;
+            if (requestOptions?.maxRequestBytes !== undefined && requestBytes > requestOptions.maxRequestBytes) {
+                rustLog.warn(`[RustEngine] Single backtest request exceeds ${requestOptions.maxRequestBytes} bytes`);
+                return {
+                    ok: false,
+                    reason: 'request_too_large',
+                    message: `request exceeded ${requestOptions.maxRequestBytes} bytes`,
+                };
+            }
+            const maxResponseBytes = requestOptions?.maxResponseBytes;
+
             const startTime = performance.now();
 
-            const timeoutSignal = AbortSignal.timeout(this.backtestTimeoutMs);
+            const timeoutSignal = AbortSignal.timeout(requestOptions?.timeoutMs ?? this.backtestTimeoutMs);
             const requestSignal = requestOptions?.signal
                 ? AbortSignal.any([requestOptions.signal, timeoutSignal])
                 : timeoutSignal;
             const response = await this.fetchImpl(`${this.baseUrl}/api/backtest`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(request),
+                body: preparedRequest.body,
                 signal: requestSignal,
             });
 
@@ -565,7 +593,40 @@ export class RustEngineClient {
                 return { ok: false, reason: 'http_error', message: response.statusText };
             }
 
-            const responseJson = await response.json();
+            const declaredResponseBytes = Number(response.headers.get('content-length'));
+            if (
+                maxResponseBytes !== undefined
+                && Number.isFinite(declaredResponseBytes)
+                && declaredResponseBytes > maxResponseBytes
+            ) {
+                // Reject on the header without reading; cancel the unread body
+                // so the transport resource is released.
+                await response.body?.cancel().catch(() => undefined);
+                return {
+                    ok: false,
+                    reason: 'response_too_large',
+                    message: `declared response exceeded ${maxResponseBytes} bytes`,
+                };
+            }
+            const responseTextResult = await readResponseTextWithinLimit(response, maxResponseBytes);
+            if (!responseTextResult.ok) {
+                return {
+                    ok: false,
+                    reason: 'response_too_large',
+                    message: `response exceeded ${maxResponseBytes} bytes`,
+                };
+            }
+            let responseJson: unknown;
+            try {
+                responseJson = JSON.parse(responseTextResult.text);
+            } catch (error) {
+                rustLog.error('[RustEngine] Backtest returned unparseable JSON:', error);
+                return {
+                    ok: false,
+                    reason: 'malformed_response',
+                    message: error instanceof Error ? error.message : String(error),
+                };
+            }
             if (requestOptions?.signal?.aborted) return { ok: false, reason: 'cancelled' };
             const validation = validateRustBacktestResult(responseJson, {
                 // Protocol v2 makes exitReason part of the generic trade
