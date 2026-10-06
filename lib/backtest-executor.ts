@@ -245,6 +245,19 @@ function buildExitSignalCacheKey(args: {
 const exitIdentityFloat = new Float64Array(1);
 const exitIdentityWords = new Uint32Array(exitIdentityFloat.buffer);
 
+// Diagnostic counter for full-window identity digests. Lets callers (and
+// specs) verify that immutable-window owners fingerprint once instead of per
+// candidate; not part of any result or wire contract.
+let exitSignalDataIdentityDigestCount = 0;
+
+export function readExitSignalDataIdentityDigestCount(): number {
+    return exitSignalDataIdentityDigestCount;
+}
+
+export function resetExitSignalDataIdentityDigestCount(): void {
+    exitSignalDataIdentityDigestCount = 0;
+}
+
 function mixExitIdentityWord(hash: number, word: number): number {
     const mixed = (hash ^ Math.imul(word, 0x9e3779b1)) >>> 0;
     return (Math.imul(mixed, 0x85ebca6b) ^ (mixed >>> 13)) >>> 0;
@@ -260,6 +273,7 @@ function mixExitIdentityWord(hash: number, word: number): number {
  * produces a fresh one.
  */
 export function computeExitSignalDataIdentity(data: OHLCVData[]): string {
+    exitSignalDataIdentityDigestCount += 1;
     let hashA = 0x243f6a88;
     let hashB = 0x85a308d3;
     const mixNumber = (value: number): void => {

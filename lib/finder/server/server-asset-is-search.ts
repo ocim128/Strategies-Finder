@@ -454,12 +454,20 @@ export async function runServerAssetIsSearch(
     const minimumTrades = canPrefilterTradeCount
         ? Math.max(0, input.options.minTrades)
         : 0;
-    // The historical search window is immutable for this pass (the caller
-    // sliced it before invoking the search), so its content identity is
-    // computed once here instead of once per candidate inside the executor.
-    const exitWindowIdentity = input.exitSignalCache
-        ? computeExitSignalDataIdentity(input.ohlcvData)
-        : undefined;
+    // Exit-override candidates inject exit settings per candidate and can
+    // reuse the executor's per-asset exit-signal cache. The historical search
+    // window is immutable for this pass, so its content identity is
+    // fingerprinted lazily ONCE here and threaded through every candidate;
+    // searches without exit overrides never hash the window.
+    const exitOverridesActive = (input.exitStrategyCandidates?.length ?? 0) > 0;
+    let exitWindowIdentity: string | undefined;
+    const resolveExitWindowIdentity = (): string | undefined => {
+        if (!exitOverridesActive || !input.exitSignalCache) return undefined;
+        if (exitWindowIdentity === undefined) {
+            exitWindowIdentity = computeExitSignalDataIdentity(input.ohlcvData);
+        }
+        return exitWindowIdentity;
+    };
 
     for (let index = 0; index < paramSets.length; index++) {
         throwIfAborted(input.abortSignal);
@@ -563,6 +571,7 @@ export async function runServerAssetIsSearch(
             // / trade-history option matrix) lives in
             // `finder-asset-candidate-execution.ts`, kept in parity with the
             // browser runner's `executeAssetCandidate`.
+            const candidateExitIdentity = resolveExitWindowIdentity();
             const output = await runAssetCandidateBacktest({
                 data: input.ohlcvData,
                 symbol: input.symbol,
@@ -589,7 +598,9 @@ export async function runServerAssetIsSearch(
                 ...(confirmationData ? { confirmationDataOverride: confirmationData } : {}),
                 ...(candidateSignals ? { preGeneratedSignals: candidateSignals } : {}),
                 ...(input.exitSignalCache ? { exitSignalCache: input.exitSignalCache } : {}),
-                ...(exitWindowIdentity !== undefined ? { exitSignalDataIdentity: exitWindowIdentity } : {}),
+                ...(candidateExitIdentity !== undefined
+                    ? { exitSignalDataIdentity: candidateExitIdentity }
+                    : {}),
                 ...(canPrefilterTradeCount
                     ? { minimumPotentialEntrySignals: minimumTrades }
                     : {}),

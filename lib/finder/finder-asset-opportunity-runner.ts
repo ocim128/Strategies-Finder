@@ -1247,11 +1247,21 @@ async function searchOneAsset(args: {
     // execution-aware recheck path because signal-only reuse cannot see
     // position-capacity or cooldown gates.
     const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
-    // The full closed window is immutable for this asset pass; its identity
-    // fingerprints once and serves full-window next-exit replays.
-    const fullClosedIdentity = exitSignalCache && exitStrategyActive
-        ? computeExitSignalDataIdentity(fullClosed)
-        : undefined;
+    // The full closed window is immutable for this asset pass; its identity is
+    // fingerprinted lazily (first eligible use) and memoized, so assets
+    // without an active Exit Strategy Override never pay for hashing.
+    const fullClosedIdentityMemo = exitStrategyActive ? { digest: undefined as string | undefined } : null;
+    const resolveFullClosedIdentity = (): string | undefined => {
+        if (!exitSignalCache || !fullClosedIdentityMemo) return undefined;
+        if (fullClosedIdentityMemo.digest === undefined) {
+            fullClosedIdentityMemo.digest = computeExitSignalDataIdentity(fullClosed);
+        }
+        return fullClosedIdentityMemo.digest;
+    };
+    // Fresh rechecks replay `recheckData`; a holdout makes it a different
+    // (shorter) window whose identity this pass does not describe.
+    const resolveRecheckIdentity = (): string | undefined =>
+        recheckData === fullClosed ? resolveFullClosedIdentity() : undefined;
     const searchWindowEndsAtBoundary = slicedHistorical.length > 0
         && recheckData.length >= slicedHistorical.length
         && timeKey(slicedHistorical[slicedHistorical.length - 1]!.time)
@@ -1333,6 +1343,7 @@ async function searchOneAsset(args: {
                     rustAttempted: false,
                 };
             }
+            const precheckExitIdentity = resolveRecheckIdentity();
             const evaluation = await regenerateSignalsAndDetectFresh({
                 candidate,
                 strategy: preparedStrategy,
@@ -1347,6 +1358,9 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
+                ...(precheckExitIdentity !== undefined
+                    ? { exitSignalDataIdentity: precheckExitIdentity }
+                    : {}),
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "fresh_entry",
                 rustCapabilities: input.rustCapabilities,
@@ -1547,6 +1561,7 @@ async function searchOneAsset(args: {
         if (callbacks.isCancelled()) {
             throw new Error("Finder stopped.");
         }
+        const recheckExitIdentity = resolveRecheckIdentity();
         return regenerateSignalsAndDetectFresh({
             candidate,
             strategy: preparedStrategy,
@@ -1565,6 +1580,9 @@ async function searchOneAsset(args: {
             options: assetOptions,
             exitStrategyCandidates: input.exitStrategyCandidates,
             exitSignalCache,
+            ...(recheckExitIdentity !== undefined
+                ? { exitSignalDataIdentity: recheckExitIdentity }
+                : {}),
             useRustEnginePreference: input.useRustEnginePreference,
             rustDiagnosticPhase: "fresh_entry",
             rustCapabilities: input.rustCapabilities,
@@ -1678,7 +1696,18 @@ async function searchOneAsset(args: {
     const oosStartedAt = performance.now();
     let oosWindowData: OHLCVData[] = [];
     let oosWindowDataBuilt = false;
-    let oosWindowDataIdentity: string | undefined;
+    let oosWindowIdentityMemo: { digest: string | undefined } | null = exitStrategyActive
+        ? { digest: undefined }
+        : null;
+    // Fingerprinted lazily at first eligible use; skipped entirely when the
+    // Exit Strategy Override is inactive so no hashing happens.
+    const resolveOosWindowIdentity = (): string | undefined => {
+        if (!exitSignalCache || !oosWindowIdentityMemo || oosWindowData.length === 0) return undefined;
+        if (oosWindowIdentityMemo.digest === undefined) {
+            oosWindowIdentityMemo.digest = computeExitSignalDataIdentity(oosWindowData);
+        }
+        return oosWindowIdentityMemo.digest;
+    };
     let oosSliceWindow: OHLCVData[] = [];
     if (input.options.oosValidationEnabled) {
         const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
@@ -2037,6 +2066,7 @@ async function searchOneAsset(args: {
                     settings: input.settings,
                 })
                 : undefined;
+            const nextExitFullClosedIdentity = resolveFullClosedIdentity();
             const winnerNextExit = await runCandidateNextExitOnAsset({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
@@ -2054,7 +2084,9 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
-                ...(fullClosedIdentity !== undefined ? { fullClosedIdentity } : {}),
+                ...(nextExitFullClosedIdentity !== undefined
+                    ? { fullClosedIdentity: nextExitFullClosedIdentity }
+                    : {}),
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "next_exit",
                 rustCapabilities: input.rustCapabilities,
@@ -2080,11 +2112,6 @@ async function searchOneAsset(args: {
         if (!oosWindowDataBuilt) {
             oosWindowData = buildFinderEvaluationData(oosSliceWindow, input.interval, input.settings);
             oosWindowDataBuilt = true;
-            // The built OOS window is immutable for the rest of this asset
-            // pass, so fingerprint it once at preparation.
-            oosWindowDataIdentity = exitSignalCache && exitStrategyActive
-                ? computeExitSignalDataIdentity(oosWindowData)
-                : undefined;
             diagnostics.oosBars = Math.max(diagnostics.oosBars, oosWindowData.length);
         }
         // The pre-deferral gate ran on the BUILT window's length; a closed
@@ -2097,6 +2124,7 @@ async function searchOneAsset(args: {
             const oosConfirmationData = (input.settings.confirmationStrategies?.length ?? 0) > 0
                 ? prefixThroughLastBar(fullClosed, oosWindowData)
                 : undefined;
+            const oosExitIdentity = resolveOosWindowIdentity();
             const winnerOos = await runCandidateOosOnAsset({
                 candidate: winnerCandidate,
                 strategy: preparedStrategy,
@@ -2110,8 +2138,8 @@ async function searchOneAsset(args: {
                 options: assetOptions,
                 exitStrategyCandidates: input.exitStrategyCandidates,
                 exitSignalCache,
-                ...(oosWindowDataIdentity !== undefined
-                    ? { exitSignalDataIdentity: oosWindowDataIdentity }
+                ...(oosExitIdentity !== undefined
+                    ? { exitSignalDataIdentity: oosExitIdentity }
                     : {}),
                 useRustEnginePreference: input.useRustEnginePreference,
                 rustDiagnosticPhase: "complementary_oos",
@@ -2490,7 +2518,7 @@ async function regenerateSignalsAndDetectFresh(args: {
             signal: args.signal,
             signalOnly: true,
             ignoreExitOverride: true,
-            ...(args.exitSignalDataIdentity !== undefined && replayData === signalData
+            ...(args.exitSignalDataIdentity !== undefined && signalData === args.fullClosed
                 ? { exitSignalDataIdentity: args.exitSignalDataIdentity }
                 : {}),
         });
@@ -2535,7 +2563,7 @@ async function regenerateSignalsAndDetectFresh(args: {
         rustDiagnosticPhase: args.rustDiagnosticPhase,
         rustCapabilities: args.rustCapabilities,
         signal: args.signal,
-        ...(args.exitSignalDataIdentity !== undefined && replayData === signalData
+        ...(args.exitSignalDataIdentity !== undefined && replayData === args.fullClosed
             ? { exitSignalDataIdentity: args.exitSignalDataIdentity }
             : {}),
         ...(preGeneratedSignals ? { preGeneratedSignals } : {}),

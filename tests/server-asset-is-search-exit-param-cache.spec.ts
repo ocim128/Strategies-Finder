@@ -24,6 +24,10 @@ import { describe, it, before, after } from "node:test";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
 import type { AssetCandidateExitSignalCache } from "../lib/finder/finder-asset-candidate-execution";
 import {
+    readExitSignalDataIdentityDigestCount,
+    resetExitSignalDataIdentityDigestCount,
+} from "../lib/backtest-executor";
+import {
     registerLoadedBuiltInStrategy,
     unregisterLoadedBuiltInStrategy,
 } from "../lib/strategies/built-in-catalog";
@@ -146,6 +150,7 @@ async function runSearch(
     generateParamSets: (defaultParams: StrategyParams, options: FinderOptions) => StrategyParams[],
     data: OHLCVData[] = makeCandles(),
     exitSignalCache?: AssetCandidateExitSignalCache,
+    exitStrategyCandidates?: Array<{ key: string; name: string; strategy: Strategy }>,
 ): Promise<FinderResult[]> {
     const output = await runServerAssetIsSearch({
         ohlcvData: data,
@@ -155,10 +160,12 @@ async function runSearch(
         settings,
         capitalSettings,
         selectedStrategy: { key: ENTRY_KEY, name: entryStrategy.name, strategy: entryStrategy },
-        exitStrategyCandidates: [
-            { key: EXIT_A_KEY, name: exitStrategyA.name, strategy: exitStrategyA },
-            { key: EXIT_B_KEY, name: exitStrategyB.name, strategy: exitStrategyB },
-        ],
+        exitStrategyCandidates: exitStrategyCandidates === undefined
+            ? [
+                { key: EXIT_A_KEY, name: exitStrategyA.name, strategy: exitStrategyA },
+                { key: EXIT_B_KEY, name: exitStrategyB.name, strategy: exitStrategyB },
+            ]
+            : exitStrategyCandidates,
         generateParamSets,
         ...(exitSignalCache ? { exitSignalCache } : {}),
         isCancelled: () => false,
@@ -303,5 +310,29 @@ describe("server Asset IS search exit-param caching", () => {
         });
         await runSearch(generator, businessDayData, exitSignalCache);
         expect(exitSignalExecuteCalls - afterFirstPass).to.equal(ENTRY_SETS);
+    });
+
+    it("fingerprints the window once across candidates, not once per candidate", async () => {
+        const { generator } = createCountingGenerator();
+        const exitSignalCache: AssetCandidateExitSignalCache = new Map();
+
+        resetExitSignalDataIdentityDigestCount();
+        await runSearch(generator, makeCandles(), exitSignalCache);
+        // ENTRY_SETS candidates share one immutable window; the owner threads
+        // a single digest and the executor must not re-hash per candidate.
+        expect(readExitSignalDataIdentityDigestCount()).to.equal(1);
+    });
+
+    it("never fingerprints the window when exit overrides are disabled", async () => {
+        const { generator } = createCountingGenerator();
+        const exitSignalCache: AssetCandidateExitSignalCache = new Map();
+        const before = exitSignalExecuteCalls;
+
+        resetExitSignalDataIdentityDigestCount();
+        const results = await runSearch(generator, makeCandles(), exitSignalCache, []);
+
+        expect(readExitSignalDataIdentityDigestCount()).to.equal(0);
+        expect(exitSignalExecuteCalls - before).to.equal(0);
+        expect(results.length).to.equal(ENTRY_SETS);
     });
 });
