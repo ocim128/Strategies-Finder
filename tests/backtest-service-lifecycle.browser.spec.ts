@@ -14,6 +14,7 @@ import { describe, it, before, after, beforeEach } from "node:test";
 import assert from "node:assert/strict";
 import { state } from "../lib/state";
 import { backtestService } from "../lib/backtest-service";
+import { debugLogger } from "../lib/debug-logger";
 import { strategyRegistry } from "../strategyRegistry";
 import { rustEngine } from "../lib/rust-engine-client";
 import {
@@ -261,6 +262,48 @@ beforeEach(() => {
 });
 
 describe("backtest service publication ownership", () => {
+    it("emits sampled executor timings and engine reasons in the timing breakdown", async () => {
+        const fetcher = makeDeferredFetch();
+        fetcher.install();
+        const capturedEvents: Array<{ message: string; data: any }> = [];
+        const savedEvent = (debugLogger as any).event.bind(debugLogger);
+        const savedShouldCapture = (backtestService as any).shouldCaptureTimingBreakdown;
+        (debugLogger as any).event = (message: string, data?: unknown) => {
+            capturedEvents.push({ message, data });
+        };
+        // Force the sampled collection on so the assertion is deterministic;
+        // production keeps the DEV/every-32nd-run sampling.
+        (backtestService as any).shouldCaptureTimingBreakdown = () => true;
+        try {
+            await backtestService.runCurrentBacktest();
+
+            expect(state.currentBacktestResult).to.not.equal(null);
+            const breakdown = capturedEvents.find((entry) => entry.message === "backtest.timing_breakdown");
+            expect(breakdown, "timing breakdown event is emitted for sampled runs").to.not.equal(undefined);
+
+            const durations = breakdown!.data?.durations ?? {};
+            for (const field of ["total", "signalGenerationMs", "exitProcessingMs", "postProcessingMs", "engineMs"]) {
+                const value = durations[field];
+                expect(typeof value, `durations.${field} is present`).to.equal("number");
+                expect(Number.isFinite(value) && value >= 0, `durations.${field} is finite and nonnegative`).to.equal(true);
+            }
+            expect(breakdown!.data?.engineUsed).to.be.oneOf(["rust", "typescript"]);
+            expect(breakdown!.data?.engineDiagnostics, "engine diagnostics are exposed").to.not.equal(undefined);
+            expect(breakdown!.data?.engineDiagnostics?.rustAttempted).to.be.a("boolean");
+            // Scalar metadata only: no candle or signal arrays in the event.
+            const serialized = JSON.stringify(breakdown!.data);
+            expect(serialized).to.not.contain("\"time\"");
+            expect(serialized.length).to.be.lessThan(2_000);
+
+            // Unchanged results: the sampled run still publishes normally.
+            expect(state.currentBacktestResult?.totalTrades).to.be.greaterThan(0);
+        } finally {
+            (debugLogger as any).event = savedEvent;
+            (backtestService as any).shouldCaptureTimingBreakdown = savedShouldCapture;
+            fetcher.restore();
+        }
+    });
+
     it("commits an uncontested run with the captured request identity", async () => {
         const fetcher = makeDeferredFetch();
         fetcher.install();

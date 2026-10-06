@@ -378,16 +378,48 @@ export class BacktestService {
             },
             backtestRunOptions: {
                 collectDiagnostics: true,
+                // Sampled timing collection (DEV or every 32nd run) also turns
+                // on the executor's phase timings so the breakdown event can
+                // attribute signal/exit/engine/finalization work.
+                ...(captureTiming ? { collectExecutorTimings: true } : {}),
             },
         });
 
         if (captureTiming) {
+            const executorTimings = run.executorTimings;
             debugLogger.event('backtest.timing_breakdown', {
                 engineUsed: run.engineUsed,
                 bars: run.result.marketContext?.candleCount ?? 0,
+                ...(executorTimings
+                    ? { exitOverrideSignals: executorTimings.exitOverrideSignals }
+                    : {}),
                 durations: {
                     total: performance.now() - runStart,
+                    ...(executorTimings
+                        ? {
+                            signalGenerationMs: executorTimings.signalGenerationMs,
+                            exitProcessingMs: executorTimings.exitProcessingMs,
+                            exitStrategyMs: executorTimings.exitStrategyMs,
+                            exitStrategyLoadMs: executorTimings.exitStrategyLoadMs,
+                            exitStrategyNormalizeMs: executorTimings.exitStrategyNormalizeMs,
+                            exitSignalGenerationMs: executorTimings.exitSignalGenerationMs,
+                            exitMergeMs: executorTimings.exitMergeMs,
+                            exitBookkeepingMs: executorTimings.exitBookkeepingMs,
+                            postProcessingMs: executorTimings.postProcessingMs,
+                            engineMs: executorTimings.engineMs,
+                        }
+                        : {}),
                 },
+                ...(run.engineDiagnostics
+                    ? {
+                        engineDiagnostics: {
+                            rustAttempted: run.engineDiagnostics.rustAttempted,
+                            ...(run.engineDiagnostics.typescriptReason !== undefined
+                                ? { typescriptReason: run.engineDiagnostics.typescriptReason }
+                                : {}),
+                        },
+                    }
+                    : {}),
             });
         }
 

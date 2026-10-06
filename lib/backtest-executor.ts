@@ -148,6 +148,7 @@ export interface BacktestExecutorTimings {
     exitSignalGenerationMs: number;
     exitMergeMs: number;
     exitBookkeepingMs: number;
+    postProcessingMs: number;
     exitOverrideSignals: number;
     engineMs: number;
 }
@@ -181,6 +182,19 @@ interface PrimarySignalReuse {
     params: StrategyParams;
     signals: Signal[];
     confirmationData?: OHLCVData[];
+}
+
+/**
+ * Which engine produced a result and which analytics the caller requested.
+ * Finalization uses this to avoid recomputing authoritative engine output
+ * while still honoring requested-but-missing analytics. Undefined
+ * `includeSharpeRatio`/`includeAdvancedAnalytics` mean "enabled" (the default
+ * full-result contract).
+ */
+interface FinalizationAnalyticsOwnership {
+    engineUsed: "rust" | "typescript";
+    includeSharpeRatio?: boolean;
+    includeAdvancedAnalytics?: boolean;
 }
 
 function haveSameStrategyParams(left: StrategyParams, right: StrategyParams): boolean {
@@ -238,6 +252,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             exitSignalGenerationMs: 0,
             exitMergeMs: 0,
             exitBookkeepingMs: 0,
+            postProcessingMs: 0,
             exitOverrideSignals: 0,
             engineMs: 0,
         }
@@ -263,6 +278,24 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     if (!strategy) {
         throw new Error(`Strategy not found: "${strategyKey}"`);
     }
+
+    // Shared finalization for every engine outcome. The engine/output context
+    // decides whether Sharpe and advanced analytics are authoritative engine
+    // output, requested-but-missing (fill from a usable curve), or disabled.
+    const runResultFinalization = (
+        result: BacktestResult,
+        engineUsed: "rust" | "typescript",
+        data: OHLCVData[] = backtestData,
+    ): void => {
+        if (shouldSkipResultPostProcessing(req)) return;
+        const startedAt = executorTimings ? performance.now() : 0;
+        finalizeResult(result, data, interval, settingsWithMeta, {
+            engineUsed,
+            includeSharpeRatio: req.backtestRunOptions?.includeSharpeRatio,
+            includeAdvancedAnalytics: req.backtestRunOptions?.includeAdvancedAnalytics,
+        });
+        if (executorTimings) executorTimings.postProcessingMs += performance.now() - startedAt;
+    };
 
     const normalizedParams = strategy.normalizeParams
         ? strategy.normalizeParams(strategyParams)
@@ -447,9 +480,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         let result = buildEntryBacktestResult(entryStats);
         if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
         result.exitControlDiagnostics = exitControlDiagnostics;
-        if (!shouldSkipResultPostProcessing(req)) {
-            finalizeResult(result, backtestData, interval, settingsWithMeta);
-        }
+        runResultFinalization(result, "typescript");
         registerBacktestEdgeAnalysisInput(result, backtestData);
         return finish(result, "typescript", signals, {
             rustAttempted: false,
@@ -543,9 +574,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
                 result.trades = [];
             }
             result.exitControlDiagnostics = exitControlDiagnostics;
-            if (!shouldSkipResultPostProcessing(req)) {
-                finalizeResult(result, backtestData, interval, settingsWithMeta);
-            }
+            runResultFinalization(result, "rust");
             registerBacktestEdgeAnalysisInput(result, backtestData);
             return finish(result, "rust", primarySignals, { rustAttempted: true }, endpointSelection);
         }
@@ -586,9 +615,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         delete (result as BacktestResultWithEndpointSelection).endpointSelection;
     }
     if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
-    if (!shouldSkipResultPostProcessing(req)) {
-        finalizeResult(result, backtestData, interval, settingsWithMeta);
-    }
+    runResultFinalization(result, "typescript");
     result.exitControlDiagnostics = exitControlDiagnostics;
     registerBacktestEdgeAnalysisInput(result, backtestData);
     const typescriptReason = rustAttempted
@@ -681,7 +708,7 @@ export async function executeBacktestFromSignals(
         if (rustResult.reason === "cancelled") throwBacktestCancelled();
         if (rustResult.result && isResultConsistent(rustResult.result)) {
             let result = rustResult.result;
-            finalizeResult(result, backtestData, interval, settings);
+            finalizeResult(result, backtestData, interval, settings, { engineUsed: "rust" });
             registerBacktestEdgeAnalysisInput(result, backtestData);
             return { result, engineUsed: "rust", signals: filteredSignals };
         }
@@ -705,7 +732,7 @@ export async function executeBacktestFromSignals(
     };
     let result = runTypescriptBacktest();
     throwIfBacktestCancelled(context.signal);
-    finalizeResult(result, backtestData, interval, settings);
+    finalizeResult(result, backtestData, interval, settings, { engineUsed: "typescript" });
     registerBacktestEdgeAnalysisInput(result, backtestData);
     return { result, engineUsed: "typescript", signals: filteredSignals };
 }
@@ -1073,7 +1100,8 @@ function finalizeResult(
     result: BacktestResult,
     backtestData: OHLCVData[],
     interval: string,
-    settingsRaw: BacktestSettings | Record<string, unknown>
+    settingsRaw: BacktestSettings | Record<string, unknown>,
+    ownership: FinalizationAnalyticsOwnership
 ): void {
     const settings = settingsRaw as Record<string, unknown>;
     result.marketContext = {
@@ -1086,10 +1114,45 @@ function finalizeResult(
     };
 
     if (!result.entryStats) {
-        result.sharpeRatio = recomputeSharpeRatio(result);
-        result.performanceAnalytics = recomputePerformanceAnalytics(result);
+        if (ownership.engineUsed === "rust") {
+            // Rust output is normalized at the executor boundary: TypeScript
+            // recomputes the scalar Sharpe and missing advanced analytics from
+            // the returned curve/history instead of trusting Rust scalars.
+            result.sharpeRatio = ownership.includeSharpeRatio === false
+                ? 0
+                : recomputeSharpeRatio(result);
+        } else {
+            // TypeScript engines own their Sharpe (including a valid 0); do
+            // not silently restore analytics the caller disabled.
+            if (ownership.includeSharpeRatio === false) {
+                result.sharpeRatio = 0;
+            }
+        }
+        result.performanceAnalytics = resolveFinalPerformanceAnalytics(result, ownership);
     }
     attachTradeTimingQuality(result, backtestData);
+}
+
+/**
+ * Preserve populated analytics, fill missing analytics the caller requested
+ * from a usable equity curve, and keep disabled analytics omitted. Advanced
+ * analytics additionally require enabled Sharpe (the calculateBacktestStats
+ * rule).
+ */
+function resolveFinalPerformanceAnalytics(
+    result: BacktestResult,
+    ownership: FinalizationAnalyticsOwnership
+): BacktestResult["performanceAnalytics"] {
+    if (ownership.includeAdvancedAnalytics === false || ownership.includeSharpeRatio === false) {
+        return undefined;
+    }
+    if (result.performanceAnalytics) {
+        return result.performanceAnalytics;
+    }
+    if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
+        return calculateAdvancedPerformanceAnalyticsFromEquityCurve(result.equityCurve);
+    }
+    return undefined;
 }
 
 function recomputeSharpeRatio(result: BacktestResult): number {
@@ -1100,13 +1163,6 @@ function recomputeSharpeRatio(result: BacktestResult): number {
         return calculateSharpeRatioFromReturns(result.trades.map(t => t.pnlPercent));
     }
     return Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;
-}
-
-function recomputePerformanceAnalytics(result: BacktestResult) {
-    if (Array.isArray(result.equityCurve) && result.equityCurve.length > 1) {
-        return calculateAdvancedPerformanceAnalyticsFromEquityCurve(result.equityCurve);
-    }
-    return undefined;
 }
 
 function isResultConsistent(result: BacktestResult): boolean {
