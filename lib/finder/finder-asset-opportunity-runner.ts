@@ -1247,9 +1247,11 @@ async function searchOneAsset(args: {
     // execution-aware recheck path because signal-only reuse cannot see
     // position-capacity or cooldown gates.
     const recheckData = oosIgnoreLastBars > 0 ? visibleValidationData : fullClosed;
-    // The full closed window is immutable for this asset pass; its identity is
-    // fingerprinted lazily (first eligible use) and memoized, so assets
-    // without an active Exit Strategy Override never pay for hashing.
+    // Recheck windows are immutable for this asset pass; each distinct replay
+    // window is fingerprinted lazily (first eligible use) and memoized, so
+    // assets without an active Exit Strategy Override never pay for hashing
+    // and no window is hashed once per candidate. `recheckData` shares the
+    // full-closed memo when it IS the full closed window.
     const fullClosedIdentityMemo = exitStrategyActive ? { digest: undefined as string | undefined } : null;
     const resolveFullClosedIdentity = (): string | undefined => {
         if (!exitSignalCache || !fullClosedIdentityMemo) return undefined;
@@ -1258,10 +1260,16 @@ async function searchOneAsset(args: {
         }
         return fullClosedIdentityMemo.digest;
     };
-    // Fresh rechecks replay `recheckData`; a holdout makes it a different
-    // (shorter) window whose identity this pass does not describe.
-    const resolveRecheckIdentity = (): string | undefined =>
-        recheckData === fullClosed ? resolveFullClosedIdentity() : undefined;
+    const recheckIdentityMemo = recheckData === fullClosed
+        ? fullClosedIdentityMemo
+        : (exitStrategyActive ? { digest: undefined as string | undefined } : null);
+    const resolveRecheckIdentity = (): string | undefined => {
+        if (!exitSignalCache || !recheckIdentityMemo) return undefined;
+        if (recheckIdentityMemo.digest === undefined) {
+            recheckIdentityMemo.digest = computeExitSignalDataIdentity(recheckData);
+        }
+        return recheckIdentityMemo.digest;
+    };
     const searchWindowEndsAtBoundary = slicedHistorical.length > 0
         && recheckData.length >= slicedHistorical.length
         && timeKey(slicedHistorical[slicedHistorical.length - 1]!.time)

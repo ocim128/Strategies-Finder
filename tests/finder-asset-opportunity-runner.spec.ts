@@ -31,6 +31,14 @@ import type { FinderOptions, FinderResult, FinderAssetOpportunityOptions } from 
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestResult, BacktestSettings, OHLCVData, Signal, Strategy, Time } from "../lib/types/strategies";
 import { rustEngine } from "../lib/rust-engine-client";
+import {
+    readExitSignalDataIdentityDigestCount,
+    resetExitSignalDataIdentityDigestCount,
+} from "../lib/backtest-executor";
+import {
+    registerLoadedBuiltInStrategy,
+    unregisterLoadedBuiltInStrategy,
+} from "../lib/strategies/built-in-catalog";
 
 function makeCandles(closes: number[]): OHLCVData[] {
     return closes.map((close, index) => ({
@@ -709,6 +717,109 @@ describe("Asset Opportunity runner", () => {
         expect(output.outcomes[0]!.diagnostics?.freshEntryRechecks).to.equal(1);
         expect(output.outcomes[0]!.diagnostics?.timingsMs.freshEntryRechecks).to.be.lessThan(5);
         expect(executeCalls, "retained primary signals avoid the redundant fresh recheck").to.equal(1);
+    });
+
+    it("fingerprints the shortened holdout recheck window once across candidates", async () => {
+        // signal_close rechecks execute for every top-K candidate on the
+        // holdout-shortened visible window. With an Exit Strategy Override
+        // active, the executor must receive ONE memoized content identity for
+        // that immutable replay window — not rehash it per candidate — while
+        // the exit-signal cache still collapses exit generation to one pass.
+        const exitKey = "ao_holdout_identity_exit";
+        let exitExecuteCalls = 0;
+        registerLoadedBuiltInStrategy(exitKey, {
+            name: "Holdout Identity Exit",
+            description: "Never exits; counts exit-signal generations.",
+            defaultParams: { hold: 1 },
+            paramLabels: { hold: "Hold" },
+            execute: () => {
+                exitExecuteCalls += 1;
+                return [];
+            },
+        } as Strategy);
+        try {
+            const data = makeCandles([100, 101, 102, 103, 104, 105, 106, 107, 108, 109]);
+            const exitSignalCache = new Map();
+            resetExitSignalDataIdentityDigestCount();
+            const output = await runAssetOpportunitySearch(makeInput({
+                options: makeOptions({
+                    topN: 3,
+                    assetOpportunity: {
+                        symbols: ["HOLDOUT_IDENTITY"],
+                        candidatePoolSize: 3,
+                        minFreshSupport: 1,
+                        oosIgnoreLastBars: 2,
+                    },
+                }),
+                selectedStrategy: {
+                    key: "holdout_identity_entry",
+                    name: "Holdout Identity Entry",
+                    strategy: {
+                        name: "Holdout Identity Entry",
+                        description: "enters on the latest visible bar",
+                        defaultParams: { variant: 0 },
+                        paramLabels: { variant: "Variant" },
+                        execute(data) {
+                            const latest = data[data.length - 1];
+                            return latest ? [{ time: latest.time, type: "buy", price: latest.close }] : [];
+                        },
+                    },
+                },
+                generateParamSets: () => [{ variant: 1 }, { variant: 2 }, { variant: 3 }],
+                exitStrategyCandidates: [{
+                    key: exitKey,
+                    name: "Holdout Identity Exit",
+                    strategy: {
+                        name: "Holdout Identity Exit",
+                        description: "registered exit override",
+                        defaultParams: { hold: 1 },
+                        paramLabels: { hold: "Hold" },
+                        execute: () => {
+                            exitExecuteCalls += 1;
+                            return [];
+                        },
+                    },
+                }],
+                exitSignalCache,
+                assets: [{ symbol: "HOLDOUT_IDENTITY", data }],
+                runIsSearch: async (args) => {
+                    const strategy = args.selectedStrategies[0]!.strategy;
+                    const paramSets = args.generateParamSets(strategy.defaultParams, args.options);
+                    const results: FinderResult[] = paramSets.map((params) => {
+                        const signals = strategy.execute(args.ohlcvData, params);
+                        const backtest = runBacktestForAssetTest(args.ohlcvData, signals, args.settings);
+                        return {
+                            key: args.selectedStrategies[0]!.key,
+                            name: args.selectedStrategies[0]!.name,
+                            params,
+                            result: backtest,
+                            selectionResult: backtest,
+                            endpointAdjusted: false,
+                            endpointRemovedTrades: 0,
+                            // Real IS searches attach the sampled exit
+                            // override to each candidate so rechecks replay
+                            // it through the executor's exit resolution.
+                            exitStrategyKey: exitKey,
+                            exitStrategyParams: { hold: 1 },
+                        } satisfies FinderResult;
+                    });
+                    results.sort((a, b) => b.result.netProfit - a.result.netProfit);
+                    return {
+                        results: results.slice(0, args.options.topN),
+                        totalCandidatesEvaluated: paramSets.length,
+                    };
+                },
+            }), makeCallbacks());
+
+            expect(output.outcomes[0]!.diagnostics?.candidateEvaluationsCompleted).to.equal(3);
+            // One memoized digest for the shared holdout replay window — not
+            // one per candidate — and one exit-signal generation for the
+            // shared exit parameters.
+            expect(readExitSignalDataIdentityDigestCount()).to.equal(1);
+            expect(exitExecuteCalls).to.equal(1);
+        } finally {
+            unregisterLoadedBuiltInStrategy(exitKey);
+        }
     });
 
     it("reserves the real latest candle before slicing and exposes OOS evidence", async () => {
