@@ -11,6 +11,7 @@
  */
 import { expect } from "chai";
 import { describe, it, before, after, beforeEach } from "node:test";
+import assert from "node:assert/strict";
 import { state } from "../lib/state";
 import { backtestService } from "../lib/backtest-service";
 import { strategyRegistry } from "../strategyRegistry";
@@ -30,6 +31,7 @@ import {
     setCurrentInterval,
     setCurrentSymbol,
     setCurrentStrategyKey,
+    setBinanceMarketType,
     setBlockRange,
 } from "../lib/state-actions";
 import { waitFor } from "./helpers/wait-for";
@@ -54,14 +56,13 @@ const BTC = "BTCUSDT";
 function makeSpecStrategy(): Strategy {
     return {
         name: "Lifecycle Spec Strategy",
-        description: "Buys at bar 3 and sells at bar 10 with bare signal shapes.",
+        description: "Buys at bar 3 with bare signal shapes and holds to end of data.",
         defaultParams: {},
         paramLabels: {},
         execute: (data) => {
             const signals: Signal[] = [];
             if (data.length > 10) {
                 signals.push({ time: data[3]!.time, type: "buy", price: data[3]!.close });
-                signals.push({ time: data[10]!.time, type: "sell", price: data[10]!.close });
             }
             return signals;
         },
@@ -70,9 +71,11 @@ function makeSpecStrategy(): Strategy {
 }
 
 function makeCandles(): OHLCVData[] {
-    // Enough bars for the fixture entries/exits and real warm-ups.
+    // Enough bars for the fixture entries/exits and real warm-ups. The
+    // quadratic close path makes head evictions change trade fills, so a
+    // mid-run eviction genuinely changes the computed result.
     return Array.from({ length: 60 }, (_, index) => {
-        const close = 100 + index * 0.1;
+        const close = 100 + index * index * 0.01;
         return {
             time: (1700000000 + index * 300) as Time,
             open: close - 0.05,
@@ -148,7 +151,10 @@ before(() => {
     (globalThis as any).HTMLInputElement = class {};
     (globalThis as any).HTMLSelectElement = class {};
     const elsById = new Map<string, any>();
+    (globalThis as any).__specElements = elsById;
     const fakeEl: any = () => {
+        const classes = new Set<string>();
+        const attrs = new Map<string, string>();
         const element: any = {
             children: [],
             style: {},
@@ -156,10 +162,18 @@ before(() => {
             checked: false,
             disabled: false,
             classList: {
-                toggle() {}, add() {}, remove() {},
+                add: (...tokens: string[]) => { for (const t of tokens) classes.add(t); },
+                remove: (...tokens: string[]) => { for (const t of tokens) classes.delete(t); },
+                toggle: (token: string, force?: boolean) => {
+                    const next = force === undefined ? !classes.has(token) : force;
+                    if (next) classes.add(token); else classes.delete(token);
+                    return next;
+                },
+                contains: (token: string) => classes.has(token),
             },
+            setAttribute: (name: string, value: string) => { attrs.set(name, String(value)); },
+            getAttribute: (name: string) => attrs.get(name) ?? null,
             appendChild(child: any) { this.children.push(child); return child; },
-            setAttribute() {},
         };
         return element;
     };
@@ -501,6 +515,225 @@ describe("backtest service publication ownership", () => {
             health2.resolve(new Response("{}", { status: 404 }));
             expect(await previewPromise2).to.equal(null);
             expect(state.currentBacktestResult!.netProfit).to.equal(9);
+        } finally {
+            fetcher.restore();
+        }
+    });
+
+    it("executes against the captured request when live candles mutate mid-run", async () => {
+        const fetcher = makeDeferredFetch();
+        fetcher.install();
+        try {
+            await backtestService.runCurrentBacktest();
+            const controlProfit = state.currentBacktestResult!.netProfit;
+            expect(controlProfit).to.not.equal(0);
+            clearBacktestResults("spec_captured_execution");
+
+            const liveTailBar = (): OHLCVData => {
+                const last = state.ohlcvData[state.ohlcvData.length - 1]!;
+                return {
+                    time: ((last.time as number) + 300) as Time,
+                    open: 140,
+                    high: 260,
+                    low: 130,
+                    close: 250,
+                    volume: 5,
+                };
+            };
+            const mutations: Array<{ name: string; mutate: () => void }> = [
+                {
+                    name: "append",
+                    mutate: () => {
+                        state.ohlcvData.push(liveTailBar());
+                    },
+                },
+                {
+                    name: "evict-and-append",
+                    mutate: () => {
+                        state.ohlcvData.splice(0, 2);
+                        state.ohlcvData.push(liveTailBar());
+                    },
+                },
+                {
+                    name: "replace",
+                    mutate: () => {
+                        const replaced = makeCandles().map((candle) => ({
+                            ...candle,
+                            close: candle.close * 10,
+                            open: candle.open * 10,
+                            high: candle.high * 10,
+                            low: candle.low * 10,
+                        }));
+                        state.ohlcvData = replaced;
+                    },
+                },
+            ];
+
+            for (const { name, mutate } of mutations) {
+                state.ohlcvData = makeCandles();
+                clearBacktestResults("spec_captured_execution");
+                resetEngineHealth();
+                const health = deferNextHealth(fetcher);
+                const run = backtestService.runCurrentBacktest();
+                await waitFor(() => fetcher.requests.some((url) => url.includes("/api/health")), 5_000, `health fetch for ${name}`);
+
+                mutate();
+                health.resolve(new Response("{}", { status: 404 }));
+                await run;
+
+                // Execution, snapshot, and fingerprint describe the captured
+                // request, not the mid-run-mutated live dataset.
+                expect(state.currentBacktestResult, `${name}: published`).to.not.equal(null);
+                expect(state.currentBacktestResult!.netProfit, `${name}: captured execution`).to.equal(controlProfit);
+
+                // Vacuity guard: the mutation is outcome-relevant, so a run
+                // STARTED on the mutated dataset computes a different result.
+                await backtestService.runCurrentBacktest();
+                const mutatedProfit = state.currentBacktestResult!.netProfit;
+                expect(mutatedProfit, `${name}: mutation must change the result`).to.not.equal(controlProfit);
+            }
+        } finally {
+            fetcher.restore();
+        }
+    });
+
+    it("releases the loading UI when the selected strategy is missing", async () => {
+        setCurrentStrategyKey("definitely_missing_strategy");
+        await backtestService.runCurrentBacktest();
+
+        const elements = (globalThis as any).__specElements as Map<string, any>;
+        const button = elements.get("runBacktest");
+        assert.equal(button.disabled, false, "run button must be re-enabled");
+        assert.equal(button.getAttribute("aria-busy"), "false", "aria-busy must clear");
+        assert.equal(button.classList.contains("is-loading"), false, "is-loading must clear");
+        const container = elements.get("progressContainer");
+        assert.equal(container.classList.contains("active"), false, "progress must deactivate");
+        assert.equal(elements.get("progressFill").style.width, "0%", "progress fill must reset");
+    });
+
+    it("releases the loading UI on pre-execution failures without disturbing newer runs", async () => {
+        const service = backtestService as any;
+        const original = service.getBacktestSettings;
+        service.getBacktestSettings = () => {
+            throw new Error("settings boom");
+        };
+        try {
+            await assert.rejects(
+                backtestService.runCurrentBacktest(),
+                /settings boom/,
+            );
+        } finally {
+            service.getBacktestSettings = original;
+        }
+
+        const elements = (globalThis as any).__specElements as Map<string, any>;
+        const button = elements.get("runBacktest");
+        assert.equal(button.disabled, false, "run button must be re-enabled");
+        assert.equal(button.getAttribute("aria-busy"), "false", "aria-busy must clear");
+        assert.equal(button.classList.contains("is-loading"), false, "is-loading must clear");
+        const container = elements.get("progressContainer");
+        assert.equal(container.classList.contains("active"), false, "progress must deactivate");
+
+        // A newer run still works and finishes cleanly afterwards.
+        await backtestService.runCurrentBacktest();
+        assert.notEqual(state.currentBacktestResult, null);
+    });
+
+    it("supersedes previews through shared publication ownership", async () => {
+        const fetcher = makeDeferredFetch();
+        fetcher.install();
+        try {
+            await backtestService.runCurrentBacktest();
+            expect(state.currentBacktestResult).to.not.equal(null);
+
+            const installRustSnapshot = () => {
+                setCurrentUiBacktestEndpointSnapshot(createEndpointCopySnapshot({
+                    symbol: BTC,
+                    interval: "5m",
+                    strategyKey: SPEC_STRATEGY_KEY,
+                    strategyParams: {},
+                    backtestSettings: { executionModel: "next_open", tradeDirection: "long" },
+                    capitalSettings: {
+                        initialCapital: 10_000, positionSize: 100, commission: 0,
+                        sizingMode: "percent", fixedTradeAmount: 0,
+                    },
+                    engineUsed: "rust",
+                    nowSec: Math.floor(Date.now() / 1000),
+                    blockRange: null,
+                    datasetForFingerprint: state.ohlcvData,
+                }));
+                setCurrentUiBacktestEndpointCandles(state.ohlcvData);
+            };
+            const healthFetches = () => fetcher.requests.filter((url) => url.includes("/api/health")).length;
+
+            // Strategy change mid-preview: the previously selected strategy's
+            // result must not publish after the selection changed.
+            installRustSnapshot();
+            resetEngineHealth();
+            let health = deferNextHealth(fetcher);
+            let preview = backtestService.runLatestUiBacktestEndpointPreview();
+            await waitFor(() => healthFetches() >= 2, 5_000, "preview health (strategy change)");
+            setCurrentStrategyKey("some_other_strategy");
+            health.resolve(new Response("{}", { status: 404 }));
+            assert.equal(await preview, null, "strategy change must supersede the preview");
+            setCurrentStrategyKey(SPEC_STRATEGY_KEY);
+
+            // Change-away-and-back mid-preview.
+            installRustSnapshot();
+            resetEngineHealth();
+            health = deferNextHealth(fetcher);
+            preview = backtestService.runLatestUiBacktestEndpointPreview();
+            await waitFor(() => healthFetches() >= 3, 5_000, "preview health (away-and-back)");
+            setCurrentSymbol("ETHUSDT");
+            setCurrentSymbol(BTC);
+            health.resolve(new Response("{}", { status: 404 }));
+            assert.equal(await preview, null, "change-away-and-back must supersede the preview");
+
+            // Block-range change mid-preview.
+            installRustSnapshot();
+            resetEngineHealth();
+            health = deferNextHealth(fetcher);
+            preview = backtestService.runLatestUiBacktestEndpointPreview();
+            await waitFor(() => healthFetches() >= 4, 5_000, "preview health (block range)");
+            setBlockRange({ from: 1700000000, to: 1700003000 });
+            health.resolve(new Response("{}", { status: 404 }));
+            assert.equal(await preview, null, "block-range change must supersede the preview");
+            setBlockRange(null);
+
+            // Market-type change mid-preview.
+            installRustSnapshot();
+            resetEngineHealth();
+            health = deferNextHealth(fetcher);
+            preview = backtestService.runLatestUiBacktestEndpointPreview();
+            await waitFor(() => healthFetches() >= 5, 5_000, "preview health (market type)");
+            setBinanceMarketType("futures");
+            health.resolve(new Response("{}", { status: 404 }));
+            assert.equal(await preview, null, "market-type change must supersede the preview");
+            setBinanceMarketType("spot");
+
+            // A newer interactive request supersedes the preview as soon as it
+            // captures — before the newer run commits anything.
+            installRustSnapshot();
+            resetEngineHealth();
+            health = deferNextHealth(fetcher);
+            preview = backtestService.runLatestUiBacktestEndpointPreview();
+            await waitFor(() => healthFetches() >= 6, 5_000, "preview health (newer run)");
+            const newerRun = backtestService.runCurrentBacktest();
+            health.resolve(new Response("{}", { status: 404 }));
+            assert.equal(await preview, null, "a newer captured request must supersede the preview");
+            await newerRun;
+            assert.equal(state.currentBacktestResultSource, "backtest", "the newer run publishes");
+
+            // A newer preview supersedes an older preview.
+            installRustSnapshot();
+            resetEngineHealth();
+            health = deferNextHealth(fetcher);
+            const olderPreview = backtestService.runLatestUiBacktestEndpointPreview();
+            await waitFor(() => healthFetches() >= 7, 5_000, "preview health (older of two)");
+            const newerPreview = backtestService.runLatestUiBacktestEndpointPreview();
+            health.resolve(new Response("{}", { status: 404 }));
+            assert.equal(await olderPreview, null, "the older preview must be superseded");
+            assert.notEqual(await newerPreview, null, "the newer preview publishes");
         } finally {
             fetcher.restore();
         }

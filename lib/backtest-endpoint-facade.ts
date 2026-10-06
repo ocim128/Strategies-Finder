@@ -1,4 +1,10 @@
 import { state } from "./state";
+import { debugLogger } from "./debug-logger";
+import {
+    beginBacktestPublicationRequest,
+    captureBacktestPublicationContext,
+    ownsBacktestPublication,
+} from "./state-actions";
 import type { OHLCVData } from "./strategies/index";
 import type { BacktestResult, StrategyParams, BacktestSettings } from "./strategies/index";
 import type { CapitalSettings } from "./types/backtest";
@@ -105,14 +111,43 @@ export async function runLatestUiBacktestEndpointPreview(): Promise<{
     if (!snapshot || !candles || !currentResult || !canUseCurrentChartForEndpointCopy(snapshot)) {
         return null;
     }
-    const endpointRun = await executeBacktest({
-        ...buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles),
-    });
 
-    // Ownership check after the await: a result clear, a newer manual run,
-    // or a competing preview invalidates this preview's publication even if
-    // its own cancellation never arrived.
-    if (state.currentBacktestResult !== currentResult || !canUseCurrentChartForEndpointCopy(snapshot)) {
+    // Previews own publication through the same shared context as
+    // interactive runs. Beginning the request advances the revision, so this
+    // preview supersedes older in-flight requests — and any newer request
+    // (interactive run or preview) supersedes this one before it commits.
+    const ownership = {
+        ...captureBacktestPublicationContext(),
+        publicationRevision: beginBacktestPublicationRequest("capture_endpoint_preview"),
+    };
+
+    let endpointRun: Awaited<ReturnType<typeof executeBacktest>>;
+    try {
+        endpointRun = await executeBacktest({
+            ...buildBacktestEndpointExecutorRequestFromSnapshot(snapshot, candles),
+        });
+    } catch (error) {
+        // A late failure must not surface from a preview that a newer request
+        // already superseded; the newer request owns the UI and the result.
+        if (!ownsBacktestPublication(ownership)) {
+            debugLogger.event("endpoint_preview.stale_failure_ignored", {
+                strategyKey: snapshot.strategyKey,
+                error: error instanceof Error ? error.message : String(error),
+            });
+            return null;
+        }
+        throw error;
+    }
+
+    // Ownership check after the await: a result clear, a newer manual run or
+    // preview (revision), or any live-context change — strategy, market
+    // type, block range, symbol/interval — invalidates this preview's
+    // publication even if its own cancellation never arrived.
+    if (
+        !ownsBacktestPublication(ownership)
+        || state.currentBacktestResult !== currentResult
+        || !canUseCurrentChartForEndpointCopy(snapshot)
+    ) {
         return null;
     }
 

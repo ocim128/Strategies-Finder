@@ -140,6 +140,65 @@ export function advanceBacktestPublicationRevision(reason: string): number {
     return backtestPublicationRevision;
 }
 
+/**
+ * Begin a new publication-owning request (interactive run or endpoint
+ * preview). Advancing at capture time means a newer request supersedes every
+ * older in-flight request even before the newer one commits its result.
+ */
+export function beginBacktestPublicationRequest(reason: string): number {
+    return advanceBacktestPublicationRevision(reason);
+}
+
+export type BacktestPublicationContext = {
+    binanceMarketType: BinanceMarketType;
+    symbol: string;
+    interval: string;
+    strategyKey: string;
+    blockRange: { from: number; to: number } | null;
+    publicationRevision: number;
+};
+
+/**
+ * Snapshot the live publication-ownership context. Callers that begin a new
+ * request must advance the revision first (beginBacktestPublicationRequest)
+ * so the snapshot supersedes older in-flight requests.
+ */
+export function captureBacktestPublicationContext(): BacktestPublicationContext {
+    return {
+        binanceMarketType: state.binanceMarketType,
+        symbol: state.currentSymbol,
+        interval: state.currentInterval,
+        strategyKey: state.currentStrategyKey,
+        blockRange: state.blockRange ? { ...state.blockRange } : null,
+        publicationRevision: getBacktestPublicationRevision(),
+    };
+}
+
+function blockRangeMatches(
+    current: { from: number; to: number } | null,
+    captured: { from: number; to: number } | null
+): boolean {
+    if (current === captured) return true;
+    if (!current || !captured) return false;
+    return current.from === captured.from && current.to === captured.to;
+}
+
+/**
+ * Whether a request captured with this context may still publish: the
+ * publication revision must be unchanged and the live context must still
+ * describe the captured request. Covers change-away-and-back (the revision
+ * advanced while away) plus direct strategy, market-type, and block-range
+ * changes.
+ */
+export function ownsBacktestPublication(context: BacktestPublicationContext): boolean {
+    if (getBacktestPublicationRevision() !== context.publicationRevision) return false;
+    return state.currentSymbol === context.symbol
+        && state.currentInterval === context.interval
+        && state.currentStrategyKey === context.strategyKey
+        && state.binanceMarketType === context.binanceMarketType
+        && blockRangeMatches(state.blockRange, context.blockRange);
+}
+
 export function setStrategyTimeframeSettings(settings: {
     enabled?: boolean;
     minutes?: number;

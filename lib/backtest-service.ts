@@ -29,7 +29,11 @@ import {
     updateDomBacktestRunProgress,
     type BacktestRunHandle,
 } from "./backtest-run-presenter";
-import { commitBacktestResult, getBacktestPublicationRevision } from "./state-actions";
+import {
+    beginBacktestPublicationRequest,
+    commitBacktestResult,
+    ownsBacktestPublication,
+} from "./state-actions";
 import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
 import {
     getCapitalSettings as readCapitalSettings,
@@ -100,29 +104,15 @@ export class BacktestService {
         return runId === this.interactiveRunSequence;
     }
 
-    private blockRangeMatchesCaptured(
-        current: { from: number; to: number } | null,
-        captured: { from: number; to: number } | null
-    ): boolean {
-        if (current === captured) return true;
-        if (!current || !captured) return false;
-        return current.from === captured.from && current.to === captured.to;
-    }
-
     /**
      * Whether this run may still publish: it must be the newest interactive
-     * run, the publication revision must be unchanged since capture, and the
-     * live context must still describe the captured request. Revision
-     * advancement also covers change-away-and-back (BTC -> ETH -> BTC).
+     * run, and the shared publication ownership must be unchanged since
+     * capture (revision, market, symbol, interval, strategy, block range).
+     * Advancing the revision at capture time also lets a newer request
+     * supersede this one before the newer run commits.
      */
     private ownsPublication(runId: number, captured: CapturedBacktestRequest): boolean {
-        if (!this.isLatestInteractiveRun(runId)) return false;
-        if (getBacktestPublicationRevision() !== captured.publicationRevision) return false;
-        return state.currentSymbol === captured.symbol
-            && state.currentInterval === captured.interval
-            && state.currentStrategyKey === captured.strategyKey
-            && state.binanceMarketType === captured.binanceMarketType
-            && this.blockRangeMatchesCaptured(state.blockRange, captured.blockRange);
+        return this.isLatestInteractiveRun(runId) && ownsBacktestPublication(captured);
     }
 
     public async runCurrentBacktest(options: RunCurrentBacktestOptions = {}) {
@@ -138,50 +128,58 @@ export class BacktestService {
         });
         const runUi = createDomBacktestRunHandle('runBacktest', 'Running backtest...', true);
         let shouldDelayHide = false;
-        const sourceStrategyKey = state.currentStrategyKey;
-        const strategy = strategyRegistry.get(sourceStrategyKey);
-        if (!strategy) {
-            debugLogger.error("backtest.strategy_not_found", { strategyKey: sourceStrategyKey });
-            runUi.setStatus('Strategy not found');
-            return;
-        }
-
-        // Capture the whole request before the first UI delay. Everything the
-        // publication decision needs is frozen here; the run itself executes
-        // against the live dataset so raw tick mutations stay visible to it.
-        const params = paramManager.getValues(strategy);
-        const capitalSettings = this.getCapitalSettings();
-        const settings = this.getBacktestSettings();
-        const sourceData = options.dataOverride ?? state.ohlcvData;
-        const capturedRequest: CapturedBacktestRequest = {
-            binanceMarketType: state.binanceMarketType,
-            symbol: state.currentSymbol,
-            interval: state.currentInterval,
-            strategyKey: sourceStrategyKey,
-            params: { ...params },
-            settings: { ...settings },
-            capitalSettings: {
-                ...capitalSettings,
-                advancedSizing: capitalSettings.advancedSizing ? { ...capitalSettings.advancedSizing } : undefined,
-            },
-            blockRange: state.blockRange ? { ...state.blockRange } : null,
-            nowSec: Math.floor(Date.now() / 1000),
-            candles: sourceData.map((candle) => ({ ...candle })),
-            publicationRevision: getBacktestPublicationRevision(),
-        };
-
+        // Set once the request is fully captured; null means a failure before
+        // execution started (missing strategy, capture error), which the
+        // finally below still cleans up for this run's own handle.
+        let capturedRequest: CapturedBacktestRequest | null = null;
         try {
+            const sourceStrategyKey = state.currentStrategyKey;
+            const strategy = strategyRegistry.get(sourceStrategyKey);
+            if (!strategy) {
+                debugLogger.error("backtest.strategy_not_found", { strategyKey: sourceStrategyKey });
+                runUi.setStatus('Strategy not found');
+                return;
+            }
+
+            // Capture the whole request before the first UI delay. Execution,
+            // the endpoint snapshot, and the dataset fingerprint all describe
+            // exactly this captured request: the live array keeps mutating
+            // (ticks, appends, rolling-window evictions) after capture, so
+            // running against it would silently change the computed result.
+            const params = paramManager.getValues(strategy);
+            const capitalSettings = this.getCapitalSettings();
+            const settings = this.getBacktestSettings();
+            const sourceData = options.dataOverride ?? state.ohlcvData;
+            capturedRequest = {
+                binanceMarketType: state.binanceMarketType,
+                symbol: state.currentSymbol,
+                interval: state.currentInterval,
+                strategyKey: sourceStrategyKey,
+                params: { ...params },
+                settings: { ...settings },
+                capitalSettings: {
+                    ...capitalSettings,
+                    advancedSizing: capitalSettings.advancedSizing ? { ...capitalSettings.advancedSizing } : undefined,
+                },
+                blockRange: state.blockRange ? { ...state.blockRange } : null,
+                nowSec: Math.floor(Date.now() / 1000),
+                candles: sourceData.map((candle) => ({ ...candle })),
+                // Advancing at capture supersedes older in-flight requests
+                // (interactive runs and endpoint previews alike).
+                publicationRevision: beginBacktestPublicationRequest('capture_interactive_backtest'),
+            };
+
             await updateDomBacktestRunProgress(runUi, '20%', 'Calculating indicators...', 100);
             await updateDomBacktestRunProgress(runUi, '40%', 'Generating signals...', 100);
 
             const { result, engineUsed, requestContext } = await this.executeBacktest(
                 runUi,
                 strategy,
-                params,
-                settings,
-                capitalSettings,
+                capturedRequest.params,
+                capturedRequest.settings,
+                capturedRequest.capitalSettings,
                 false,
-                sourceData,
+                capturedRequest.candles,
                 capturedRequest.symbol,
                 capturedRequest.interval,
                 sourceStrategyKey,
@@ -223,16 +221,18 @@ export class BacktestService {
             // Enable replay button if there are results
             setReplayStartButtonDisabled(result.totalTrades === 0);
         } catch (error) {
-            if (!this.ownsPublication(runId, capturedRequest)) {
+            const stale = !this.isLatestInteractiveRun(runId)
+                || (capturedRequest !== null && !this.ownsPublication(runId, capturedRequest));
+            if (stale) {
                 debugLogger.event('backtest.stale_ignored', {
-                    strategy: sourceStrategyKey,
+                    strategy: capturedRequest?.strategyKey ?? state.currentStrategyKey,
                     runId,
                     phase: 'error',
                 });
                 return;
             }
             debugLogger.error('backtest.error', {
-                strategy: sourceStrategyKey,
+                strategy: capturedRequest?.strategyKey ?? state.currentStrategyKey,
                 error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
                 durationMs: Date.now() - startedAt,
             });
@@ -244,9 +244,9 @@ export class BacktestService {
             if (shouldDelayHide && this.isLatestInteractiveRun(runId)) {
                 await delayBacktestUi(500);
             }
-            // Keep presenter finish/cleanup for obsolete runs so the shared
-            // run indicator never sticks; only the publication/UI changes are
-            // gated by ownership.
+            // Every exit path — including the missing-strategy return and
+            // pre-execution failures — releases this run's own loading
+            // handle; the presenter token keeps newer runs undisturbed.
             runUi.finish();
         }
     }
