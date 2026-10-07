@@ -16,10 +16,18 @@ use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 const MAX_DATA_CACHE_ENTRIES: usize = 512;
 const MAX_DATA_CACHE_BARS: usize = 16_000_000;
-/// Conservative starting admission bound for CPU-heavy routes. The final
-/// default should come from concurrent Finder/request measurements; the
+/// Conservative starting admission bound for CPU-heavy routes. This is an
+/// evaluation default, not a validated product setting: before rollout,
+/// concurrent Finder runs must compare limits of 2 and 4 against the
+/// pre-admission behavior, measuring total duration, TypeScript fallback
+/// count, repeated cache uploads, and peak RSS. The
 /// `RUST_ENGINE_MAX_IN_FLIGHT` setting overrides it at startup.
 pub const DEFAULT_MAX_IN_FLIGHT: usize = 2;
+/// Per-request identifier assigned by the admission middleware and carried
+/// into request spans so concurrent requests have distinguishable log
+/// records, including rejections.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestId(pub u64);
 // ============================================================================
 // Data Cache Types
 // ============================================================================
@@ -36,6 +44,9 @@ pub struct AppState {
     cache_access_counter: Arc<AtomicU64>,
     /// Admission bound shared by every CPU-heavy route.
     pub max_in_flight: Arc<Semaphore>,
+    /// The configured admission limit, kept for structured diagnostics.
+    max_in_flight_limit: usize,
+    request_counter: Arc<AtomicU64>,
 }
 impl AppState {
     pub fn new(max_in_flight: usize) -> Self {
@@ -43,7 +54,17 @@ impl AppState {
             data_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_access_counter: Arc::new(AtomicU64::new(0)),
             max_in_flight: Arc::new(Semaphore::new(max_in_flight)),
+            max_in_flight_limit: max_in_flight,
+            request_counter: Arc::new(AtomicU64::new(0)),
         }
+    }
+    /// The configured admission limit, for diagnostic events.
+    pub fn max_in_flight_limit(&self) -> usize {
+        self.max_in_flight_limit
+    }
+    /// Monotonic per-process request identifier for log correlation.
+    pub fn next_request_id(&self) -> u64 {
+        self.request_counter.fetch_add(1, Ordering::Relaxed) + 1
     }
 }
 impl Default for AppState {
@@ -165,6 +186,7 @@ fn reject_unsupported_packed_signals(
 /// Handle backtest request
 pub async fn backtest_handler(
     Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+    request_id: Option<Extension<RequestId>>,
     Json(req): Json<BacktestRequest>,
 ) -> Result<Json<BacktestResponse>, (StatusCode, String)> {
     // Handler elapsed time starts immediately after successful JSON
@@ -173,6 +195,7 @@ pub async fn backtest_handler(
     let start = Instant::now();
     let span = tracing::info_span!(
         "backtest_single",
+        request_id = request_id.map(|Extension(id)| id.0).unwrap_or(0),
         route = "/api/backtest",
         bars = req.data.len(),
         compact = req.compact,
@@ -180,7 +203,7 @@ pub async fn backtest_handler(
         skip_sharpe_ratio = req.skip_sharpe_ratio,
     );
     let completion_span = span.clone();
-    let ((result, market_prep_ms, simulate_ms), pool_wait_ms) = run_on_blocking_pool(move || {
+    let worker = run_on_blocking_pool(move || {
         // Retain admission capacity through computation: a disconnected
         // client must not free the slot while CPU work still runs.
         let _admission_permit = admission_permit;
@@ -208,7 +231,19 @@ pub async fn backtest_handler(
         let simulate_ms = elapsed_ms_since(simulate_started);
         (result, market_prep_ms, simulate_ms)
     })
-    .await?;
+    .await;
+    let ((result, market_prep_ms, simulate_ms), pool_wait_ms) = match worker {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(
+                parent: &completion_span,
+                status = error.0.as_u16(),
+                error = %error.1,
+                "blocking worker failed"
+            );
+            return Err(error);
+        }
+    };
     let processing_time_ms = elapsed_ms_since(start);
     let timings = WorkerStageTimings {
         pool_wait_ms,
@@ -231,14 +266,12 @@ pub async fn backtest_handler(
 /// Handle batch backtest request - runs multiple backtests in parallel
 pub async fn batch_backtest_handler(
     Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+    request_id: Option<Extension<RequestId>>,
     Json(req): Json<BatchBacktestRequest>,
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
-    reject_unsupported_packed_signals(&req.items)?;
-    // The clock covers pool wait and the whole simulation, matching the
-    // single and cached-batch endpoints.
-    let start = Instant::now();
     let span = tracing::info_span!(
         "backtest_batch",
+        request_id = request_id.map(|Extension(id)| id.0).unwrap_or(0),
         route = "/api/backtest/batch",
         bars = req.data.len(),
         items = req.items.len(),
@@ -246,53 +279,77 @@ pub async fn batch_backtest_handler(
         skip_drawdown = req.skip_drawdown,
         skip_sharpe_ratio = req.skip_sharpe_ratio,
     );
+    if let Err(error) = reject_unsupported_packed_signals(&req.items) {
+        tracing::warn!(
+            parent: &span,
+            status = error.0.as_u16(),
+            error = %error.1,
+            "batch rejected"
+        );
+        return Err(error);
+    }
+    // The clock covers pool wait and the whole simulation, matching the
+    // single and cached-batch endpoints. Validation above is intentionally
+    // outside the measurement.
+    let start = Instant::now();
     let completion_span = span.clone();
-    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
-        run_on_blocking_pool(move || {
-            let _admission_permit = admission_permit;
-            let _entered = span.enter();
-            let prep_started = Instant::now();
-            let market_series = build_market_series(&req.data);
-            let market_prep_ms = elapsed_ms_since(prep_started);
-            let simulate_started = Instant::now();
-            // Run all backtests in parallel using rayon.
-            let results: Vec<BatchBacktestResultItem> = req
-                .items
-                .par_iter()
-                .map(|item| {
-                    // Use item-specific settings if provided, otherwise use base settings
-                    let settings = item
-                        .settings
-                        .clone()
-                        .unwrap_or_else(|| req.base_settings.clone());
-                    let result = run_backtest_with_market_series_options(
-                        &req.data,
-                        &item.signals,
-                        req.initial_capital,
-                        req.position_size_percent,
-                        req.commission_percent,
-                        &settings,
-                        Some(&req.sizing),
-                        req.compact,
-                        false,
-                        req.skip_drawdown,
-                        req.skip_sharpe_ratio,
-                        &market_series,
-                    );
-                    BatchBacktestResultItem {
-                        id: item.id.clone(),
-                        result,
-                    }
-                })
-                .collect();
-            let simulate_ms = elapsed_ms_since(simulate_started);
-            let response = BatchBacktestResponse {
-                results,
-                processing_time_ms: 0,
-            };
-            (response, market_prep_ms, simulate_ms)
-        })
-        .await?;
+    let worker = run_on_blocking_pool(move || {
+        let _admission_permit = admission_permit;
+        let _entered = span.enter();
+        let prep_started = Instant::now();
+        let market_series = build_market_series(&req.data);
+        let market_prep_ms = elapsed_ms_since(prep_started);
+        let simulate_started = Instant::now();
+        // Run all backtests in parallel using rayon.
+        let results: Vec<BatchBacktestResultItem> = req
+            .items
+            .par_iter()
+            .map(|item| {
+                // Use item-specific settings if provided, otherwise use base settings
+                let settings = item
+                    .settings
+                    .clone()
+                    .unwrap_or_else(|| req.base_settings.clone());
+                let result = run_backtest_with_market_series_options(
+                    &req.data,
+                    &item.signals,
+                    req.initial_capital,
+                    req.position_size_percent,
+                    req.commission_percent,
+                    &settings,
+                    Some(&req.sizing),
+                    req.compact,
+                    false,
+                    req.skip_drawdown,
+                    req.skip_sharpe_ratio,
+                    &market_series,
+                );
+                BatchBacktestResultItem {
+                    id: item.id.clone(),
+                    result,
+                }
+            })
+            .collect();
+        let simulate_ms = elapsed_ms_since(simulate_started);
+        let response = BatchBacktestResponse {
+            results,
+            processing_time_ms: 0,
+        };
+        (response, market_prep_ms, simulate_ms)
+    })
+    .await;
+    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) = match worker {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(
+                parent: &completion_span,
+                status = error.0.as_u16(),
+                error = %error.1,
+                "blocking worker failed"
+            );
+            return Err(error);
+        }
+    };
     // The reported batch timing includes the blocking-pool wait, so it is
     // stamped only after the worker completes.
     response.processing_time_ms = elapsed_ms_since(start);
@@ -315,12 +372,14 @@ pub async fn batch_backtest_handler(
 /// This allows sending large datasets once and referencing them by ID
 pub async fn cache_data_handler(
     Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+    request_id: Option<Extension<RequestId>>,
     State(state): State<AppState>,
     Json(req): Json<CacheDataRequest>,
 ) -> Result<Json<CacheDataResponse>, (StatusCode, String)> {
     let start = Instant::now();
     let span = tracing::info_span!(
         "cache_upload",
+        request_id = request_id.map(|Extension(id)| id.0).unwrap_or(0),
         route = "/api/data/cache",
         ordinary_bars = req.data.len(),
         packed = req.data.is_empty(),
@@ -329,7 +388,7 @@ pub async fn cache_data_handler(
     // Selection, packed decoding, and hashing are explicit CPU work over the
     // whole payload; offload them to the blocking pool. The closure owns the
     // request, so large vectors move in instead of being cloned.
-    let ((data, bar_count, cache_id), pool_wait_ms) = run_on_blocking_pool(move || {
+    let worker = run_on_blocking_pool(move || {
         let _admission_permit = admission_permit;
         let _entered = span.enter();
         // The cache ID must distinguish assets with the same time range and
@@ -351,10 +410,23 @@ pub async fn cache_data_handler(
         let bar_count = data.len();
         Ok((data, bar_count, cache_id))
     })
-    .await
+    .await;
     // An inner validation error keeps its 400 status; only a failed worker
     // join becomes the outer 500.
-    .and_then(|(inner, pool_wait_ms)| inner.map(|prepared| (prepared, pool_wait_ms)))?;
+    let worker =
+        worker.and_then(|(inner, pool_wait_ms)| inner.map(|prepared| (prepared, pool_wait_ms)));
+    let ((data, bar_count, cache_id), pool_wait_ms) = match worker {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(
+                parent: &completion_span,
+                status = error.0.as_u16(),
+                error = %error.1,
+                "cache upload worker failed"
+            );
+            return Err(error);
+        }
+    };
     // Store in cache only after decoding finished; no cache lock is held
     // while the payload decodes or hashes.
     {
@@ -452,29 +524,45 @@ fn decode_packed_ohlcv(values: Vec<f64>) -> Result<Vec<OHLCV>, String> {
 /// This is MUCH faster for large datasets as data is only sent once
 pub async fn cached_batch_backtest_handler(
     Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+    request_id: Option<Extension<RequestId>>,
     State(state): State<AppState>,
     Json(req): Json<CachedBatchBacktestRequest>,
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
-    // Validate before touching the cache so unsupported requests never hit
-    // simulation or dispatch.
-    reject_unsupported_packed_signals(&req.items)?;
-    // The clock starts before the cache lookup and stops at result assembly,
-    // so cached-lookup and blocking-pool wait are part of the measurement.
-    let start = Instant::now();
     let span = tracing::info_span!(
         "backtest_batch_cached",
+        request_id = request_id.map(|Extension(id)| id.0).unwrap_or(0),
         route = "/api/backtest/batch/cached",
         items = req.items.len(),
         compact = req.compact,
         skip_drawdown = req.skip_drawdown,
         skip_sharpe_ratio = req.skip_sharpe_ratio,
     );
+    // Validate before touching the cache so unsupported requests never hit
+    // simulation or dispatch.
+    if let Err(error) = reject_unsupported_packed_signals(&req.items) {
+        tracing::warn!(
+            parent: &span,
+            status = error.0.as_u16(),
+            error = %error.1,
+            "batch rejected"
+        );
+        return Err(error);
+    }
+    // The clock starts before the cache lookup and stops at result assembly,
+    // so cached-lookup and blocking-pool wait are part of the measurement.
+    let start = Instant::now();
     let completion_span = span.clone();
     // Get cached data
     let data = get_cached_dataset(&state, &req.cache_id).await;
     let data = match data {
         Some(d) => d,
         None => {
+            tracing::warn!(
+                parent: &span,
+                status = StatusCode::NOT_FOUND.as_u16(),
+                cache_id = %req.cache_id,
+                "cache miss"
+            );
             return Err((
                 StatusCode::NOT_FOUND,
                 format!(
@@ -490,51 +578,62 @@ pub async fn cached_batch_backtest_handler(
         "cache hit; dispatching batch simulation"
     );
     let bar_count = data.len();
-    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
-        run_on_blocking_pool(move || {
-            let _admission_permit = admission_permit;
-            let _entered = span.enter();
-            let prep_started = Instant::now();
-            let market_series = build_market_series(data.as_slice());
-            let market_prep_ms = elapsed_ms_since(prep_started);
-            let simulate_started = Instant::now();
-            // Run all backtests in parallel using rayon.
-            let results: Vec<BatchBacktestResultItem> = req
-                .items
-                .par_iter()
-                .map(|item| {
-                    let settings = item
-                        .settings
-                        .clone()
-                        .unwrap_or_else(|| req.base_settings.clone());
-                    let result = run_backtest_with_market_series_options(
-                        data.as_slice(),
-                        &item.signals,
-                        req.initial_capital,
-                        req.position_size_percent,
-                        req.commission_percent,
-                        &settings,
-                        Some(&req.sizing),
-                        req.compact,
-                        false,
-                        req.skip_drawdown,
-                        req.skip_sharpe_ratio,
-                        &market_series,
-                    );
-                    BatchBacktestResultItem {
-                        id: item.id.clone(),
-                        result,
-                    }
-                })
-                .collect();
-            let simulate_ms = elapsed_ms_since(simulate_started);
-            let response = BatchBacktestResponse {
-                results,
-                processing_time_ms: 0,
-            };
-            (response, market_prep_ms, simulate_ms)
-        })
-        .await?;
+    let worker = run_on_blocking_pool(move || {
+        let _admission_permit = admission_permit;
+        let _entered = span.enter();
+        let prep_started = Instant::now();
+        let market_series = build_market_series(data.as_slice());
+        let market_prep_ms = elapsed_ms_since(prep_started);
+        let simulate_started = Instant::now();
+        // Run all backtests in parallel using rayon.
+        let results: Vec<BatchBacktestResultItem> = req
+            .items
+            .par_iter()
+            .map(|item| {
+                let settings = item
+                    .settings
+                    .clone()
+                    .unwrap_or_else(|| req.base_settings.clone());
+                let result = run_backtest_with_market_series_options(
+                    data.as_slice(),
+                    &item.signals,
+                    req.initial_capital,
+                    req.position_size_percent,
+                    req.commission_percent,
+                    &settings,
+                    Some(&req.sizing),
+                    req.compact,
+                    false,
+                    req.skip_drawdown,
+                    req.skip_sharpe_ratio,
+                    &market_series,
+                );
+                BatchBacktestResultItem {
+                    id: item.id.clone(),
+                    result,
+                }
+            })
+            .collect();
+        let simulate_ms = elapsed_ms_since(simulate_started);
+        let response = BatchBacktestResponse {
+            results,
+            processing_time_ms: 0,
+        };
+        (response, market_prep_ms, simulate_ms)
+    })
+    .await;
+    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) = match worker {
+        Ok(value) => value,
+        Err(error) => {
+            tracing::error!(
+                parent: &completion_span,
+                status = error.0.as_u16(),
+                error = %error.1,
+                "blocking worker failed"
+            );
+            return Err(error);
+        }
+    };
     // The reported batch timing includes cache lookup and pool wait, so it is
     // stamped only after the worker completes.
     response.processing_time_ms = elapsed_ms_since(start);
@@ -605,6 +704,7 @@ mod tests {
         let state = AppState::default();
         let full = backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             Json(make_backtest_request(false, false)),
         )
         .await
@@ -616,6 +716,7 @@ mod tests {
 
         let compact = backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             Json(make_backtest_request(true, false)),
         )
         .await
@@ -628,6 +729,7 @@ mod tests {
 
         let compact_with_trades = backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             Json(make_backtest_request(true, true)),
         )
         .await
@@ -645,6 +747,7 @@ mod tests {
         let state = AppState::default();
         let response = batch_backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             Json(BatchBacktestRequest {
                 data: request.data,
                 items: vec![crate::types::BatchBacktestItem {
@@ -686,34 +789,66 @@ mod tests {
     }
 
     #[test]
-    fn pool_wait_attribution_includes_controlled_blocking_queue_time() {
+    fn pool_wait_attribution_uses_handshakes_not_elapsed_thresholds() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .max_blocking_threads(1)
             .build()
             .expect("single-blocking-thread runtime should build");
         runtime.block_on(async {
             // Occupy the only blocking thread with controlled work.
+            let (holder_started_tx, holder_started_rx) = std::sync::mpsc::channel::<()>();
             let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let (holder_done_tx, holder_done_rx) = std::sync::mpsc::channel::<Instant>();
             let holder = tokio::task::spawn_blocking(move || {
-                // Hold the thread briefly even if the release signal wins the
-                // race, so the queued closure below observes a real wait.
-                let deadline = Instant::now() + std::time::Duration::from_millis(30);
-                while Instant::now() < deadline {
-                    if release_rx.try_recv().is_ok() {
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(1));
+                holder_started_tx
+                    .send(())
+                    .expect("holder started signal receiver lives");
+                if release_rx
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .is_err()
+                {
+                    panic!("holder was never released; test cleanup failed");
                 }
+                // Deterministic post-release hold performed by the holder
+                // itself: the queued closure cannot start before this ends,
+                // regardless of scheduler speed.
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                holder_done_tx
+                    .send(Instant::now())
+                    .expect("holder done signal receiver lives");
             });
-            // Queue behind the holder, then release it.
-            let (_value, pool_wait_ms) = run_on_blocking_pool(|| 1_u8)
-                .await
-                .expect("queued worker should complete");
+            holder_started_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("holder must start");
+
+            // Dispatch the queued closure, then release the holder. Two
+            // yields let the runtime register the spawn_blocking dispatch
+            // before the release, so dispatch happens-before release in
+            // program order rather than by elapsed time.
+            let queued = tokio::spawn(run_on_blocking_pool(Instant::now));
+            tokio::task::yield_now().await;
+            tokio::task::yield_now().await;
             let _ = release_tx.send(());
+
+            let (queued_started, pool_wait_ms) = queued
+                .await
+                .expect("queued task joins")
+                .expect("queued worker should complete");
+            let holder_done = holder_done_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("holder done signal");
             holder.await.expect("holder task should join");
 
+            // Ordering proves real queueing: the queued closure can only
+            // start after the holder released its thread.
             assert!(
-                pool_wait_ms >= 5,
+                queued_started >= holder_done,
+                "queued closure must start only after the holder finished"
+            );
+            // The wait covers at least the holder's own post-release hold,
+            // because dispatch happened before the release.
+            assert!(
+                pool_wait_ms >= 3,
                 "queued work must attribute its blocking-pool wait, got {pool_wait_ms}ms"
             );
         });
@@ -723,10 +858,14 @@ mod tests {
     async fn processing_time_fields_use_camel_case_nonnegative_integers() {
         let request = make_backtest_request(false, false);
         let state = AppState::default();
-        let single = backtest_handler(Extension(admission_permit(&state)), Json(request.clone()))
-            .await
-            .expect("single handler should complete")
-            .0;
+        let single = backtest_handler(
+            Extension(admission_permit(&state)),
+            None,
+            Json(request.clone()),
+        )
+        .await
+        .expect("single handler should complete")
+        .0;
         let single_json = serde_json::to_value(BacktestResponse {
             result: single.result,
             processing_time_ms: single.processing_time_ms,
@@ -736,6 +875,7 @@ mod tests {
 
         let batch = batch_backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             Json(BatchBacktestRequest {
                 data: request.data.clone(),
                 items: vec![crate::types::BatchBacktestItem {
@@ -813,6 +953,7 @@ mod tests {
     async fn upload(State(state): State<AppState>, request: CacheDataRequest) -> CacheDataResponse {
         cache_data_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state),
             Json(request),
         )
@@ -883,6 +1024,7 @@ mod tests {
         let state = AppState::default();
         let malformed = cache_data_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state.clone()),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -895,6 +1037,7 @@ mod tests {
 
         let non_finite = cache_data_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state.clone()),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -907,6 +1050,7 @@ mod tests {
 
         let empty = cache_data_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state.clone()),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -919,6 +1063,7 @@ mod tests {
 
         let no_data = cache_data_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -932,25 +1077,25 @@ mod tests {
 
     #[tokio::test(flavor = "current_thread")]
     async fn cache_upload_decode_and_hash_run_off_the_async_executor() {
-        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+        use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 
         let state = AppState::default();
-        // Roughly 100k bars of packed rows: decoding and hashing take long
-        // enough that a synchronous implementation would starve this
-        // single-threaded executor for their whole duration.
+        // Roughly 100k bars of packed rows: decoding and hashing take far
+        // longer than the executor-progress probe below needs, so the
+        // ordering assertion is robust without any timing thresholds.
         let packed: Vec<f64> = (0..600_000).map(|index| (index % 997) as f64).collect();
         let request = CacheDataRequest {
             data: Vec::new(),
             packed_data: Some(packed),
         };
         let done = Arc::new(AtomicBool::new(false));
-        let yields = Arc::new(AtomicU64::new(0));
 
         let upload_state = state.clone();
         let done_for_upload = Arc::clone(&done);
         let upload_task = tokio::spawn(async move {
             let result = cache_data_handler(
                 Extension(admission_permit(&upload_state)),
+                None,
                 State(upload_state),
                 Json(request),
             )
@@ -959,25 +1104,188 @@ mod tests {
             result
         });
 
-        let done_for_poller = Arc::clone(&done);
-        let yields_for_poller = Arc::clone(&yields);
-        let poller = async move {
-            while !done_for_poller.load(AtomicOrdering::SeqCst) {
+        // Executor-progress probe: while the upload's decode/hash occupies a
+        // blocking worker, this single-threaded executor must still run other
+        // tasks. If decode ran inline, the upload would complete before the
+        // probe ever reached its checkpoint.
+        let done_for_probe = Arc::clone(&done);
+        let probe = async move {
+            let mut checkpoint = 0_u32;
+            while checkpoint < 100 {
+                assert!(
+                    !done_for_probe.load(AtomicOrdering::SeqCst),
+                    "upload completed before the executor-progress checkpoint;                      decode is not offloaded"
+                );
                 tokio::task::yield_now().await;
-                yields_for_poller.fetch_add(1, AtomicOrdering::Relaxed);
+                checkpoint += 1;
             }
         };
 
-        let (upload_result, ()) = tokio::join!(upload_task, poller);
+        let (upload_result, ()) = tokio::join!(upload_task, probe);
         let response = upload_result
             .expect("upload task should join")
             .expect("upload should succeed")
             .0;
         assert_eq!(response.bar_count, 100_000);
+        assert!(done.load(AtomicOrdering::SeqCst));
+    }
+
+    // ======================================================================
+    // Structured log capture. The global subscriber is installed once per
+    // process and every event lands in one shared buffer; capture tests
+    // serialize on a mutex and filter by unique markers.
+    // ======================================================================
+
+    #[derive(Clone, Default)]
+    struct SharedLogBuffer(Arc<std::sync::Mutex<Vec<String>>>);
+
+    struct CaptureWriter {
+        shared: Arc<std::sync::Mutex<Vec<String>>>,
+        line: Vec<u8>,
+    }
+    impl std::io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.line.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Drop for CaptureWriter {
+        fn drop(&mut self) {
+            if self.line.is_empty() {
+                return;
+            }
+            let text = String::from_utf8_lossy(&self.line).trim_end().to_string();
+            self.shared.lock().expect("log buffer lock").push(text);
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedLogBuffer {
+        type Writer = CaptureWriter;
+        fn make_writer(&'a self) -> CaptureWriter {
+            CaptureWriter {
+                shared: self.0.clone(),
+                line: Vec::new(),
+            }
+        }
+    }
+
+    fn shared_log_buffer() -> Arc<std::sync::Mutex<Vec<String>>> {
+        static BUFFER: std::sync::OnceLock<Arc<std::sync::Mutex<Vec<String>>>> =
+            std::sync::OnceLock::new();
+        BUFFER
+            .get_or_init(|| Arc::new(std::sync::Mutex::default()))
+            .clone()
+    }
+
+    /// Install the capturing subscriber once per process. Tests that assert
+    /// on log records must hold [`log_capture_lock`] while they act.
+    fn init_log_capture() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(SharedLogBuffer(shared_log_buffer()))
+                .finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        });
+    }
+
+    async fn log_capture_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(tokio::sync::Mutex::default).lock().await
+    }
+
+    fn records_containing(marker: &str) -> Vec<String> {
+        shared_log_buffer()
+            .lock()
+            .expect("log buffer lock")
+            .iter()
+            .filter(|record| record.contains(marker))
+            .cloned()
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn structured_logs_cover_success_cache_miss_and_worker_failure() {
+        init_log_capture();
+        let _guard = log_capture_lock().await;
+
+        // Success: a unique bar count marks this request's completion record.
+        let state = AppState::default();
+        let mut request = make_backtest_request(false, false);
+        request.data = (0..31_337)
+            .map(|index| {
+                let base = 100.0 + (index as f64) * 0.01;
+                OHLCV::new(
+                    index as i64 * 60_000,
+                    base,
+                    base + 0.5,
+                    base - 0.5,
+                    base,
+                    1000.0,
+                )
+            })
+            .collect();
+        let response = backtest_handler(
+            Extension(admission_permit(&state)),
+            Some(Extension(RequestId(424_242))),
+            Json(request),
+        )
+        .await
+        .expect("capture success handler should complete");
+        assert_eq!(response.0.result.total_trades, 1);
+        let success_records = records_containing("bars=31337");
         assert!(
-            yields.load(AtomicOrdering::Relaxed) > 1_000,
-            "executor starved during upload: {} yields",
-            yields.load(AtomicOrdering::Relaxed)
+            success_records
+                .iter()
+                .any(|record| record.contains("backtest complete")
+                    && record.contains("request_id=424242")
+                    && record.contains("pool_wait_ms=")
+                    && record.contains("simulate_ms=")),
+            "success completion record missing stage fields: {success_records:?}"
+        );
+
+        // Cache miss: a warn event carrying the unknown cache id.
+        let payload = serde_json::json!({
+            "cacheId": "log-capture-missing-cache-id",
+            "items": [{"id": "capture-1", "signals": []}],
+            "initialCapital": 10000.0,
+            "positionSizePercent": 100.0,
+            "commissionPercent": 0.0
+        });
+        let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
+        let error = cached_batch_backtest_handler(
+            Extension(admission_permit(&state)),
+            Some(Extension(RequestId(424_243))),
+            State(state.clone()),
+            Json(request),
+        )
+        .await
+        .expect_err("missing cache id must fail");
+        assert_eq!(error.0, StatusCode::NOT_FOUND);
+        let miss_records = records_containing("log-capture-missing-cache-id");
+        assert!(
+            miss_records
+                .iter()
+                .any(|record| record.contains("cache miss")),
+            "cache-miss warn event missing: {miss_records:?}"
+        );
+
+        // Worker join failure: the pool runner logs the failed task.
+        let result = run_on_blocking_pool(|| -> BacktestResult {
+            panic!("injected worker failure for log capture")
+        })
+        .await;
+        assert!(result.is_err(), "panicking worker must surface an error");
+        let failure_records = records_containing("CPU-bound task failed");
+        assert!(
+            failure_records
+                .iter()
+                .any(|record| record.contains("injected worker failure")),
+            "worker failure log missing: {failure_records:?}"
         );
     }
 
@@ -1020,9 +1328,10 @@ mod tests {
             payload["items"][0]["packedSignals"] = packed;
             let request: BatchBacktestRequest =
                 serde_json::from_value(payload).expect("camelCase batch payload must deserialize");
-            let error = batch_backtest_handler(Extension(admission_permit(&state)), Json(request))
-                .await
-                .expect_err("packed items must be rejected");
+            let error =
+                batch_backtest_handler(Extension(admission_permit(&state)), None, Json(request))
+                    .await
+                    .expect_err("packed items must be rejected");
             assert_eq!(error.0, StatusCode::BAD_REQUEST);
             assert!(error.1.contains(packed_rejection_message()));
         }
@@ -1030,10 +1339,11 @@ mod tests {
         // Without the field, the ordinary signals keep their results.
         let request: BatchBacktestRequest =
             serde_json::from_value(batch_request_payload(None)).unwrap();
-        let response = batch_backtest_handler(Extension(admission_permit(&state)), Json(request))
-            .await
-            .expect("ordinary batch should complete")
-            .0;
+        let response =
+            batch_backtest_handler(Extension(admission_permit(&state)), None, Json(request))
+                .await
+                .expect("ordinary batch should complete")
+                .0;
         assert_eq!(response.results[0].result.total_trades, 1);
     }
 
@@ -1048,6 +1358,7 @@ mod tests {
         let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
         let error = cached_batch_backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state.clone()),
             Json(request),
         )
@@ -1062,6 +1373,7 @@ mod tests {
         let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
         let error = cached_batch_backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state),
             Json(request),
         )
@@ -1075,6 +1387,7 @@ mod tests {
         let state = AppState::default();
         let upload = cache_data_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state.clone()),
             Json(CacheDataRequest {
                 data: vec![
@@ -1106,6 +1419,7 @@ mod tests {
         let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
         let response = cached_batch_backtest_handler(
             Extension(admission_permit(&state)),
+            None,
             State(state),
             Json(request),
         )

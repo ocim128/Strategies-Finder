@@ -317,11 +317,25 @@ with a clear error and the effective limit is logged. Excess requests are
 rejected with 503 before their JSON body is parsed. `/api/health` and
 `/api/data/clear` stay outside the gate, and the CORS layer wraps it so
 rejected browser requests keep their CORS headers. An accepted request keeps
-its admission slot until its blocking computation settles, so a disconnected
-client does not free capacity while CPU work continues; completion, validation
+its admission slot from the gate through response construction, and handlers
+retain a second reference through their blocking computation, so capacity
+never frees while CPU work or result serialization is still running; a
+disconnected client does not free the slot either. Completion, validation
 errors, cache misses, and panics all release the slot. The bound is a request
 count, not a byte or process-memory budget, and it does not cancel work that
 already started.
+
+The default of 2 is an evaluation starting point, not a validated product
+setting. Before rollout, run the real Finder workloads (including
+Rust-preferred Universe execution, which can use four workers) at limits 2
+and 4 and against the pre-admission behavior, comparing total run duration,
+TypeScript fallback count, repeated cache uploads (a readable 503 makes the
+cached client forget its cache ID), and peak RSS in isolated processes. Pick
+the default from those measurements and do not add retries merely to hide
+saturation. Until that comparison exists, treat admission tuning as
+incomplete. Node `fetch` (undici) can surface the early 503-then-close for
+multi-megabyte in-flight uploads as a connection reset rather than a readable
+503; curl reads the same response cleanly.
 
 The main Rust modules are:
 
@@ -602,10 +616,20 @@ transport or queueing overhead, not a slow Rust simulation.
 
 The server also emits one structured completion log per accepted request
 (`backtest_single`, `backtest_batch`, `backtest_batch_cached`, `cache_upload`)
-with the route, bar/item counts, compact/skip options, and `poolWaitMs`,
-`marketPrepMs`, `simulateMs`, and `totalMs` stages. `marketPrepMs` covers only
-the market-series constructor; lazy column materialization intentionally
-lands under `simulateMs`.
+with snake_case fields: `request_id`, `route`, bar/item counts (`bars`,
+`items`, `ordinary_bars`, `packed`), compact/skip options, and the stages
+`pool_wait_ms`, `market_prep_ms`, `simulate_ms`, and `total_ms`. Uploads add
+`cache_id` and `bars` to their `cache upload complete` record.
+`market_prep_ms` covers only the market-series constructor; lazy column
+materialization intentionally lands under `simulate_ms`.
+
+Failures are logged too, each under the request's span: `admission rejected;
+engine busy` (warn, with `request_id`, `route`, `limit`) on overload, `batch
+rejected` for unsupported `packedSignals` requests, `cache miss` (warn, with
+`cache_id`) for unknown cache IDs, and `blocking worker failed` (error, with
+status and error) when a worker join fails. Concurrent requests are
+distinguishable by their `request_id`, assigned once per request by the
+admission gate.
 Similarly, a Finder run can remain TypeScript-heavy even with Rust enabled
 because signal generation, unsupported settings, fresh/OOS requirements, or
 fallback decisions occur before or around Rust simulation.

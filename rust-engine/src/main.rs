@@ -12,10 +12,9 @@ use axum::{
 };
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use trading_engine::api::routes::{self, AppState};
+use trading_engine::api::routes::{self, AppState, RequestId};
 const MAX_JSON_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 fn cors_origins(configured_origin: Option<&str>) -> Vec<HeaderValue> {
@@ -61,18 +60,33 @@ fn max_in_flight_from(value: Option<&str>) -> Result<usize, String> {
 /// this gate, and the CORS layer wraps it so rejected browser requests keep
 /// their CORS headers.
 async fn admission_gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let request_id = state.next_request_id();
+    let route = request.uri().path().to_owned();
     let Ok(permit) = state.max_in_flight.clone().try_acquire_owned() else {
+        tracing::warn!(
+            request_id,
+            route = %route,
+            limit = state.max_in_flight_limit(),
+            "admission rejected; engine busy"
+        );
         return (
             StatusCode::SERVICE_UNAVAILABLE,
             "Engine busy: too many in-flight requests",
         )
             .into_response();
     };
+    let permit = Arc::new(permit);
     let mut request = request;
-    request
-        .extensions_mut()
-        .insert(Arc::new(permit) as Arc<OwnedSemaphorePermit>);
-    next.run(request).await
+    request.extensions_mut().insert(RequestId(request_id));
+    // The middleware keeps its own permit reference through response
+    // construction, alongside the reference handlers retain through their
+    // blocking computation. Without it, capacity would free as soon as the
+    // worker finished and new requests could enter while a large response is
+    // still being serialized.
+    request.extensions_mut().insert(permit.clone());
+    let response = next.run(request).await;
+    drop(permit);
+    response
 }
 
 fn build_router(state: AppState, cors: CorsLayer) -> Router {
@@ -187,6 +201,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::time::Duration;
+    use tokio::sync::OwnedSemaphorePermit;
 
     #[test]
     fn cors_allows_only_expected_local_origins() {
@@ -266,16 +281,51 @@ mod tests {
     /// release-receiver into the worker closure.
     type ProbeRegistry =
         Arc<Mutex<HashMap<String, (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>>;
-    /// Test-side handles: the worker-started receiver and the release sender.
-    type ProbeHandles =
-        HashMap<String, (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>)>;
-
     fn probe_registry() -> ProbeRegistry {
         Arc::new(Mutex::new(HashMap::new()))
     }
 
+    /// Bound on how long a probe worker may wait for its test-side release
+    /// before giving up on its own, so a broken test cannot wedge runtime
+    /// shutdown even without the session guard.
+    const PROBE_RELEASE_TIMEOUT: Duration = Duration::from_secs(10);
+
+    /// Test-side handles for one probe request. Dropping the session releases
+    /// the worker, so an assertion failure during unwinding cannot leave a
+    /// worker blocked on its release channel and hang runtime teardown.
+    struct ProbeSession {
+        started_rx: std::sync::mpsc::Receiver<()>,
+        release_tx: std::sync::mpsc::Sender<()>,
+    }
+
+    impl ProbeSession {
+        /// Wait until the probe worker signals it started, bounded so a
+        /// broken pipeline fails the test instead of hanging it.
+        fn wait_started(&self) {
+            if self
+                .started_rx
+                .recv_timeout(Duration::from_secs(10))
+                .is_err()
+            {
+                panic!("probe worker never started");
+            }
+        }
+
+        fn release(&self) {
+            // The worker may have timed out already; a failed send is fine.
+            let _ = self.release_tx.send(());
+        }
+    }
+
+    impl Drop for ProbeSession {
+        fn drop(&mut self) {
+            self.release();
+        }
+    }
+
     async fn probe_handler(
         Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+        Extension(semaphore): Extension<Arc<tokio::sync::Semaphore>>,
         State(registry): State<ProbeRegistry>,
         Json(req): Json<serde_json::Value>,
     ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
@@ -292,7 +342,9 @@ mod tests {
             // The permit clone must survive until the controlled work ends.
             let _admission_permit = admission_permit;
             started_tx.send(()).expect("probe started signal");
-            release_rx.recv().expect("probe release signal");
+            if release_rx.recv_timeout(PROBE_RELEASE_TIMEOUT).is_err() {
+                panic!("probe worker was never released; test cleanup failed");
+            }
             serde_json::json!({ "done": true })
         })
         .await
@@ -302,7 +354,15 @@ mod tests {
                 format!("probe worker failed: {error}"),
             )
         })?;
-        Ok(Json(done))
+        // The worker reference is gone at this point, so any remaining
+        // capacity must come from the middleware's own reference. If the
+        // middleware dropped its permit after dispatch, this reads 1 with a
+        // limit of 1 and the serialization-capacity regression fires.
+        let available_permits_at_response = semaphore.available_permits();
+        Ok(Json(serde_json::json!({
+            "done": done,
+            "availablePermitsAtResponse": available_permits_at_response,
+        })))
     }
 
     async fn probe_error_handler(
@@ -340,7 +400,8 @@ mod tests {
         // The router state is the probe registry; the admission gate carries
         // its own AppState via from_fn_with_state. Like the production
         // build_router, only the CPU-heavy probe routes pass the gate; the
-        // health route stays outside it.
+        // health route stays outside it. The extension layer exposes the
+        // shared semaphore to the probe handlers for capacity assertions.
         let admission = middleware::from_fn_with_state(state.clone(), admission_gate);
         Router::new()
             .route("/probe", post(probe_handler).route_layer(admission.clone()))
@@ -353,52 +414,20 @@ mod tests {
                 post(probe_panic_handler).route_layer(admission),
             )
             .route("/api/health", get(health_check))
+            .layer(Extension(Arc::clone(&state.max_in_flight)))
             .with_state(registry)
     }
 
-    fn probe_registry_entry(registry: &ProbeRegistry, id: &str) {
+    fn probe_registry_entry(registry: &ProbeRegistry, id: &str) -> ProbeSession {
         let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
         let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
         registry
             .lock()
             .expect("probe registry lock")
             .insert(id.to_string(), (started_tx, release_rx));
-        // Stash the test-side handles next to the request id.
-        started_handles()
-            .lock()
-            .expect("started handles lock")
-            .insert(id.to_string(), (started_rx, release_tx));
-    }
-
-    fn started_handles() -> &'static Mutex<ProbeHandles> {
-        static HANDLES: std::sync::OnceLock<Mutex<ProbeHandles>> = std::sync::OnceLock::new();
-        HANDLES.get_or_init(Mutex::default)
-    }
-
-    /// Wait until the probe worker signals it started, bounded so a broken
-    /// pipeline fails the test instead of hanging it.
-    fn wait_for_probe_start(id: &str) {
-        let deadline = std::time::Instant::now() + Duration::from_secs(10);
-        loop {
-            {
-                let handles = started_handles().lock().expect("started handles lock");
-                if let Some((started_rx, _)) = handles.get(id) {
-                    if started_rx.try_recv().is_ok() {
-                        return;
-                    }
-                }
-            }
-            if std::time::Instant::now() > deadline {
-                panic!("probe worker {id} never started");
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-    }
-
-    fn release_probe(id: &str) {
-        let handles = started_handles().lock().expect("started handles lock");
-        if let Some((_, release_tx)) = handles.get(id) {
-            release_tx.send(()).expect("probe release send");
+        ProbeSession {
+            started_rx,
+            release_tx,
         }
     }
 
@@ -510,7 +539,9 @@ mod tests {
     async fn admission_capacity_is_held_until_the_worker_settles() {
         let state = AppState::new(1);
         let registry = probe_registry();
-        probe_registry_entry(&registry, "worker-a");
+        // Dropping the session releases the worker even if an assertion
+        // below fails.
+        let worker_a = probe_registry_entry(&registry, "worker-a");
 
         let app = probe_router(state.clone(), Arc::clone(&registry));
         let request = axum::http::Request::builder()
@@ -526,7 +557,7 @@ mod tests {
             app.oneshot(request).await.expect("probe response")
         });
 
-        wait_for_probe_start("worker-a");
+        worker_a.wait_started();
         // The middleware and the blocking worker both hold references.
         assert_eq!(
             state.max_in_flight.available_permits(),
@@ -534,7 +565,7 @@ mod tests {
             "capacity must be held while the CPU work runs"
         );
 
-        release_probe("worker-a");
+        worker_a.release();
         let response = task.await.expect("probe task joins");
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(
@@ -545,10 +576,53 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn admission_capacity_is_held_through_response_serialization() {
+        let state = AppState::new(1);
+        let registry = probe_registry();
+        let serialize_a = probe_registry_entry(&registry, "serialize-a");
+
+        let app = probe_router(state.clone(), registry);
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/probe")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&serde_json::json!({ "id": "serialize-a" })).unwrap(),
+            ))
+            .unwrap();
+        let task = tokio::spawn(async move {
+            use tower::ServiceExt;
+            app.oneshot(request).await.expect("probe response")
+        });
+
+        serialize_a.wait_started();
+        assert_eq!(
+            state.max_in_flight.available_permits(),
+            0,
+            "capacity must be held while the CPU work runs"
+        );
+
+        serialize_a.release();
+        let response = task.await.expect("probe task joins");
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = response_text(response).await;
+        let body: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            body["availablePermitsAtResponse"], 0,
+            "the middleware must retain its permit through response              construction; the worker reference alone freed capacity before              serialization"
+        );
+        assert_eq!(
+            state.max_in_flight.available_permits(),
+            1,
+            "capacity must return once the response is built"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disconnect_retains_capacity_until_the_worker_settles() {
         let state = AppState::new(1);
         let registry = probe_registry();
-        probe_registry_entry(&registry, "worker-b");
+        let worker_b = probe_registry_entry(&registry, "worker-b");
 
         let app = probe_router(state.clone(), Arc::clone(&registry));
         let request = axum::http::Request::builder()
@@ -564,7 +638,7 @@ mod tests {
             app.oneshot(request).await.expect("probe response")
         });
 
-        wait_for_probe_start("worker-b");
+        worker_b.wait_started();
         // Simulate a disconnect: drop the in-flight response future while the
         // worker keeps computing.
         task.abort();
@@ -575,7 +649,7 @@ mod tests {
             "the worker still owns its permit clone after a disconnect"
         );
 
-        release_probe("worker-b");
+        worker_b.release();
         let deadline = std::time::Instant::now() + Duration::from_secs(10);
         while state.max_in_flight.available_permits() < 1 {
             assert!(
@@ -666,6 +740,115 @@ mod tests {
             state.max_in_flight.available_permits(),
             1,
             "capacity must return after both admitted requests complete"
+        );
+    }
+
+    // ======================================================================
+    // Structured log capture for admission diagnostics. Mirrors the helper
+    // in routes.rs tests: one global subscriber feeds a shared buffer, and
+    // capture tests serialize on an async mutex.
+    // ======================================================================
+
+    #[derive(Clone, Default)]
+    struct SharedLogBuffer(Arc<std::sync::Mutex<Vec<String>>>);
+
+    struct CaptureWriter {
+        shared: Arc<std::sync::Mutex<Vec<String>>>,
+        line: Vec<u8>,
+    }
+    impl std::io::Write for CaptureWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.line.extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl Drop for CaptureWriter {
+        fn drop(&mut self) {
+            if self.line.is_empty() {
+                return;
+            }
+            let text = String::from_utf8_lossy(&self.line).trim_end().to_string();
+            self.shared.lock().expect("log buffer lock").push(text);
+        }
+    }
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for SharedLogBuffer {
+        type Writer = CaptureWriter;
+        fn make_writer(&'a self) -> CaptureWriter {
+            CaptureWriter {
+                shared: self.0.clone(),
+                line: Vec::new(),
+            }
+        }
+    }
+
+    fn shared_log_buffer() -> Arc<std::sync::Mutex<Vec<String>>> {
+        static BUFFER: std::sync::OnceLock<Arc<std::sync::Mutex<Vec<String>>>> =
+            std::sync::OnceLock::new();
+        BUFFER
+            .get_or_init(|| Arc::new(std::sync::Mutex::default()))
+            .clone()
+    }
+
+    fn init_log_capture() {
+        static INIT: std::sync::Once = std::sync::Once::new();
+        INIT.call_once(|| {
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_max_level(tracing::Level::TRACE)
+                .with_writer(SharedLogBuffer(shared_log_buffer()))
+                .finish();
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        });
+    }
+
+    async fn log_capture_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(tokio::sync::Mutex::default).lock().await
+    }
+
+    fn records_containing(marker: &str) -> Vec<String> {
+        shared_log_buffer()
+            .lock()
+            .expect("log buffer lock")
+            .iter()
+            .filter(|record| record.contains(marker))
+            .cloned()
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn overload_rejection_emits_a_structured_event() {
+        init_log_capture();
+        let _guard = log_capture_lock().await;
+
+        let state = AppState::new(1);
+        let held = state
+            .max_in_flight
+            .clone()
+            .try_acquire_owned()
+            .expect("permit available");
+
+        let response = post_json_to(
+            probe_router(state.clone(), probe_registry()),
+            "/probe",
+            serde_json::json!({ "id": "never-looked-up" }),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+
+        drop(held);
+        let records = records_containing("admission rejected");
+        assert!(
+            records.iter().any(|record| {
+                record.contains("request_id=")
+                    && record.contains("route=/probe")
+                    && record.contains("limit=1")
+            }),
+            "overload rejection event missing or missing fields: {records:?}"
         );
     }
 
