@@ -43,6 +43,25 @@ function rawFixture() {
 }
 
 describe("TOP_MEAN persisted result normalization", () => {
+    it("drops retired arms from historical summaries, previews and wire responses", () => {
+        const raw = rawFixture();
+        Object.assign(raw.horizons[0]!, { topCoverage: raw.horizons[0]!.topMeanByAsset });
+        const saved = normalizePersistedTopMeanResult({
+            ...raw,
+            assetSwitch: { arms: { topMean: { totalNetPnl: 7 }, topStableSupport: { totalNetPnl: 8 }, topCoverage: { totalNetPnl: 9 } },
+                trades: [{ arm: "topStableSupport", asset: "A" }, { arm: "topGraphStrength", asset: "B" }] },
+            latestSelections: { selections: [{ selector: "TOP_STABLE_SUPPORT" }, { selector: "TOP_PRICE_STRENGTH" }] },
+        }, manifest());
+        assert.ok(saved);
+        assert.deepEqual(Object.keys(saved.assetSwitch!.arms), ["topMean", "topStableSupport"]);
+        assert.equal(saved.assetSwitch!.trades!.length, 1);
+        assert.deepEqual(saved.latestSelections!.selections.map((row) => row.selector), ["TOP_STABLE_SUPPORT"]);
+        const wire = toWireSafeTopMeanResultSummary(saved);
+        assert.deepEqual(wire.assetSwitch!.arms, saved.assetSwitch!.arms);
+        assert.ok(!JSON.stringify(wire).includes("topCoverage"));
+        assert.ok(!JSON.stringify(wire).includes("TOP_PRICE_STRENGTH"));
+    });
+
     it("caps production-shaped raw replay files and restores UI identifiers through status", async () => {
         const root = await mkdtemp(join(tmpdir(), "top-mean-persisted-"));
         const runManifest = manifest();

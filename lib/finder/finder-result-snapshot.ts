@@ -241,7 +241,8 @@ function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate
             replayMode: "asset_switch",
             assetSwitchMetrics: Object.fromEntries(
                 Object.entries(candidate.assetSwitchMetrics).filter(([arm, metric]) =>
-                    !isCausalArm(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as FinderArmPerformanceArm]) || isFinderAssetSwitchMetric(metric)).map(([arm, metric]) => [arm, {
+                    Object.hasOwn(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, arm)
+                    && (!isCausalArm(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as FinderArmPerformanceArm]) || isFinderAssetSwitchMetric(metric))).map(([arm, metric]) => [arm, {
                     ...metric,
                     diagnosticCounts: { ...metric.diagnosticCounts },
                     openPosition: metric.openPosition ? { ...metric.openPosition } : null,
@@ -275,7 +276,7 @@ function compactArmPerformanceCandidate(candidate: FinderArmPerformanceCandidate
         } : {}),
         ...(candidate.contributorExclusions ? {
             contributorExclusions: Object.fromEntries(
-                Object.entries(candidate.contributorExclusions).map(([arm, exclusion]) => [arm, {
+                Object.entries(candidate.contributorExclusions).filter(([arm]) => Object.hasOwn(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, arm)).map(([arm, exclusion]) => [arm, {
                     asset: exclusion?.asset ?? null,
                     events: Math.max(0, Math.floor(exclusion?.events ?? 0)),
                 }]),

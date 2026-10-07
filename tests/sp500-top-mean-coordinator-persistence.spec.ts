@@ -59,7 +59,7 @@ async function fixture(deps: TopMeanCoordinatorEngineDeps = {}, replayMode: "hor
 
 describe("TOP_MEAN coordinator persistence boundaries", () => {
     for (const mode of ["horizon", "asset_switch"] as const) {
-        it(`enables all twenty arms in Batch ${mode}, including annual and restored zero-event sections`, async () => {
+        it(`enables all seventeen arms in Batch ${mode}, including annual and restored zero-event sections`, async () => {
             const run = await fixture({}, mode);
             try {
                 let result: TopMeanResultSummary | undefined;
@@ -68,7 +68,7 @@ describe("TOP_MEAN coordinator persistence boundaries", () => {
                     if (event.type === "done") result = event.result;
                 });
                 assert.ok(result);
-                assert.equal(result.causalArmDefinitions?.version, "finder-causal-arms-v1");
+                assert.equal(result.causalArmDefinitions?.version, "finder-causal-arms-v2");
                 assert.ok(result.causalArmDiagnostics);
                 assert.equal(result.annualReports?.length, 1);
                 const status = await handleSp500TopMeanStatusRequest(run.request.runId, run.root);
@@ -76,7 +76,7 @@ describe("TOP_MEAN coordinator persistence boundaries", () => {
                 assert.deepEqual(status.result.causalArmDefinitions, result.causalArmDefinitions);
                 assert.deepEqual(status.result.causalArmDiagnostics, result.causalArmDiagnostics);
                 for (const section of [result, result.annualReports![0]!, status.result, status.result.annualReports![0]!]) {
-                    assert.equal(section.causalArmDefinitions?.version, "finder-causal-arms-v1");
+                    assert.equal(section.causalArmDefinitions?.version, "finder-causal-arms-v2");
                     for (const field of CAUSAL_ARM_FIELDS) {
                         if (mode === "asset_switch") assert.equal(section.assetSwitch!.arms[field]!.status, "no_entry");
                         else {

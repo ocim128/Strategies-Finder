@@ -94,7 +94,7 @@ archives, detailed ranking event rows, database migration or resume storage
 are introduced. The original v1 delivery plan has been retired; the current
 v2 rules are documented above.
 
-Scalar ranking recovery validates each of the twenty arm sections once. The
+Scalar ranking recovery validates each of the seventeen arm sections once. The
 fifteen legacy sections remain required; absent or malformed additional sections
 are omitted independently, without discarding valid legacy measurements.
 Ranking scoring and confidence bootstrap report the existing `aggregate` phase,
@@ -188,11 +188,23 @@ clean data (no target gaps) reuses the pre-computed selector winners instead
 of re-ranking every view. Standalone TOP_MEAN keeps the large cache, the
 shared annual outcome cache, and full diagnostics.
 
-Asset-switch replay has a dedicated selector pass: it resolves all 20 arm
+Asset-switch replay has a dedicated selector pass: it resolves all 17 arm
 picks in one pass over each event, retains only the event time and picks, and
 releases each score snapshot after use. Its position loop handles no-due-order
 and unchanged-pick decisions synchronously; it awaits only when a target-candle
 lookup or fill needs asynchronous work.
+
+Only TOP_STABLE_SUPPORT and TOP_FRESH_SUPPORT remain as additional causal
+arms. Their scores use the trade-vote ledger and original entry timestamps,
+without graph scoring or a separate target-price loading pass. Tie hashing
+reuses the fixed event prefix with identical UTF-8 digests and tie order.
+
+On the captured 4,999-pair `mcginley_dynamic_confirmation` 4h switch-return
+fixture, the isolated first candidate took 11.5 s with the seventeen retained
+arms versus 21.8 s after the earlier twenty-arm optimizations (about 47% less
+wall time). All ten candidates matched the saved metrics for the seventeen
+retained arms exactly. The full seventeen-arm CLI sweep took 113.9 s; host
+load and cache state affect live-server timings.
 
 The coordinator receives one frozen evaluation cutoff across all child runs.
 Pair backtests and annual replay windows use it. Horizon outcomes use only
@@ -220,7 +232,7 @@ version, process start time and replay implementation marker. Historical
 children without these fields report `null`; exporting later never assigns
 the exporter's code version to an earlier run. This helps distinguish stale
 server code from CPU, I/O and cache variability when CLI and live timings differ.
-The current marker is `bounded-ranking-daily-columns-v2`.
+The current marker is `temporal-support-only-v4`.
 `config.pairListHash` fingerprints the ordered canonical pair list without
 exporting thousands of symbols. Equal pair counts do not mean equal work:
 compare the hash, strategy parameters, window, cutoff and costs before treating
@@ -234,6 +246,11 @@ retained columns before use. Worker caches still reset between candidates.
 reads during replay, including reuse across candidates; raw target loads can
 remain misses while the underlying disk read is avoided.
 
+Short server IBKR target histories are authoritative local CSV reads. They no
+longer trigger two additional historical reads of the same file just because
+their length is below the generic stale-fragment threshold. Synced crypto CSV
+targets use the same rule; non-authoritative cached fragments retain refetch.
+
 For the 41-strategy daily switch-ranking snapshot (4,990 pairs, two-bar
 horizon, captured date range/cutoff), a controlled four-worker CLI comparison
 took 161.1 s before and 137.2 s after this cache change. Source-column reads
@@ -246,13 +263,10 @@ These comparisons pin the captured pairs and parameters; live timings depend
 on worker count and host load.
 
 Causal switch picks share lazy tie digests within each decision timestamp.
-Ranking insertion computes the incoming candidate's digest at most once and
-visits only the applicable pool's arm specifications. Its bounded top-five
-loop creates neither a comparator closure nor a retained row for discarded
-candidates; causal sweeps share one digest callback per event. The graph solver packs
-sorted edge endpoints once for its repeated matrix multiplies. These changes
-preserve edge order, cold starts, arithmetic order, tie keys, solver tolerance,
-and all twenty arms.
+Ranking insertion computes the incoming candidate digest at most once and
+visits only the applicable pool specifications. Bounded top-five insertion
+creates no retained row for discarded candidates. These changes preserve
+score arithmetic, tie keys, and all seventeen retained arms.
 
 `scripts/bench-finder-arm-snapshot.ts <status.json> <label> [baseline.json]`
 reruns a completed `/api/finder/status?runId=...` snapshot as an isolated CLI
@@ -284,7 +298,7 @@ inventory cannot be recovered, Re-Sort remains limited to the bounded browser
 preview. Apply and copy use the terminal context rather than current menu
 controls.
 
-The inventory holds compact metrics for all 20 replay arms per successfully
+The inventory holds compact metrics for all 17 replay arms per successfully
 evaluated configuration; it does not retain candles, trades, event details,
 pool snapshots, or candidate outcomes. Work scales as configurations × pairs,
 so keep the configuration budget small for 500–5,000-pair runs. Large
@@ -296,15 +310,15 @@ server-side TOP_MEAN work should use
 
 The trusted TOP_MEAN coordinator enables the internal `enableCausalArms`
 replay option for both Batch TOP_MEAN and Finder children. Every new Finder
-child computes the five additional arms for Return and Ranking consistency;
+child computes the two support arms for Return and Ranking consistency;
 Batch TOP_MEAN also computes them for its full-window and annual replays.
 The separate Batch OPEN_SCORE post-analysis route keeps its legacy subset.
 This is not a public request field, route, service or infrastructure change.
 Definitions, clocks and eligible pools are specified in
 [Additional causal score definitions](finder.md#additional-causal-score-definitions).
 
-The sequential scan and packed scan workers reconstruct valid pair endpoints,
-valid loaded degree and original entry timestamps on both delta legs, including
+The sequential scan and packed scan workers reconstruct valid loaded degree
+and original entry timestamps on both delta legs, including
 exits. Tradeless valid pairs contribute degree without a stream. Legacy retained
 degree and artifact schemas are unchanged. Entry times add one optional
 Float64 column (8 bytes per delta) only for enabled scans; worker packing,
@@ -313,19 +327,10 @@ The parallel path keeps its existing sequential fallback.
 
 The event sweep processes every timestamp, including pre-window and exit-only
 buckets. Rolling step-function integrals and expiry queues maintain support
-without walking synthetic bars or every open trade at each decision. Graph
-edges use stream identity and one base-leg update per pair position. The pure
-sparse scorer uses deterministic asset/edge order and yields during bounded
-component/solver work so Stop remains responsive.
-
-Before selection, a separate target-history pass uses the supplied lazy loader
-and bounded prefetch queue. It consumes one asset's normalized closed candles
-at a time and accesses only the causal prefix; it never reads forward outcome
-arrays or uses their gap reranking to form a new-arm pick. Known missing
-targets are retained as a name set, filtering repeat loads and prefetches;
-`null` remains distinct from an empty array. The frozen cutoff and caller's
-cancellation behavior are preserved. The second bounded pass for outcomes
-does not enlarge either target LRU.
+without walking synthetic bars or every open trade at each decision.
+No graph endpoints, open-edge ledger, solver buffers or separate price-history
+pass are constructed. Target datasets remain lazy and bounded for execution
+and forward outcome measurement.
 
 Horizon mode transfers additional keys only into ordinary positive candidates.
 Switch mode retains at most five keys/picks and an eligible-pool count per arm
@@ -333,12 +338,11 @@ and event while dense legacy snapshots remain available, then releases them
 before simulation. No additional dense price/asset/event matrix is retained.
 Eligibility counts survive with ranking disabled. Ranking capture still freezes
 membership before forward data inspection; future failures skip rather than
-replace new-arm picks. No-pick graph events use the existing hold-and-clear
-switch behavior.
+replace support-arm picks.
 
 Coordinator summaries, wire serialization, Finder metrics, exports and local
-snapshots retain the five optional result keys plus whitelisted scalar
-`causalArmDefinitions` (`finder-causal-arms-v1`) and `causalArmDiagnostics`.
+snapshots retain the two optional support result keys plus whitelisted scalar
+`causalArmDefinitions` (`finder-causal-arms-v2`) and `causalArmDiagnostics`.
 New enabled children require every new section even when it has zero events;
 missing or invalid required sections are child contract errors before cleanup.
 Legacy recovery requires only the original fifteen arms, validates present
@@ -348,7 +352,9 @@ with **Rerun required**. It never invents zero-event recovery data. The existing
 
 For rollback, disable the trusted additional-arm option for new runs and show
 the legacy selector subset. Keep optional-field readers so previously saved
-twenty-arm runs remain readable. Ownership, authorization, admission limits,
+twenty-arm runs remain readable after dropping the three retired arms;
+legacy provenance retains its v1 marker and the unchanged support definitions.
+Ownership, authorization, admission limits,
 reattach, cancellation and owned-artifact cleanup are unchanged; Node worker
 imports stay outside browser-bound modules.
 
@@ -363,7 +369,8 @@ sweep and compact switch records on 600,000 trades under a 128 MiB JS heap cap.
 These checks establish implementation parity and bounded retention, not
 out-of-sample research performance.
 
-The 2026-10-03 deterministic fixture (60 pair artifacts, 2,000 decisions,
+Historical measurements before retiring Coverage, Price Strength and Graph
+Strength: the 2026-10-03 deterministic fixture (60 pair artifacts, 2,000 decisions,
 100-second bars, five-bar horizon, ranking enabled) measured:
 
 | Replay | Legacy time | Enabled time | Legacy / enabled target reads | Legacy / enabled peak RSS |

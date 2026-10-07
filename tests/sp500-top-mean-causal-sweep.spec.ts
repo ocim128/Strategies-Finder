@@ -5,12 +5,9 @@ import { sweepScoreEvents } from "../lib/batch-backtest/open-score-replay/event-
 import { buildCausalSweepFixture, serializeSweepResult } from "./helpers/causal-sweep-fixture";
 
 /**
- * Pins the causal-arm event sweep against a reference snapshot captured from
- * the pre-optimization implementation (string-comparison graph sorts, cold
- * conjugate-gradient starts, string-keyed TemporalSupport, per-bucket endpoint
- * flatMaps). The optimized sweep — integer name ranks, incremental open-pair
- * edge list, warm-started solver, nested-map vote ledger — must reproduce it
- * byte-for-byte, or the optimization is wrong.
+ * Pins the retained Stable/Fresh Support and original score arrays against
+ * the pre-optimization snapshot. Only retired arm fields are removed from
+ * the historical reference; retained floating-point scores must match exactly.
  */
 async function main(): Promise<void> {
     const fixture = buildCausalSweepFixture();
@@ -20,7 +17,7 @@ async function main(): Promise<void> {
         mode: "horizon",
         assetNames: fixture.assetNames,
         validDegree: fixture.validDegree,
-        pairEndpoints: fixture.pairEndpoints,
+
         streams: fixture.streams,
         profitableStreams: fixture.profitableStreams,
         sampleFromSec: undefined,
@@ -38,6 +35,14 @@ async function main(): Promise<void> {
         outcome.ok ? outcome.result.events : [],
         outcome.ok ? outcome.result.causalArmDiagnostics : undefined,
     );
+    for (const event of reference.events) for (const [, keys] of event.causalScores ?? []) {
+        delete keys.topCoverage; delete keys.topPriceStrength; delete keys.topGraphStrength;
+    }
+    const diagnostics = reference.diagnostics;
+    if (diagnostics) {
+        delete diagnostics.unavailablePriceHistory; delete diagnostics.graphExcludedCandidates; delete diagnostics.graphSolverFailures;
+        for (const field of ["topCoverage", "topPriceStrength", "topGraphStrength"]) delete diagnostics.eligibleCandidates[field];
+    }
     assert.deepEqual(actual, reference, "optimized causal sweep diverged from the pre-optimization reference");
     assert.ok(outcome.ok && outcome.result.events.length > 100, "fixture must produce a meaningful event count");
     console.log(`PASS: sp500-top-mean-causal-sweep.spec.ts (events=${outcome.ok ? outcome.result.events.length : 0})`);

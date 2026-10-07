@@ -129,11 +129,8 @@ export type OpenScoreUsdLatestSelectorName =
     | "BOT_RAW_PROFIT_NOW"
     | "BOT_MEAN_PROFIT_NOW"
     | "BOT_Z"
-    | "TOP_COVERAGE"
     | "TOP_STABLE_SUPPORT"
-    | "TOP_FRESH_SUPPORT"
-    | "TOP_PRICE_STRENGTH"
-    | "TOP_GRAPH_STRENGTH";
+    | "TOP_FRESH_SUPPORT";
 
 export interface OpenScoreUsdLatestSelectionCandidate {
     /** Additional arm's actual ranking key; score remains the raw vote count. */
@@ -195,11 +192,8 @@ export type OpenScoreUsdEventDetailSelector =
     | "BOT_RAW_PROFIT_NOW"
     | "BOT_MEAN_PROFIT_NOW"
     | "BOT_Z"
-    | "TOP_COVERAGE"
     | "TOP_STABLE_SUPPORT"
-    | "TOP_FRESH_SUPPORT"
-    | "TOP_PRICE_STRENGTH"
-    | "TOP_GRAPH_STRENGTH";
+    | "TOP_FRESH_SUPPORT";
 
 export interface OpenScoreUsdEventDetail {
     decisionTime: number;
@@ -385,17 +379,13 @@ export interface CausalArmDiagnostics {
     eligibleCandidates: Partial<Record<import("./arm-contract").CausalArmField, number>>;
     unavailableDegree: number;
     unavailableSupportHistory: number;
-    unavailablePriceHistory: number;
-    priceUnavailableReasons?: Partial<Record<"missing_target" | "insufficient_history" | "invalid_timestamp" | "invalid_price" | "data_gap" | "stale_history", number>>;
-    graphExcludedCandidates: number;
-    graphSolverFailures: number;
 }
 
 export function compactCausalArmDiagnostics(value: unknown): CausalArmDiagnostics | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const row = value as CausalArmDiagnostics;
     const result = { eligibleCandidates: {} } as CausalArmDiagnostics;
-    for (const key of ["unavailableDegree", "unavailableSupportHistory", "unavailablePriceHistory", "graphExcludedCandidates", "graphSolverFailures"] as const) {
+    for (const key of ["unavailableDegree", "unavailableSupportHistory"] as const) {
         if (!Number.isSafeInteger(row[key]) || row[key] < 0) return undefined;
         result[key] = row[key];
     }
@@ -403,13 +393,6 @@ export function compactCausalArmDiagnostics(value: unknown): CausalArmDiagnostic
     for (const field of REPLAY_ARM_FIELDS) if (isCausalArm(field)) {
         const count = row.eligibleCandidates[field];
         if (count !== undefined && Number.isSafeInteger(count) && count >= 0) result.eligibleCandidates[field] = count;
-    }
-    if (row.priceUnavailableReasons && typeof row.priceUnavailableReasons === "object") {
-        result.priceUnavailableReasons = {};
-        for (const reason of ["missing_target", "insufficient_history", "invalid_timestamp", "invalid_price", "data_gap", "stale_history"] as const) {
-            const count = row.priceUnavailableReasons[reason];
-            if (count !== undefined && Number.isSafeInteger(count) && count >= 0) result.priceUnavailableReasons[reason] = count;
-        }
     }
     return result;
 }
@@ -431,11 +414,8 @@ export interface OpenScoreUsdReplayResult {
     eligibleEvents: number;
     horizons: Array<{
         bars: number;
-        topCoverage?: ReplayComparison;
         topStableSupport?: ReplayComparison;
         topFreshSupport?: ReplayComparison;
-        topPriceStrength?: ReplayComparison;
-        topGraphStrength?: ReplayComparison;
         topRaw: ReplayComparison;
         /** Highest rawScore / activePairCount (mean signed vote). */
         topMean: ReplayComparison;

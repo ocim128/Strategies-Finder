@@ -21,6 +21,7 @@
  */
 
 import { clearLocalDailyCsvCachesForSymbols } from "../../candle-cache";
+import { isIbkrSymbol } from "../../local-daily-datasets";
 import type { OHLCVData } from "../../types/strategies";
 import {
     createBatchDatasetLoaderCore,
@@ -106,7 +107,7 @@ const loader = createBatchDatasetLoaderCore({
     pairCacheMaxEntries: cacheBudget.pairCacheMaxEntries,
     fetchDetached: fetchServerDetachedData,
     fetchHistorical: fetchServerHistoricalData,
-    acceptOfflineThinData: (symbol, interval) => getCryptoCsvMtimeMs(symbol, interval) !== null,
+    acceptOfflineThinData: (symbol, interval) => isIbkrSymbol(symbol) || getCryptoCsvMtimeMs(symbol, interval) !== null,
     // Server-side disk cache. Same hooks as the Batch server loader so a
     // synthetic pair built once is reused across FINDER runs. NOTE: the Finder
     // and Batch loaders construct SEPARATE in-memory `loader` cores, so a pair

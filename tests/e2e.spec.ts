@@ -410,7 +410,10 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
         if (!opened.open || opened.panelHeight <= closed.panelHeight || !opened.applyEnabled) throw new Error('Measurement details expansion failed');
         await page.evaluate(() => {
             const selector = document.getElementById('finderResort') as HTMLSelectElement;
-            for (const arm of ['TOP_COVERAGE', 'TOP_STABLE_SUPPORT', 'TOP_FRESH_SUPPORT', 'TOP_PRICE_STRENGTH', 'TOP_GRAPH_STRENGTH']) {
+            for (const arm of ['TOP_COVERAGE', 'TOP_PRICE_STRENGTH', 'TOP_GRAPH_STRENGTH']) {
+                if (Array.from(selector.options).some((option) => option.value === arm)) throw new Error('Retired Finder arm still exposed: ' + arm);
+            }
+            for (const arm of ['TOP_STABLE_SUPPORT', 'TOP_FRESH_SUPPORT']) {
                 if (!Array.from(selector.options).some((option) => option.value === arm)) throw new Error('Missing Finder arm ' + arm);
                 selector.value = arm; selector.dispatchEvent(new Event('change', { bubbles: true }));
                 if (!document.getElementById('finderList')!.textContent!.includes('Rerun required')) throw new Error('Legacy arm availability must require rerun: ' + arm);
@@ -423,7 +426,7 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
             const { finderManager: manager } = await import(managerPath);
             const { createEmptyRankingMeasurement } = await import(typesPath);
             const { REPLAY_ARM_TO_FINDER_ARM, CAUSAL_ARM_FIELDS } = await import(contractPath);
-            const { FINDER_CAUSAL_ARMS_V1 } = await import(definitionsPath);
+            const { FINDER_SUPPORT_ARMS_V2 } = await import(definitionsPath);
             const sourceRows = manager.resultStore.armPerformanceRunResults;
             for (const mode of ['horizon', 'asset_switch']) {
                 const rows = sourceRows.map((row: any) => {
@@ -442,10 +445,9 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
                     }]));
                     return { ...row, replayMode: mode, horizon: mode === 'horizon' ? 20 : undefined,
                         metrics: mode === 'horizon' ? metrics : undefined, assetSwitchMetrics: mode === 'asset_switch' ? assetSwitchMetrics : undefined,
-                        rankingMeasurement, causalArmDefinitions: FINDER_CAUSAL_ARMS_V1,
+                        rankingMeasurement, causalArmDefinitions: FINDER_SUPPORT_ARMS_V2,
                         causalArmDiagnostics: { eligibleCandidates: Object.fromEntries(CAUSAL_ARM_FIELDS.map((field: string) => [field, 600])),
-                            unavailableDegree: 0, unavailableSupportHistory: 1, unavailablePriceHistory: 2, graphExcludedCandidates: 3, graphSolverFailures: 0,
-                            priceUnavailableReasons: { insufficient_history: 2 } },
+                            unavailableDegree: 0, unavailableSupportHistory: 1 },
                     };
                 });
                 manager.adoptArmPerformanceResults(rows, null, true, false);
@@ -587,6 +589,12 @@ const verifyFinderWorkspace = async (page: Page): Promise<void> => {
 const verifyBatchCausalArms = async (page: Page): Promise<void> => {
     await page.click('.panel-tab[data-tab="batchbacktest"]');
     await page.waitForSelector('#batchBacktestSp500TopMeanDetailsSelector', { visible: true });
+    await page.evaluate(() => {
+        const selector = document.getElementById('batchBacktestSp500TopMeanDetailsSelector') as HTMLSelectElement;
+        for (const arm of ['TOP_COVERAGE', 'TOP_PRICE_STRENGTH', 'TOP_GRAPH_STRENGTH']) {
+            if (Array.from(selector.options).some((option) => option.value === arm)) throw new Error('Retired Batch arm still exposed: ' + arm);
+        }
+    });
     await page.evaluate(async () => {
         const servicePath = '/lib/batch-backtest/batch-backtest-service.ts';
         const contractPath = '/lib/batch-backtest/open-score-replay/arm-contract.ts';
@@ -595,7 +603,7 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
         const storePath = '/lib/batch-backtest/browser/batch-browser-store.ts';
         const { batchBacktestService: service } = await import(servicePath);
         const { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } = await import(contractPath);
-        const { FINDER_CAUSAL_ARMS_V1 } = await import(definitionsPath);
+        const { FINDER_SUPPORT_ARMS_V2 } = await import(definitionsPath);
         const { createEmptyAssetSwitchSummary } = await import(switchPath);
         const { persistLatestTopMeanResult, readLatestTopMeanResult } = await import(storePath);
         service.init();
@@ -608,7 +616,7 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
             topCandidates: [{ asset: field, score: 7, mean: 1, activePairs: 7, rankingScore: -0.25 }] }));
         for (const mode of ['horizon', 'asset_switch']) {
             const summary: any = { runId: 'batch-causal-e2e', completed: true, replayMode: mode, counts: {}, warnings: [], reportLines: [],
-                causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
+                causalArmDefinitions: { ...FINDER_SUPPORT_ARMS_V2 },
                 horizons: mode === 'horizon' ? [{ horizon: 5, events: 1, topMean: comparison, topAssets: [], armComparisons, latestArms: armComparisons }] : [],
                 latestSelections: mode === 'horizon' ? { decisionTime: 1_700_000_000, selections } : undefined,
                 openScoreEventDetails: mode === 'horizon' ? CAUSAL_ARM_FIELDS.map((field: string) => ({ selector: REPLAY_ARM_TO_FINDER_ARM[field],
@@ -694,7 +702,7 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
             }
             persistLatestTopMeanResult(summary);
             const recovered = readLatestTopMeanResult();
-            if (!recovered || recovered.causalArmDefinitions.version !== 'finder-causal-arms-v1') throw new Error('Batch causal definitions lost on reload');
+            if (!recovered || recovered.causalArmDefinitions.version !== 'finder-causal-arms-v2') throw new Error('Batch support definitions lost on reload');
             for (const field of CAUSAL_ARM_FIELDS) {
                 if (mode === 'horizon' ? !recovered.horizons[0].armComparisons[REPLAY_ARM_TO_FINDER_ARM[field]] : !recovered.assetSwitch.arms[field]) throw new Error('Batch causal summary lost on reload');
             }

@@ -526,7 +526,8 @@ export function toScalarArmPerformanceCandidate(
         return {
             ...common,
             replayMode: "asset_switch",
-            assetSwitchMetrics: { ...candidate.assetSwitchMetrics },
+            assetSwitchMetrics: Object.fromEntries(Object.entries(candidate.assetSwitchMetrics)
+                .filter(([arm]) => Object.hasOwn(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, arm))) as NonNullable<FinderArmPerformanceCandidate["assetSwitchMetrics"]>,
         };
     }
     const metrics = {} as NonNullable<FinderArmPerformanceCandidate["metrics"]>;
@@ -543,7 +544,8 @@ export function toScalarArmPerformanceCandidate(
         horizon: candidate.horizon,
         metrics,
         ...(candidate.metricsExTopContributor ? { metricsExTopContributor } : {}),
-        ...(candidate.contributorExclusions ? { contributorExclusions: { ...candidate.contributorExclusions } } : {}),
+        ...(candidate.contributorExclusions ? { contributorExclusions: Object.fromEntries(Object.entries(candidate.contributorExclusions)
+            .filter(([arm]) => Object.hasOwn(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS, arm))) } : {}),
         requestedEngineMode: candidate.requestedEngineMode,
         actualEngineMode: candidate.actualEngineMode,
     };

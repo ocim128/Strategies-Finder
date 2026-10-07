@@ -9,7 +9,7 @@ import type {
 import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-performance-metrics";
 import { renderTopMeanResults, renderLatestOpenScoreSelections, normalizeLatestArm, formatLatestOpenScoreSelectionLines } from "../lib/batch-backtest/browser/top-mean-results-view";
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
-import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
+import { FINDER_SUPPORT_ARMS_V2 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { createEmptyAssetSwitchSummary } from "../lib/batch-backtest/open-score-replay/asset-switch";
 
 function comparison(events: number): ReplayComparison {
@@ -36,7 +36,7 @@ describe("buildTopMeanHorizonSummaries", () => {
         const dom = { batchBacktestSp500TopMeanResults: { innerHTML: "" } };
         const summary = {
             completed: true, replayMode: "asset_switch", horizons: [], assetSwitch,
-            causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
+            causalArmDefinitions: { ...FINDER_SUPPORT_ARMS_V2 },
             annualReports: [{ year: 2025, sampleFromSec: assetSwitch.windowStartSec,
                 sampleToSec: assetSwitch.windowEndSec, horizons: [],
                 assetSwitch: { ...assetSwitch, independentWindow: true }, reportLines: ["duplicate annual report"] }],
@@ -107,7 +107,7 @@ describe("buildTopMeanHorizonSummaries", () => {
                 activePairs: 7, eligibleCandidates: 6, reason: "selected" as const, rankingScore: -0.25,
                 topCandidates: [{ asset: "AAA", score: 7, mean: 1, activePairs: 7, rankingScore: -0.25 }],
             }] };
-            const summary = { horizons: [], latestSelections, causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 } } as unknown as TopMeanResultSummary;
+            const summary = { horizons: [], latestSelections, causalArmDefinitions: { ...FINDER_SUPPORT_ARMS_V2 } } as unknown as TopMeanResultSummary;
             expect(normalizeLatestArm(arm)).to.equal(arm);
             const html = renderLatestOpenScoreSelections(summary, arm, "off");
             expect(html).to.include(`<strong>${arm}</strong>`);

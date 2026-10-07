@@ -26,7 +26,7 @@ import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "
 import { strategyRegistry } from "../strategyRegistry";
 import { CURRENT_SNAPSHOT_SELECTOR, LATEST_SELECTION_CONTENT_SELECTOR } from "../lib/batch-backtest/browser/top-mean-results-view";
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
-import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
+import { FINDER_SUPPORT_ARMS_V2 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { createEmptyAssetSwitchSummary } from "../lib/batch-backtest/open-score-replay/asset-switch";
 
 function fakeEl(): any {
@@ -195,9 +195,9 @@ describe("BatchBacktestService analysis lifecycle", () => {
             setupForAnalysis();
             const result = topMeanResultFixture();
             result.replayMode = mode;
-            result.causalArmDefinitions = { ...FINDER_CAUSAL_ARMS_V1 };
-            result.causalArmDiagnostics = { eligibleCandidates: { topPriceStrength: 6 }, unavailableDegree: 0,
-                unavailableSupportHistory: 1, unavailablePriceHistory: 2, graphExcludedCandidates: 3, graphSolverFailures: 0 };
+            result.causalArmDefinitions = { ...FINDER_SUPPORT_ARMS_V2 };
+            result.causalArmDiagnostics = { eligibleCandidates: { topStableSupport: 6 }, unavailableDegree: 0,
+                unavailableSupportHistory: 1 };
             if (mode === "asset_switch") {
                 result.horizons = [];
                 result.assetSwitch = createEmptyAssetSwitchSummary({ enableCausalArms: true, evaluationCutoffSec: 1_700_000_000 });

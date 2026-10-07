@@ -73,9 +73,12 @@ const FNV64_PRIME_LO = 0x000001b3 >>> 0;
  * carry is recovered with a plain floor divide by 2^32.
  */
 export function fnv1a64Hex(text: string): string {
+    const [hi, lo] = appendFnv1a64(text, FNV64_OFFSET_HI, FNV64_OFFSET_LO);
+    return hi.toString(16).padStart(8, "0") + lo.toString(16).padStart(8, "0");
+}
+
+function appendFnv1a64(text: string, hi: number, lo: number): [number, number] {
     const bytes = TEXT_ENCODER.encode(text);
-    let hi = FNV64_OFFSET_HI;
-    let lo = FNV64_OFFSET_LO;
     for (let i = 0; i < bytes.length; i += 1) {
         const b = bytes[i]!;
         lo = (lo ^ b) >>> 0;
@@ -86,7 +89,7 @@ export function fnv1a64Hex(text: string): string {
         lo = newLo;
         hi = newHi;
     }
-    return hi.toString(16).padStart(8, "0") + lo.toString(16).padStart(8, "0");
+    return [hi, lo];
 }
 
 /**
@@ -111,6 +114,18 @@ const TEXT_ENCODER = new TextEncoder();
  */
 export function tieBreakDigest(truncatedEventTimeSec: number, scoringAsset: string): string {
     return fnv1a64Hex(`${MAX_ACTIVE_TIE_VERSION}|${MAX_ACTIVE_TIE_SEED}|${Math.trunc(truncatedEventTimeSec)}|${scoringAsset}`);
+}
+
+/** One event's fixed prefix is hashed once; asset suffixes keep the exact UTF-8 digest. */
+export function createTieBreakDigest(truncatedEventTimeSec: number): (scoringAsset: string) => string {
+    const [prefixHi, prefixLo] = appendFnv1a64(
+        `${MAX_ACTIVE_TIE_VERSION}|${MAX_ACTIVE_TIE_SEED}|${Math.trunc(truncatedEventTimeSec)}|`,
+        FNV64_OFFSET_HI, FNV64_OFFSET_LO,
+    );
+    return (scoringAsset) => {
+        const [hi, lo] = appendFnv1a64(scoringAsset, prefixHi, prefixLo);
+        return hi.toString(16).padStart(8, "0") + lo.toString(16).padStart(8, "0");
+    };
 }
 
 // ---------------------------------------------------------------------------

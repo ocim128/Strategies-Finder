@@ -15,11 +15,8 @@ export const REPLAY_ARM_TO_FINDER_ARM = {
     botRaw: "BOT_RAW",
     botMean: "BOT_MEAN",
     botMeanRawUnique: "BOT_MEAN_RAW_UNIQUE",
-    topCoverage: "TOP_COVERAGE",
     topStableSupport: "TOP_STABLE_SUPPORT",
     topFreshSupport: "TOP_FRESH_SUPPORT",
-    topPriceStrength: "TOP_PRICE_STRENGTH",
-    topGraphStrength: "TOP_GRAPH_STRENGTH",
 } as const;
 
 export type ReplayArmField = keyof typeof REPLAY_ARM_TO_FINDER_ARM;
@@ -29,7 +26,7 @@ export const REPLAY_ARM_FIELDS = Object.freeze(
     Object.keys(REPLAY_ARM_TO_FINDER_ARM) as ReplayArmField[],
 );
 
-export const CAUSAL_ARM_FIELDS = ["topCoverage", "topStableSupport", "topFreshSupport", "topPriceStrength", "topGraphStrength"] as const;
+export const CAUSAL_ARM_FIELDS = ["topStableSupport", "topFreshSupport"] as const;
 export type CausalArmField = typeof CAUSAL_ARM_FIELDS[number];
 export type LegacyArmField = Exclude<ReplayArmField, CausalArmField>;
 export type ReplayArmResults<T> = Record<LegacyArmField, T> & Partial<Record<CausalArmField, T>>;

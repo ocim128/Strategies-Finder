@@ -28,8 +28,7 @@ describe("top-five ranking consistency", () => {
         const assetNames = Array.from({ length: 80 }, (_, index) => `ASSET${index}`);
         const candidates: Candidate[] = assetNames.map((_, assetIndex) => ({ assetIndex,
             raw: assetIndex % 7, mean: assetIndex % 3, z: assetIndex % 4, adjusted: 1, activePairs: 1,
-            topCoverage: assetIndex % 3, topStableSupport: assetIndex % 3, topFreshSupport: assetIndex % 3,
-            topPriceStrength: assetIndex % 3, topGraphStrength: assetIndex % 3 }));
+            topStableSupport: assetIndex % 3, topFreshSupport: assetIndex % 3}));
         for (const time of [1700000000, 1700000060]) {
             for (const spec of RANKING_ARM_SPECS) {
                 const expected = candidates.map((candidate) => ({ assetIndex: candidate.assetIndex,
@@ -49,7 +48,7 @@ describe("top-five ranking consistency", () => {
     it("preserves all arm memberships with shared event digests, including changed timestamps", () => {
         const assetNames = Array.from({ length: 100 }, (_, i) => `ASSET${i}`);
         const candidates: Candidate[] = assetNames.map((_, assetIndex) => ({ assetIndex, raw: 1, mean: 1, z: 1, adjusted: 1, activePairs: 1,
-            topCoverage: 1, topStableSupport: 1, topFreshSupport: 1, topPriceStrength: 1, topGraphStrength: 1 }));
+            topStableSupport: 1, topFreshSupport: 1}));
         const digestFor = createRankingDigestCache(assetNames);
         // Returning to an earlier timestamp must not retain the intervening event's digests.
         for (const time of [1700000000, 1700000060, 1700000000]) {

@@ -25,12 +25,12 @@ describe("Asset-switch performance presentation", () => {
         const selectors = html.slice(0, split);
         const research = html.slice(split);
         assert.ok(selectors.includes('topMean'));
-        assert.ok(selectors.includes('topCoverage'));
+        assert.ok(selectors.includes('topStableSupport'));
         assert.ok(!selectors.includes('>topMeanProfit<'));
         assert.ok(!selectors.includes('>topRawProfit<'));
         assert.ok(research.includes('>topMeanProfit<') && research.includes('>topRawProfit<'));
         assert.ok(!research.includes('>topMean<'));
-        assert.equal((selectors.match(/<article /g) ?? []).length, 18);
+        assert.equal((selectors.match(/<article /g) ?? []).length, 15);
         assert.equal((research.match(/<article /g) ?? []).length, 2);
         assert.ok(html.includes('data-batch-replay-panel="table" hidden'));
         assert.ok(html.includes('data-batch-replay-panel="cards"'));
@@ -49,6 +49,6 @@ describe("Asset-switch performance presentation", () => {
         assert.ok(html.includes('&lt;Independent 2025&gt;'));
         assert.ok(html.includes('No decision events'));
         assert.ok(html.includes('data-value="">n/a'));
-        assert.ok(!html.includes('>topCoverage<'));
+        assert.ok(!html.includes('>topStableSupport<'));
     });
 });

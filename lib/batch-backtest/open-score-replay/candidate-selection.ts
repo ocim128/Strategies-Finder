@@ -21,7 +21,7 @@
  * and the no-gap fast path (which shares the original view references) are
  * behavior contracts — see the comments at each helper.
  */
-import { tieBreakDigest } from "../max-active-research-contract";
+import { createTieBreakDigest, tieBreakDigest } from "../max-active-research-contract";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
 import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { REPLAY_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, type CausalArmField } from "./arm-contract";
@@ -68,11 +68,12 @@ export const RANKING_ARM_SPEC_BY_FIELD = new Map(RANKING_ARM_SPECS.map((spec) =>
 /** One event's lazy tie digests shared across arms; no run-length cache growth. */
 export function createRankingDigestCache(names: readonly string[]): (time: number, index: number) => string {
     let eventTime: number | undefined;
+    let hashAsset: ((asset: string) => string) | undefined;
     const digests = new Map<number, string>();
     return (time, index) => {
-        if (eventTime !== time) { digests.clear(); eventTime = time; }
+        if (eventTime !== time) { digests.clear(); eventTime = time; hashAsset = createTieBreakDigest(time); }
         let digest = digests.get(index);
-        if (digest === undefined) { digest = tieBreakDigest(time, names[index]!); digests.set(index, digest); }
+        if (digest === undefined) { digest = hashAsset!(names[index]!); digests.set(index, digest); }
         return digest;
     };
 }
@@ -637,10 +638,11 @@ export async function buildAssetSwitchDecisions(args: {
             for (const spec of rankingSpecsByPool.get(pool) ?? []) insertRankingPick(ranking.arms[spec.field].picks, candidate, spec, event.timeSec, assetNames, digestFor);
         };
         let digestCache: Map<number, string> | null = null;
+        let hashAsset: ((asset: string) => string) | undefined;
         const digestFor = (assetIndex: number): string => {
             const cached = digestCache?.get(assetIndex);
             if (cached !== undefined) return cached;
-            const digest = tieBreakDigest(event.timeSec, assetNames[assetIndex]!);
+            const digest = (hashAsset ??= createTieBreakDigest(event.timeSec))(assetNames[assetIndex]!);
             (digestCache ??= new Map()).set(assetIndex, digest);
             return digest;
         };

@@ -160,6 +160,13 @@ Cache hits materialize only that trailing range into fresh candle objects.
 Cold reads still parse/cache the complete capped series, and detached callers
 without a limit retain the full-series contract. File mtime invalidation and
 the columnar cache's entry cap remain intact.
+
+Server Batch and Finder accept short authoritative IBKR and synced crypto CSV
+target histories without retrying the same file through historical loaders.
+This applies to standalone targets as well as synthetic legs. Other cached
+fragments still use the existing stale-fragment refetch path; empty IBKR target
+files still fail explicitly.
+
 The crypto cache also caps retention at eight million candle points (six
 Float64 columns, at most 384 MB of backing arrays) per process, alongside the
 512-entry cap. It shares `PointBoundedParsedCache` with IBKR daily targets.

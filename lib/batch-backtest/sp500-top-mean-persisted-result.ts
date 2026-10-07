@@ -3,6 +3,7 @@ import type { OpenScoreUsdReplayResult } from "./open-score-replay/types";
 import type { CoverageCounts } from "./sp500-pair-enumerator";
 import { compactCausalArmDefinitions } from "./open-score-replay/causal-arm-constants";
 import { compactCausalArmDiagnostics } from "./open-score-replay/types";
+import { removeRetiredCausalArms } from "./open-score-replay/retired-arm-compat";
 import {
     buildTopMeanHorizonSummaries,
     type TopMeanHorizonSummary,
@@ -56,10 +57,11 @@ function normalizeCounts(value: unknown, manifest: TopMeanRunManifest): Coverage
  * count and leave unavailable coverage counters at zero.
  */
 export function normalizePersistedTopMeanResult(
-    value: unknown,
+    storedValue: unknown,
     manifest: TopMeanRunManifest,
 ): TopMeanResultSummary | null {
-    if (!isRecord(value)) return null;
+    if (!isRecord(storedValue)) return null;
+    const value = removeRetiredCausalArms(storedValue);
     for (const key of ["horizons", "annualReports", "eventDetails", "openScoreEventDetails",
         "ongoingEventDetails", "warnings", "reportLines"]) {
         if (value[key] != null && !Array.isArray(value[key])) return null;

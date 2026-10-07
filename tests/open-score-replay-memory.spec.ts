@@ -56,7 +56,7 @@ async function main(): Promise<void> {
                     assert.equal(deltas, 600 * 3998);
                     const swept = await sweepScoreEvents({
                         enableCausalArms: true, interval: "1m", mode: "asset_switch",
-                        assetNames: scan.assetNames, validDegree: scan.validDegree, pairEndpoints: scan.pairEndpoints,
+                        assetNames: scan.assetNames, validDegree: scan.validDegree,
                         streams: scan.streams, profitableStreams: scan.profitableStreams,
                         pairCount: 600, assetCount: 2,
                         shouldStop: () => false, onPhase: () => {},
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
                     assert.equal(swept.result.events.length, 1000);
                     const last = swept.result.events.at(-1);
                     assert.equal(last.causalScores, undefined);
-                    assert.ok(last.causalArms.topCoverage.picks.length <= 5);
+                    assert.ok(last.causalArms.topStableSupport.picks.length <= 5);
                     assert.equal(last.rawScore[0], 600);
                     assert.equal(last.rawScoreProfitNow[0], 600);
                     assert.equal(last.activePairCount[0], 600);

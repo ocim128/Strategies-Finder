@@ -204,7 +204,6 @@ export async function runParallelArtifactScan(args: {
             return idx;
         };
         const validDegree = args.enableCausalArms ? new Map<string, number>() : undefined;
-        const pairEndpoints = args.enableCausalArms ? [] as Array<{ base: number; quote: number } | null> : undefined;
         const retainedDegree = new Map<string, number>();
         const streams: ScoreDeltaBuffer[] = [];
         const profitableStreams: boolean[] = [];
@@ -231,7 +230,7 @@ export async function runParallelArtifactScan(args: {
             const pnlShares = shard.pnlShares!;
             const confidenceWeights = shard.confidenceWeights!;
             const deltaFlags = shard.deltaFlags!;
-            if (args.enableCausalArms && (!shard.entrySecs || !shard.validDegree || !shard.pairEndpoints)) return { status: "fallback" };
+            if (args.enableCausalArms && (!shard.entrySecs || !shard.validDegree)) return { status: "fallback" };
             const lengths = shard.pairLengths!;
             const flags = shard.pairFlags!;
             let offset = 0;
@@ -239,8 +238,6 @@ export async function runParallelArtifactScan(args: {
                 const length = lengths[pair]!;
                 const end = offset + length;
                 ensureSegmentOrder(timeSecs, assetIndices, deltas, pnlShares, confidenceWeights, deltaFlags, offset, length, shard.entrySecs);
-                const endpoints = shard.pairEndpoints?.[pair];
-                pairEndpoints?.push(endpoints ? { base: localToGlobal[endpoints.base]!, quote: localToGlobal[endpoints.quote]! } : null);
                 streams.push(new ScoreDeltaBuffer(length, {
                     ...(shard.entrySecs ? { entrySecs: shard.entrySecs.subarray(offset, end) } : {}),
                     timeSecs: timeSecs.subarray(offset, end),
@@ -268,7 +265,7 @@ export async function runParallelArtifactScan(args: {
             status: "ok",
             tradelessPairs,
             result: {
-                ...(validDegree ? { validDegree, pairEndpoints } : {}),
+                ...(validDegree ? { validDegree } : {}),
                 assetIndexByName,
                 assetNames,
                 retainedDegree,

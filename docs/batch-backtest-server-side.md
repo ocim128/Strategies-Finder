@@ -202,18 +202,15 @@ Asset-switch target prices use an LRU bounded by 8,192 series and 8 million
 candle points (about 192 MB in its three price/time arrays). This retains short
 daily series across decisions without raising the point-memory limit. Performance
 diagnostics expose switch-series hits, misses, evictions and peak points separately
-from the raw target-loader cache. Tie-digest reuse and packed graph endpoints
-preserve the existing twenty-arm selection and solver semantics.
+from the raw target-loader cache. Tie-digest reuse preserves the existing selection order. Only Stable Support
+and Fresh Support remain as additional arms; graph scoring and the separate
+price-strength pass have been removed. Support scores require no target reads.
 
 The event sweep also checks Stop and yields every 2,000 deltas while indexing
 decision times, counting bucket sizes, placing deltas, and applying the final
 time-ordered merge. Its distinct-bucket indexing pass yields every 2,000 bucket
 times. Sorting the timestamps uses the native synchronous array sort, so Stop
 is checked immediately before and after that sort.
-
-The causal arms' per-entry-bucket graph-strength solve checks Stop once at
-solve entry and deliberately does not yield inside the solve, so a Stop raised
-mid-solve is honored at the next bucket or solve boundary.
 
 ## Stop vs Cancel vs Reload
 
@@ -466,14 +463,14 @@ The TOP_MEAN UI Coordinator runs a long-running batch evaluation over an explici
 
 ### Additional causal arms
 
-New Batch TOP_MEAN runs calculate all twenty replay arms, including
-**TOP_COVERAGE**, **TOP_STABLE_SUPPORT**, **TOP_FRESH_SUPPORT**,
-**TOP_PRICE_STRENGTH** and **TOP_GRAPH_STRENGTH**, in both Fixed horizon and
-Hold until switch. They share the
+New Batch TOP_MEAN runs calculate seventeen replay arms: the original
+fifteen plus **TOP_STABLE_SUPPORT** and **TOP_FRESH_SUPPORT**, in both Fixed
+horizon and Hold until switch. They share the
 [fixed causal score definitions](finder.md#additional-causal-score-definitions)
-with Finder. Existing cap-tilt vote weights carry through coverage, support and
-graph scores; price strength still uses completed target closes. The
-cross-sectional current TOP_MEAN snapshot keeps its existing raw-score meaning.
+with Finder. Existing cap-tilt vote weights carry through both support scores.
+Coverage, Price Strength and Graph Strength are retired, including their
+calculations and selectors. The cross-sectional TOP_MEAN snapshot keeps its
+existing raw-score meaning.
 
 The existing latest-pick and details Arm selectors include these names.
 Latest picks show the actual arm score separately from raw votes, with their
@@ -482,15 +479,17 @@ remain frozen before future-data inspection; cooldown applies before ranking.
 Full-window and independent calendar-year comparisons appear in the same
 report and Copy OPEN_SCORE output. Copy Result, Download Result, status
 recovery and browser snapshots retain their calculated sections and
-`finder-causal-arms-v1` definitions. Details and copied results report warm-up,
-price history and graph-component/solver exclusions. Older saved results remain
+`finder-causal-arms-v2` definitions. Details and copied results report warm-up
+and zero-degree availability. Older saved results remain
 readable and show **Rerun required** for missing additional arms.
 
 Both sequential and packed-worker scans collect the optional entry-time and
 pair metadata. Target history uses the existing bounded lazy loader and
 prefetch queue; target cache capacities, row caps, Stop, ownership, archive
-formats and reattach behavior are unchanged. Every annual pass recomputes
-its causal price keys before selection and keeps its own availability counts.
+formats and reattach behavior are unchanged. Every annual pass rebuilds
+its temporal support state and keeps its own availability counts. Historical
+twenty-arm results drop the retired fields from summaries, previews and exports
+while retaining legacy v1 support provenance.
 There are no new request fields or settings. The separate Batch Run
 OPEN_SCORE post-analysis action retains its legacy replay set.
 

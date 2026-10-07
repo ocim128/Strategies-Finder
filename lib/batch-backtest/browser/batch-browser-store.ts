@@ -1,3 +1,4 @@
+import { removeRetiredCausalArms } from "../open-score-replay/retired-arm-compat";
 /**
  * Browser storage for the Batch Backtest UI: persisted-JSON reads/writes for
  * run settings, active-run markers, and compact result snapshots.
@@ -272,6 +273,7 @@ export function clearPersistedLatestResults(): void {
 }
 
 export function persistLatestTopMeanResult(result: TopMeanResultSummary): void {
+    result = removeRetiredCausalArms(result);
     const {
         openScoreEventDetails: _openScoreEventDetails,
         annualReports,
@@ -347,7 +349,7 @@ export function readLatestTopMeanResult(): TopMeanResultSummary | null {
                 });
                 if (!annualValid) return null;
             }
-            return { ...source, replayMode } as TopMeanResultSummary;
+            return removeRetiredCausalArms({ ...source, replayMode } as TopMeanResultSummary);
         },
         onError: (error) => debugLogger.warn("sp500_top_mean.latest_result_restore_failed", {
             error: error instanceof Error ? error.message : String(error),

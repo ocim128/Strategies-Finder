@@ -101,7 +101,6 @@ function bufferView(buffer: ArtifactScanResult): unknown {
     return {
         assetNames: buffer.assetNames,
         validDegree: buffer.validDegree ? [...buffer.validDegree].sort((a, b) => a[0].localeCompare(b[0])) : undefined,
-        pairEndpoints: buffer.pairEndpoints,
         retainedDegree: [...buffer.retainedDegree.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
         pairCount: buffer.pairCount,
         omittedPairs: buffer.omittedPairs,

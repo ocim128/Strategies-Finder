@@ -1,3 +1,4 @@
+import { removeRetiredCausalArms } from "./open-score-replay/retired-arm-compat";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
@@ -334,6 +335,7 @@ import { compactRankingMeasurement, compactCausalArmDiagnostics } from "./open-s
 export function toWireSafeTopMeanResultSummary(
     result: TopMeanResultSummary,
 ): TopMeanResultSummary {
+    result = removeRetiredCausalArms(result);
     return {
         ...result,
         causalArmDefinitions: compactCausalArmDefinitions(result.causalArmDefinitions),
@@ -555,7 +557,7 @@ export interface TopMeanCoordinatorEngineDeps {
      * skips what the compact candidate result never reads: annual calendar
      * replays, the current-position snapshot, per-row event details, and both
      * result.json writes (the child directory is deleted after the sweep).
-     * Standalone TOP_MEAN computes the same twenty arms, and also retains
+     * Standalone TOP_MEAN computes the same seventeen arms, and also retains
      * single-year deduplication and the pre-replay snapshot
      * persistence that the /status reattach path serves.
      */
@@ -904,7 +906,7 @@ export class TopMeanCoordinatorEngine {
             runtime: {
                 processId: process.pid, nodeVersion: process.version,
                 processStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
-                replayImplementation: "bounded-ranking-daily-columns-v2",
+                replayImplementation: "temporal-support-only-v4",
             },
             startedAt: new Date().toISOString(),
             totalMs: 0,

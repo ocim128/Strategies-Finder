@@ -426,16 +426,14 @@ export function renderTopMeanResults(
     dom.batchBacktestSp500TopMeanResults.innerHTML = html;
 }
 
-/** Compact history/component availability shared by results, details and copy. */
+/** Compact support availability shared by results, details and copy. */
 export function formatCausalArmAvailabilityLines(summary: Pick<TopMeanResultSummary, "causalArmDefinitions" | "causalArmDiagnostics">): string[] {
     if (!summary.causalArmDefinitions) return [];
     const diagnostics = summary.causalArmDiagnostics;
     const lines = [`Causal score definitions: ${summary.causalArmDefinitions.version}`];
     if (!diagnostics) return lines;
     for (const field of CAUSAL_ARM_FIELDS) lines.push(`${REPLAY_ARM_TO_FINDER_ARM[field]}: ${diagnostics.eligibleCandidates[field] ?? 0} eligible candidate observations`);
-    lines.push(`Zero available degree: ${diagnostics.unavailableDegree}`, `Insufficient support history: ${diagnostics.unavailableSupportHistory}`,
-        `Unavailable price history: ${diagnostics.unavailablePriceHistory}`, `Outside selected graph component: ${diagnostics.graphExcludedCandidates}`, `Graph solver failures: ${diagnostics.graphSolverFailures}`);
-    for (const [reason, count] of Object.entries(diagnostics.priceUnavailableReasons ?? {})) lines.push(`Price ${reason.replaceAll("_", " ")}: ${count}`);
+    lines.push(`Zero available degree: ${diagnostics.unavailableDegree}`, `Insufficient support history: ${diagnostics.unavailableSupportHistory}`);
     return lines;
 }
 

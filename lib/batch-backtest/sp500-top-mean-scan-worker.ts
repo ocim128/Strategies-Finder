@@ -33,7 +33,6 @@ export const TOP_MEAN_SCAN_NO_QUOTE_LEG = 0xffffffff;
 
 export interface TopMeanScanShardResult {
     validDegree?: Array<[string, number]>;
-    pairEndpoints?: Array<{ base: number; quote: number } | null>;
     entrySecs?: Float64Array;
     shardIndex: number;
     ok: boolean;
@@ -60,7 +59,6 @@ export interface TopMeanScanShardResult {
 
 interface ShardScanAccumulator {
     validDegree?: Map<string, number>;
-    pairEndpoints?: Array<{ base: number; quote: number } | null>;
     shardIndex: number;
     names: string[];
     retainedDegree: Map<string, number>;
@@ -98,7 +96,7 @@ function scanShard(shardIndex: number, artifacts: CompactPairArtifact[], causal 
     };
     const retainedDegree = new Map<string, number>();
     const acc: ShardScanAccumulator = {
-        ...(causal ? { validDegree: new Map<string, number>(), pairEndpoints: [] } : {}),
+        ...(causal ? { validDegree: new Map<string, number>() } : {}),
         shardIndex,
         names,
         retainedDegree,
@@ -131,7 +129,6 @@ function scanShard(shardIndex: number, artifacts: CompactPairArtifact[], causal 
             continue;
         }
         outcome.deltas.sort(compareDeltas);
-        acc.pairEndpoints?.push(valid ? { base: localIndexByName.get(outcome.baseName)!, quote: localIndexByName.get(outcome.quoteName!)! } : null);
         acc.pairLengths.push(outcome.deltas.length);
         acc.pairFlags.push((outcome.profitable ? 1 : 0) | (outcome.pnlKnown ? 2 : 0));
         acc.rowOffsets.push(acc.rows.length);
@@ -160,7 +157,7 @@ function packShard(acc: ShardScanAccumulator): TopMeanScanShardResult {
         deltaFlags[i] = row.isEntry | (row.voteApplied ? 2 : 0);
     }
     return {
-        ...(acc.validDegree ? { validDegree: [...acc.validDegree], pairEndpoints: acc.pairEndpoints, entrySecs } : {}),
+        ...(acc.validDegree ? { validDegree: [...acc.validDegree], entrySecs } : {}),
         shardIndex: acc.shardIndex,
         ok: true,
         names: acc.names,

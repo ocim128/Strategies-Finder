@@ -83,10 +83,8 @@ export function getFinderCausalAvailabilityDetails(row: { causalArmDiagnostics?:
     const diagnostics = row.causalArmDiagnostics;
     if (!diagnostics) return [];
     const field = FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm];
-    const reasons = arm === "TOP_PRICE_STRENGTH" ? Object.entries(diagnostics.priceUnavailableReasons ?? {}).map(([reason, count]) => reason.replaceAll("_", " ") + ": " + count)
-        : arm === "TOP_GRAPH_STRENGTH" ? ["outside selected component: " + diagnostics.graphExcludedCandidates, "solver failures: " + diagnostics.graphSolverFailures]
-        : arm === "TOP_STABLE_SUPPORT" ? ["insufficient support history: " + diagnostics.unavailableSupportHistory, "zero available degree: " + diagnostics.unavailableDegree]
-        : arm === "TOP_COVERAGE" || arm === "TOP_FRESH_SUPPORT" ? ["zero available degree: " + diagnostics.unavailableDegree] : [];
+    const reasons = arm === "TOP_STABLE_SUPPORT" ? ["insufficient support history: " + diagnostics.unavailableSupportHistory, "zero available degree: " + diagnostics.unavailableDegree]
+        : arm === "TOP_FRESH_SUPPORT" ? ["zero available degree: " + diagnostics.unavailableDegree] : [];
     return reasons.length ? ["Eligible candidate observations: " + (diagnostics.eligibleCandidates[field as import("../batch-backtest/open-score-replay/arm-contract").CausalArmField] ?? 0), ...reasons] : [];
 }
 

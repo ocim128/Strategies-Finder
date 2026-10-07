@@ -126,8 +126,7 @@ import { buildReportLines } from "./open-score-replay/report";
 import { createEmptyAssetSwitchSummary, runAssetSwitchReplay } from "./open-score-replay/asset-switch";
 import { createEmptyRankingMeasurement } from "./open-score-replay/types";
 import { replayArmFields, isCausalArm } from "./open-score-replay/arm-contract";
-import { FINDER_CAUSAL_ARMS_V1 } from "./open-score-replay/causal-arm-constants";
-import { addCausalPriceScores } from "./open-score-replay/causal-target-scores";
+import { FINDER_SUPPORT_ARMS_V2 } from "./open-score-replay/causal-arm-constants";
 import { TOP_MEAN_HORIZONS_MAX_VALUE } from "./sp500-top-mean-request-limits";
 
 // ============================================================================
@@ -226,10 +225,10 @@ export async function runOpenScoreUsdReplay(
 
     const assetCount = assetNames.length;
     const totalDeltas = streams.reduce((s, st) => s + st.length, 0);
-    const emptyCausalDiagnostics = { eligibleCandidates: {}, unavailableDegree: 0, unavailableSupportHistory: 0, unavailablePriceHistory: 0, graphExcludedCandidates: 0, graphSolverFailures: 0 };
+    const emptyCausalDiagnostics = { eligibleCandidates: {}, unavailableDegree: 0, unavailableSupportHistory: 0 };
     const emptyCalculatedResult = async (partial: Partial<OpenScoreUsdReplayResult>): Promise<OpenScoreUsdReplayResult> => {
         if (!options.enableCausalArms) return emptyResult(partial);
-        const result = emptyResult({ ...partial, causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 }, causalArmDiagnostics: emptyCausalDiagnostics });
+        const result = emptyResult({ ...partial, causalArmDefinitions: { ...FINDER_SUPPORT_ARMS_V2 }, causalArmDiagnostics: emptyCausalDiagnostics });
         if (replayMode === "horizon") {
             const aggregated = await aggregateHorizonResults({ options, horizons, blockCount, bootstrapSamples, views: [], gapFilteredViews: [], gapFilteredProfitOnlyEvents: [], botPicksByView: [], returnsByView: [], dataGapAssets: new Map(), assetNames, retainedDegree: staticDegree, noDataEvents: new Set(), onPhase });
             result.horizons = aggregated.horizonResults;
@@ -247,7 +246,7 @@ export async function runOpenScoreUsdReplay(
     // it builds internally become the only delta indexing.
     const sweepOutcome = await sweepScoreEvents({
         enableCausalArms: options.enableCausalArms,
-        interval: options.interval, mode: replayMode, assetNames, validDegree: scan.validDegree, pairEndpoints: scan.pairEndpoints,
+        interval: options.interval, mode: replayMode, assetNames, validDegree: scan.validDegree,
         streams,
         profitableStreams,
         sampleFromSec: options.sampleFromSec,
@@ -272,14 +271,7 @@ export async function runOpenScoreUsdReplay(
 
 
     const causalArmDiagnostics = sweepOutcome.result.causalArmDiagnostics;
-    const causalMetadata = options.enableCausalArms ? { causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 }, causalArmDiagnostics } : {};
-    if (options.enableCausalArms) {
-        const missing = await addCausalPriceScores(events, assetNames, options, causalArmDiagnostics!);
-        const loader = options.loadTargetDataset!;
-        const prefetch = options.prefetchTargetDatasets;
-        options = { ...options, loadTargetDataset: (asset) => missing.has(asset) ? Promise.resolve(null) : loader(asset),
-            ...(prefetch ? { prefetchTargetDatasets: (assets) => prefetch(assets.filter((asset) => !missing.has(asset))) } : {}) };
-    }
+    const causalMetadata = options.enableCausalArms ? { causalArmDefinitions: { ...FINDER_SUPPORT_ARMS_V2 }, causalArmDiagnostics } : {};
     const totalEvents = events.length;
     if (totalEvents === 0) {
         return emptyCalculatedResult({ pairs: pairCount, assets: assetCount, reportLines: ["OPEN_SCORE USD | no decision events (no pair entries in window)."] });
@@ -353,6 +345,7 @@ export async function runOpenScoreUsdReplay(
         const switchOutcome = await runAssetSwitchReplay({
             views: switchStage.decisions,
             selectedAssets: switchStage.selectedAssets,
+
             assetNames,
             options,
             slippageRate,

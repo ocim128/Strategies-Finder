@@ -4,7 +4,7 @@ import { renderTopMeanOpenScoreEventDetails } from "../lib/batch-backtest/browse
 import type { TopMeanResultSummary } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
 import type { AssetSwitchTradeRecord } from "../lib/batch-backtest/open-score-replay/types";
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
-import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
+import { FINDER_SUPPORT_ARMS_V2 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 
 function trade(asset: string, year: number): AssetSwitchTradeRecord {
     const decisionTimeSec = Math.floor(Date.UTC(year, 5, 15, 12) / 1_000);
@@ -58,7 +58,7 @@ describe("TOP_MEAN asset-switch event details", () => {
             const result = summary([{ ...trade("NEW_ARM", 2024), arm: field }, trade("OTHER_ARM", 2024)]);
             const arm = REPLAY_ARM_TO_FINDER_ARM[field];
             expect(renderTopMeanOpenScoreEventDetails(result, arm)).to.include("Rerun required");
-            result.causalArmDefinitions = { ...FINDER_CAUSAL_ARMS_V1 };
+            result.causalArmDefinitions = { ...FINDER_SUPPORT_ARMS_V2 };
             const html = renderTopMeanOpenScoreEventDetails(result, arm);
             expect(html).to.include("NEW_ARM");
             expect(html).not.to.include("OTHER_ARM");

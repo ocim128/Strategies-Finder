@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
-import { FINDER_CAUSAL_ARMS_V1 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
+import { FINDER_SUPPORT_ARMS_V2 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { describe, it } from "node:test";
 import {
     FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
@@ -120,7 +120,7 @@ function makeSummary(): TopMeanResultSummary {
     );
     return {
         runId: "child",
-        causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
+        causalArmDefinitions: { ...FINDER_SUPPORT_ARMS_V2 },
         completed: true,
         archiveComplete: false,
         counts: {} as TopMeanResultSummary["counts"],
@@ -149,7 +149,7 @@ function makeSwitchSummary(): TopMeanResultSummary {
     };
     return {
         runId: "child-switch",
-        causalArmDefinitions: { ...FINDER_CAUSAL_ARMS_V1 },
+        causalArmDefinitions: { ...FINDER_SUPPORT_ARMS_V2 },
         replayMode: "asset_switch",
         completed: true,
         archiveComplete: false,
@@ -252,11 +252,11 @@ describe("Finder Arm Performance runner", () => {
                 const summary = mode === "asset_switch" ? makeSwitchSummary() : makeSummary();
                 if (failure === "missing_definition") delete summary.causalArmDefinitions;
                 else if (mode === "asset_switch") {
-                    if (failure === "missing_arm") delete summary.assetSwitch!.arms.topCoverage;
-                    else summary.assetSwitch!.arms.topCoverage = { ...summary.assetSwitch!.arms.topCoverage!, enteredCount: -1 };
+                    if (failure === "missing_arm") delete summary.assetSwitch!.arms.topStableSupport;
+                    else summary.assetSwitch!.arms.topStableSupport = { ...summary.assetSwitch!.arms.topStableSupport!, enteredCount: -1 };
                 } else {
-                    if (failure === "missing_arm") delete summary.horizons[0]!.armComparisons!.TOP_COVERAGE;
-                    else summary.horizons[0]!.armComparisons!.TOP_COVERAGE!.events = -1;
+                    if (failure === "missing_arm") delete summary.horizons[0]!.armComparisons!.TOP_STABLE_SUPPORT;
+                    else summary.horizons[0]!.armComparisons!.TOP_STABLE_SUPPORT!.events = -1;
                 }
                 let removed = 0, collected = 0, error: unknown;
                 try {

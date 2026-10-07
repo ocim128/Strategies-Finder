@@ -29,7 +29,6 @@ export function compareDeltas(a: ScoreDelta, b: ScoreDelta): number {
 
 export interface ArtifactScanResult {
     validDegree?: Map<string, number>;
-    pairEndpoints?: Array<{ base: number; quote: number } | null>;
     assetIndexByName: Map<string, number>;
     assetNames: string[];
     /**
@@ -346,7 +345,6 @@ export async function scanArtifacts(args: {
         return idx;
     };
     const validDegree = args.enableCausalArms ? new Map<string, number>() : undefined;
-    const pairEndpoints = args.enableCausalArms ? [] as Array<{ base: number; quote: number } | null> : undefined;
     const scanCtx: PairArtifactScanContext = {
         enableCausalArms: args.enableCausalArms,
         assetIndex,
@@ -385,7 +383,6 @@ export async function scanArtifacts(args: {
         // Only this pair's temporary rows survive the sort. Retaining objects
         // for four deltas per trade exhausts even a 16 GiB coordinator heap.
         streams.push(ScoreDeltaBuffer.from(outcome.deltas, args.enableCausalArms));
-        pairEndpoints?.push(validPair ? { base: assetIndexByName.get(outcome.baseName)!, quote: assetIndexByName.get(outcome.quoteName!)! } : null);
         // Profit-gated arms: a pair feeds the filtered accumulators only when its
         // full backtest netted strictly positive. Kept in lockstep with
         // `streams` (index i describes streams[i]).
@@ -402,7 +399,7 @@ export async function scanArtifacts(args: {
     return {
         ok: true,
         result: {
-            ...(validDegree ? { validDegree, pairEndpoints } : {}),
+            ...(validDegree ? { validDegree } : {}),
             assetIndexByName,
             assetNames,
             retainedDegree,

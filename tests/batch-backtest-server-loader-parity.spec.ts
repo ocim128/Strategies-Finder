@@ -157,6 +157,25 @@ describe("batch-backtest server loader parity", () => {
         ]);
     });
 
+    it("does not refetch authoritative short offline targets, but still repairs cached fragments", async () => {
+        const short: OHLCVData[] = [{ time: 0 as Time, open: 100, high: 102, low: 99, close: 101, volume: 10 }];
+        const deep = Array.from({ length: 3000 }, (_, i) => ({ ...short[0]!, time: i * 14400 as Time }));
+        for (const authoritative of [true, false]) {
+            const calls: boolean[] = [];
+            const loader = createBatchDatasetLoaderCore({
+                logPrefix: "batch.test",
+                fetchDetached: async () => short,
+                fetchHistorical: async (_symbol, _interval, _limit, options) => {
+                    calls.push(options?.offline === true);
+                    return deep;
+                },
+                acceptOfflineThinData: () => authoritative,
+            });
+            expect(await loader.load("AAPL\u2022", "4h")).to.deep.equal(authoritative ? short : deep);
+            expect(calls).to.deep.equal(authoritative ? [] : [true]);
+        }
+    });
+
     it("shares pair bars and aligned metadata across repeated batch iterations", async () => {
         const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
             time: time as Time,

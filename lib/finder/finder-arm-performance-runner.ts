@@ -223,7 +223,7 @@ function buildCandidateResult(args: {
     failedPairDetails: readonly TopMeanPairFailure[];
 }): FinderArmPerformanceCandidate {
     const { plan, candidateId, status, result, input, failedPairDetails } = args;
-    if (!compactCausalArmDefinitions(result.causalArmDefinitions)) throw new Error("TOP_MEAN child omitted the required finder-causal-arms-v1 definitions.");
+    if (!compactCausalArmDefinitions(result.causalArmDefinitions)) throw new Error("TOP_MEAN child omitted the required finder-causal-arms-v2 definitions.");
     const replayMode = input.options.armPerformance?.replayMode ?? "horizon";
     const resolved = resolveCandidateSettings(plan, input);
     const rankingRequested = input.options.armPerformance?.measurement === "ranking_consistency";

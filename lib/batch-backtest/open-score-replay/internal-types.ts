@@ -97,11 +97,8 @@ export interface DecisionEvent {
 
 /** One asset-pool member at a decision event. */
 export interface Candidate {
-    topCoverage?: number;
     topStableSupport?: number;
     topFreshSupport?: number;
-    topPriceStrength?: number;
-    topGraphStrength?: number;
     assetIndex: number;
     raw: number;
     adjusted: number;

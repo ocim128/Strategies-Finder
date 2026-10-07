@@ -271,12 +271,23 @@ export class SwitchTargetLookup {
         };
     }
 
+    private observe(asset: string, meta: SeriesMeta): void {
+        this.requested.add(asset);
+        if (meta.status === "missing") this.missing.add(asset);
+        else {
+            this.loaded.add(asset);
+            if (meta.status === "invalid") this.invalid.add(asset);
+        }
+        cappedGapSet(this.gapMeta, asset, { status: meta.status, gaps: meta.gaps });
+    }
+
     private async loadMeta(asset: string): Promise<SeriesMeta> {
         const cached = this.seriesMeta.get(asset);
         if (cached) {
             this.seriesHits++;
             this.seriesMeta.delete(asset);
             this.seriesMeta.set(asset, cached);
+            if (!this.requested.has(asset)) this.observe(asset, cached);
             return cached;
         }
         this.requested.add(asset);
@@ -287,14 +298,16 @@ export class SwitchTargetLookup {
         } catch {
             data = null;
         }
+        const meta = this.prepareMeta(data);
+        this.observe(asset, meta);
+        this.rememberSeriesMeta(asset, meta);
+        return meta;
+    }
+
+    private prepareMeta(data: OHLCVData[] | null): SeriesMeta {
         if (!data || data.length === 0) {
-            const meta = { status: "missing" as const, gaps: [] };
-            this.missing.add(asset);
-            cappedGapSet(this.gapMeta, asset, meta);
-            this.rememberSeriesMeta(asset, meta);
-            return meta;
+            return { status: "missing", gaps: [] };
         }
-        this.loaded.add(asset);
         const times = new Float64Array(data.length);
         const opens = new Float64Array(data.length);
         const closes = new Float64Array(data.length);
@@ -313,11 +326,7 @@ export class SwitchTargetLookup {
             closes[index] = candle.close;
         }
         if (invalidSeries) {
-            const meta = { status: "invalid" as const, gaps: [] };
-            this.invalid.add(asset);
-            cappedGapSet(this.gapMeta, asset, meta);
-            this.rememberSeriesMeta(asset, meta);
-            return meta;
+            return { status: "invalid", gaps: [] };
         }
         const gaps: CandleGapInterval[] = [];
         for (let i = 1; i < data.length; i += 1) {
@@ -332,8 +341,6 @@ export class SwitchTargetLookup {
             opens,
             closes,
         };
-        cappedGapSet(this.gapMeta, asset, { status: meta.status, gaps });
-        this.rememberSeriesMeta(asset, meta);
         return meta;
     }
 

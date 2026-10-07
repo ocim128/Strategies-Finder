@@ -256,7 +256,8 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             }
 
             const staleFragmentThreshold = resolveStaleFragmentBarThreshold(interval);
-            if (data.length > 0 && data.length < staleFragmentThreshold) {
+            if (data.length > 0 && data.length < staleFragmentThreshold
+                && !options.acceptOfflineThinData?.(symbol, interval)) {
                 debugLogger.warn(`${options.logPrefix}.stale_fragment_refetch`, {
                     symbol, interval: interval, cachedBars: data.length, threshold: staleFragmentThreshold,
                 });

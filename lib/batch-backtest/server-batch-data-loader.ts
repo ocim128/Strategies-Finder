@@ -18,6 +18,7 @@ import {
     storeSyntheticPair,
 } from "./synthetic-pair-disk-cache";
 import { getCryptoCsvMtimeMs } from "./server-crypto-csv-loader";
+import { isIbkrSymbol } from "../local-daily-datasets";
 import {
     clearServerDataCache,
     createServerDataFetcher,
@@ -59,7 +60,7 @@ const loader = createBatchDatasetLoaderCore({
     pairCacheMaxEntries: cacheBudget.pairCacheMaxEntries,
     fetchDetached: fetchServerDetachedData,
     fetchHistorical: fetchServerHistoricalData,
-    acceptOfflineThinData: (symbol, interval) => getCryptoCsvMtimeMs(symbol, interval) !== null,
+    acceptOfflineThinData: (symbol, interval) => isIbkrSymbol(symbol) || getCryptoCsvMtimeMs(symbol, interval) !== null,
     // Server-side disk cache. File-backed IBKR legs and synced crypto legs use
     // CSV mtimes; crypto without a CSV uses SQLite series metadata.
     computeSyntheticPairFingerprint: (args) =>

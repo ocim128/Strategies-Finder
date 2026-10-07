@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
     fnv1a64Hex,
     tieBreakDigest,
+    createTieBreakDigest,
     MAX_ACTIVE_TIE_VERSION,
     MAX_ACTIVE_TIE_SEED,
     MAX_ACTIVE_BLOCK_COUNT,
@@ -34,6 +35,15 @@ describe("max-active-research-contract", () => {
     });
 
     describe("tieBreakDigest", () => {
+        it("reuses an event prefix without changing UTF-8 suffixes or time truncation", () => {
+            for (const time of [0, -1.9, 1_700_000_000, 1_700_000_000.9]) {
+                const digest = createTieBreakDigest(time);
+                for (const asset of ["", "AAPL", "AAPL\u2022", "\u4e2d\u6587", "\u{1f680}", "\ud800", "A|B", "AAPL"]) {
+                    assert.equal(digest(asset), tieBreakDigest(time, asset));
+                }
+            }
+        });
+
         it("encodes the versioned tie rule and shared seed", () => {
             // The digest input is `${TIE_VERSION}|${TIE_SEED}|${t}|${asset}`.
             const t = 1_700_000_000;
