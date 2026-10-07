@@ -1315,7 +1315,11 @@ pub(crate) fn run_backtest_with_market_series_options(
             current_equity += unrealized_pnl;
         }
         if compact {
-            update_drawdown(current_equity);
+            // A caller that skips drawdown never reads the running peak
+            // state, so leave it untouched instead of feeding every bar.
+            if !skip_drawdown {
+                update_drawdown(current_equity);
+            }
         } else {
             equity_curve.push(EquityPoint {
                 time: candle.time,
@@ -1342,7 +1346,9 @@ pub(crate) fn run_backtest_with_market_series_options(
             &mut kelly_state,
         );
         if compact {
-            update_drawdown(capital);
+            if !skip_drawdown {
+                update_drawdown(capital);
+            }
         } else if let Some(last_point) = equity_curve.last_mut() {
             last_point.value = capital;
         }
@@ -1354,17 +1360,15 @@ pub(crate) fn run_backtest_with_market_series_options(
     } else {
         calculate_max_drawdown(&equity_curve, initial_capital)
     };
-    let mut result = calculate_backtest_stats(
+    let mut result = calculate_backtest_stats_with_options(
         trades,
         equity_curve,
         initial_capital,
         capital,
         max_dd,
         max_dd_pct,
+        !skip_sharpe_ratio,
     );
-    if skip_sharpe_ratio {
-        result.sharpe_ratio = 0.0;
-    }
     result.final_position_open = final_position_open;
     if compact {
         if !retain_trades {
@@ -1415,6 +1419,29 @@ pub fn calculate_backtest_stats(
     max_drawdown: f64,
     max_drawdown_percent: f64,
 ) -> BacktestResult {
+    calculate_backtest_stats_with_options(
+        trades,
+        equity_curve,
+        initial_capital,
+        final_capital,
+        max_drawdown,
+        max_drawdown_percent,
+        true,
+    )
+}
+/// Variant of [`calculate_backtest_stats`] letting callers skip Sharpe work
+/// when the request asked to omit it.
+#[must_use]
+#[allow(clippy::too_many_arguments)]
+fn calculate_backtest_stats_with_options(
+    trades: Vec<Trade>,
+    equity_curve: Vec<EquityPoint>,
+    initial_capital: f64,
+    final_capital: f64,
+    max_drawdown: f64,
+    max_drawdown_percent: f64,
+    include_sharpe: bool,
+) -> BacktestResult {
     let total_trades = trades.len() as u32;
     if total_trades == 0 {
         return BacktestResult {
@@ -1462,7 +1489,11 @@ pub fn calculate_backtest_stats(
         0.0
     };
     let expectancy = (win_rate_fraction * avg_win) - ((1.0 - win_rate_fraction) * avg_loss);
-    let sharpe_ratio = calculate_sharpe_ratio(&trades);
+    let sharpe_ratio = if include_sharpe {
+        calculate_sharpe_ratio(&trades)
+    } else {
+        0.0
+    };
     BacktestResult {
         trades,
         net_profit,
@@ -1862,6 +1893,26 @@ mod tests {
         compact: bool,
         retain_trades: bool,
     ) -> BacktestResult {
+        run_options_with_skips(
+            data,
+            signals,
+            settings,
+            compact,
+            retain_trades,
+            false,
+            false,
+        )
+    }
+
+    fn run_options_with_skips(
+        data: &[OHLCV],
+        signals: &[Signal],
+        settings: &BacktestSettings,
+        compact: bool,
+        retain_trades: bool,
+        skip_drawdown: bool,
+        skip_sharpe_ratio: bool,
+    ) -> BacktestResult {
         let market_series = build_market_series(data);
         run_backtest_with_market_series_options(
             data,
@@ -1873,10 +1924,250 @@ mod tests {
             None,
             compact,
             retain_trades,
-            false,
-            false,
+            skip_drawdown,
+            skip_sharpe_ratio,
             &market_series,
         )
+    }
+
+    fn assert_trades_match(actual: &[Trade], expected: &[Trade]) {
+        assert_eq!(actual.len(), expected.len(), "trade count");
+        for (index, (actual, expected)) in actual.iter().zip(expected.iter()).enumerate() {
+            assert_eq!(actual.id, expected.id, "trade {index} id");
+            assert_eq!(actual.trade_type, expected.trade_type, "trade {index} type");
+            assert_eq!(
+                actual.entry_time, expected.entry_time,
+                "trade {index} entry time"
+            );
+            assert_close(
+                actual.entry_price,
+                expected.entry_price,
+                &format!("trade {index} entry price"),
+            );
+            assert_eq!(
+                actual.exit_time, expected.exit_time,
+                "trade {index} exit time"
+            );
+            assert_close(
+                actual.exit_price,
+                expected.exit_price,
+                &format!("trade {index} exit price"),
+            );
+            assert_close(actual.pnl, expected.pnl, &format!("trade {index} pnl"));
+            assert_close(
+                actual.pnl_percent,
+                expected.pnl_percent,
+                &format!("trade {index} pnl percent"),
+            );
+            assert_close(actual.size, expected.size, &format!("trade {index} size"));
+            assert_eq!(
+                actual.exit_reason, expected.exit_reason,
+                "trade {index} exit reason"
+            );
+        }
+    }
+
+    /// Every requested metric and every trade must equal the all-enabled
+    /// baseline; a skipped metric must be exactly zero.
+    fn assert_result_matches_baseline_with_skips(
+        actual: &BacktestResult,
+        baseline: &BacktestResult,
+        skip_drawdown: bool,
+        skip_sharpe: bool,
+    ) {
+        if skip_drawdown {
+            assert_eq!(actual.max_drawdown, 0.0, "skipped max drawdown");
+            assert_eq!(
+                actual.max_drawdown_percent, 0.0,
+                "skipped max drawdown percent"
+            );
+        } else {
+            assert_close(actual.max_drawdown, baseline.max_drawdown, "max drawdown");
+            assert_close(
+                actual.max_drawdown_percent,
+                baseline.max_drawdown_percent,
+                "max drawdown percent",
+            );
+        }
+        if skip_sharpe {
+            assert_eq!(actual.sharpe_ratio, 0.0, "skipped sharpe ratio");
+        } else {
+            assert_close(actual.sharpe_ratio, baseline.sharpe_ratio, "sharpe ratio");
+        }
+        assert_close(actual.net_profit, baseline.net_profit, "net profit");
+        assert_close(
+            actual.net_profit_percent,
+            baseline.net_profit_percent,
+            "net profit percent",
+        );
+        assert_close(actual.win_rate, baseline.win_rate, "win rate");
+        assert_close(actual.expectancy, baseline.expectancy, "expectancy");
+        assert_close(actual.avg_trade, baseline.avg_trade, "avg trade");
+        assert_close(
+            actual.profit_factor,
+            baseline.profit_factor,
+            "profit factor",
+        );
+        assert_eq!(actual.total_trades, baseline.total_trades, "total trades");
+        assert_eq!(
+            actual.winning_trades, baseline.winning_trades,
+            "winning trades"
+        );
+        assert_eq!(
+            actual.losing_trades, baseline.losing_trades,
+            "losing trades"
+        );
+        assert_close(actual.avg_win, baseline.avg_win, "avg win");
+        assert_close(actual.avg_loss, baseline.avg_loss, "avg loss");
+        assert_eq!(
+            actual.final_position_open, baseline.final_position_open,
+            "final position open"
+        );
+        assert_trades_match(&actual.trades, &baseline.trades);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn assert_skip_flag_matrix_matches_baseline(
+        data: &[OHLCV],
+        signals: &[Signal],
+        settings: &BacktestSettings,
+        label: &str,
+        require_drawdown_work: bool,
+    ) {
+        let skip_combos = [(false, false), (true, false), (false, true), (true, true)];
+        for compact in [false, true] {
+            let baseline =
+                run_options_with_skips(data, signals, settings, compact, false, false, false);
+            if require_drawdown_work {
+                assert!(
+                    baseline.max_drawdown > 0.0 && baseline.total_trades >= 1,
+                    "{label}: baseline must exercise drawdown work"
+                );
+            }
+            for (skip_drawdown, skip_sharpe) in skip_combos {
+                let result = run_options_with_skips(
+                    data,
+                    signals,
+                    settings,
+                    compact,
+                    false,
+                    skip_drawdown,
+                    skip_sharpe,
+                );
+                assert_result_matches_baseline_with_skips(
+                    &result,
+                    &baseline,
+                    skip_drawdown,
+                    skip_sharpe,
+                );
+                if !compact {
+                    // Full equity output is preserved even when drawdown is
+                    // skipped.
+                    assert_eq!(
+                        result.equity_curve.len(),
+                        baseline.equity_curve.len(),
+                        "{label}: equity curve length"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn skip_flags_only_zero_their_own_metrics_across_output_modes() {
+        let data = create_test_data(200);
+        // One losing round trip then a winning one: exercises drawdown and a
+        // non-degenerate Sharpe input.
+        let signals = vec![
+            Signal::buy(10 * 60000, 101.0),
+            Signal::sell(50 * 60000, 100.0),
+            Signal::buy(100 * 60000, 110.0),
+            Signal::sell(150 * 60000, 115.0),
+        ];
+        let settings = flat_long_settings();
+        assert_skip_flag_matrix_matches_baseline(
+            &data,
+            &signals,
+            &settings,
+            "long signal_close",
+            true,
+        );
+    }
+
+    #[test]
+    fn skip_flags_hold_for_short_next_open_execution() {
+        let data = create_test_data(6);
+        let mut settings = flat_long_settings();
+        settings.trade_direction = TradeDirection::Short;
+        settings.execution_model = ExecutionModel::NextOpen;
+        let signals = vec![
+            Signal::sell(0, 100.0),
+            Signal::buy(60000, 103.0),
+            Signal::sell(2 * 60000, 104.0),
+            Signal::buy(4 * 60000, 100.0),
+        ];
+        assert_skip_flag_matrix_matches_baseline(
+            &data,
+            &signals,
+            &settings,
+            "short next_open",
+            true,
+        );
+    }
+
+    #[test]
+    fn skip_flags_hold_for_partial_and_final_exits() {
+        let data = vec![
+            OHLCV::new(0, 100.0, 100.0, 100.0, 100.0, 1000.0),
+            OHLCV::new(60000, 100.0, 100.0, 100.0, 100.0, 1000.0),
+            OHLCV::new(120000, 100.0, 112.0, 99.0, 105.0, 1000.0),
+        ];
+        let mut settings = flat_long_settings();
+        settings.atr_period = 1;
+        settings.risk_mode = RiskMode::Percentage;
+        settings.stop_loss_enabled = true;
+        settings.stop_loss_percent = 10.0;
+        settings.partial_take_profit_at_r = 1.0;
+        settings.partial_take_profit_percent = 50.0;
+        settings.risk_max_hold_enabled = true;
+        settings.risk_max_hold_bars = 1;
+        let signals = vec![Signal::buy(60000, 100.0)];
+
+        let baseline_full = run_options(&data, &signals, &settings, false, false);
+        assert_eq!(baseline_full.total_trades, 2, "partial plus final exit");
+        assert_skip_flag_matrix_matches_baseline(
+            &data,
+            &signals,
+            &settings,
+            "partial exits",
+            false,
+        );
+    }
+
+    #[test]
+    fn skip_flags_hold_for_zero_and_single_trade_results() {
+        let data = create_test_data(50);
+        let zero_trade_signals = vec![Signal::buy(10 * 60000, 0.0), Signal::buy(20 * 60000, 0.0)];
+        let settings = flat_long_settings();
+        assert_skip_flag_matrix_matches_baseline(
+            &data,
+            &zero_trade_signals,
+            &settings,
+            "zero trades",
+            false,
+        );
+
+        let single_trade_signals = vec![
+            Signal::buy(10 * 60000, 101.0),
+            Signal::sell(40 * 60000, 105.0),
+        ];
+        assert_skip_flag_matrix_matches_baseline(
+            &data,
+            &single_trade_signals,
+            &settings,
+            "single trade",
+            false,
+        );
     }
 
     #[test]
