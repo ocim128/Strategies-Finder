@@ -167,6 +167,18 @@ describe("validation plan routing", () => {
         assert.deepEqual(plan.testFilters, []);
     });
 
+    it("routes an executor-only change to full JS so every consumer suite is covered", () => {
+        // The shared executor is consumed by Finder execution, Batch runner,
+        // Walk Forward, and lifecycle/diagnostics suites. A narrow focused
+        // filter set cannot cover those consumers, so the change must widen
+        // to full JS exactly like the other shared backtest core files.
+        const plan = planFor(["lib/backtest-executor.ts"]);
+        assert.deepEqual(ruleIds(plan), ["shared-backtest-core"]);
+        assert.deepEqual(plan.checks, ["full-js"]);
+        assert.deepEqual(plan.testFilters, []);
+        assert.deepEqual(plan.unmatchedPaths, []);
+    });
+
     it("keeps E2E and Rust checks additive next to a full JS check", () => {
         const plan = planFor(["lib/rust-settings-sanitizer.ts"]);
         assert.ok(ruleIds(plan).includes("shared-backtest-core"));

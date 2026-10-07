@@ -189,23 +189,11 @@ export const VALIDATION_RULES: readonly ValidationRule[] = [
         checks: FOCUSED_JS_CHECKS,
     },
     {
-        id: "backtest-executor",
-        summary: "Shared backtest executor changed; endpoint, executor cancellation/timing, compact-parity, and rust- parity specs select.",
-        files: ["lib/backtest-executor.ts"],
-        guides: ["docs/backtest-engines-typescript-rust.md"],
-        testFilters: [
-            "backtest-endpoint",
-            "backtest-executor",
-            "backtesting-engine-compact-parity",
-            "rust-",
-        ],
-        checks: FOCUSED_JS_CHECKS,
-    },
-    {
         id: "shared-backtest-core",
-        summary: "Shared backtest engine, strategy helper, settings model, or persistence file changed; full JS verification runs so every focused suite, including Rust parity specs, is covered.",
+        summary: "Shared backtest engine, executor, strategy helper, settings model, or persistence file changed; full JS verification runs so every focused suite, including Rust parity specs, is covered.",
         files: [
             "lib/backtest-service.ts",
+            "lib/backtest-executor.ts",
             "lib/settings-model.ts",
             "lib/settings-manager.ts",
             "lib/persisted-json.ts",
