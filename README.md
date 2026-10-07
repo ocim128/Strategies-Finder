@@ -86,6 +86,7 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Finder: `lib/finder-manager.ts`, `lib/finder/*` (server-side Symbol Universe in `lib/finder/server/*`; see [docs/finder-server-side.md](docs/finder-server-side.md))
 - Walk Forward: `lib/walk-forward-service.ts`
 - Monte Carlo: `lib/monte-carlo-service.ts`, `lib/strategies/monte-carlo/*`
+  (see [Monte Carlo guide](docs/monte-carlo.md))
 - Scanner: `lib/scanner/*`
 - Data Mining: `lib/data-mining-manager.ts`, `lib/data-mining-dom.ts`
 - Batch Backtest: `lib/batch-backtest/batch-backtest-service.ts` (browser orchestration), `lib/batch-backtest/batch-backtest-vite-plugin.ts` (server execution; see [docs/batch-backtest-server-side.md](docs/batch-backtest-server-side.md))

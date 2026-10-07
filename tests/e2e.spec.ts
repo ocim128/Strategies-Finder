@@ -764,6 +764,64 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
 
 };
 
+const verifyMonteCarlo = async (page: Page): Promise<void> => {
+    await page.evaluate(async () => {
+        const actionsPath = '/lib/state-actions.ts';
+        const { clearBacktestResults } = await import(actionsPath);
+        clearBacktestResults('monte_carlo_e2e');
+    });
+    await page.click('#panelMoreTrigger');
+    await page.click('#panelMoreMenu [data-tab="montecarlo"]');
+    await waitForCondition(page, () => {
+        const run = document.getElementById('mc-run-btn') as HTMLButtonElement | null;
+        return !!run?.disabled && document.getElementById('mc-status')?.textContent === 'Please run a backtest first';
+    }, 10000, 'Monte Carlo lazy initialization');
+
+    await page.evaluate(async () => {
+        const statePath = '/lib/state.ts';
+        const enginePath = '/lib/strategies/backtest/backtest-engine.ts';
+        const actionsPath = '/lib/state-actions.ts';
+        const { state } = await import(statePath);
+        const { runBacktest } = await import(enginePath);
+        const { commitBacktestResult } = await import(actionsPath);
+        const data = state.ohlcvData;
+        const signals = data.slice(0, 60).filter((_: unknown, i: number) => i % 4 === 0)
+            .map((bar: { time: unknown; close: number }, i: number) => ({
+                time: bar.time, price: bar.close, type: i % 2 === 0 ? 'buy' : 'sell',
+            }));
+        const result = runBacktest(data, signals, 10000, 10, 0.1, {
+            tradeDirection: 'combined', executionModel: 'next_open', slippageBps: 2,
+            stopLossEnabled: false, takeProfitEnabled: false,
+            riskMinHoldEnabled: false, riskMaxHoldEnabled: false,
+        });
+        if (result.trades.length < 5) throw new Error('Monte Carlo fixture needs at least five trades');
+        if (!result.trades.some((trade: { type: string }) => trade.type === 'short')) {
+            throw new Error('Monte Carlo fixture must include short trades');
+        }
+        commitBacktestResult(result, 'backtest', { reason: 'monte_carlo_e2e' });
+        (document.getElementById('mc-simulations') as HTMLInputElement).value = '100';
+    });
+    await page.click('#mc-run-btn');
+    await waitForCondition(page, () => document.getElementById('mc-status')?.textContent?.startsWith('Completed') === true,
+        15000, 'Monte Carlo completion');
+    await page.evaluate(() => {
+        const panel = document.getElementById('montecarloTab')!;
+        const results = document.getElementById('mc-results')!;
+        if (getComputedStyle(results).display === 'none') throw new Error('Monte Carlo results stayed hidden');
+        if (!panel.contains(document.getElementById('mc-empty-state'))) throw new Error('Monte Carlo empty state escaped its tab');
+        for (const id of ['mc-profit-histogram', 'mc-dd-histogram', 'mc-sharpe-histogram', 'mc-equity-fan']) {
+            if (!results.contains(document.getElementById(id))) throw new Error(`${id} escaped the results container`);
+        }
+        if (document.querySelectorAll('#mc-method-comparison-body tr').length !== 3) {
+            throw new Error('Monte Carlo must render sequence, bootstrap and combined scenarios');
+        }
+        if (document.getElementById('mc-sim-count')?.textContent !== '100 / scenario') throw new Error('Monte Carlo simulation count missing');
+        if ((document.getElementById('mc-run-btn') as HTMLButtonElement).disabled) throw new Error('Monte Carlo Run stayed disabled');
+        if (getComputedStyle(document.getElementById('mc-spinner')!).display !== 'none') throw new Error('Monte Carlo spinner stayed visible');
+    });
+    console.log('Monte Carlo lazy initialization, combined next-open trades and all three scenarios passed.');
+};
+
 async function runTest() {
     try {
         console.log('Starting Vite server for E2E test...');
@@ -1033,6 +1091,7 @@ async function runTest() {
             await verifyRankingCards(page);
             await verifyFinderWorkspace(page);
             await verifyBatchCausalArms(page);
+            await verifyMonteCarlo(page);
 
             console.log('Performing layout verification...');
             const layoutIssues = await verifyLayout(page);

@@ -11,6 +11,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 - [testing.md](testing.md) - focused spec selection, parallel scheduling, machine-readable evidence, and deterministic test helpers for agent workflows.
 - [settings.md](settings.md) - Settings layout, search, live summaries, autosave feedback, and named configuration restore.
+- [monte-carlo.md](monte-carlo.md) - chart backtest resampling, simulation controls, lazy tab layout, and regression checks.
 
 - [strategy-authoring.md](strategy-authoring.md) - built-in strategy contract, examples, helper surface, and prepared execution.
 - [backtest-endpoint.md](backtest-endpoint.md) - local HTTP endpoint request/response contract.

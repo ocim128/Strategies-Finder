@@ -26,13 +26,6 @@ export interface MonteCarloDomElements {
     medianSharpeEl: HTMLElement;
     medianDdEl: HTMLElement;
     execTimeEl: HTMLElement;
-    pmScoredTradesEl: HTMLElement;
-    pmOverallCoverageEl: HTMLElement;
-    pmDataCoverageEl: HTMLElement;
-    pmObservedFinalBalanceEl: HTMLElement;
-    pmSkipBreakdownEl: HTMLElement;
-    pmMedianFinalBankrollEl: HTMLElement;
-    pmFinalBankrollP5El: HTMLElement;
     ciBody: HTMLTableSectionElement;
     riskGrid: HTMLElement;
     riskFlagEl: HTMLElement;
@@ -85,13 +78,6 @@ const MONTE_CARLO_DOM_IDS = {
     medianSharpeEl: "mc-median-sharpe",
     medianDdEl: "mc-median-dd",
     execTimeEl: "mc-exec-time",
-    pmScoredTradesEl: "mc-pm-scored-trades",
-    pmOverallCoverageEl: "mc-pm-overall-coverage",
-    pmDataCoverageEl: "mc-pm-data-coverage",
-    pmObservedFinalBalanceEl: "mc-pm-observed-final-balance",
-    pmSkipBreakdownEl: "mc-pm-skip-breakdown",
-    pmMedianFinalBankrollEl: "mc-pm-median-final-bankroll",
-    pmFinalBankrollP5El: "mc-pm-final-bankroll-p5",
     ciBody: "mc-ci-body",
     riskGrid: "mc-risk-grid",
     riskFlagEl: "mc-risk-flag",
@@ -168,13 +154,6 @@ const ELEMENT_FALLBACKS = {
     medianSharpeEl: "resultsContainer",
     medianDdEl: "resultsContainer",
     execTimeEl: "resultsContainer",
-    pmScoredTradesEl: "resultsContainer",
-    pmOverallCoverageEl: "resultsContainer",
-    pmDataCoverageEl: "resultsContainer",
-    pmObservedFinalBalanceEl: "resultsContainer",
-    pmSkipBreakdownEl: "resultsContainer",
-    pmMedianFinalBankrollEl: "resultsContainer",
-    pmFinalBankrollP5El: "resultsContainer",
     riskGrid: "resultsContainer",
     riskFlagEl: "resultsContainer",
     ddStressMultipleEl: "resultsContainer",
