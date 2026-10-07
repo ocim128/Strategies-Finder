@@ -1368,7 +1368,10 @@ pub(crate) fn run_backtest_with_market_series_options(
     result.final_position_open = final_position_open;
     if compact {
         if !retain_trades {
-            result.trades.clear();
+            // Reassign instead of `clear()`: a moved-in vector keeps the
+            // pre-simulation capacity, so clearing would retain up to
+            // size_of::<Trade>() * trades bytes per compact batch result.
+            result.trades = Vec::new();
         }
         result.equity_curve.clear();
     }
@@ -1580,6 +1583,10 @@ mod tests {
     }
 
     fn assert_close(actual: f64, expected: f64, label: &str) {
+        if actual == expected {
+            // Also covers matching infinities, e.g. an all-winning profit factor.
+            return;
+        }
         let tolerance = 1e-9 * actual.abs().max(expected.abs()).max(1.0);
         assert!(
             (actual - expected).abs() <= tolerance,
@@ -1789,6 +1796,166 @@ mod tests {
         assert_eq!(compact.winning_trades, full.winning_trades);
         assert_eq!(compact.losing_trades, full.losing_trades);
         assert!((compact.net_profit - full.net_profit).abs() < 1e-9);
+    }
+
+    fn flat_long_settings() -> BacktestSettings {
+        let mut settings = BacktestSettings::default();
+        settings.stop_loss_atr = 0.0;
+        settings.take_profit_atr = 0.0;
+        settings.trailing_atr = 0.0;
+        settings.partial_take_profit_at_r = 0.0;
+        settings.break_even_at_r = 0.0;
+        settings.trend_ema_period = 0;
+        settings.adx_max = 0.0;
+        settings.trade_direction = TradeDirection::Long;
+        settings
+    }
+
+    /// Compact and full runs must agree on every scalar the engine reports,
+    /// including the internal `final_position_open` flag.
+    fn assert_scalar_metrics_match_compact_baseline(
+        actual: &BacktestResult,
+        baseline: &BacktestResult,
+    ) {
+        assert_close(actual.net_profit, baseline.net_profit, "net profit");
+        assert_close(
+            actual.net_profit_percent,
+            baseline.net_profit_percent,
+            "net profit percent",
+        );
+        assert_close(actual.win_rate, baseline.win_rate, "win rate");
+        assert_close(actual.expectancy, baseline.expectancy, "expectancy");
+        assert_close(actual.avg_trade, baseline.avg_trade, "avg trade");
+        assert_close(
+            actual.profit_factor,
+            baseline.profit_factor,
+            "profit factor",
+        );
+        assert_close(actual.max_drawdown, baseline.max_drawdown, "max drawdown");
+        assert_close(
+            actual.max_drawdown_percent,
+            baseline.max_drawdown_percent,
+            "max drawdown percent",
+        );
+        assert_eq!(actual.total_trades, baseline.total_trades, "total trades");
+        assert_eq!(
+            actual.winning_trades, baseline.winning_trades,
+            "winning trades"
+        );
+        assert_eq!(
+            actual.losing_trades, baseline.losing_trades,
+            "losing trades"
+        );
+        assert_close(actual.avg_win, baseline.avg_win, "avg win");
+        assert_close(actual.avg_loss, baseline.avg_loss, "avg loss");
+        assert_close(actual.sharpe_ratio, baseline.sharpe_ratio, "sharpe ratio");
+        assert_eq!(
+            actual.final_position_open, baseline.final_position_open,
+            "final position open"
+        );
+    }
+
+    fn run_options(
+        data: &[OHLCV],
+        signals: &[Signal],
+        settings: &BacktestSettings,
+        compact: bool,
+        retain_trades: bool,
+    ) -> BacktestResult {
+        let market_series = build_market_series(data);
+        run_backtest_with_market_series_options(
+            data,
+            signals,
+            10_000.0,
+            100.0,
+            0.0,
+            settings,
+            None,
+            compact,
+            retain_trades,
+            false,
+            false,
+            &market_series,
+        )
+    }
+
+    #[test]
+    fn compact_output_without_retained_trades_releases_storage_and_matches_full_metrics() {
+        let data = create_test_data(200);
+        let signals = vec![
+            Signal::buy(10 * 60000, 101.0),
+            Signal::sell(50 * 60000, 105.0),
+            Signal::buy(100 * 60000, 110.0),
+            Signal::sell(150 * 60000, 115.0),
+        ];
+        let settings = flat_long_settings();
+
+        let full = run_options(&data, &signals, &settings, false, false);
+        assert!(full.total_trades >= 2);
+        let compact = run_options(&data, &signals, &settings, true, false);
+        assert!(compact.trades.is_empty());
+        assert_eq!(
+            compact.trades.capacity(),
+            0,
+            "omitted trade buffers must not retain batch storage"
+        );
+        assert_scalar_metrics_match_compact_baseline(&compact, &full);
+    }
+
+    #[test]
+    fn compact_zero_trade_results_release_signal_backed_capacity() {
+        let data = create_test_data(50);
+        // Valid bar indexes but a nonpositive entry price: the signals reach
+        // the simulation and pre-size the trade vector, yet no trade opens.
+        let signals = vec![Signal::buy(10 * 60000, 0.0), Signal::buy(20 * 60000, 0.0)];
+        let settings = flat_long_settings();
+
+        let full = run_options(&data, &signals, &settings, false, false);
+        assert_eq!(full.total_trades, 0);
+        assert!(!full.final_position_open);
+        let compact = run_options(&data, &signals, &settings, true, false);
+        assert!(compact.trades.is_empty());
+        assert_eq!(compact.trades.capacity(), 0);
+        assert_scalar_metrics_match_compact_baseline(&compact, &full);
+    }
+
+    #[test]
+    fn compact_retained_trades_keep_full_history_and_metrics() {
+        let data = create_test_data(200);
+        let signals = vec![
+            Signal::buy(10 * 60000, 101.0),
+            Signal::sell(50 * 60000, 105.0),
+        ];
+        let settings = flat_long_settings();
+
+        let full = run_options(&data, &signals, &settings, false, false);
+        let retained = run_options(&data, &signals, &settings, true, true);
+        assert!(retained.equity_curve.is_empty());
+        assert_eq!(retained.trades.len(), full.trades.len());
+        assert!(retained.trades.capacity() >= retained.trades.len());
+        for (actual, expected) in retained.trades.iter().zip(full.trades.iter()) {
+            assert_eq!(actual.id, expected.id);
+            assert_close(actual.pnl, expected.pnl, "retained trade pnl");
+            assert_eq!(actual.exit_reason, expected.exit_reason);
+        }
+        assert_scalar_metrics_match_compact_baseline(&retained, &full);
+    }
+
+    #[test]
+    fn compact_open_position_reports_final_position_open_like_full_output() {
+        let data = create_test_data(100);
+        // No exit signal: the engine liquidates at end of data, but the
+        // internal flag must still report the position was open.
+        let signals = vec![Signal::buy(10 * 60000, 101.0)];
+        let settings = flat_long_settings();
+
+        let full = run_options(&data, &signals, &settings, false, false);
+        assert!(full.final_position_open);
+        assert_eq!(full.total_trades, 1);
+        let compact = run_options(&data, &signals, &settings, true, false);
+        assert_eq!(compact.trades.capacity(), 0);
+        assert!(compact.final_position_open);
+        assert_scalar_metrics_match_compact_baseline(&compact, &full);
     }
     #[test]
     fn test_same_bar_exit_policy_matches_signal_order() {
