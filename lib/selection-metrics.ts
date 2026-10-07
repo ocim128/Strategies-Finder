@@ -1,4 +1,4 @@
-/** Pure metrics shared by the legacy asset selector and pair selector. */
+/** Pure metrics shared by the legacy asset-selector CLI. */
 
 export interface SelectionMetric {
     count: number;
@@ -53,7 +53,7 @@ export function formatPercent(value: number | null, signed = false): string {
     return `${signed && value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
 }
 
-/** Formats a fraction as percentage points for pair-selection comparisons. */
+/** Formats a fraction as percentage points for selection comparisons. */
 export function formatPercentagePoints(value: number | null): string {
     if (value === null) return "n/a";
     return `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}pp`;

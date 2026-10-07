@@ -181,14 +181,6 @@ export const VALIDATION_RULES: readonly ValidationRule[] = [
         ],
     },
     {
-        id: "pair-selection",
-        summary: "Pair-selection rule or helper changed; selection-rules guide and pair- specs (registry, checker, feature access, pipeline) select.",
-        directories: ["lib/pair-selection/"],
-        guides: ["docs/selection-rules.md"],
-        testFilters: ["pair-"],
-        checks: FOCUSED_JS_CHECKS,
-    },
-    {
         id: "shared-backtest-core",
         summary: "Shared backtest engine, executor, strategy helper, settings model, or persistence file changed; full JS verification runs so every focused suite, including Rust parity specs, is covered.",
         files: [

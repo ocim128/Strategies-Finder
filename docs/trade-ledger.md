@@ -2,7 +2,7 @@
 
 This guide records the format of existing trade-ledger archives. The current Batch
 application does not create new archives. Existing folders remain readable by the
-offline replay checker and Pair Selection.
+offline replay checker.
 
 ## Run folder layout
 
@@ -14,7 +14,7 @@ offline replay checker and Pair Selection.
     summary.json         # totals, per-pair suppression rates, completeness (run end)
 ```
 
-These are historical artifacts. The offline checker and Pair Selection continue to
+These are historical artifacts. The offline checker continues to
 read compatible archived folders.
 The current Batch run route does not write ledger files.
 
@@ -120,10 +120,6 @@ of bar `fillBarIndex + H`. `entryPrice` is the fill bar open. Long return is
 When that exit bar does not exist, the outcome is `status: "right_censored"` with
 `pnlPercent: null` and no fabricated last-bar exit price.
 
-The pair-selection checker requires `ledgerVersion: 3` and reads the selected H
-from `provenance.ledgerHorizons`; pass an optional third CLI argument to name a
-different configured horizon. A horizon absent from that provenance is refused.
-
 ### As-if outcomes (archived field)
 
 Historical rows may include `asIf` outcomes and an `asIfReason`. The offline
@@ -201,11 +197,10 @@ captured pair. Its `entries.jsonl.gz` partition contains only the recorded, in-w
 ledger rows, including their contiguous ledger ordinals. For a window with `fromSec`,
 `entries-warmup.jsonl.gz` separately retains accepted pre-window entries as
 `[signalBarIndex, direction, signalTimeSec]`; these records have no ledger ordinals,
-outcome fields, or ledger-row binding. Feature generation folds them into strictly
+outcome fields, or ledger-row binding. Feature generation folded them into strictly
 prior fire/inter-fire history, while each feature's observation count remains the
-support of its declared input window. A windowed folder has the same pair-selection
-capabilities as any other compatible folder; the checker's optional --from / --to
-controls remain available.
+support of its declared input window. A windowed folder is structurally identical
+to any other compatible archived folder.
 
 ## Checker (replay mode)
 
@@ -238,8 +233,7 @@ reads and `in` probes of forbidden fields throw, and field enumeration
 unconditionally. Sealed fields: `exitTime`, `exitPrice`, `pnlPercent`, `fees`,
 `exitReason`, `asIf`, `asIfReason`, plus `executed`/`notExecutedReason` â€” conditioning
 on the ORIGINAL run's survivorship is lookahead for a rule meant to run live.
-The v3 `horizons` field is sealed from legacy offline checker rules as well; pair-selection
-reads it through its separate outcome harness.
+The v3 `horizons` field is sealed from legacy offline checker rules as well.
 
 Rule rows are read-only in TypeScript and at runtime. Assignment, deletion,
 property definition, prototype replacement, and preventing extensions all throw

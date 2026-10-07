@@ -10,8 +10,6 @@ permissions:
 jobs:
   unit:
     name: Typecheck and test specs
-    # Feature-pack releases record the exact runtime used for generation.
-    # Keep this aligned with lib/pair-features/releases/v*.json.
     runs-on: windows-latest
     timeout-minutes: 20
     steps:

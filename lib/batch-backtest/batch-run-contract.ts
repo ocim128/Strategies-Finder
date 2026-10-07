@@ -29,7 +29,7 @@ export interface BatchRunFingerprintInput {
  * browser tab never holds row data. The ceiling therefore bounds only the
  * scalar snapshot/intake (KB-scale per thousand symbols), not tab memory, so
  * it was raised from the legacy in-tab-era 2,000 to cover whole-universe
- * ledger-export runs (e.g. ~5.5k synthetic pairs for pair-selection mining).
+ * ledger-export runs (e.g. ~5.5k synthetic pairs).
  */
 export const BATCH_MAX_SYMBOLS = 8_000;
 export const BATCH_MAX_SYMBOL_LENGTH = 128;
