@@ -121,10 +121,10 @@ where
     })
     .await
     .map_err(|error| {
-        tracing::error!("CPU-bound backtest task failed: {}", error);
+        tracing::error!("CPU-bound task failed: {}", error);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Backtest worker task failed: {error}"),
+            format!("CPU-bound worker task failed: {error}"),
         )
     })?;
     Ok(result)
@@ -299,26 +299,44 @@ pub async fn cache_data_handler(
     State(state): State<AppState>,
     Json(req): Json<CacheDataRequest>,
 ) -> Result<Json<CacheDataResponse>, (StatusCode, String)> {
-    // The cache ID must distinguish assets with the same time range and bar
-    // count. Asset Opportunity commonly uploads many synthetic datasets that
-    // share both, so a range-only key can silently run a candidate against the
-    // wrong asset.
-    let data = if !req.data.is_empty() {
-        req.data
-    } else if let Some(packed_data) = req.packed_data {
-        match decode_packed_ohlcv(packed_data) {
-            Ok(data) => data,
-            Err(message) => return Err((StatusCode::BAD_REQUEST, message)),
-        }
-    } else {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "Cache request has no data".to_string(),
-        ));
-    };
-    let bar_count = data.len();
-    let cache_id = cache_id_for_data(&data);
-    // Store in cache
+    let start = Instant::now();
+    let span = tracing::info_span!(
+        "cache_upload",
+        route = "/api/data/cache",
+        ordinary_bars = req.data.len(),
+        packed = req.data.is_empty(),
+    );
+    let completion_span = span.clone();
+    // Selection, packed decoding, and hashing are explicit CPU work over the
+    // whole payload; offload them to the blocking pool. The closure owns the
+    // request, so large vectors move in instead of being cloned.
+    let ((data, bar_count, cache_id), pool_wait_ms) = run_on_blocking_pool(move || {
+        let _entered = span.enter();
+        // The cache ID must distinguish assets with the same time range and
+        // bar count. Asset Opportunity commonly uploads many synthetic
+        // datasets that share both, so a range-only key can silently run a
+        // candidate against the wrong asset.
+        let data = if !req.data.is_empty() {
+            req.data
+        } else if let Some(packed_data) = req.packed_data {
+            decode_packed_ohlcv(packed_data)
+                .map_err(|message| (StatusCode::BAD_REQUEST, message))?
+        } else {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                "Cache request has no data".to_string(),
+            ));
+        };
+        let cache_id = cache_id_for_data(&data);
+        let bar_count = data.len();
+        Ok((data, bar_count, cache_id))
+    })
+    .await
+    // An inner validation error keeps its 400 status; only a failed worker
+    // join becomes the outer 500.
+    .and_then(|(inner, pool_wait_ms)| inner.map(|prepared| (prepared, pool_wait_ms)))?;
+    // Store in cache only after decoding finished; no cache lock is held
+    // while the payload decodes or hashes.
     {
         let mut cache = state.data_cache.write().await;
         cache.insert(
@@ -331,7 +349,15 @@ pub async fn cache_data_handler(
         // Keep a bounded working set for repeated batch requests.
         trim_data_cache(&mut cache);
     }
-    tracing::info!("Cached {} bars with ID: {}", bar_count, cache_id);
+    let total_ms = elapsed_ms_since(start);
+    tracing::info!(
+        parent: &completion_span,
+        bars = bar_count,
+        cache_id = %cache_id,
+        pool_wait_ms = pool_wait_ms,
+        total_ms = total_ms,
+        "cache upload complete"
+    );
     Ok(Json(CacheDataResponse {
         cache_id,
         bar_count,
@@ -709,6 +735,187 @@ mod tests {
 
         assert_eq!(cache.len(), MAX_DATA_CACHE_ENTRIES);
         assert!(!cache.contains_key("oldest"));
+    }
+
+    fn sample_upload_data() -> Vec<OHLCV> {
+        vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(60000, 105.0, 106.0, 104.0, 105.0, 1000.0),
+            OHLCV::new(120000, 105.0, 106.0, 104.0, 105.0, 1000.0),
+        ]
+    }
+
+    fn packed_from_data(data: &[OHLCV]) -> Vec<f64> {
+        data.iter()
+            .flat_map(|bar| {
+                [
+                    bar.time as f64,
+                    bar.open,
+                    bar.high,
+                    bar.low,
+                    bar.close,
+                    bar.volume,
+                ]
+            })
+            .collect()
+    }
+
+    async fn upload(State(state): State<AppState>, request: CacheDataRequest) -> CacheDataResponse {
+        cache_data_handler(State(state), Json(request))
+            .await
+            .expect("upload should succeed")
+            .0
+    }
+
+    #[tokio::test]
+    async fn cache_upload_assigns_equivalent_ids_to_ordinary_and_packed_data() {
+        let state = AppState::default();
+        let ordinary = upload(
+            State(state.clone()),
+            CacheDataRequest {
+                data: sample_upload_data(),
+                packed_data: None,
+            },
+        )
+        .await;
+        let packed = upload(
+            State(state.clone()),
+            CacheDataRequest {
+                data: Vec::new(),
+                packed_data: Some(packed_from_data(&sample_upload_data())),
+            },
+        )
+        .await;
+        assert_eq!(ordinary.cache_id, packed.cache_id);
+        assert_eq!(ordinary.bar_count, packed.bar_count);
+        // Re-uploading identical data converges on the same cache entry.
+        let repeat = upload(
+            State(state),
+            CacheDataRequest {
+                data: sample_upload_data(),
+                packed_data: None,
+            },
+        )
+        .await;
+        assert_eq!(ordinary.cache_id, repeat.cache_id);
+    }
+
+    #[tokio::test]
+    async fn cache_upload_distinguishes_interior_price_changes() {
+        let state = AppState::default();
+        let mut changed = sample_upload_data();
+        changed[1].close += 0.5;
+        let baseline = upload(
+            State(state.clone()),
+            CacheDataRequest {
+                data: sample_upload_data(),
+                packed_data: None,
+            },
+        )
+        .await;
+        let changed = upload(
+            State(state),
+            CacheDataRequest {
+                data: changed,
+                packed_data: None,
+            },
+        )
+        .await;
+        assert_ne!(baseline.cache_id, changed.cache_id);
+    }
+
+    #[tokio::test]
+    async fn cache_upload_rejects_malformed_and_empty_packed_data() {
+        let state = AppState::default();
+        let malformed = cache_data_handler(
+            State(state.clone()),
+            Json(CacheDataRequest {
+                data: Vec::new(),
+                packed_data: Some(vec![1.0, 2.0, 3.0]),
+            }),
+        )
+        .await
+        .expect_err("malformed packed length must fail");
+        assert_eq!(malformed.0, StatusCode::BAD_REQUEST);
+
+        let non_finite = cache_data_handler(
+            State(state.clone()),
+            Json(CacheDataRequest {
+                data: Vec::new(),
+                packed_data: Some(vec![0.0, 100.0, 101.0, 99.0, 100.0, f64::NAN]),
+            }),
+        )
+        .await
+        .expect_err("non-finite packed values must fail");
+        assert_eq!(non_finite.0, StatusCode::BAD_REQUEST);
+
+        let empty = cache_data_handler(
+            State(state.clone()),
+            Json(CacheDataRequest {
+                data: Vec::new(),
+                packed_data: Some(Vec::new()),
+            }),
+        )
+        .await
+        .expect_err("empty packed payload must fail");
+        assert_eq!(empty.0, StatusCode::BAD_REQUEST);
+
+        let no_data = cache_data_handler(
+            State(state),
+            Json(CacheDataRequest {
+                data: Vec::new(),
+                packed_data: None,
+            }),
+        )
+        .await
+        .expect_err("request without data must fail");
+        assert_eq!(no_data.0, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn cache_upload_decode_and_hash_run_off_the_async_executor() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering};
+
+        let state = AppState::default();
+        // Roughly 100k bars of packed rows: decoding and hashing take long
+        // enough that a synchronous implementation would starve this
+        // single-threaded executor for their whole duration.
+        let packed: Vec<f64> = (0..600_000).map(|index| (index % 997) as f64).collect();
+        let request = CacheDataRequest {
+            data: Vec::new(),
+            packed_data: Some(packed),
+        };
+        let done = Arc::new(AtomicBool::new(false));
+        let yields = Arc::new(AtomicU64::new(0));
+
+        let upload_state = state.clone();
+        let done_for_upload = Arc::clone(&done);
+        let upload_task = tokio::spawn(async move {
+            let result = cache_data_handler(State(upload_state), Json(request)).await;
+            done_for_upload.store(true, AtomicOrdering::SeqCst);
+            result
+        });
+
+        let done_for_poller = Arc::clone(&done);
+        let yields_for_poller = Arc::clone(&yields);
+        let poller = async move {
+            while !done_for_poller.load(AtomicOrdering::SeqCst) {
+                tokio::task::yield_now().await;
+                yields_for_poller.fetch_add(1, AtomicOrdering::Relaxed);
+            }
+        };
+
+        let (upload_result, ()) = tokio::join!(upload_task, poller);
+        let response = upload_result
+            .expect("upload task should join")
+            .expect("upload should succeed")
+            .0;
+        assert_eq!(response.bar_count, 100_000);
+        assert!(
+            yields.load(AtomicOrdering::Relaxed) > 1_000,
+            "executor starved during upload: {} yields",
+            yields.load(AtomicOrdering::Relaxed)
+        );
     }
 
     fn batch_request_payload(packed_signals: Option<serde_json::Value>) -> serde_json::Value {
