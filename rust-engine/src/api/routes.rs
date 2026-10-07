@@ -1468,42 +1468,79 @@ mod tests {
     }
 
     // ======================================================================
-    // Direct and cached routes must agree on one heterogeneous batch. The
-    // shared item loop is exercised through both handlers so the comparison
-    // covers multiple IDs, base/item settings selection, long/short, both
-    // execution models, empty items/signals, full/compact output, and metric
-    // skip combinations — independent of elapsed timing.
+    // Direct and cached routes must agree on one heterogeneous batch, and
+    // the batch must satisfy independently derived contracts: exact trade
+    // fills per item, base-versus-item settings replacement, nonzero
+    // drawdown and Sharpe while enabled, and exact zeros for skipped
+    // metrics in every skip combination across both output modes. Route
+    // equality is an additional check, not the contract itself — both
+    // routes share one item loop, so a shared mistake would pass equality.
     // ======================================================================
 
-    fn heterogeneous_batch_data() -> Vec<OHLCV> {
+    fn strengthened_batch_data() -> Vec<OHLCV> {
         vec![
             OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
-            OHLCV::new(60000, 103.0, 104.0, 102.0, 103.0, 1000.0),
+            OHLCV::new(60000, 90.0, 91.0, 89.0, 90.0, 1000.0),
             OHLCV::new(120000, 105.0, 106.0, 104.0, 105.0, 1000.0),
-            OHLCV::new(180000, 107.0, 108.0, 106.0, 107.0, 1000.0),
+            OHLCV::new(180000, 95.0, 96.0, 94.0, 95.0, 1000.0),
+            OHLCV::new(240000, 110.0, 111.0, 109.0, 110.0, 1000.0),
         ]
     }
 
-    fn heterogeneous_batch_items() -> Vec<crate::types::BatchBacktestItem> {
-        let item_settings = crate::types::BacktestSettings {
-            trade_direction: crate::types::TradeDirection::Short,
-            execution_model: crate::types::ExecutionModel::NextOpen,
+    /// The base settings carry a nondefault active risk setting, so an item
+    /// that explicitly disables it proves settings replacement instead of
+    /// inheritance or field merging.
+    fn strengthened_base_settings() -> crate::types::BacktestSettings {
+        crate::types::BacktestSettings {
+            risk_max_hold_enabled: true,
+            risk_max_hold_bars: 1,
+            ..crate::types::BacktestSettings::default()
+        }
+    }
+
+    fn strengthened_items() -> Vec<crate::types::BatchBacktestItem> {
+        let no_max_hold = crate::types::BacktestSettings {
+            risk_max_hold_enabled: false,
+            risk_max_hold_bars: 0,
             ..crate::types::BacktestSettings::default()
         };
+        let short_next_open = crate::types::BacktestSettings {
+            trade_direction: crate::types::TradeDirection::Short,
+            execution_model: crate::types::ExecutionModel::NextOpen,
+            risk_max_hold_enabled: false,
+            risk_max_hold_bars: 0,
+            ..crate::types::BacktestSettings::default()
+        };
+        let signals = vec![
+            Signal::buy(0, 100.0),
+            Signal::sell(120000, 105.0),
+            Signal::buy(180000, 95.0),
+            Signal::sell(240000, 110.0),
+        ];
         vec![
-            // No item settings: base settings (long, signal_close) apply.
+            // No item settings: the base settings (including the one-bar max
+            // hold) apply.
             crate::types::BatchBacktestItem {
-                id: "base-long".to_string(),
-                signals: vec![Signal::buy(0, 100.0), Signal::sell(180000, 107.0)],
+                id: "base-max-hold".to_string(),
+                signals: signals.clone(),
                 packed_signals: None,
                 settings: None,
             },
-            // Item settings replace the base object; they never merge.
+            // Item settings replace the base object wholesale: the explicit
+            // max-hold disable must survive even though the base enables it.
+            crate::types::BatchBacktestItem {
+                id: "override-no-max-hold".to_string(),
+                signals: signals.clone(),
+                packed_signals: None,
+                settings: Some(no_max_hold),
+            },
+            // Direction and execution-model replacement: next-open fills
+            // shift one bar and a short entry sells first.
             crate::types::BatchBacktestItem {
                 id: "short-next-open".to_string(),
-                signals: vec![Signal::sell(0, 100.0), Signal::buy(180000, 107.0)],
+                signals: vec![Signal::sell(0, 100.0), Signal::buy(120000, 105.0)],
                 packed_signals: None,
-                settings: Some(item_settings),
+                settings: Some(short_next_open),
             },
             // Ordinary empty signals stay a valid no-trade candidate.
             crate::types::BatchBacktestItem {
@@ -1515,14 +1552,14 @@ mod tests {
         ]
     }
 
-    async fn run_heterogeneous_batch_through_both_routes(
+    async fn run_strengthened_batch_through_both_routes(
         state: &AppState,
         items: Vec<crate::types::BatchBacktestItem>,
         compact: bool,
         skip_drawdown: bool,
         skip_sharpe_ratio: bool,
     ) -> (serde_json::Value, serde_json::Value) {
-        let data = heterogeneous_batch_data();
+        let data = strengthened_batch_data();
         let direct = batch_backtest_handler(
             Extension(admission_permit(state)),
             None,
@@ -1532,7 +1569,7 @@ mod tests {
                 initial_capital: 10_000.0,
                 position_size_percent: 100.0,
                 commission_percent: 0.0,
-                base_settings: crate::types::BacktestSettings::default(),
+                base_settings: strengthened_base_settings(),
                 sizing: crate::types::TradeSizingConfig::default(),
                 compact,
                 skip_drawdown,
@@ -1564,7 +1601,7 @@ mod tests {
                 initial_capital: 10_000.0,
                 position_size_percent: 100.0,
                 commission_percent: 0.0,
-                base_settings: crate::types::BacktestSettings::default(),
+                base_settings: strengthened_base_settings(),
                 sizing: crate::types::TradeSizingConfig::default(),
                 compact,
                 skip_drawdown,
@@ -1580,69 +1617,210 @@ mod tests {
         )
     }
 
+    /// The kernel's documented Sharpe over two trades: mean pnl percent over
+    /// n, sample deviation over n - 1, zero when the deviation vanishes.
+    fn sharpe_of_two_trades(pnl_percents: [f64; 2]) -> f64 {
+        let mean = (pnl_percents[0] + pnl_percents[1]) / 2.0;
+        let deviation = pnl_percents[0] - mean;
+        let std_dev = (2.0 * deviation * deviation).sqrt();
+        if std_dev == 0.0 {
+            0.0
+        } else {
+            mean / std_dev
+        }
+    }
+
+    fn assert_value_close(actual: &serde_json::Value, expected: f64, label: &str) {
+        let value = actual
+            .as_f64()
+            .unwrap_or_else(|| panic!("{label}: not a number: {actual}"));
+        assert!(
+            (value - expected).abs() <= 1e-9 * expected.abs().max(1.0),
+            "{label}: actual {value} expected {expected}"
+        );
+    }
+
+    /// Exact fills for the strengthened items in full-output runs. The two
+    /// long candidates share entries but must differ in exit fills because
+    /// the base's one-bar max hold replaces the signal exits with time
+    /// stops; the short next-open candidate shifts both fills one bar.
+    fn assert_exact_trades(results: &serde_json::Value, label: &str) {
+        let base_trades = results[0]["result"]["trades"].as_array().unwrap();
+        assert_eq!(base_trades.len(), 2, "{label}: base-max-hold trades");
+        assert_eq!(base_trades[0]["type"], "long");
+        assert_eq!(base_trades[0]["entryTime"], 0);
+        assert_value_close(
+            &base_trades[0]["entryPrice"],
+            100.0,
+            "{label} base t0 entry",
+        );
+        assert_eq!(base_trades[0]["exitTime"], 60000);
+        assert_value_close(&base_trades[0]["exitPrice"], 90.0, "{label} base t0 exit");
+        assert_eq!(base_trades[0]["exitReason"], "time_stop");
+        assert_eq!(base_trades[1]["entryTime"], 180000);
+        assert_value_close(&base_trades[1]["entryPrice"], 95.0, "{label} base t1 entry");
+        assert_eq!(base_trades[1]["exitTime"], 240000);
+        assert_value_close(&base_trades[1]["exitPrice"], 110.0, "{label} base t1 exit");
+        assert_eq!(base_trades[1]["exitReason"], "time_stop");
+
+        let override_trades = results[1]["result"]["trades"].as_array().unwrap();
+        assert_eq!(override_trades.len(), 2, "{label}: override trades");
+        assert_eq!(override_trades[0]["entryTime"], 0);
+        assert_value_close(
+            &override_trades[0]["entryPrice"],
+            100.0,
+            "{label} override t0 entry",
+        );
+        assert_eq!(override_trades[0]["exitTime"], 120000);
+        assert_value_close(
+            &override_trades[0]["exitPrice"],
+            105.0,
+            "{label} override t0 exit",
+        );
+        assert_eq!(override_trades[0]["exitReason"], "signal");
+        assert_eq!(override_trades[1]["entryTime"], 180000);
+        assert_value_close(
+            &override_trades[1]["entryPrice"],
+            95.0,
+            "{label} override t1 entry",
+        );
+        assert_eq!(override_trades[1]["exitTime"], 240000);
+        assert_value_close(
+            &override_trades[1]["exitPrice"],
+            110.0,
+            "{label} override t1 exit",
+        );
+        assert_eq!(override_trades[1]["exitReason"], "signal");
+
+        let short_trades = results[2]["result"]["trades"].as_array().unwrap();
+        assert_eq!(short_trades.len(), 1, "{label}: short next-open trades");
+        assert_eq!(short_trades[0]["type"], "short");
+        assert_eq!(short_trades[0]["entryTime"], 60000);
+        assert_value_close(&short_trades[0]["entryPrice"], 90.0, "{label} short entry");
+        assert_eq!(short_trades[0]["exitTime"], 180000);
+        assert_value_close(&short_trades[0]["exitPrice"], 95.0, "{label} short exit");
+        assert_eq!(short_trades[0]["exitReason"], "signal");
+    }
+
     #[tokio::test]
-    async fn direct_and_cached_routes_match_on_a_heterogeneous_batch() {
+    async fn batch_routes_cover_heterogeneous_items_and_metric_skip_combinations() {
         let state = AppState::default();
-        let items = heterogeneous_batch_items();
+        let items = strengthened_items();
 
-        // Full output retains trades and the equity curve.
-        let (direct_full, cached_full) =
-            run_heterogeneous_batch_through_both_routes(&state, items.clone(), false, false, false)
+        // Independently derived expectations for 100% sizing and no fees:
+        // the mark at the second bar dips to 9000 (1000 dollars, 10%) for
+        // both long candidates, and the Sharpe inputs are the trade pnl
+        // percents -10/+15.789 (base) and +5/+15.789 (override).
+        let second_pnl_percent = (110.0 / 95.0 - 1.0) * 100.0;
+        let base_sharpe = sharpe_of_two_trades([-10.0, second_pnl_percent]);
+        let override_sharpe = sharpe_of_two_trades([5.0, second_pnl_percent]);
+        assert!(base_sharpe != 0.0 && override_sharpe != 0.0);
+
+        for compact in [false, true] {
+            for (skip_drawdown, skip_sharpe) in
+                [(false, false), (true, false), (false, true), (true, true)]
+            {
+                let label = format!(
+                    "compact={compact} skip_drawdown={skip_drawdown} skip_sharpe={skip_sharpe}"
+                );
+                let (direct, cached) = run_strengthened_batch_through_both_routes(
+                    &state,
+                    items.clone(),
+                    compact,
+                    skip_drawdown,
+                    skip_sharpe,
+                )
                 .await;
-        assert_eq!(direct_full, cached_full, "full-output results must match");
-        let ids: Vec<&str> = direct_full
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|item| item["id"].as_str().unwrap())
-            .collect();
-        assert_eq!(ids, vec!["base-long", "short-next-open", "empty-signals"]);
-        assert_eq!(direct_full[0]["result"]["totalTrades"], 1);
-        assert_eq!(direct_full[0]["result"]["trades"][0]["type"], "long");
-        assert_eq!(
-            direct_full[0]["result"]["trades"][0]["exitReason"],
-            "signal"
-        );
-        assert_eq!(direct_full[1]["result"]["totalTrades"], 1);
-        assert_eq!(direct_full[1]["result"]["trades"][0]["type"], "short");
-        assert_eq!(direct_full[2]["result"]["totalTrades"], 0);
-        assert!(
-            !direct_full[0]["result"]["equityCurve"]
-                .as_array()
-                .unwrap()
-                .is_empty(),
-            "full output must retain the equity curve"
-        );
+                assert_eq!(direct, cached, "{label}: routes must match");
 
-        // Compact output with both metric skips: skipped metrics are zero
-        // while trade counts stay identical to the full run.
-        let (direct_compact, cached_compact) =
-            run_heterogeneous_batch_through_both_routes(&state, items, true, true, true).await;
-        assert_eq!(
-            direct_compact, cached_compact,
-            "compact skipped-metric results must match"
-        );
-        assert_eq!(direct_compact[0]["result"]["maxDrawdown"], 0.0);
-        assert_eq!(direct_compact[0]["result"]["maxDrawdownPercent"], 0.0);
-        assert_eq!(direct_compact[0]["result"]["sharpeRatio"], 0.0);
-        assert!(
-            direct_compact[0]["result"]["equityCurve"]
-                .as_array()
-                .unwrap()
-                .is_empty(),
-            "compact output must clear the equity curve"
-        );
-        assert_eq!(
-            direct_compact[0]["result"]["totalTrades"],
-            direct_full[0]["result"]["totalTrades"]
-        );
+                let ids: Vec<&str> = direct
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|item| item["id"].as_str().unwrap())
+                    .collect();
+                assert_eq!(
+                    ids,
+                    vec![
+                        "base-max-hold",
+                        "override-no-max-hold",
+                        "short-next-open",
+                        "empty-signals"
+                    ]
+                );
+
+                if compact {
+                    for item in direct.as_array().unwrap() {
+                        assert!(
+                            item["result"]["trades"].as_array().unwrap().is_empty(),
+                            "{label}: compact output drops trades"
+                        );
+                        assert!(
+                            item["result"]["equityCurve"].as_array().unwrap().is_empty(),
+                            "{label}: compact output clears the equity curve"
+                        );
+                    }
+                } else {
+                    assert_exact_trades(&direct, &label);
+                    assert!(
+                        !direct[0]["result"]["equityCurve"]
+                            .as_array()
+                            .unwrap()
+                            .is_empty(),
+                        "{label}: full output retains the equity curve"
+                    );
+                }
+
+                for (name, result, expected_sharpe) in [
+                    ("base-max-hold", &direct[0]["result"], base_sharpe),
+                    (
+                        "override-no-max-hold",
+                        &direct[1]["result"],
+                        override_sharpe,
+                    ),
+                ] {
+                    assert_eq!(result["totalTrades"], 2, "{label}/{name}: trade count");
+                    if skip_drawdown {
+                        assert_eq!(result["maxDrawdown"], 0.0, "{label}/{name} drawdown");
+                        assert_eq!(
+                            result["maxDrawdownPercent"], 0.0,
+                            "{label}/{name} drawdown percent"
+                        );
+                    } else {
+                        assert_value_close(
+                            &result["maxDrawdown"],
+                            1000.0,
+                            &format!("{label}/{name} drawdown"),
+                        );
+                        assert_value_close(
+                            &result["maxDrawdownPercent"],
+                            10.0,
+                            &format!("{label}/{name} drawdown percent"),
+                        );
+                    }
+                    if skip_sharpe {
+                        assert_eq!(result["sharpeRatio"], 0.0, "{label}/{name} sharpe");
+                    } else {
+                        assert_value_close(
+                            &result["sharpeRatio"],
+                            expected_sharpe,
+                            &format!("{label}/{name} sharpe"),
+                        );
+                    }
+                }
+                assert_eq!(
+                    direct[3]["result"]["totalTrades"], 0,
+                    "{label}: empty-signals candidate"
+                );
+            }
+        }
     }
 
     #[tokio::test]
     async fn empty_batch_items_yield_empty_results_on_both_routes() {
         let state = AppState::default();
         let (direct, cached) =
-            run_heterogeneous_batch_through_both_routes(&state, Vec::new(), true, false, false)
+            run_strengthened_batch_through_both_routes(&state, Vec::new(), true, false, false)
                 .await;
         assert!(direct.as_array().unwrap().is_empty());
         assert!(cached.as_array().unwrap().is_empty());
