@@ -587,6 +587,62 @@ describe("server scalar batch rows", () => {
         expect(nowAndOpenScore(scalarLines)).to.deep.equal(nowAndOpenScore(lines));
     });
 
+    it("derives the three NOW winners from ordinary end_of_data trades across full, scalar, and mixed inventories", () => {
+        // Ordinary ±1 open-position votes (no prefilled scalars):
+        //   X: +4 as long base, -3 as short base  -> score 1, activePairs 7
+        //   Y: +4 as long base, -1 as long quote  -> score 3, activePairs 5
+        //   W: +2 as long base                    -> score 2, activePairs 2
+        //   A/B negative, C/D negative, E/F/G/H net to 0 (excluded: score > 0).
+        // The "Z+A" row carries an authoritative EMPTY openTradeAssetScores
+        // scalar: its end_of_data trade would score Z +1 / A -1, but an empty
+        // array suppresses the trade fallback entirely.
+        const rows = [
+            openTradeRow("X+A", "long"),
+            openTradeRow("X+B", "long"),
+            openTradeRow("X+C", "long"),
+            openTradeRow("X+D", "long"),
+            openTradeRow("X+E", "short"),
+            openTradeRow("X+F", "short"),
+            openTradeRow("X+G", "short"),
+            openTradeRow("Y+E", "long"),
+            openTradeRow("Y+F", "long"),
+            openTradeRow("Y+G", "long"),
+            openTradeRow("Y+H", "long"),
+            openTradeRow("H+Y", "long"),
+            openTradeRow("W+A", "long"),
+            openTradeRow("W+B", "long"),
+            openTradeRow("Z+A", "long", { openTradeAssetScores: [] }),
+        ];
+        const lines = formatBatchOverallSummary(rows);
+        const openScoreLine = "OPEN_SCORE | Y +3, A -2, B -2, W +2, C -1, D -1, X +1, E +0, F +0, G +0, H +0";
+        const maxActiveLine = "MAX_ACTIVE NOW | X score=+1 activePairs=7";
+        const topRawLine = "TOP_RAW NOW | Y score=+3 activePairs=5";
+        const topMeanLine = "TOP_MEAN NOW | W mean=+1 score=+2 activePairs=2";
+        // Complete lines in arm order after OPEN_SCORE; Z is absent and the
+        // empty scalar kept A at -2 (not -3).
+        expect(lines).to.include(openScoreLine);
+        expect(lines.filter((line) => line.includes(" NOW | "))).to.deep.equal([
+            maxActiveLine,
+            topRawLine,
+            topMeanLine,
+        ]);
+        expect(lines.indexOf(maxActiveLine)).to.be.greaterThan(lines.indexOf(openScoreLine));
+        expect(lines.join("\n")).to.not.contain("Z ");
+
+        const nowAndOpenScore = (all: string[]) =>
+            all.filter((line) => line.startsWith("OPEN_SCORE") || line.includes(" NOW | "));
+
+        // The scalar wire projection of every row produces the same sections:
+        // toScalarRow keeps each row's fallback-derived scores stable.
+        expect(nowAndOpenScore(formatBatchOverallSummary(rows.map((row) => toScalarRow(row)))))
+            .to.deep.equal(nowAndOpenScore(lines));
+
+        // A mixed inventory (alternating full and scalar rows) agrees too.
+        const mixed = rows.map((row, index) => (index % 2 === 0 ? toScalarRow(row) : row));
+        expect(nowAndOpenScore(formatBatchOverallSummary(mixed)))
+            .to.deep.equal(nowAndOpenScore(lines));
+    });
+
     it("renders no NOW lines when no asset has a positive score", () => {
         // WLD nets to 0 across the two rows (positive eligibility is
         // score > 0, not nonzero coverage) and BTC is negative -> the
