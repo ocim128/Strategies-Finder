@@ -900,6 +900,40 @@ describe("Rust single-run result acceptance", () => {
         expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
     });
 
+    it("rejects a trade entry whose business-day time overflows to NaN", async () => {
+        // Date.UTC(1000000, 0, 1) is NaN, and the shared time helper returns
+        // that NaN instead of null, so a null-only check accepts it.
+        const trade = v2Trade();
+        trade.entryTime = { year: 1_000_000, month: 1, day: 1 };
+        const client = acceptanceClient(tradeResponse({
+            trades: [trade],
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            netProfit: -10,
+            winRate: 0,
+            avgTrade: -10,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects an equity point whose business-day time overflows to NaN", async () => {
+        const malformed = tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+        });
+        malformed.equityCurve = [{ time: { year: 1_000_000, month: 1, day: 1 }, value: 10_000 }];
+        const client = acceptanceClient(malformed);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
     it("accepts populated trade and equity history and preserves entry values", async () => {
         const winner = { ...v2Trade(), id: 1, pnl: 5, pnlPercent: 5 };
         const loser = { ...v2Trade(), id: 2, pnl: -5, pnlPercent: -5 };

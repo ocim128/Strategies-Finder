@@ -38,11 +38,14 @@ function isFiniteNumber(value: unknown): value is number {
  * Rust wire times arrive as finite numbers. Equivalent string and
  * business-day shapes stay acceptable through the shared normalization
  * helper so normalized variants are not rejected; anything unparseable is.
+ * The helper's object path can overflow to NaN (an out-of-range business
+ * day yields Date.UTC NaN), so the parsed value must be finite too.
  */
 function isSupportedTime(time: unknown): boolean {
     if (typeof time === "number") return Number.isFinite(time);
     if (typeof time === "string" || (time !== null && typeof time === "object")) {
-        return timeToNumber(time as Time) !== null;
+        const parsedTime = timeToNumber(time as Time);
+        return parsedTime !== null && Number.isFinite(parsedTime);
     }
     return false;
 }
