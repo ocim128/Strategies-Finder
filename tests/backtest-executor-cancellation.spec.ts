@@ -167,4 +167,84 @@ describe("backtest executor cancellation", () => {
             rustEngine.runBacktestWithStatus = original;
         }
     });
+
+    it("falls back to TypeScript when the real client rejects a malformed HTTP result", async () => {
+        // The executor no longer re-validates Rust output: the concrete
+        // client's malformed_response rejection must be the acceptance
+        // boundary that sends this run to TypeScript.
+        await expectMalformedHttpFallback(
+            "MALFORMED_HTTP_FALLBACK",
+            "malformed_http_fallback_test",
+            { trades: "not-an-array" },
+        );
+    });
+
+    it("falls back to TypeScript when a malformed trade or equity entry slips past the summary metrics", async () => {
+        // Audit repro: every summary metric reconciles, but the returned
+        // history entries are garbage. The validator must reject the whole
+        // result so the executor replays the run in TypeScript.
+        await expectMalformedHttpFallback(
+            "MALFORMED_ENTRIES_FALLBACK",
+            "malformed_entries_fallback_test",
+            {
+                trades: [{ exitReason: "signal" }],
+                equityCurve: [{ time: 1, value: "invalid-equity" }],
+                netProfit: 0,
+                netProfitPercent: 0,
+                winRate: 0,
+                expectancy: 0,
+                avgTrade: 0,
+                profitFactor: 0,
+                maxDrawdown: 0,
+                maxDrawdownPercent: 0,
+                totalTrades: 0,
+                winningTrades: 0,
+                losingTrades: 0,
+                avgWin: 0,
+                avgLoss: 0,
+                sharpeRatio: 0,
+            },
+        );
+    });
+
+    async function expectMalformedHttpFallback(
+        primarySymbol: string,
+        strategyKey: string,
+        malformedBody: Record<string, unknown>,
+    ): Promise<void> {
+        const originalCheckHealth = rustEngine.checkHealth;
+        const clientInternals = rustEngine as unknown as { fetchImpl: typeof fetch };
+        const originalFetchImpl = clientInternals.fetchImpl;
+        rustEngine.checkHealth = async () => true;
+        clientInternals.fetchImpl = (async () => new Response(
+            JSON.stringify(malformedBody),
+            { status: 200 },
+        )) as typeof fetch;
+
+        try {
+            const result = await executeBacktest({
+                ohlcvData: candles,
+                interval: "1h",
+                primarySymbol,
+                strategyKey,
+                strategy,
+                strategyParams: {},
+                backtestSettings: settings,
+                capitalSettings: capital,
+                context: {
+                    nowSec: 9_999_999_999,
+                    blockRange: null,
+                    engineMode: "rust_preferred",
+                },
+            });
+
+            assert.strictEqual(result.engineUsed, "typescript");
+            assert.strictEqual(result.engineDiagnostics?.rustAttempted, true);
+            assert.strictEqual(result.engineDiagnostics?.typescriptReason, "malformed_response");
+            assert.ok(result.result.totalTrades >= 0);
+        } finally {
+            rustEngine.checkHealth = originalCheckHealth;
+            clientInternals.fetchImpl = originalFetchImpl;
+        }
+    }
 });

@@ -1056,23 +1056,12 @@ pub(crate) fn run_backtest_with_market_series_options(
     let mut max_drawdown = 0.0;
     let mut max_drawdown_percent = 0.0;
     let mut update_drawdown = |equity: f64| {
-        if equity > peak_equity {
-            peak_equity = equity;
-        } else {
-            let drawdown = peak_equity - equity;
-            if drawdown > max_drawdown {
-                max_drawdown = drawdown;
-            }
-            // Dollars and percentage are maximized independently: the worst
-            // relative loss may come from a different peak than the worst
-            // dollar loss.
-            if peak_equity > 0.0 {
-                let drawdown_percent = drawdown / peak_equity * 100.0;
-                if drawdown_percent > max_drawdown_percent {
-                    max_drawdown_percent = drawdown_percent;
-                }
-            }
-        }
+        update_drawdown_sample(
+            equity,
+            &mut peak_equity,
+            &mut max_drawdown,
+            &mut max_drawdown_percent,
+        );
     };
     let mut i = 0;
     while i < data.len() {
@@ -1418,6 +1407,32 @@ pub(crate) fn run_backtest_with_market_series_options(
     }
     result
 }
+/// One scalar drawdown sample shared by the compact streaming closure and the
+/// equity-curve helper. A value above the running peak raises it; otherwise
+/// the dollar and percentage drops are maximized independently, so the worst
+/// relative loss may come from a different peak than the worst dollar loss.
+/// The percentage divide stays guarded by a nonpositive-peak check.
+fn update_drawdown_sample(
+    equity: f64,
+    peak: &mut f64,
+    max_drawdown: &mut f64,
+    max_drawdown_percent: &mut f64,
+) {
+    if equity > *peak {
+        *peak = equity;
+    } else {
+        let drawdown = *peak - equity;
+        if drawdown > *max_drawdown {
+            *max_drawdown = drawdown;
+        }
+        if *peak > 0.0 {
+            let drawdown_percent = drawdown / *peak * 100.0;
+            if drawdown_percent > *max_drawdown_percent {
+                *max_drawdown_percent = drawdown_percent;
+            }
+        }
+    }
+}
 /// Calculate maximum drawdown from an equity curve. Dollars and percentage
 /// are maximized independently: the worst relative loss may come from a
 /// different peak than the worst dollar loss.
@@ -1430,19 +1445,12 @@ pub fn calculate_max_drawdown(equity_curve: &[EquityPoint], initial_capital: f64
     let mut max_drawdown = 0.0;
     let mut max_drawdown_percent = 0.0;
     for point in equity_curve {
-        if point.value > peak {
-            peak = point.value;
-        }
-        let drawdown = peak - point.value;
-        if drawdown > max_drawdown {
-            max_drawdown = drawdown;
-        }
-        if peak > 0.0 {
-            let drawdown_pct = drawdown / peak * 100.0;
-            if drawdown_pct > max_drawdown_percent {
-                max_drawdown_percent = drawdown_pct;
-            }
-        }
+        update_drawdown_sample(
+            point.value,
+            &mut peak,
+            &mut max_drawdown,
+            &mut max_drawdown_percent,
+        );
     }
     (max_drawdown, max_drawdown_percent)
 }
@@ -3016,6 +3024,108 @@ mod tests {
         let (dd, dd_pct) = calculate_max_drawdown(&equity, -1000.0);
         assert!((dd - 1500.0).abs() < 0.01);
         assert!(dd_pct == 0.0);
+    }
+    #[test]
+    fn compact_streaming_and_full_curve_report_independent_drawdown_maxima() {
+        // 100% sizing, no fees: marked equity follows 10000 -> 5000 -> 100000
+        // -> 90000. The worst relative loss (50% from the 10000 peak) comes
+        // from a different peak than the worst later dollar loss (10000 from
+        // the 100000 peak).
+        let data = vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(60000, 50.0, 51.0, 49.0, 50.0, 1000.0),
+            OHLCV::new(120000, 1000.0, 1001.0, 999.0, 1000.0, 1000.0),
+            OHLCV::new(180000, 900.0, 901.0, 899.0, 900.0, 1000.0),
+        ];
+        let signals = vec![Signal::buy(0, 100.0)];
+        let settings = flat_long_settings();
+
+        // The fee-free end-of-data liquidation settles at the final mark, so
+        // each mode's baseline is asserted against the same hand-derived
+        // expectation rather than against the other mode. Dollars and
+        // percentage maximize independently: 10000 dollars (from the 100000
+        // peak) alongside 50 percent (from the 10000 peak).
+        let full = run_options(&data, &signals, &settings, false, false);
+        assert_eq!(full.total_trades, 1);
+        assert_close(full.max_drawdown, 10000.0, "full max drawdown");
+        assert_close(full.max_drawdown_percent, 50.0, "full max drawdown percent");
+
+        let compact = run_options(&data, &signals, &settings, true, false);
+        assert_eq!(compact.total_trades, full.total_trades);
+        assert_close(compact.max_drawdown, 10000.0, "compact max drawdown");
+        assert_close(
+            compact.max_drawdown_percent,
+            50.0,
+            "compact max drawdown percent",
+        );
+    }
+    #[test]
+    fn terminal_exit_fee_distinguishes_compact_extra_sample_from_full_replacement() {
+        // Full output replaces the final equity point with the settled
+        // capital before scanning, so the pre-liquidation mark never becomes
+        // a peak; compact streams every mark and feeds the settled capital
+        // after liquidation as one more sample. A terminal exit fee then
+        // yields different maxima per mode, which is why no universal
+        // full/compact drawdown equality is asserted.
+        let data = vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(60000, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(120000, 110.0, 111.0, 109.0, 110.0, 1000.0),
+        ];
+        let signals = vec![Signal::buy(0, 100.0)];
+        let settings = flat_long_settings();
+
+        // Hand-derived from the kernel's fee arithmetic (100% sizing, 0.2%
+        // commission, entry price 100, final close 110): the entry fee dips
+        // every early mark below the 10000 starting peak, and the exit fee
+        // settles the terminal sample below the final mark.
+        let rate = 0.2 / 100.0;
+        let trade_value = 10_000.0 / (1.0 + rate);
+        let shares = trade_value / 100.0;
+        let entry_fee = trade_value * rate;
+        let exit_fee = shares * 110.0 * rate;
+        let run = |compact: bool| {
+            let market_series = build_market_series(&data);
+            run_backtest_with_market_series_options(
+                &data,
+                &signals,
+                10_000.0,
+                100.0,
+                0.2,
+                &settings,
+                None,
+                compact,
+                false,
+                false,
+                false,
+                &market_series,
+            )
+        };
+        let full = run(false);
+        assert_eq!(full.total_trades, 1);
+        assert_eq!(full.trades[0].exit_reason, "end_of_data");
+        // Full keeps [start - entry fee, start - entry fee, settled]: the
+        // deepest dip is the entry fee below the 10000 starting peak, because
+        // the replaced final point hides the pre-liquidation mark.
+        assert_close(full.max_drawdown, entry_fee, "full max drawdown");
+        assert_close(
+            full.max_drawdown_percent,
+            entry_fee / 10_000.0 * 100.0,
+            "full max drawdown percent",
+        );
+
+        let compact = run(true);
+        assert_eq!(compact.total_trades, full.total_trades);
+        // Compact keeps the pre-liquidation peak (start - entry fee plus the
+        // 10-point mark gain) and samples the settled capital afterwards: the
+        // maximum drawdown is exactly the exit fee, deeper than the entry-fee
+        // dip the full curve reports.
+        assert_close(compact.max_drawdown, exit_fee, "compact max drawdown");
+        assert_close(
+            compact.max_drawdown_percent,
+            exit_fee / (trade_value + 10.0 * shares) * 100.0,
+            "compact max drawdown percent",
+        );
     }
     #[test]
     fn test_sharpe_ratio() {

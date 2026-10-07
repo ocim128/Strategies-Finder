@@ -665,3 +665,302 @@ describe("Rust single-run transport budgets", () => {
         expect(textCalls).to.equal(1);
     });
 });
+
+describe("Rust single-run result acceptance", () => {
+    function v2Trade(): Record<string, unknown> {
+        return {
+            id: 0,
+            type: "long",
+            entryTime: 1,
+            entryPrice: 100,
+            exitTime: 1,
+            exitPrice: 100,
+            pnl: 0,
+            pnlPercent: 0,
+            size: 1,
+            exitReason: "signal",
+        };
+    }
+
+    function tradeResponse(overrides: {
+        trades?: unknown[];
+        totalTrades: number;
+        winningTrades: number;
+        losingTrades: number;
+        netProfit?: number;
+        winRate?: number;
+        avgTrade?: number;
+        profitFactor?: number | null;
+    }): Record<string, unknown> {
+        const response = emptyBacktestResponse();
+        response.trades = overrides.trades ?? [];
+        response.totalTrades = overrides.totalTrades;
+        response.winningTrades = overrides.winningTrades;
+        response.losingTrades = overrides.losingTrades;
+        if (overrides.netProfit !== undefined) response.netProfit = overrides.netProfit;
+        if (overrides.winRate !== undefined) response.winRate = overrides.winRate;
+        if (overrides.avgTrade !== undefined) response.avgTrade = overrides.avgTrade;
+        if (overrides.profitFactor !== undefined) response.profitFactor = overrides.profitFactor;
+        return response;
+    }
+
+    function acceptanceClient(body: Record<string, unknown>): RustEngineClient {
+        const fetchImpl: typeof fetch = async (url) => {
+            if (String(url).endsWith("/api/health")) {
+                return new Response(JSON.stringify({
+                    status: "healthy",
+                    engine: "trading-engine-rust",
+                    protocolVersion: 2,
+                    capabilities: {},
+                }), { status: 200 });
+            }
+            return new Response(JSON.stringify(body), { status: 200 });
+        };
+        return new RustEngineClient("http://127.0.0.1:3030", fetchImpl);
+    }
+
+    it("rejects trade counts that do not reconcile", async () => {
+        const client = acceptanceClient(tradeResponse({
+            totalTrades: 2,
+            winningTrades: 1,
+            losingTrades: 0,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts winRate at the one-point tolerance edge and rejects beyond it", async () => {
+        const counts = { totalTrades: 10, winningTrades: 5, losingTrades: 5 };
+        const trades = [v2Trade(), v2Trade(), v2Trade(), v2Trade(), v2Trade()];
+        // 5/10 winners means an expected win rate of exactly 50; one point
+        // of drift is tolerated, anything beyond is rejected.
+        const atEdge = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 51,
+            avgTrade: 10,
+            profitFactor: 1,
+        }));
+        const atEdgeResult = await atEdge.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(atEdgeResult.ok, JSON.stringify(atEdgeResult)).to.equal(true);
+
+        const beyond = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 51.2,
+            avgTrade: 10,
+            profitFactor: 1,
+        }));
+        const beyondResult = await beyond.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(beyondResult).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts avgTrade within the 15% tolerance and rejects beyond it", async () => {
+        const counts = { totalTrades: 10, winningTrades: 5, losingTrades: 5 };
+        const trades = [v2Trade(), v2Trade(), v2Trade(), v2Trade(), v2Trade()];
+        // netProfit 100 over 10 trades expects avgTrade 10 with a 1.5
+        // tolerance (15% of the expectation).
+        const atEdge = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 50,
+            avgTrade: 11.5,
+            profitFactor: 1,
+        }));
+        const atEdgeResult = await atEdge.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(atEdgeResult.ok, JSON.stringify(atEdgeResult)).to.equal(true);
+
+        const beyond = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 50,
+            avgTrade: 11.6,
+            profitFactor: 1,
+        }));
+        const beyondResult = await beyond.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(beyondResult).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts a valid zero-trade result and normalizes null profitFactor to 0", async () => {
+        const client = acceptanceClient(tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            profitFactor: null,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result.ok, JSON.stringify(result)).to.equal(true);
+        if (result.ok) expect(result.result.profitFactor).to.equal(0);
+    });
+
+    it("normalizes null profitFactor to infinity for an all-winning run", async () => {
+        const client = acceptanceClient(tradeResponse({
+            trades: [v2Trade()],
+            totalTrades: 1,
+            winningTrades: 1,
+            losingTrades: 0,
+            netProfit: 10,
+            winRate: 100,
+            avgTrade: 10,
+            profitFactor: null,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result.ok, JSON.stringify(result)).to.equal(true);
+        if (result.ok) expect(result.result.profitFactor).to.equal(Number.POSITIVE_INFINITY);
+    });
+
+    it("rejects null profitFactor for a mixed winning and losing run", async () => {
+        const client = acceptanceClient(tradeResponse({
+            trades: [v2Trade(), v2Trade()],
+            totalTrades: 2,
+            winningTrades: 1,
+            losingTrades: 1,
+            netProfit: 5,
+            winRate: 50,
+            avgTrade: 2.5,
+            profitFactor: null,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects a trade entry that omits its numeric fields", async () => {
+        const client = acceptanceClient(tradeResponse({
+            trades: [{ exitReason: "signal" }],
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            netProfit: -10,
+            winRate: 0,
+            avgTrade: -10,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects a trade entry carrying non-numeric prices", async () => {
+        const trade = v2Trade();
+        trade.entryPrice = "100";
+        const client = acceptanceClient(tradeResponse({
+            trades: [trade],
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            netProfit: -10,
+            winRate: 0,
+            avgTrade: -10,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects an equity point whose value is not a number", async () => {
+        // The audit repro: summary metrics stay valid while one equity point
+        // carries a string value.
+        const malformed = tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+        });
+        malformed.equityCurve = [{ time: 1, value: "invalid-equity" }];
+        const client = acceptanceClient(malformed);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects an equity point with an unparseable time", async () => {
+        const malformed = tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+        });
+        malformed.equityCurve = [{ time: "not-a-time", value: 10_000 }];
+        const client = acceptanceClient(malformed);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects a trade entry whose business-day time overflows to NaN", async () => {
+        // Date.UTC(1000000, 0, 1) is NaN, and the shared time helper returns
+        // that NaN instead of null, so a null-only check accepts it.
+        const trade = v2Trade();
+        trade.entryTime = { year: 1_000_000, month: 1, day: 1 };
+        const client = acceptanceClient(tradeResponse({
+            trades: [trade],
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            netProfit: -10,
+            winRate: 0,
+            avgTrade: -10,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects an equity point whose business-day time overflows to NaN", async () => {
+        const malformed = tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+        });
+        malformed.equityCurve = [{ time: { year: 1_000_000, month: 1, day: 1 }, value: 10_000 }];
+        const client = acceptanceClient(malformed);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts populated trade and equity history and preserves entry values", async () => {
+        const winner = { ...v2Trade(), id: 1, pnl: 5, pnlPercent: 5 };
+        const loser = { ...v2Trade(), id: 2, pnl: -5, pnlPercent: -5 };
+        const response = tradeResponse({
+            trades: [winner, loser],
+            totalTrades: 2,
+            winningTrades: 1,
+            losingTrades: 1,
+            netProfit: 0,
+            winRate: 50,
+            avgTrade: 0,
+            profitFactor: 1,
+        });
+        response.equityCurve = [
+            { time: 1, value: 10_000 },
+            { time: 60_000, value: 9_500 },
+            { time: 120_000, value: 10_000 },
+        ];
+        const client = acceptanceClient(response);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result.ok, JSON.stringify(result)).to.equal(true);
+        if (result.ok) {
+            expect(result.result.trades).to.have.lengthOf(2);
+            expect(result.result.trades[0]).to.include({ entryPrice: 100, exitReason: "signal" });
+            expect(result.result.equityCurve).to.deep.equal(response.equityCurve);
+        }
+    });
+});

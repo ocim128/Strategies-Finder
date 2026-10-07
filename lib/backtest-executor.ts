@@ -30,10 +30,10 @@ import {
     hasUnsupportedRustSignalShape,
     rustEngine,
     type RustBacktestFailureReason,
+    type RustBacktestTransportResult,
     type RustCapabilities,
     type RustOutputOptions,
 } from "./rust-engine-client";
-import { validateRustBacktestResult } from "./rust-backtest-result-validator";
 import {
     getTypescriptEngineRequirementReasons,
     getRequiredRustCapabilities,
@@ -638,7 +638,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
         );
         if (executorTimings) executorTimings.engineMs += performance.now() - engineStartedAt;
         throwIfBacktestCancelled(req.context.signal);
-        if (rustResult.result && isResultConsistent(rustResult.result)) {
+        // The concrete client owns single-run acceptance: its `ok` outcome
+        // already carries a validated, normalized result.
+        if (rustResult.ok) {
             let result = rustResult.result;
             const endpointSelection = endpointSelectionRequested
                 ? buildSelectionResult(
@@ -660,7 +662,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
             return finish(result, "rust", primarySignals, { rustAttempted: true }, endpointSelection);
         }
         if (rustResult.reason === "cancelled") throwBacktestCancelled();
-        rustFailureReason = rustResult.result ? "inconsistent_result" : rustResult.reason;
+        rustFailureReason = rustResult.reason;
     }
 
     const runBacktestImpl = shouldUseCompactBacktest(req)
@@ -786,13 +788,15 @@ export async function executeBacktestFromSignals(
             context.rustDiagnosticPhase,
         );
         throwIfBacktestCancelled(context.signal);
-        if (rustResult.reason === "cancelled") throwBacktestCancelled();
-        if (rustResult.result && isResultConsistent(rustResult.result)) {
+        // The concrete client owns single-run acceptance: its `ok` outcome
+        // already carries a validated, normalized result.
+        if (rustResult.ok) {
             let result = rustResult.result;
             finalizeResult(result, backtestData, interval, settings, { engineUsed: "rust" });
             registerBacktestEdgeAnalysisInput(result, backtestData);
             return { result, engineUsed: "rust", signals: filteredSignals };
         }
+        if (rustResult.reason === "cancelled") throwBacktestCancelled();
     }
 
     const runTypescriptBacktest = (): BacktestResult => {
@@ -1157,9 +1161,9 @@ async function tryRustBacktest(
     rustCapabilities?: RustCapabilities,
     signal?: AbortSignal,
     rustDiagnosticPhase?: BacktestExecutionContext["rustDiagnosticPhase"],
-): Promise<{ result: BacktestResult | null; reason?: RustBacktestFailureReason }> {
+): Promise<RustBacktestTransportResult> {
     const { initialCapital, positionSize, commission, sizingMode, fixedTradeAmount } = capitalSettings;
-    const outcome = await rustEngine.runBacktestWithStatus(
+    return rustEngine.runBacktestWithStatus(
         data,
         signals,
         initialCapital,
@@ -1170,9 +1174,6 @@ async function tryRustBacktest(
         outputOptions,
         { signal, ...(rustDiagnosticPhase ? { rustDiagnosticPhase } : {}) },
     );
-    return outcome.ok
-        ? { result: outcome.result }
-        : { result: null, reason: outcome.reason };
 }
 
 function throwBacktestCancelled(): never {
@@ -1252,22 +1253,6 @@ function recomputeSharpeRatio(result: BacktestResult): number {
         return calculateSharpeRatioFromReturns(result.trades.map(t => t.pnlPercent));
     }
     return Number.isFinite(result.sharpeRatio) ? result.sharpeRatio : 0;
-}
-
-function isResultConsistent(result: BacktestResult): boolean {
-    if (!validateRustBacktestResult(result).ok) return false;
-    const totalTrades = result.totalTrades;
-    if (totalTrades !== result.winningTrades + result.losingTrades) return false;
-    if (totalTrades <= 0) return true;
-
-    const expectedWinRate = (result.winningTrades / totalTrades) * 100;
-    if (Math.abs(expectedWinRate - result.winRate) > 1) return false;
-
-    const expectedAvgTrade = result.netProfit / totalTrades;
-    const tolerance = Math.max(0.01, Math.abs(expectedAvgTrade) * 0.15);
-    if (Math.abs(expectedAvgTrade - result.avgTrade) > tolerance) return false;
-
-    return true;
 }
 
 function hasGlobalStrategyTimeframeWrapper(strategy: Strategy): boolean {
