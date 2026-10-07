@@ -1,4 +1,5 @@
-import type { BacktestResult } from "./types/strategies";
+import type { BacktestResult, Time } from "./types/strategies";
+import { timeToNumber } from "./strategies/backtest/backtest-utils";
 
 export type RustBacktestResultValidation =
     | { ok: true; result: BacktestResult }
@@ -17,13 +18,76 @@ const NUMERIC_FIELDS = [
     "sharpeRatio",
 ] as const;
 
+const TRADE_NUMERIC_FIELDS = [
+    "entryPrice",
+    "exitPrice",
+    "pnl",
+    "pnlPercent",
+    "size",
+] as const;
+
 function invalid(message: string): RustBacktestResultValidation {
     return { ok: false, reason: "malformed_response", message };
 }
 
+function isFiniteNumber(value: unknown): value is number {
+    return typeof value === "number" && Number.isFinite(value);
+}
+
+/**
+ * Rust wire times arrive as finite numbers. Equivalent string and
+ * business-day shapes stay acceptable through the shared normalization
+ * helper so normalized variants are not rejected; anything unparseable is.
+ */
+function isSupportedTime(time: unknown): boolean {
+    if (typeof time === "number") return Number.isFinite(time);
+    if (typeof time === "string" || (time !== null && typeof time === "object")) {
+        return timeToNumber(time as Time) !== null;
+    }
+    return false;
+}
+
+/**
+ * Validate one returned trade entry. Compact results keep empty histories,
+ * and the entry count is deliberately not reconciled with `totalTrades`:
+ * retained history is an output option, not a contract.
+ */
+function tradeEntryError(trade: unknown, requireExitReason: boolean): string | null {
+    if (!trade || typeof trade !== "object") return "trade is not an object";
+    const raw = trade as Record<string, unknown>;
+    if (!Number.isInteger(raw.id) || (raw.id as number) < 0) return "trade has an invalid id";
+    if (raw.type !== "long" && raw.type !== "short") return "trade has an invalid type";
+    if (!isSupportedTime(raw.entryTime) || !isSupportedTime(raw.exitTime)) {
+        return "trade has an invalid entry or exit time";
+    }
+    if (!TRADE_NUMERIC_FIELDS.every((field) => isFiniteNumber(raw[field]))) {
+        return "trade has a non-finite numeric field";
+    }
+    if (raw.exitReason !== undefined && typeof raw.exitReason !== "string") {
+        return "trade has an invalid exitReason";
+    }
+    if (requireExitReason && typeof raw.exitReason !== "string") {
+        return "trade is missing exitReason";
+    }
+    if (raw.fees !== undefined && raw.fees !== null && !isFiniteNumber(raw.fees)) {
+        return "trade has invalid fees";
+    }
+    return null;
+}
+
+function equityPointError(point: unknown): string | null {
+    if (!point || typeof point !== "object") return "equity point is not an object";
+    const raw = point as Record<string, unknown>;
+    if (!isSupportedTime(raw.time)) return "equity point has an invalid time";
+    if (!isFiniteNumber(raw.value)) return "equity point has an invalid value";
+    return null;
+}
+
 /**
  * Validate and normalize the generic Rust backtest wire result before it can
- * reach renderers or the TypeScript/Rust parity checks.
+ * reach renderers or the TypeScript/Rust parity checks. Summary metrics,
+ * every returned trade entry, and every returned equity point are checked;
+ * omitted history (compact results) stays valid.
  */
 export function validateRustBacktestResult(
     value: unknown,
@@ -41,6 +105,15 @@ export function validateRustBacktestResult(
         return invalid("Rust backtest result has a non-finite metric");
     }
 
+    for (const trade of raw.trades) {
+        const error = tradeEntryError(trade, options.requireExitReason === true);
+        if (error) return invalid(`Rust backtest result ${error}`);
+    }
+    for (const point of raw.equityCurve) {
+        const error = equityPointError(point);
+        if (error) return invalid(`Rust backtest result ${error}`);
+    }
+
     const totalTrades = raw.totalTrades;
     const winningTrades = raw.winningTrades;
     const losingTrades = raw.losingTrades;
@@ -51,11 +124,6 @@ export function validateRustBacktestResult(
     }
     if ((totalTrades as number) !== (winningTrades as number) + (losingTrades as number)) {
         return invalid("Rust backtest result trade counts do not reconcile");
-    }
-    if (options.requireExitReason && raw.trades.some((trade) => {
-        return !trade || typeof trade !== "object" || typeof (trade as Record<string, unknown>).exitReason !== "string";
-    })) {
-        return invalid("Rust backtest result trade is missing exitReason");
     }
 
     const profitFactor = raw.profitFactor;

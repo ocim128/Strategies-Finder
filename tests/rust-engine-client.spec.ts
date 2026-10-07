@@ -835,4 +835,98 @@ describe("Rust single-run result acceptance", () => {
 
         expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
     });
+
+    it("rejects a trade entry that omits its numeric fields", async () => {
+        const client = acceptanceClient(tradeResponse({
+            trades: [{ exitReason: "signal" }],
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            netProfit: -10,
+            winRate: 0,
+            avgTrade: -10,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects a trade entry carrying non-numeric prices", async () => {
+        const trade = v2Trade();
+        trade.entryPrice = "100";
+        const client = acceptanceClient(tradeResponse({
+            trades: [trade],
+            totalTrades: 1,
+            winningTrades: 0,
+            losingTrades: 1,
+            netProfit: -10,
+            winRate: 0,
+            avgTrade: -10,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects an equity point whose value is not a number", async () => {
+        // The audit repro: summary metrics stay valid while one equity point
+        // carries a string value.
+        const malformed = tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+        });
+        malformed.equityCurve = [{ time: 1, value: "invalid-equity" }];
+        const client = acceptanceClient(malformed);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("rejects an equity point with an unparseable time", async () => {
+        const malformed = tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+        });
+        malformed.equityCurve = [{ time: "not-a-time", value: 10_000 }];
+        const client = acceptanceClient(malformed);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts populated trade and equity history and preserves entry values", async () => {
+        const winner = { ...v2Trade(), id: 1, pnl: 5, pnlPercent: 5 };
+        const loser = { ...v2Trade(), id: 2, pnl: -5, pnlPercent: -5 };
+        const response = tradeResponse({
+            trades: [winner, loser],
+            totalTrades: 2,
+            winningTrades: 1,
+            losingTrades: 1,
+            netProfit: 0,
+            winRate: 50,
+            avgTrade: 0,
+            profitFactor: 1,
+        });
+        response.equityCurve = [
+            { time: 1, value: 10_000 },
+            { time: 60_000, value: 9_500 },
+            { time: 120_000, value: 10_000 },
+        ];
+        const client = acceptanceClient(response);
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result.ok, JSON.stringify(result)).to.equal(true);
+        if (result.ok) {
+            expect(result.result.trades).to.have.lengthOf(2);
+            expect(result.result.trades[0]).to.include({ entryPrice: 100, exitReason: "signal" });
+            expect(result.result.equityCurve).to.deep.equal(response.equityCurve);
+        }
+    });
 });
