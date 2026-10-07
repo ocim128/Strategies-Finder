@@ -6,6 +6,7 @@ import { dataManager } from "../data-manager";
 import { assetSearchService, type Asset } from "../asset-search-service";
 import { uiManager } from "../ui-manager";
 import { escapeHtml } from "../html-escape";
+import { parseSyntheticPairToken } from "../synthetic-pair-token";
 import {
     getBinanceMarketTypeForProvider,
     isBinanceDataProvider,
@@ -108,7 +109,7 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
                 const active = asset.symbol === state.currentSymbol ? ' active' : '';
                 const bc = asset.type === 'crypto' ? 'crypto' : asset.type === 'stock' ? 'stock' : asset.type === 'forex' ? 'forex' : 'commodity';
                 const icon = escapeHtml((asset.baseAsset?.substring(0, 3) || asset.symbol.substring(0, 3)));
-                const bt = asset.provider === 'binance-futures' ? 'Futures' : asset.type === 'crypto' ? 'Crypto' : asset.type === 'stock' ? 'Stock' : asset.type === 'forex' ? 'Forex' : 'Commodity';
+                const bt = parseSyntheticPairToken(asset.symbol) ? 'Synthetic' : asset.provider === 'binance-futures' ? 'Futures' : asset.type === 'crypto' ? 'Crypto' : asset.type === 'stock' ? 'Stock' : asset.type === 'forex' ? 'Forex' : 'Commodity';
                 return `<div class="symbol-search-item${active}" data-symbol="${escapeHtml(asset.symbol)}" data-provider="${escapeHtml(asset.provider)}" data-display-name="${escapeHtml(asset.displayName)}" role="button" tabindex="0"><div class="symbol-item-icon">${icon}</div><div class="symbol-item-details"><div class="symbol-item-name">${escapeHtml(asset.displayName)}<span class="symbol-item-badge ${bc}">${bt}</span></div><div class="symbol-item-pair">${escapeHtml(asset.symbol)}</div></div></div>`;
             }).join('');
 
@@ -116,7 +117,36 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
         selectedIndex = -1;
     };
 
-    const selectSymbol = (symbol: string, displayName?: string, provider?: Asset['provider']) => {
+    let isSelectingSynthetic = false;
+    const selectSymbol = async (symbol: string, displayName?: string, provider?: Asset['provider']) => {
+        if (isSelectingSynthetic) return;
+        const syntheticPair = parseSyntheticPairToken(symbol);
+        if (syntheticPair) {
+            isSelectingSynthetic = true;
+            symbolSearchSpinner?.classList.remove('is-hidden');
+            try {
+                // Reuse the Data Mining loader so ratio construction, imported
+                // caches, and saved configuration metadata stay consistent.
+                const { dataMiningManager } = await import('../data-mining-manager');
+                const loaded = await dataMiningManager.regenerateSyntheticPair(
+                    syntheticPair.baseSymbol, syntheticPair.quoteSymbol, state.currentInterval,
+                );
+                if (!loaded) return;
+                debugLogger.event('ui.symbol.select', { symbol, displayName, provider, syntheticPair });
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error);
+                debugLogger.error('ui.synthetic_pair_load_failed', { symbol, error: message });
+                uiManager.showToast(`Synthetic pair failed: ${message}`, 'error');
+                return;
+            } finally {
+                isSelectingSynthetic = false;
+                symbolSearchSpinner?.classList.add('is-hidden');
+            }
+            symbolDropdown.classList.remove('active');
+            if (symbolSearchInput) symbolSearchInput.value = '';
+            symbolSearchClear?.classList.add('is-hidden');
+            return;
+        }
         if (provider && isBinanceDataProvider(provider)) {
             const nextMarketType = getBinanceMarketTypeForProvider(provider);
             if (nextMarketType !== state.binanceMarketType) {
@@ -145,7 +175,7 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
     };
 
     const handleItemSelect = (el: HTMLElement) => {
-        selectSymbol(el.dataset.symbol!, el.dataset.displayName, el.dataset.provider as Asset['provider'] | undefined);
+        void selectSymbol(el.dataset.symbol!, el.dataset.displayName, el.dataset.provider as Asset['provider'] | undefined);
     };
     symbolSearchResults?.addEventListener('click', (e) => {
         const item = (e.target as HTMLElement).closest('.symbol-search-item') as HTMLElement | null;
@@ -280,7 +310,7 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
                     const symbol = selected.dataset.symbol!;
                     const displayName = selected.querySelector('.symbol-item-name')?.textContent?.trim();
                     const provider = selected.dataset.provider as Asset['provider'] | undefined;
-                    selectSymbol(symbol, displayName, provider);
+                    void selectSymbol(symbol, displayName, provider);
                 }
             } else if (e.key === 'Escape') {
                 symbolDropdown.classList.remove('active');
@@ -314,7 +344,7 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
             const target = e.currentTarget as HTMLElement;
             const symbol = target.dataset.symbol;
             if (!symbol) return;
-            selectSymbol(symbol);
+            void selectSymbol(symbol);
         });
 
         item.addEventListener('keydown', (e: Event) => {

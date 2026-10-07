@@ -14,6 +14,7 @@ import {
     type LocalDailyAsset,
 } from './local-daily-datasets';
 import { debugLogger } from './debug-logger';
+import { normalizeSyntheticPairProviderMarkers, parseSyntheticPairToken } from './synthetic-pair-token';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
 export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'ibkr-local' | 'mock';
@@ -70,6 +71,25 @@ class AssetSearchService {
     ): Promise<Asset[]> {
         const binanceMarketType = options?.binanceMarketType ?? 'spot';
         const binanceProvider = getBinanceProviderForMarketType(binanceMarketType);
+        // A synthetic query names two exact legs, rather than a listed market.
+        // Keep native TradFi symbols with a trailing '+' on their usual path.
+        if (query.includes('+') && !tradfiSearchService.isTradFiSymbol(query)) {
+            const pair = parseSyntheticPairToken(normalizeSyntheticPairProviderMarkers(query));
+            if (!pair || pair.baseSymbol === pair.quoteSymbol || limit <= 0) return [];
+            const [base, quote] = await Promise.all([
+                this.getAssetInfo(pair.baseSymbol, options),
+                this.getAssetInfo(pair.quoteSymbol, options),
+            ]);
+            if (!base || !quote) return [];
+            return [{
+                symbol: `${pair.baseSymbol}+${pair.quoteSymbol}`,
+                displayName: `${pair.baseSymbol} / ${pair.quoteSymbol}`,
+                type: base.type,
+                provider: base.provider,
+                baseAsset: pair.baseSymbol,
+                quoteAsset: pair.quoteSymbol,
+            }];
+        }
         if (!query.trim()) {
             const popular = this.getPopularAssets(limit, binanceMarketType);
             try {

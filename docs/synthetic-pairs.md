@@ -12,6 +12,19 @@ The synthetic pair system generates an ordinary OHLCV JSON file from two real sy
 
 ### From the UI
 
+The chart's pair search also accepts `BASE+QUOTE`, such as `AAPL•+NVDA•`
+for local IBKR stocks or `BTC+ETH` for Binance symbols. Select the result
+marked **Synthetic** by clicking it or using Arrow Down then Enter. It builds
+and loads the base/quote ratio at the current chart interval using the same
+generator and saved-configuration metadata as Data Mining. Both legs must
+exist in their provider catalogs; use `•` to select local IBKR data. If only
+one stock leg has `•`, the other bare ticker is treated as IBKR too. Crypto
+legs follow the selected Binance Spot/Futures market.
+
+Local IBKR synthetic charts accept overnight and weekend gaps in whole
+target bars. The cadence check still requires an adjacent target bar and
+rejects a cached series built at a different timeframe.
+
 1. Open the **Data Mining** tab.
 2. Scroll to **Synthetic Pair**.
 3. Enter **Base Symbol** (e.g. `BNBUSDT`) and **Quote Symbol** (e.g. `PAXGUSDT`).
@@ -161,4 +174,5 @@ For IBKR synthetic 4H pairs, 30m seed CSV files (`price-data/ibkr/csv/30m/`) are
 - `tests/synthetic-pair-transform.spec.ts` — ratio formula, alignment, error handling, payload shape, pipeline helper
 - `tests/build-synthetic-pair-script.spec.ts` — CLI argument parsing
 - `tests/sp500-pair-enumerator.spec.ts` — IBKR 30m seed availability & canonical pair enumeration
-
+- `tests/asset-search-service.spec.ts` — synthetic search, exact leg lookup, provider markers
+- `tests/symbol-search-handler.browser.spec.ts` — click/keyboard loading, metadata, stock session gaps, wrong-timeframe cache rejection

@@ -11,6 +11,7 @@ import { clearAll } from "./app-actions";
 import { commitOhlcvData } from "./state-actions";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { getSyntheticPairMetadata, setSyntheticPairMetadata } from "./synthetic-pair-session";
+import { isIbkrSymbol } from "./local-daily-datasets";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { parseIntervalSeconds } from "./interval-utils";
@@ -56,7 +57,7 @@ export class DataMiningManager {
             && isSyntheticSymbol(state.currentSymbol, { baseSymbol, quoteSymbol })
             && state.currentInterval === interval
             && state.ohlcvData.length > 0
-            && this.barsMatchInterval(state.ohlcvData, interval)
+            && this.barsMatchInterval(state.ohlcvData, interval, isIbkrSymbol(baseSymbol) || isIbkrSymbol(quoteSymbol))
         ) {
             this.recordDiagnostic('synth_regenerate_skipped_current', { base: baseSymbol, quote: quoteSymbol, interval });
             return true;
@@ -657,13 +658,14 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
         }
     }
 
-    private barsMatchInterval(bars: readonly OHLCVData[], interval: string): boolean {
+    private barsMatchInterval(bars: readonly OHLCVData[], interval: string, allowSessionGaps = false): boolean {
         const expectedSec = parseIntervalSeconds(interval);
         if (!expectedSec || expectedSec <= 0 || bars.length < 3) return true;
 
         const start = Math.max(1, bars.length - 64);
         let checked = 0;
         let matching = 0;
+        let compatible = 0;
         for (let i = start; i < bars.length; i++) {
             const prev = parseTimeToUnixSeconds(bars[i - 1]?.time);
             const current = parseTimeToUnixSeconds(bars[i]?.time);
@@ -672,8 +674,13 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
             if (gap <= 0) continue;
             checked += 1;
             if (Math.abs(gap - expectedSec) <= 1) matching += 1;
+            if (gap >= expectedSec - 1 && Math.abs(gap - Math.round(gap / expectedSec) * expectedSec) <= 1) compatible += 1;
         }
 
+        // Local stock candles omit overnight/weekend sessions. Accept gaps in
+        // whole target bars, but require an adjacent target bar so a coarser
+        // cached series cannot masquerade as the requested timeframe.
+        if (allowSessionGaps) return checked === 0 || (matching > 0 && compatible === checked);
         return checked === 0 || matching / checked >= 0.8;
     }
 
@@ -720,6 +727,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
         if (this.isGeneratingSynthetic) return false;
 
         const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
+        const allowSessionGaps = isIbkrSymbol(baseSymbol) || isIbkrSymbol(quoteSymbol);
         const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
         const source = pickSourceInterval(interval, 12, available);
         const sourceInterval = source?.sourceInterval ?? interval;
@@ -755,7 +763,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
             // pays the re-aggregation cost.
             const cached = dataManager.getImportedData(syntheticSymbol, interval);
             if (cached && cached.length > 0) {
-                if (!this.barsMatchInterval(cached, interval)) {
+                if (!this.barsMatchInterval(cached, interval, allowSessionGaps)) {
                     this.recordDiagnostic('synth_ignored_wrong_interval_cache', {
                         symbol: syntheticSymbol,
                         interval,
@@ -815,7 +823,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                 return false;
             }
 
-            if (!this.barsMatchInterval(syntheticBars, interval)) {
+            if (!this.barsMatchInterval(syntheticBars, interval, allowSessionGaps)) {
                 throw new Error(`Synthetic bars do not match requested interval ${interval}.`);
             }
 
@@ -864,7 +872,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
         quoteSymbol: string,
         bars: OHLCVData[],
     ): void {
-        if (!this.barsMatchInterval(bars, interval)) {
+        if (!this.barsMatchInterval(bars, interval, isIbkrSymbol(baseSymbol) || isIbkrSymbol(quoteSymbol))) {
             throw new Error(`Refusing to load ${bars.length} ${syntheticSymbol} bars because their cadence does not match ${interval}.`);
         }
         dataManager.stopStreaming();
