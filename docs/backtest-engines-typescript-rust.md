@@ -431,9 +431,10 @@ check transport limits, response shape, result IDs, duplicate/missing/unknown
 items, finite metrics, and consistency between trade counts and win/loss
 counts. A failed transport or payload check falls back to TypeScript for the
 whole dispatch; after a batch is delivered, Finder's per-item acceptance
-retains every valid entry and replays only the inconsistent, missing, or
-unknown items individually, so the final ranking can combine validated Rust
-entries with TypeScript replays.
+retains every valid entry, replays the inconsistent and missing requested
+items individually, and ignores result IDs that match no requested run, so
+the final ranking can combine validated Rust entries with TypeScript
+replays.
 
 ### Rust client boundary
 
