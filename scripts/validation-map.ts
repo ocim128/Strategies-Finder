@@ -181,6 +181,27 @@ export const VALIDATION_RULES: readonly ValidationRule[] = [
         ],
     },
     {
+        id: "pair-selection",
+        summary: "Pair-selection rule or helper changed; selection-rules guide and pair- specs (registry, checker, feature access, pipeline) select.",
+        directories: ["lib/pair-selection/"],
+        guides: ["docs/selection-rules.md"],
+        testFilters: ["pair-"],
+        checks: FOCUSED_JS_CHECKS,
+    },
+    {
+        id: "backtest-executor",
+        summary: "Shared backtest executor changed; endpoint, executor cancellation/timing, compact-parity, and rust- parity specs select.",
+        files: ["lib/backtest-executor.ts"],
+        guides: ["docs/backtest-engines-typescript-rust.md"],
+        testFilters: [
+            "backtest-endpoint",
+            "backtest-executor",
+            "backtesting-engine-compact-parity",
+            "rust-",
+        ],
+        checks: FOCUSED_JS_CHECKS,
+    },
+    {
         id: "shared-backtest-core",
         summary: "Shared backtest engine, strategy helper, settings model, or persistence file changed; full JS verification runs so every focused suite, including Rust parity specs, is covered.",
         files: [

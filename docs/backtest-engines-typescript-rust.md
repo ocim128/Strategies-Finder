@@ -159,14 +159,14 @@ trades never pay for floor preparation.
 ### Prepared signals
 
 `executeBacktest` accepts `preGeneratedSignals`: fully prepared entry signals
-(like Finder's `preGeneratedSignals` replays in `finder-universe-oos.ts`,
-`finder-runner-universe.ts`, and `server-asset-is-search.ts`) skip primary
-strategy signal generation and confirmation generation entirely — strategy
-`execute` is not called, and invert/polarity is NOT re-applied, so callers
-pass signals already in their final polarity. Everything else runs as in a
-generated run: closed-candle selection, block-range filtering, exit-override
-resolution, strategy evaluation, engine selection, cancellation, and
-finalization.
+(like Finder's `preGeneratedSignals` replays in
+`lib/finder/finder-universe-oos.ts`, `lib/finder/finder-runner-universe.ts`,
+and `lib/finder/server/server-asset-is-search.ts`) skip primary strategy
+signal generation and confirmation generation entirely — strategy `execute`
+is not called, and invert/polarity is NOT re-applied, so callers pass signals
+already in their final polarity. Everything else runs as in a generated run:
+closed-candle selection, block-range filtering, exit-override resolution,
+strategy evaluation, engine selection, cancellation, and finalization.
 
 The former second pipeline for this — `executeBacktestFromSignals` in
 `lib/backtest-executor.ts` and `BacktestService.evaluateSignalsOnData` (with
