@@ -137,6 +137,27 @@ struct WorkerStageTimings {
 fn elapsed_ms_since(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
+/// Map a blocking-worker outcome for a handler, logging request-associated
+/// failures under the request span. Every CPU-heavy handler routes its worker
+/// result through this function, so a worker join failure always produces one
+/// `blocking worker failed` event carrying the request's identity.
+fn map_worker_result<T>(
+    completion_span: &tracing::Span,
+    worker: Result<(T, u64), (StatusCode, String)>,
+) -> Result<(T, u64), (StatusCode, String)> {
+    match worker {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            tracing::error!(
+                parent: completion_span,
+                status = error.0.as_u16(),
+                error = %error.1,
+                "blocking worker failed"
+            );
+            Err(error)
+        }
+    }
+}
 // ============================================================================
 // Handlers
 // ============================================================================
@@ -232,18 +253,8 @@ pub async fn backtest_handler(
         (result, market_prep_ms, simulate_ms)
     })
     .await;
-    let ((result, market_prep_ms, simulate_ms), pool_wait_ms) = match worker {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::error!(
-                parent: &completion_span,
-                status = error.0.as_u16(),
-                error = %error.1,
-                "blocking worker failed"
-            );
-            return Err(error);
-        }
-    };
+    let ((result, market_prep_ms, simulate_ms), pool_wait_ms) =
+        map_worker_result(&completion_span, worker)?;
     let processing_time_ms = elapsed_ms_since(start);
     let timings = WorkerStageTimings {
         pool_wait_ms,
@@ -338,18 +349,8 @@ pub async fn batch_backtest_handler(
         (response, market_prep_ms, simulate_ms)
     })
     .await;
-    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) = match worker {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::error!(
-                parent: &completion_span,
-                status = error.0.as_u16(),
-                error = %error.1,
-                "blocking worker failed"
-            );
-            return Err(error);
-        }
-    };
+    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
+        map_worker_result(&completion_span, worker)?;
     // The reported batch timing includes the blocking-pool wait, so it is
     // stamped only after the worker completes.
     response.processing_time_ms = elapsed_ms_since(start);
@@ -415,18 +416,7 @@ pub async fn cache_data_handler(
     // join becomes the outer 500.
     let worker =
         worker.and_then(|(inner, pool_wait_ms)| inner.map(|prepared| (prepared, pool_wait_ms)));
-    let ((data, bar_count, cache_id), pool_wait_ms) = match worker {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::error!(
-                parent: &completion_span,
-                status = error.0.as_u16(),
-                error = %error.1,
-                "cache upload worker failed"
-            );
-            return Err(error);
-        }
-    };
+    let ((data, bar_count, cache_id), pool_wait_ms) = map_worker_result(&completion_span, worker)?;
     // Store in cache only after decoding finished; no cache lock is held
     // while the payload decodes or hashes.
     {
@@ -622,18 +612,8 @@ pub async fn cached_batch_backtest_handler(
         (response, market_prep_ms, simulate_ms)
     })
     .await;
-    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) = match worker {
-        Ok(value) => value,
-        Err(error) => {
-            tracing::error!(
-                parent: &completion_span,
-                status = error.0.as_u16(),
-                error = %error.1,
-                "blocking worker failed"
-            );
-            return Err(error);
-        }
-    };
+    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
+        map_worker_result(&completion_span, worker)?;
     // The reported batch timing includes cache lookup and pool wait, so it is
     // stamped only after the worker completes.
     response.processing_time_ms = elapsed_ms_since(start);
@@ -668,6 +648,7 @@ pub async fn clear_cache_handler(State(state): State<AppState>) -> Json<serde_js
 mod tests {
     use super::*;
     use crate::types::Signal;
+    use std::future::Future as _;
 
     fn admission_permit(state: &AppState) -> Arc<OwnedSemaphorePermit> {
         Arc::new(
@@ -821,19 +802,19 @@ mod tests {
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .expect("holder must start");
 
-            // Dispatch the queued closure, then release the holder. Two
-            // yields let the runtime register the spawn_blocking dispatch
-            // before the release, so dispatch happens-before release in
-            // program order rather than by elapsed time.
-            let queued = tokio::spawn(run_on_blocking_pool(Instant::now));
-            tokio::task::yield_now().await;
-            tokio::task::yield_now().await;
+            // Dispatch the queued closure deterministically: one manual poll
+            // runs run_on_blocking_pool up to its spawn_blocking await, which
+            // submits the blocking task and stamps the dispatch time before
+            // the holder is released. Dispatch happens-before release by
+            // construction, with no scheduler guarantee involved.
+            let queued = run_on_blocking_pool(Instant::now);
+            tokio::pin!(queued);
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            let _ = queued.as_mut().poll(&mut cx);
             let _ = release_tx.send(());
 
-            let (queued_started, pool_wait_ms) = queued
-                .await
-                .expect("queued task joins")
-                .expect("queued worker should complete");
+            let (queued_started, pool_wait_ms) =
+                queued.await.expect("queued worker should complete");
             let holder_done = holder_done_rx
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .expect("holder done signal");
@@ -1075,59 +1056,74 @@ mod tests {
         assert_eq!(no_data.0, StatusCode::BAD_REQUEST);
     }
 
-    #[tokio::test(flavor = "current_thread")]
-    async fn cache_upload_decode_and_hash_run_off_the_async_executor() {
-        use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
+    #[test]
+    fn cache_upload_decode_stays_offloaded_while_a_worker_is_deliberately_held() {
+        // Single-threaded executor with a single blocking-worker slot: the
+        // held worker below occupies that slot, so an offloaded decode cannot
+        // even start, while an inline decode would run synchronously on this
+        // executor during the first poll. The discriminator is structural,
+        // not a relative-speed measurement.
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .build()
+            .expect("single-blocking-thread runtime should build");
+        runtime.block_on(async {
+            let state = AppState::default();
+            // Deliberately hold the only blocking worker behind a release
+            // gate with worker-start synchronization.
+            let (holder_started_tx, holder_started_rx) = std::sync::mpsc::channel::<()>();
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let holder = tokio::task::spawn_blocking(move || {
+                holder_started_tx
+                    .send(())
+                    .expect("held worker signal receiver lives");
+                if release_rx
+                    .recv_timeout(std::time::Duration::from_secs(10))
+                    .is_err()
+                {
+                    panic!("held worker was never released; test cleanup failed");
+                }
+            });
+            holder_started_rx
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .expect("held worker must start");
 
-        let state = AppState::default();
-        // Roughly 100k bars of packed rows: decoding and hashing take far
-        // longer than the executor-progress probe below needs, so the
-        // ordering assertion is robust without any timing thresholds.
-        let packed: Vec<f64> = (0..600_000).map(|index| (index % 997) as f64).collect();
-        let request = CacheDataRequest {
-            data: Vec::new(),
-            packed_data: Some(packed),
-        };
-        let done = Arc::new(AtomicBool::new(false));
-
-        let upload_state = state.clone();
-        let done_for_upload = Arc::clone(&done);
-        let upload_task = tokio::spawn(async move {
-            let result = cache_data_handler(
-                Extension(admission_permit(&upload_state)),
+            // Roughly 100k bars of packed rows.
+            let packed: Vec<f64> = (0..600_000).map(|index| (index % 997) as f64).collect();
+            let request = CacheDataRequest {
+                data: Vec::new(),
+                packed_data: Some(packed),
+            };
+            let upload = cache_data_handler(
+                Extension(admission_permit(&state)),
                 None,
-                State(upload_state),
+                State(state.clone()),
                 Json(request),
-            )
-            .await;
-            done_for_upload.store(true, AtomicOrdering::SeqCst);
-            result
+            );
+            tokio::pin!(upload);
+            // One manual poll: with correct offloading this dispatches the
+            // decode behind the held worker and returns Pending; with inline
+            // decoding it would run the whole decode and hash to completion
+            // right here on the executor.
+            let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+            let _ = upload.as_mut().poll(&mut cx);
+            assert!(
+                state.data_cache.read().await.is_empty(),
+                "decode ran on the async executor instead of the blocking pool"
+            );
+            // The executor must still make progress while the worker is held.
+            tokio::task::yield_now().await;
+            assert!(
+                state.data_cache.read().await.is_empty(),
+                "decode started despite the blocking worker still being held"
+            );
+
+            // Release the held worker and let the upload finish.
+            let _ = release_tx.send(());
+            let response = upload.await.expect("upload should succeed after release").0;
+            assert_eq!(response.bar_count, 100_000);
+            holder.await.expect("held worker joins");
         });
-
-        // Executor-progress probe: while the upload's decode/hash occupies a
-        // blocking worker, this single-threaded executor must still run other
-        // tasks. If decode ran inline, the upload would complete before the
-        // probe ever reached its checkpoint.
-        let done_for_probe = Arc::clone(&done);
-        let probe = async move {
-            let mut checkpoint = 0_u32;
-            while checkpoint < 100 {
-                assert!(
-                    !done_for_probe.load(AtomicOrdering::SeqCst),
-                    "upload completed before the executor-progress checkpoint;                      decode is not offloaded"
-                );
-                tokio::task::yield_now().await;
-                checkpoint += 1;
-            }
-        };
-
-        let (upload_result, ()) = tokio::join!(upload_task, probe);
-        let response = upload_result
-            .expect("upload task should join")
-            .expect("upload should succeed")
-            .0;
-        assert_eq!(response.bar_count, 100_000);
-        assert!(done.load(AtomicOrdering::SeqCst));
     }
 
     // ======================================================================
@@ -1268,24 +1264,40 @@ mod tests {
         assert_eq!(error.0, StatusCode::NOT_FOUND);
         let miss_records = records_containing("log-capture-missing-cache-id");
         assert!(
-            miss_records
-                .iter()
-                .any(|record| record.contains("cache miss")),
-            "cache-miss warn event missing: {miss_records:?}"
+            miss_records.iter().any(|record| {
+                record.contains("cache miss")
+                    && record.contains("request_id=424243")
+                    && record.contains("route=")
+            }),
+            "cache-miss warn event missing or missing request identity: {miss_records:?}"
         );
 
-        // Worker join failure: the pool runner logs the failed task.
-        let result = run_on_blocking_pool(|| -> BacktestResult {
+        // Worker join failure through the shared handler path: a real pool
+        // failure flows through map_worker_result — the exact function every
+        // CPU-heavy handler uses — under a span carrying the request
+        // identity, and must emit the request-associated event.
+        let failure_span = tracing::info_span!(
+            "backtest_single",
+            request_id = 424_244,
+            route = "/api/backtest",
+        );
+        let worker = run_on_blocking_pool(|| -> BacktestResult {
             panic!("injected worker failure for log capture")
         })
         .await;
-        assert!(result.is_err(), "panicking worker must surface an error");
-        let failure_records = records_containing("CPU-bound task failed");
+        let error = map_worker_result(&failure_span, worker)
+            .expect_err("panicking worker must surface an error");
+        assert_eq!(error.0, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(error.1.contains("injected worker failure"));
+        let failure_records = records_containing("blocking worker failed");
         assert!(
-            failure_records
-                .iter()
-                .any(|record| record.contains("injected worker failure")),
-            "worker failure log missing: {failure_records:?}"
+            failure_records.iter().any(|record| {
+                record.contains("injected worker failure")
+                    && record.contains("request_id=424244")
+                    && record.contains("route=")
+                    && record.contains("status=500")
+            }),
+            "handler worker-failure event missing or missing request fields: {failure_records:?}"
         );
     }
 

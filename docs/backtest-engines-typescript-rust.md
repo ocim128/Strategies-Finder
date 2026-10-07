@@ -333,9 +333,14 @@ TypeScript fallback count, repeated cache uploads (a readable 503 makes the
 cached client forget its cache ID), and peak RSS in isolated processes. Pick
 the default from those measurements and do not add retries merely to hide
 saturation. Until that comparison exists, treat admission tuning as
-incomplete. Node `fetch` (undici) can surface the early 503-then-close for
-multi-megabyte in-flight uploads as a connection reset rather than a readable
-503; curl reads the same response cleanly.
+incomplete. `scripts/bench-rust-engine-admission.ts` (JSON output in
+`artifacts/rust-admission-tuning.json`) drives the production client with a
+concurrent batch workload to make that comparison turnkey; on its synthetic
+workload limit 2 already shows heavy fallback churn (the transport sees the
+early 503-then-close as a connection reset, i.e. `network_error`, which
+triggers fallback and cache-ID forgetting) while limit 4 matches the
+high-limit control. Node `fetch` (undici) reports those resets instead of
+the readable 503; curl reads the same response cleanly.
 
 The main Rust modules are:
 
