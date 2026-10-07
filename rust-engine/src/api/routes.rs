@@ -4,7 +4,7 @@ use crate::types::{
     BacktestRequest, BacktestResult, BatchBacktestRequest, BatchBacktestResponse,
     BatchBacktestResultItem, Time, OHLCV,
 };
-use axum::{extract::State, http::StatusCode, Json};
+use axum::{extract::Extension, extract::State, http::StatusCode, Json};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -13,9 +13,13 @@ use std::sync::{
     Arc,
 };
 use std::time::Instant;
-use tokio::sync::RwLock;
+use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 const MAX_DATA_CACHE_ENTRIES: usize = 512;
 const MAX_DATA_CACHE_BARS: usize = 16_000_000;
+/// Conservative starting admission bound for CPU-heavy routes. The final
+/// default should come from concurrent Finder/request measurements; the
+/// `RUST_ENGINE_MAX_IN_FLIGHT` setting overrides it at startup.
+pub const DEFAULT_MAX_IN_FLIGHT: usize = 2;
 // ============================================================================
 // Data Cache Types
 // ============================================================================
@@ -30,13 +34,21 @@ pub struct AppState {
     /// Cache of OHLCV data indexed by hash
     pub data_cache: Arc<RwLock<HashMap<String, CachedDataset>>>,
     cache_access_counter: Arc<AtomicU64>,
+    /// Admission bound shared by every CPU-heavy route.
+    pub max_in_flight: Arc<Semaphore>,
 }
-impl Default for AppState {
-    fn default() -> Self {
+impl AppState {
+    pub fn new(max_in_flight: usize) -> Self {
         Self {
             data_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_access_counter: Arc::new(AtomicU64::new(0)),
+            max_in_flight: Arc::new(Semaphore::new(max_in_flight)),
         }
+    }
+}
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new(DEFAULT_MAX_IN_FLIGHT)
     }
 }
 /// Request to cache OHLCV data
@@ -152,6 +164,7 @@ fn reject_unsupported_packed_signals(
 }
 /// Handle backtest request
 pub async fn backtest_handler(
+    Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
     Json(req): Json<BacktestRequest>,
 ) -> Result<Json<BacktestResponse>, (StatusCode, String)> {
     // Handler elapsed time starts immediately after successful JSON
@@ -168,6 +181,9 @@ pub async fn backtest_handler(
     );
     let completion_span = span.clone();
     let ((result, market_prep_ms, simulate_ms), pool_wait_ms) = run_on_blocking_pool(move || {
+        // Retain admission capacity through computation: a disconnected
+        // client must not free the slot while CPU work still runs.
+        let _admission_permit = admission_permit;
         // Enter the request span only inside the synchronous closure so the
         // guard never spans an `.await`.
         let _entered = span.enter();
@@ -214,6 +230,7 @@ pub async fn backtest_handler(
 }
 /// Handle batch backtest request - runs multiple backtests in parallel
 pub async fn batch_backtest_handler(
+    Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
     Json(req): Json<BatchBacktestRequest>,
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
     reject_unsupported_packed_signals(&req.items)?;
@@ -232,6 +249,7 @@ pub async fn batch_backtest_handler(
     let completion_span = span.clone();
     let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
         run_on_blocking_pool(move || {
+            let _admission_permit = admission_permit;
             let _entered = span.enter();
             let prep_started = Instant::now();
             let market_series = build_market_series(&req.data);
@@ -296,6 +314,7 @@ pub async fn batch_backtest_handler(
 /// Cache OHLCV data and return a cache ID
 /// This allows sending large datasets once and referencing them by ID
 pub async fn cache_data_handler(
+    Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
     State(state): State<AppState>,
     Json(req): Json<CacheDataRequest>,
 ) -> Result<Json<CacheDataResponse>, (StatusCode, String)> {
@@ -311,6 +330,7 @@ pub async fn cache_data_handler(
     // whole payload; offload them to the blocking pool. The closure owns the
     // request, so large vectors move in instead of being cloned.
     let ((data, bar_count, cache_id), pool_wait_ms) = run_on_blocking_pool(move || {
+        let _admission_permit = admission_permit;
         let _entered = span.enter();
         // The cache ID must distinguish assets with the same time range and
         // bar count. Asset Opportunity commonly uploads many synthetic
@@ -431,6 +451,7 @@ fn decode_packed_ohlcv(values: Vec<f64>) -> Result<Vec<OHLCV>, String> {
 /// Handle batch backtest using cached OHLCV data
 /// This is MUCH faster for large datasets as data is only sent once
 pub async fn cached_batch_backtest_handler(
+    Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
     State(state): State<AppState>,
     Json(req): Json<CachedBatchBacktestRequest>,
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
@@ -471,6 +492,7 @@ pub async fn cached_batch_backtest_handler(
     let bar_count = data.len();
     let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
         run_on_blocking_pool(move || {
+            let _admission_permit = admission_permit;
             let _entered = span.enter();
             let prep_started = Instant::now();
             let market_series = build_market_series(data.as_slice());
@@ -548,6 +570,16 @@ mod tests {
     use super::*;
     use crate::types::Signal;
 
+    fn admission_permit(state: &AppState) -> Arc<OwnedSemaphorePermit> {
+        Arc::new(
+            state
+                .max_in_flight
+                .clone()
+                .try_acquire_owned()
+                .expect("test admission permit should be available"),
+        )
+    }
+
     fn make_backtest_request(compact: bool, retain_trades: bool) -> BacktestRequest {
         BacktestRequest {
             data: vec![
@@ -570,28 +602,38 @@ mod tests {
 
     #[tokio::test]
     async fn generic_backtest_route_honors_output_options() {
-        let full = backtest_handler(Json(make_backtest_request(false, false)))
-            .await
-            .expect("generic backtest worker should complete")
-            .0
-            .result;
+        let state = AppState::default();
+        let full = backtest_handler(
+            Extension(admission_permit(&state)),
+            Json(make_backtest_request(false, false)),
+        )
+        .await
+        .expect("generic backtest worker should complete")
+        .0
+        .result;
         assert!(!full.equity_curve.is_empty());
         assert_eq!(full.trades.len(), 1);
 
-        let compact = backtest_handler(Json(make_backtest_request(true, false)))
-            .await
-            .expect("generic compact backtest worker should complete")
-            .0
-            .result;
+        let compact = backtest_handler(
+            Extension(admission_permit(&state)),
+            Json(make_backtest_request(true, false)),
+        )
+        .await
+        .expect("generic compact backtest worker should complete")
+        .0
+        .result;
         assert!(compact.equity_curve.is_empty());
         assert!(compact.trades.is_empty());
         assert_eq!(compact.total_trades, full.total_trades);
 
-        let compact_with_trades = backtest_handler(Json(make_backtest_request(true, true)))
-            .await
-            .expect("generic compact trade backtest worker should complete")
-            .0
-            .result;
+        let compact_with_trades = backtest_handler(
+            Extension(admission_permit(&state)),
+            Json(make_backtest_request(true, true)),
+        )
+        .await
+        .expect("generic compact trade backtest worker should complete")
+        .0
+        .result;
         assert!(compact_with_trades.equity_curve.is_empty());
         assert_eq!(compact_with_trades.trades.len(), 1);
         assert_eq!(compact_with_trades.total_trades, full.total_trades);
@@ -600,23 +642,27 @@ mod tests {
     #[tokio::test]
     async fn batch_backtest_route_preserves_item_results_after_offload() {
         let request = make_backtest_request(false, false);
-        let response = batch_backtest_handler(Json(BatchBacktestRequest {
-            data: request.data,
-            items: vec![crate::types::BatchBacktestItem {
-                id: "candidate-1".to_string(),
-                signals: request.signals,
-                packed_signals: None,
-                settings: None,
-            }],
-            initial_capital: request.initial_capital,
-            position_size_percent: request.position_size_percent,
-            commission_percent: request.commission_percent,
-            base_settings: request.settings,
-            sizing: request.sizing,
-            compact: request.compact,
-            skip_drawdown: false,
-            skip_sharpe_ratio: false,
-        }))
+        let state = AppState::default();
+        let response = batch_backtest_handler(
+            Extension(admission_permit(&state)),
+            Json(BatchBacktestRequest {
+                data: request.data,
+                items: vec![crate::types::BatchBacktestItem {
+                    id: "candidate-1".to_string(),
+                    signals: request.signals,
+                    packed_signals: None,
+                    settings: None,
+                }],
+                initial_capital: request.initial_capital,
+                position_size_percent: request.position_size_percent,
+                commission_percent: request.commission_percent,
+                base_settings: request.settings,
+                sizing: request.sizing,
+                compact: request.compact,
+                skip_drawdown: false,
+                skip_sharpe_ratio: false,
+            }),
+        )
         .await
         .expect("batch worker should complete")
         .0;
@@ -676,7 +722,8 @@ mod tests {
     #[tokio::test]
     async fn processing_time_fields_use_camel_case_nonnegative_integers() {
         let request = make_backtest_request(false, false);
-        let single = backtest_handler(Json(request.clone()))
+        let state = AppState::default();
+        let single = backtest_handler(Extension(admission_permit(&state)), Json(request.clone()))
             .await
             .expect("single handler should complete")
             .0;
@@ -687,23 +734,26 @@ mod tests {
         .unwrap();
         assert!(single_json["processingTimeMs"].is_u64());
 
-        let batch = batch_backtest_handler(Json(BatchBacktestRequest {
-            data: request.data.clone(),
-            items: vec![crate::types::BatchBacktestItem {
-                id: "candidate-1".to_string(),
-                signals: request.signals.clone(),
-                packed_signals: None,
-                settings: None,
-            }],
-            initial_capital: request.initial_capital,
-            position_size_percent: request.position_size_percent,
-            commission_percent: request.commission_percent,
-            base_settings: request.settings.clone(),
-            sizing: request.sizing,
-            compact: request.compact,
-            skip_drawdown: false,
-            skip_sharpe_ratio: false,
-        }))
+        let batch = batch_backtest_handler(
+            Extension(admission_permit(&state)),
+            Json(BatchBacktestRequest {
+                data: request.data.clone(),
+                items: vec![crate::types::BatchBacktestItem {
+                    id: "candidate-1".to_string(),
+                    signals: request.signals.clone(),
+                    packed_signals: None,
+                    settings: None,
+                }],
+                initial_capital: request.initial_capital,
+                position_size_percent: request.position_size_percent,
+                commission_percent: request.commission_percent,
+                base_settings: request.settings.clone(),
+                sizing: request.sizing,
+                compact: request.compact,
+                skip_drawdown: false,
+                skip_sharpe_ratio: false,
+            }),
+        )
         .await
         .expect("batch handler should complete")
         .0;
@@ -761,10 +811,14 @@ mod tests {
     }
 
     async fn upload(State(state): State<AppState>, request: CacheDataRequest) -> CacheDataResponse {
-        cache_data_handler(State(state), Json(request))
-            .await
-            .expect("upload should succeed")
-            .0
+        cache_data_handler(
+            Extension(admission_permit(&state)),
+            State(state),
+            Json(request),
+        )
+        .await
+        .expect("upload should succeed")
+        .0
     }
 
     #[tokio::test]
@@ -828,6 +882,7 @@ mod tests {
     async fn cache_upload_rejects_malformed_and_empty_packed_data() {
         let state = AppState::default();
         let malformed = cache_data_handler(
+            Extension(admission_permit(&state)),
             State(state.clone()),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -839,6 +894,7 @@ mod tests {
         assert_eq!(malformed.0, StatusCode::BAD_REQUEST);
 
         let non_finite = cache_data_handler(
+            Extension(admission_permit(&state)),
             State(state.clone()),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -850,6 +906,7 @@ mod tests {
         assert_eq!(non_finite.0, StatusCode::BAD_REQUEST);
 
         let empty = cache_data_handler(
+            Extension(admission_permit(&state)),
             State(state.clone()),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -861,6 +918,7 @@ mod tests {
         assert_eq!(empty.0, StatusCode::BAD_REQUEST);
 
         let no_data = cache_data_handler(
+            Extension(admission_permit(&state)),
             State(state),
             Json(CacheDataRequest {
                 data: Vec::new(),
@@ -891,7 +949,12 @@ mod tests {
         let upload_state = state.clone();
         let done_for_upload = Arc::clone(&done);
         let upload_task = tokio::spawn(async move {
-            let result = cache_data_handler(State(upload_state), Json(request)).await;
+            let result = cache_data_handler(
+                Extension(admission_permit(&upload_state)),
+                State(upload_state),
+                Json(request),
+            )
+            .await;
             done_for_upload.store(true, AtomicOrdering::SeqCst);
             result
         });
@@ -948,6 +1011,7 @@ mod tests {
 
     #[tokio::test]
     async fn batch_route_rejects_packed_signal_items() {
+        let state = AppState::default();
         for packed in [
             serde_json::json!([0.0, 0.0, 100.0, 0.0]),
             serde_json::json!([]),
@@ -956,7 +1020,7 @@ mod tests {
             payload["items"][0]["packedSignals"] = packed;
             let request: BatchBacktestRequest =
                 serde_json::from_value(payload).expect("camelCase batch payload must deserialize");
-            let error = batch_backtest_handler(Json(request))
+            let error = batch_backtest_handler(Extension(admission_permit(&state)), Json(request))
                 .await
                 .expect_err("packed items must be rejected");
             assert_eq!(error.0, StatusCode::BAD_REQUEST);
@@ -966,7 +1030,7 @@ mod tests {
         // Without the field, the ordinary signals keep their results.
         let request: BatchBacktestRequest =
             serde_json::from_value(batch_request_payload(None)).unwrap();
-        let response = batch_backtest_handler(Json(request))
+        let response = batch_backtest_handler(Extension(admission_permit(&state)), Json(request))
             .await
             .expect("ordinary batch should complete")
             .0;
@@ -982,9 +1046,13 @@ mod tests {
         payload["cacheId"] = serde_json::json!("never-uploaded");
         payload["items"][0]["packedSignals"] = serde_json::json!([]);
         let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
-        let error = cached_batch_backtest_handler(State(state.clone()), Json(request))
-            .await
-            .expect_err("packed items must be rejected before cache lookup");
+        let error = cached_batch_backtest_handler(
+            Extension(admission_permit(&state)),
+            State(state.clone()),
+            Json(request),
+        )
+        .await
+        .expect_err("packed items must be rejected before cache lookup");
         assert_eq!(error.0, StatusCode::BAD_REQUEST);
         assert!(error.1.contains(packed_rejection_message()));
 
@@ -992,9 +1060,13 @@ mod tests {
         let mut payload = batch_request_payload(None);
         payload["cacheId"] = serde_json::json!("never-uploaded");
         let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
-        let error = cached_batch_backtest_handler(State(state), Json(request))
-            .await
-            .expect_err("unknown cache id must 404");
+        let error = cached_batch_backtest_handler(
+            Extension(admission_permit(&state)),
+            State(state),
+            Json(request),
+        )
+        .await
+        .expect_err("unknown cache id must 404");
         assert_eq!(error.0, StatusCode::NOT_FOUND);
     }
 
@@ -1002,6 +1074,7 @@ mod tests {
     async fn cached_batch_route_runs_ordinary_items_after_upload() {
         let state = AppState::default();
         let upload = cache_data_handler(
+            Extension(admission_permit(&state)),
             State(state.clone()),
             Json(CacheDataRequest {
                 data: vec![
@@ -1031,10 +1104,14 @@ mod tests {
             "commissionPercent": 0.0
         });
         let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
-        let response = cached_batch_backtest_handler(State(state), Json(request))
-            .await
-            .expect("cached batch should complete")
-            .0;
+        let response = cached_batch_backtest_handler(
+            Extension(admission_permit(&state)),
+            State(state),
+            Json(request),
+        )
+        .await
+        .expect("cached batch should complete")
+        .0;
         assert_eq!(response.results[0].id, "candidate-1");
         assert_eq!(response.results[0].result.total_trades, 1);
     }
@@ -1065,6 +1142,8 @@ mod tests {
     }
 
     fn batch_test_router(state: AppState) -> axum::Router {
+        // Production requests get their admission permit from the middleware;
+        // this minimal router inserts the same extension directly.
         axum::Router::new()
             .route(
                 "/api/backtest/batch",
@@ -1074,6 +1153,7 @@ mod tests {
                 "/api/backtest/batch/cached",
                 axum::routing::post(cached_batch_backtest_handler),
             )
+            .layer(Extension(admission_permit(&state)))
             .with_state(state)
     }
 

@@ -3,15 +3,19 @@
 //! Provides REST API endpoints for:
 //! - Single backtests
 use axum::{
-    extract::DefaultBodyLimit,
-    http::{header, HeaderValue, Method},
+    extract::{DefaultBodyLimit, Request, State},
+    http::{header, HeaderValue, Method, StatusCode},
+    middleware::{self, Next},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::sync::OwnedSemaphorePermit;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use trading_engine::api::routes;
+use trading_engine::api::routes::{self, AppState};
 const MAX_JSON_BODY_BYTES: usize = 256 * 1024 * 1024;
 
 fn cors_origins(configured_origin: Option<&str>) -> Vec<HeaderValue> {
@@ -33,6 +37,74 @@ fn cors_origins(configured_origin: Option<&str>) -> Vec<HeaderValue> {
     origins
 }
 
+/// Parse the `RUST_ENGINE_MAX_IN_FLIGHT` admission setting. The value is read
+/// once at startup: it must be a positive integer, and the conservative
+/// default applies when unset.
+fn max_in_flight_from(value: Option<&str>) -> Result<usize, String> {
+    match value {
+        None => Ok(routes::DEFAULT_MAX_IN_FLIGHT),
+        Some(raw) => raw
+            .trim()
+            .parse::<usize>()
+            .ok()
+            .filter(|limit| *limit > 0)
+            .ok_or_else(|| {
+                format!("RUST_ENGINE_MAX_IN_FLIGHT must be a positive integer, got '{raw}'")
+            }),
+    }
+}
+
+/// Admission gate for the CPU-heavy routes. Overloaded requests are rejected
+/// before JSON parsing with a 503; accepted requests carry their semaphore
+/// permit in request extensions so handlers retain capacity through the whole
+/// blocking computation. Health and cache-clear routes never pass through
+/// this gate, and the CORS layer wraps it so rejected browser requests keep
+/// their CORS headers.
+async fn admission_gate(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    let Ok(permit) = state.max_in_flight.clone().try_acquire_owned() else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Engine busy: too many in-flight requests",
+        )
+            .into_response();
+    };
+    let mut request = request;
+    request
+        .extensions_mut()
+        .insert(Arc::new(permit) as Arc<OwnedSemaphorePermit>);
+    next.run(request).await
+}
+
+fn build_router(state: AppState, cors: CorsLayer) -> Router {
+    let admission = middleware::from_fn_with_state(state.clone(), admission_gate);
+    Router::new()
+        // Health check stays outside the admission gate.
+        .route("/api/health", get(health_check))
+        // Backtest endpoints
+        .route(
+            "/api/backtest",
+            post(routes::backtest_handler).route_layer(admission.clone()),
+        )
+        .route(
+            "/api/backtest/batch",
+            post(routes::batch_backtest_handler).route_layer(admission.clone()),
+        )
+        // Cached data endpoints (for large datasets); cache clear stays
+        // outside the gate, cache upload is CPU-heavy and admitted.
+        .route(
+            "/api/data/cache",
+            post(routes::cache_data_handler).route_layer(admission.clone()),
+        )
+        .route("/api/data/clear", post(routes::clear_cache_handler))
+        .route(
+            "/api/backtest/batch/cached",
+            post(routes::cached_batch_backtest_handler).route_layer(admission),
+        )
+        .with_state(state)
+        .layer(DefaultBodyLimit::max(MAX_JSON_BODY_BYTES))
+        .layer(cors)
+}
+
 #[tokio::main]
 async fn main() {
     // Initialize tracing
@@ -43,6 +115,14 @@ async fn main() {
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
+    let max_in_flight =
+        match max_in_flight_from(std::env::var("RUST_ENGINE_MAX_IN_FLIGHT").ok().as_deref()) {
+            Ok(limit) => limit,
+            Err(message) => {
+                eprintln!("Startup error: {message}");
+                std::process::exit(2);
+            }
+        };
     // CORS configuration for browser access
     let configured_origin = std::env::var("VITE_DEV_SERVER_ORIGIN").ok();
     let cors = CorsLayer::new()
@@ -52,24 +132,12 @@ async fn main() {
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([header::CONTENT_TYPE]);
     // Shared application state (for data caching)
-    let state = routes::AppState::default();
+    let state = AppState::new(max_in_flight);
+    tracing::info!(
+        "Admission limit: {max_in_flight} in-flight CPU-heavy requests (RUST_ENGINE_MAX_IN_FLIGHT)"
+    );
     // Build router
-    let app = Router::new()
-        // Health check
-        .route("/api/health", get(health_check))
-        // Backtest endpoints
-        .route("/api/backtest", post(routes::backtest_handler))
-        .route("/api/backtest/batch", post(routes::batch_backtest_handler))
-        // Cached data endpoints (for large datasets)
-        .route("/api/data/cache", post(routes::cache_data_handler))
-        .route("/api/data/clear", post(routes::clear_cache_handler))
-        .route(
-            "/api/backtest/batch/cached",
-            post(routes::cached_batch_backtest_handler),
-        )
-        .with_state(state)
-        .layer(DefaultBodyLimit::max(MAX_JSON_BODY_BYTES))
-        .layer(cors);
+    let app = build_router(state, cors);
     // Start server. Keep the historical default, but allow an isolated local
     // instance for smoke tests when another engine owns 3030.
     let addr = SocketAddr::from(([127, 0, 0, 1], server_port()));
@@ -114,6 +182,11 @@ async fn health_check() -> Json<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::Extension;
+    use http_body_util::BodyExt;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    use std::time::Duration;
 
     #[test]
     fn cors_allows_only_expected_local_origins() {
@@ -162,5 +235,447 @@ mod tests {
         assert_eq!(server_port_from(Some("0")), 3030);
         assert_eq!(server_port_from(Some("not-a-port")), 3030);
         assert_eq!(server_port_from(None), 3030);
+    }
+
+    #[test]
+    fn admission_config_requires_a_positive_integer() {
+        assert_eq!(max_in_flight_from(None), Ok(routes::DEFAULT_MAX_IN_FLIGHT));
+        assert_eq!(max_in_flight_from(Some("1")), Ok(1));
+        assert_eq!(max_in_flight_from(Some(" 4 ")), Ok(4));
+        // Rust's usize parser accepts a leading '+', matching its semantics.
+        for invalid in ["0", "-2", "abc", "", "1.5"] {
+            let error = max_in_flight_from(Some(invalid))
+                .expect_err("invalid admission values must be rejected");
+            assert!(
+                error.contains("positive integer"),
+                "unexpected error for '{invalid}': {error}"
+            );
+            assert!(
+                error.contains(invalid),
+                "error must quote the raw value for '{invalid}': {error}"
+            );
+        }
+    }
+
+    // ======================================================================
+    // Admission gate coverage through the real middleware/router.
+    // ======================================================================
+
+    /// Shared registry letting tests control the blocking work started by the
+    /// probe handlers below: the handler moves the entry's started-sender and
+    /// release-receiver into the worker closure.
+    type ProbeRegistry =
+        Arc<Mutex<HashMap<String, (std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>>>;
+    /// Test-side handles: the worker-started receiver and the release sender.
+    type ProbeHandles =
+        HashMap<String, (std::sync::mpsc::Receiver<()>, std::sync::mpsc::Sender<()>)>;
+
+    fn probe_registry() -> ProbeRegistry {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
+
+    async fn probe_handler(
+        Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+        State(registry): State<ProbeRegistry>,
+        Json(req): Json<serde_json::Value>,
+    ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+        let id = req["id"].as_str().ok_or((
+            StatusCode::BAD_REQUEST,
+            "probe request needs an id".to_string(),
+        ))?;
+        let (started_tx, release_rx) = registry
+            .lock()
+            .expect("probe registry lock")
+            .remove(id)
+            .ok_or((StatusCode::NOT_FOUND, "unknown probe id".to_string()))?;
+        let done = tokio::task::spawn_blocking(move || {
+            // The permit clone must survive until the controlled work ends.
+            let _admission_permit = admission_permit;
+            started_tx.send(()).expect("probe started signal");
+            release_rx.recv().expect("probe release signal");
+            serde_json::json!({ "done": true })
+        })
+        .await
+        .map_err(|error| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("probe worker failed: {error}"),
+            )
+        })?;
+        Ok(Json(done))
+    }
+
+    async fn probe_error_handler(
+        Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+    ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+        // Validation failure after admission: capacity must still release.
+        let _admission_permit = admission_permit;
+        Err((
+            StatusCode::BAD_REQUEST,
+            "probe validation failure".to_string(),
+        ))
+    }
+
+    async fn probe_panic_handler(
+        Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
+    ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+        let result = tokio::task::spawn_blocking(move || {
+            let _admission_permit = admission_permit;
+            panic!("probe worker boom");
+        })
+        .await;
+        Err(match result {
+            Ok(value) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("probe unexpectedly succeeded: {value:?}"),
+            ),
+            Err(error) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("probe worker failed: {error}"),
+            ),
+        })
+    }
+
+    fn probe_router(state: AppState, registry: ProbeRegistry) -> Router {
+        // The router state is the probe registry; the admission gate carries
+        // its own AppState via from_fn_with_state. Like the production
+        // build_router, only the CPU-heavy probe routes pass the gate; the
+        // health route stays outside it.
+        let admission = middleware::from_fn_with_state(state.clone(), admission_gate);
+        Router::new()
+            .route("/probe", post(probe_handler).route_layer(admission.clone()))
+            .route(
+                "/probe-error",
+                post(probe_error_handler).route_layer(admission.clone()),
+            )
+            .route(
+                "/probe-panic",
+                post(probe_panic_handler).route_layer(admission),
+            )
+            .route("/api/health", get(health_check))
+            .with_state(registry)
+    }
+
+    fn probe_registry_entry(registry: &ProbeRegistry, id: &str) {
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        registry
+            .lock()
+            .expect("probe registry lock")
+            .insert(id.to_string(), (started_tx, release_rx));
+        // Stash the test-side handles next to the request id.
+        started_handles()
+            .lock()
+            .expect("started handles lock")
+            .insert(id.to_string(), (started_rx, release_tx));
+    }
+
+    fn started_handles() -> &'static Mutex<ProbeHandles> {
+        static HANDLES: std::sync::OnceLock<Mutex<ProbeHandles>> = std::sync::OnceLock::new();
+        HANDLES.get_or_init(Mutex::default)
+    }
+
+    /// Wait until the probe worker signals it started, bounded so a broken
+    /// pipeline fails the test instead of hanging it.
+    fn wait_for_probe_start(id: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            {
+                let handles = started_handles().lock().expect("started handles lock");
+                if let Some((started_rx, _)) = handles.get(id) {
+                    if started_rx.try_recv().is_ok() {
+                        return;
+                    }
+                }
+            }
+            if std::time::Instant::now() > deadline {
+                panic!("probe worker {id} never started");
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    fn release_probe(id: &str) {
+        let handles = started_handles().lock().expect("started handles lock");
+        if let Some((_, release_tx)) = handles.get(id) {
+            release_tx.send(()).expect("probe release send");
+        }
+    }
+
+    async fn post_json_to(
+        app: Router,
+        uri: &str,
+        body: serde_json::Value,
+        origin: Option<&str>,
+    ) -> Response {
+        let mut builder = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(uri)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(origin) = origin {
+            builder = builder.header(header::ORIGIN, origin);
+        }
+        let request = builder
+            .body(axum::body::Body::from(serde_json::to_vec(&body).unwrap()))
+            .expect("test request should build");
+        use tower::ServiceExt;
+        app.oneshot(request).await.expect("router should answer")
+    }
+
+    async fn get_to(app: Router, uri: &str) -> Response {
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::GET)
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .expect("test request should build");
+        use tower::ServiceExt;
+        app.oneshot(request).await.expect("router should answer")
+    }
+
+    async fn response_text(response: Response) -> String {
+        let bytes = BodyExt::collect(response.into_body())
+            .await
+            .expect("body collects")
+            .to_bytes();
+        String::from_utf8(bytes.to_vec()).expect("utf-8 body")
+    }
+
+    fn test_cors() -> CorsLayer {
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(cors_origins(None)))
+            .allow_methods([Method::GET, Method::POST])
+            .allow_headers([header::CONTENT_TYPE])
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn admission_rejects_overload_before_parsing_and_keeps_health_open() {
+        let state = AppState::new(1);
+        // Saturate the single admission slot directly.
+        let held = state
+            .max_in_flight
+            .clone()
+            .try_acquire_owned()
+            .expect("permit available");
+
+        // Health is outside the gate.
+        let response = get_to(probe_router(state.clone(), probe_registry()), "/api/health").await;
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Malformed JSON gets 503, proving rejection happens before parsing.
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/probe")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from("{not json"))
+            .unwrap();
+        {
+            use tower::ServiceExt;
+            let response = probe_router(state.clone(), probe_registry())
+                .oneshot(request)
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            let text = response_text(response).await;
+            assert!(text.contains("Engine busy"), "unexpected body: {text}");
+        }
+
+        // The real production router behaves identically, and the 503 keeps
+        // its CORS headers so browser callers can read the failure.
+        let production = build_router(state.clone(), test_cors());
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/api/backtest")
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::ORIGIN, "http://localhost:5173")
+            .body(axum::body::Body::from("{not json"))
+            .unwrap();
+        {
+            use tower::ServiceExt;
+            let response = production.oneshot(request).await.unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+                    .and_then(|value| value.to_str().ok()),
+                Some("http://localhost:5173")
+            );
+        }
+
+        drop(held);
+        assert_eq!(state.max_in_flight.available_permits(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn admission_capacity_is_held_until_the_worker_settles() {
+        let state = AppState::new(1);
+        let registry = probe_registry();
+        probe_registry_entry(&registry, "worker-a");
+
+        let app = probe_router(state.clone(), Arc::clone(&registry));
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/probe")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&serde_json::json!({ "id": "worker-a" })).unwrap(),
+            ))
+            .unwrap();
+        let task = tokio::spawn(async move {
+            use tower::ServiceExt;
+            app.oneshot(request).await.expect("probe response")
+        });
+
+        wait_for_probe_start("worker-a");
+        // The middleware and the blocking worker both hold references.
+        assert_eq!(
+            state.max_in_flight.available_permits(),
+            0,
+            "capacity must be held while the CPU work runs"
+        );
+
+        release_probe("worker-a");
+        let response = task.await.expect("probe task joins");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            state.max_in_flight.available_permits(),
+            1,
+            "capacity must return after completion"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disconnect_retains_capacity_until_the_worker_settles() {
+        let state = AppState::new(1);
+        let registry = probe_registry();
+        probe_registry_entry(&registry, "worker-b");
+
+        let app = probe_router(state.clone(), Arc::clone(&registry));
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri("/probe")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&serde_json::json!({ "id": "worker-b" })).unwrap(),
+            ))
+            .unwrap();
+        let task = tokio::spawn(async move {
+            use tower::ServiceExt;
+            app.oneshot(request).await.expect("probe response")
+        });
+
+        wait_for_probe_start("worker-b");
+        // Simulate a disconnect: drop the in-flight response future while the
+        // worker keeps computing.
+        task.abort();
+
+        assert_eq!(
+            state.max_in_flight.available_permits(),
+            0,
+            "the worker still owns its permit clone after a disconnect"
+        );
+
+        release_probe("worker-b");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while state.max_in_flight.available_permits() < 1 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "capacity never returned after the worker settled"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(state.max_in_flight.available_permits(), 1);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn completion_error_and_panic_paths_release_capacity() {
+        let state = AppState::new(1);
+
+        // /probe-error answers with its own validation status; /probe-panic
+        // surfaces the failed worker join. Both must release capacity.
+        let expected_status = [("/probe-error", 400_u16), ("/probe-panic", 500)];
+        for (uri, expected_status) in expected_status {
+            let response = post_json_to(
+                probe_router(state.clone(), probe_registry()),
+                uri,
+                serde_json::json!({}),
+                None,
+            )
+            .await;
+            assert_eq!(
+                response.status().as_u16(),
+                expected_status,
+                "{uri} must answer with its own failure status"
+            );
+            assert_eq!(
+                state.max_in_flight.available_permits(),
+                1,
+                "{uri} must release admission capacity"
+            );
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn protected_production_routes_accept_and_admit_normally() {
+        let state = AppState::new(1);
+        let app = build_router(state.clone(), test_cors());
+
+        // Upload a tiny dataset: admitted, then the cached batch runs too.
+        let response = post_json_to(
+            app.clone(),
+            "/api/data/cache",
+            serde_json::json!({
+                "data": [
+                    {"time": 0, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1000.0},
+                    {"time": 60000, "open": 105.0, "high": 106.0, "low": 104.0, "close": 105.0, "volume": 1000.0},
+                    {"time": 120000, "open": 105.0, "high": 106.0, "low": 104.0, "close": 105.0, "volume": 1000.0}
+                ]
+            }),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = response_text(response).await;
+        let upload: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let cache_id = upload["cacheId"].as_str().unwrap().to_string();
+
+        let response = post_json_to(
+            app.clone(),
+            "/api/backtest/batch/cached",
+            serde_json::json!({
+                "cacheId": cache_id,
+                "items": [{
+                    "id": "candidate-1",
+                    "signals": [
+                        {"time": 0, "type": "buy", "price": 100.0},
+                        {"time": 60000, "type": "sell", "price": 105.0}
+                    ]
+                }],
+                "initialCapital": 10000.0,
+                "positionSizePercent": 100.0,
+                "commissionPercent": 0.0
+            }),
+            None,
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = response_text(response).await;
+        let batch: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(batch["results"][0]["result"]["totalTrades"], 1);
+        assert_eq!(
+            state.max_in_flight.available_permits(),
+            1,
+            "capacity must return after both admitted requests complete"
+        );
+    }
+
+    #[test]
+    fn default_admission_state_uses_the_conservative_default() {
+        let state = AppState::default();
+        assert_eq!(
+            state.max_in_flight.available_permits(),
+            routes::DEFAULT_MAX_IN_FLIGHT
+        );
+        assert_eq!(routes::DEFAULT_MAX_IN_FLIGHT, 2);
     }
 }
