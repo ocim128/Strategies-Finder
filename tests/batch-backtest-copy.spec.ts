@@ -544,6 +544,61 @@ describe("server scalar batch rows", () => {
         expect(topMeanLine).to.contain("AAA mean=+1");
         expect(topMeanLine).to.contain("BBB mean=+1");
     });
+
+    it("MAX_ACTIVE NOW, TOP_RAW NOW, and TOP_MEAN NOW pick different winners from one pool", () => {
+        // Explicit openTradeAssetScores scalars (authoritative when present)
+        // arrange three different winners from the same positive pool:
+        //   Y: score 10 over 2 rows -> activePairs 2, mean 5  -> TOP_RAW NOW
+        //   W: score 9  over 1 row  -> activePairs 1, mean 9  -> TOP_MEAN NOW
+        //   X: score 4  over 4 rows -> activePairs 4, mean 1  -> MAX_ACTIVE NOW
+        const rowWithScores = (symbol: string, entries: { asset: string; score: number }[]) =>
+            openTradeRow(symbol, "long", { openTradeAssetScores: entries });
+        const rows = [
+            rowWithScores("R1", [{ asset: "Y", score: 5 }, { asset: "A", score: -5 }]),
+            rowWithScores("R2", [{ asset: "Y", score: 5 }, { asset: "B", score: -5 }]),
+            rowWithScores("R3", [{ asset: "W", score: 9 }, { asset: "C", score: -9 }]),
+            rowWithScores("R4", [{ asset: "X", score: 1 }, { asset: "D", score: -1 }]),
+            rowWithScores("R5", [{ asset: "X", score: 1 }, { asset: "E", score: -1 }]),
+            rowWithScores("R6", [{ asset: "X", score: 1 }, { asset: "F", score: -1 }]),
+            rowWithScores("R7", [{ asset: "X", score: 1 }, { asset: "G", score: -1 }]),
+        ];
+        const lines = formatBatchOverallSummary(rows);
+        const openScoreLine = "OPEN_SCORE | Y +10, C -9, W +9, A -5, B -5, X +4, D -1, E -1, F -1, G -1";
+        const maxActiveLine = "MAX_ACTIVE NOW | X score=+4 activePairs=4";
+        const topRawLine = "TOP_RAW NOW | Y score=+10 activePairs=2";
+        const topMeanLine = "TOP_MEAN NOW | W mean=+9 score=+9 activePairs=1";
+        // Complete lines (not just prefixes), in arm order after OPEN_SCORE.
+        expect(lines).to.include(openScoreLine);
+        expect(lines.indexOf(maxActiveLine)).to.be.greaterThan(lines.indexOf(openScoreLine));
+        expect(lines.indexOf(topRawLine)).to.be.greaterThan(lines.indexOf(maxActiveLine));
+        expect(lines.indexOf(topMeanLine)).to.be.greaterThan(lines.indexOf(topRawLine));
+        // Negative-vote legs never surface in a NOW line.
+        expect(lines.filter((line) => line.includes(" NOW | "))).to.deep.equal([
+            maxActiveLine,
+            topRawLine,
+            topMeanLine,
+        ]);
+
+        // The scalar wire projection of the same rows produces the identical
+        // OPEN_SCORE and NOW sections.
+        const scalarLines = formatBatchOverallSummary(rows.map((row) => toScalarRow(row)));
+        const nowAndOpenScore = (all: string[]) =>
+            all.filter((line) => line.startsWith("OPEN_SCORE") || line.includes(" NOW | "));
+        expect(nowAndOpenScore(scalarLines)).to.deep.equal(nowAndOpenScore(lines));
+    });
+
+    it("renders no NOW lines when no asset has a positive score", () => {
+        // WLD nets to 0 across the two rows (positive eligibility is
+        // score > 0, not nonzero coverage) and BTC is negative -> the
+        // positives pool is empty even though WLD has open-pair coverage.
+        const rows = [
+            openTradeRow("WLD+BTC", "long"),
+            openTradeRow("WLDUSDT", "short"),
+        ];
+        const lines = formatBatchOverallSummary(rows);
+        expect(lines.filter((line) => line.includes(" NOW | "))).to.deep.equal([]);
+        expect(lines).to.include("OPEN_SCORE | BTC -1, WLD +0");
+    });
 });
 
 describe("summarizeRegimeSplit", () => {

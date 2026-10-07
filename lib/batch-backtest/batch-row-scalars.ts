@@ -63,18 +63,21 @@ export interface CurrentMaxActiveCandidate {
 }
 
 /**
- * Current-state MAX_ACTIVE candidates for the Batch summary. Unlike the
- * historical replay, this describes only positions open at the end of the
- * Batch run. Return every tied winner instead of hiding a tie behind an
- * arbitrary asset-name choice.
+ * Full positive-score candidate pool with currently-open pair coverage for
+ * the Batch NOW summaries: every asset whose net open-position vote is > 0,
+ * together with the number of rows whose open positions currently include it
+ * (a row counts an asset once when its vote for that asset is nonzero; an
+ * existing `openTradeAssetScores` row scalar, including an empty one, is
+ * authoritative, with the trade fallback only for rows that predate it).
+ * This is the single coverage-aggregation owner: the summary's MAX_ACTIVE
+ * NOW, TOP_RAW NOW, and TOP_MEAN NOW selectors each pick from this one pool.
  */
-export function computeCurrentMaxActiveCandidates(
+export function computeOpenScorePositivesWithCoverage(
     rows: readonly BatchBacktestSymbolResult[],
     /**
-     * Optional pre-computed asset scores for the same `rows`. When supplied,
-     * skips the internal O(N) `computeOpenTradeAssetScores(rows)` call. Callers
-     * that already compute the asset-score map for the OPEN_SCORE summary line
-     * should thread it through to avoid recomputing the same map per call.
+     * Optional pre-computed asset scores for the same `rows` (e.g. the
+     * OPEN_SCORE summary line). When supplied, the O(N)
+     * `computeOpenTradeAssetScores(rows)` call is skipped.
      */
     scores?: { asset: string; score: number }[],
 ): CurrentMaxActiveCandidate[] {
@@ -86,15 +89,49 @@ export function computeCurrentMaxActiveCandidates(
             activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
         }
     }
-
-    const positives = (scores ?? computeOpenTradeAssetScores(rows))
+    return (scores ?? computeOpenTradeAssetScores(rows))
         .filter((entry) => entry.score > 0)
         .map((entry) => ({
             ...entry,
             activePairs: activePairsByAsset.get(entry.asset) ?? 0,
         }));
-    const maxActivePairs = Math.max(0, ...positives.map((entry) => entry.activePairs));
-    return positives
-        .filter((entry) => entry.activePairs === maxActivePairs)
+}
+
+/** Pick every candidate tied at the maximum of `key`, sorted by score then name. */
+export function pickTopPositive<T extends { score: number; asset: string }>(
+    candidates: readonly T[],
+    key: (candidate: T) => number,
+): T[] {
+    if (candidates.length === 0) return [];
+    let maxValue = -Infinity;
+    for (const candidate of candidates) {
+        const keyed = key(candidate);
+        if (keyed > maxValue) maxValue = keyed;
+    }
+    return candidates
+        .filter((candidate) => key(candidate) === maxValue)
         .sort((a, b) => b.score - a.score || a.asset.localeCompare(b.asset));
+}
+
+/**
+ * Current-state MAX_ACTIVE candidates for the Batch summary. Unlike the
+ * historical replay, this describes only positions open at the end of the
+ * Batch run. Wrapper over {@link computeOpenScorePositivesWithCoverage} that
+ * keeps every tied winner instead of hiding a tie behind an arbitrary
+ * asset-name choice.
+ */
+export function computeCurrentMaxActiveCandidates(
+    rows: readonly BatchBacktestSymbolResult[],
+    /**
+     * Optional pre-computed asset scores for the same `rows`. When supplied,
+     * skips the internal O(N) `computeOpenTradeAssetScores(rows)` call. Callers
+     * that already compute the asset-score map for the OPEN_SCORE summary line
+     * should thread it through to avoid recomputing the same map per call.
+     */
+    scores?: { asset: string; score: number }[],
+): CurrentMaxActiveCandidate[] {
+    return pickTopPositive(
+        computeOpenScorePositivesWithCoverage(rows, scores),
+        (candidate) => candidate.activePairs,
+    );
 }

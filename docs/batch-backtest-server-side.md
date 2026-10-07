@@ -384,6 +384,21 @@ per-symbol values by exit year, followed by one `YEARLY | <symbol> | ...` line
 per symbol. Years are sorted ascending; rows from older runs without
 `yearlyPnl` are shown as `n/a`.
 
+The `NOW` selector arms have one ownership chain. Coverage aggregation lives
+only in `computeOpenScorePositivesWithCoverage`
+(`lib/batch-backtest/batch-row-scalars.ts`), which builds the full
+positive-asset pool (every asset with net score > 0) together with its
+currently-open pair count; a row counts an asset once when its vote for that
+asset is nonzero, an existing `openTradeAssetScores` row scalar (including an
+empty one) is authoritative, and the end-of-data trade fallback applies only
+to rows without the scalar. `computeCurrentMaxActiveCandidates` in the same
+module is a thin wrapper that selects the max-`activePairs` tie group from
+that pool. `formatBatchOverallSummary` computes the scores and the pool once,
+then derives MAX_ACTIVE NOW (by `activePairs`), TOP_RAW NOW (by raw score),
+and TOP_MEAN NOW (by `score / activePairs`) from the same pool; every tied
+winner is surfaced, sorted by score descending then asset name. Full rows,
+`toScalarRow` projections, and restored snapshots produce the same lines.
+
 ## Reload persistence
 
 The Batch tab persists the latest completed output through

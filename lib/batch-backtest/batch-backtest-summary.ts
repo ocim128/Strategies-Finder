@@ -7,7 +7,12 @@ import {
     formatNullableCurrency as formatCurrency,
     formatProfitFactor,
 } from "../ui-formatters";
-import { computeBuyAndHoldPct, computeCurrentMaxActiveCandidates, computeOpenTradeAssetScores } from "./batch-row-scalars";
+import {
+    computeBuyAndHoldPct,
+    computeOpenScorePositivesWithCoverage,
+    computeOpenTradeAssetScores,
+    pickTopPositive,
+} from "./batch-row-scalars";
 import type { CurrentMaxActiveCandidate } from "./batch-row-scalars";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import { aggregateYearlyPnl, formatYearlyPnl, getBatchRowYearlyPnl } from "./batch-yearly-pnl";
@@ -195,24 +200,23 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
                 `Top3 ${openConcentration.top3Assets.join(", ")} = ${formatPercent(openConcentration.top3Share * 100)} gross`,
             ].join(" | "),
         );
-        const maxActiveCandidates = computeCurrentMaxActiveCandidates(stats.resultRows, scores);
+        // MAX_ACTIVE NOW / TOP_RAW NOW / TOP_MEAN NOW are live-snapshot
+        // parallels of the historical-replay arms. All three derive from ONE
+        // full positive pool (computeOpenScorePositivesWithCoverage in
+        // batch-row-scalars.ts, the single coverage-aggregation owner) and
+        // pick by the arm's key: activePairs, raw score, and score/activePairs
+        // mean respectively. Every tied winner is surfaced (no arbitrary
+        // asset-name tie-break). See docs/batch-backtest-server-side.md for
+        // the arm semantics and current-snapshot context.
+        const positivesWithCoverage = computeOpenScorePositivesWithCoverage(stats.resultRows, scores);
+        const maxActiveCandidates = pickTopPositive(positivesWithCoverage, (candidate) => candidate.activePairs);
         if (maxActiveCandidates.length > 0) {
             lines.push(
                 `MAX_ACTIVE NOW | ${maxActiveCandidates.map((candidate) =>
                     `${candidate.asset} score=${formatSignedScore(candidate.score)} activePairs=${candidate.activePairs}`,
                 ).join(" | ")}`,
             );
-            // TOP_RAW NOW / TOP_MEAN NOW are live-snapshot parallels of the
-            // historical-replay arms. Both reuse the positives pool already
-            // assembled by computeCurrentMaxActiveCandidates (which returns
-            // every positive asset with its activePairs count, NOT just the
-            // MAX_ACTIVE winners) — re-derive the full positive list with
-            // the same scoring, then pick by the arm's key. All tied winners
-            // are surfaced (mirrors MAX_ACTIVE NOW's no-arbitrary-tiebreak
-            // rule). See docs/batch-backtest-server-side.md for the arm
-            // semantics and current-snapshot context.
-            const positivesWithCoverage = computeOpenScorePositivesWithCoverage(stats.resultRows, scores);
-            const topRawNow = pickTopPositive(positivesWithCoverage, (c) => c.score);
+            const topRawNow = pickTopPositive(positivesWithCoverage, (candidate) => candidate.score);
             if (topRawNow.length > 0) {
                 lines.push(
                     `TOP_RAW NOW | ${topRawNow.map((candidate) =>
@@ -236,57 +240,9 @@ export function formatBatchOverallSummary(results: readonly BatchBacktestSymbolR
     return lines;
 }
 
-/**
- * Live-snapshot helper for TOP_RAW NOW / TOP_MEAN NOW. Returns the full
- * positive-score candidate list (every asset with raw score > 0) along with
- * its currently-open pair count. Mirrors {@link computeCurrentMaxActiveCandidates}
- * minus the max-activePairs filter.
- */
-function computeOpenScorePositivesWithCoverage(
-    rows: readonly BatchBacktestSymbolResult[],
-    /**
-     * Optional pre-computed asset scores for the same `rows` (e.g. the
-     * OPEN_SCORE summary line). When supplied, the O(N)
-     * `computeOpenTradeAssetScores(rows)` call is skipped — important because
-     * the Copy Results path used to recompute the same map three times.
-     */
-    scores?: { asset: string; score: number }[],
-): CurrentMaxActiveCandidate[] {
-    const activePairsByAsset = new Map<string, number>();
-    for (const row of rows) {
-        const rowScores = row.openTradeAssetScores ?? computeOpenTradeAssetScores([row]);
-        const assetsInOpenPair = new Set(rowScores.filter((entry) => entry.score !== 0).map((entry) => entry.asset));
-        for (const asset of assetsInOpenPair) {
-            activePairsByAsset.set(asset, (activePairsByAsset.get(asset) ?? 0) + 1);
-        }
-    }
-    return (scores ?? computeOpenTradeAssetScores(rows))
-        .filter((entry) => entry.score > 0)
-        .map((entry) => ({
-            ...entry,
-            activePairs: activePairsByAsset.get(entry.asset) ?? 0,
-        }));
-}
-
 /** mean signed vote = score / activePairs (the TOP_MEAN arm's selection key). */
 function candidateMean(candidate: CurrentMaxActiveCandidate): number {
     return candidate.activePairs > 0 ? candidate.score / candidate.activePairs : candidate.score;
-}
-
-/** Pick every candidate tied at the maximum of `key`, sorted by score then name. */
-function pickTopPositive<T extends { score: number; asset: string }>(
-    candidates: readonly T[],
-    key: (c: T) => number,
-): T[] {
-    if (candidates.length === 0) return [];
-    let maxValue = -Infinity;
-    for (const c of candidates) {
-        const k = key(c);
-        if (k > maxValue) maxValue = k;
-    }
-    return candidates
-        .filter((c) => key(c) === maxValue)
-        .sort((a, b) => b.score - a.score || a.asset.localeCompare(b.asset));
 }
 
 function formatMeanScore(value: number): string {
