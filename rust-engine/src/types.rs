@@ -484,7 +484,12 @@ pub struct BatchBacktestItem {
     pub id: String,
     #[serde(default)]
     pub signals: Vec<Signal>,
-    /// Compact signal rows: time, direction (0=buy/1=sell), price, bar index (-1 when absent).
+    /// Legacy compact signal rows: time, direction (0=buy/1=sell), price, bar
+    /// index (-1 when absent). Unsupported: the field stays deserializable so
+    /// such requests fail validation with a clear error instead of silently
+    /// running zero trades, but both batch routes reject any item that
+    /// carries it. An explicit JSON `null` keeps the historical `None`
+    /// semantics.
     #[serde(default)]
     pub packed_signals: Option<Vec<f64>>,
     #[serde(default)]

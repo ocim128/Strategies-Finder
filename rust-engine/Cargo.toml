@@ -25,6 +25,13 @@ rayon = "1.8"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+# Router-level tests drive real HTTP requests through axum without a socket;
+# both crates are already in the dependency graph via axum, so the lockfile
+# gains no new packages.
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+
 [profile.release]
 opt-level = 3
 lto = true

@@ -103,6 +103,27 @@ where
         )
     })
 }
+/// Reject batch items that carry the legacy `packedSignals` field. The engine
+/// never implemented packed execution, and silently running such items
+/// produced plausible-looking zero-trade results. The whole request is
+/// rejected before cache lookup or CPU dispatch; ordinary empty signals stay
+/// a valid no-trade candidate.
+fn reject_unsupported_packed_signals(
+    items: &[crate::types::BatchBacktestItem],
+) -> Result<(), (StatusCode, String)> {
+    for item in items {
+        if item.packed_signals.is_some() {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Batch item '{}' uses packedSignals, which this engine does not support; send plain signals instead",
+                    item.id
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
 /// Handle backtest request
 pub async fn backtest_handler(
     Json(req): Json<BacktestRequest>,
@@ -135,6 +156,7 @@ pub async fn backtest_handler(
 pub async fn batch_backtest_handler(
     Json(req): Json<BatchBacktestRequest>,
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
+    reject_unsupported_packed_signals(&req.items)?;
     let response = run_on_blocking_pool(move || {
         let start = Instant::now();
         let market_series = build_market_series(&req.data);
@@ -292,6 +314,9 @@ pub async fn cached_batch_backtest_handler(
     State(state): State<AppState>,
     Json(req): Json<CachedBatchBacktestRequest>,
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
+    // Validate before touching the cache so unsupported requests never hit
+    // simulation or dispatch.
+    reject_unsupported_packed_signals(&req.items)?;
     let start = Instant::now();
     // Get cached data
     let data = get_cached_dataset(&state, &req.cache_id).await;
@@ -485,5 +510,183 @@ mod tests {
 
         assert_eq!(cache.len(), MAX_DATA_CACHE_ENTRIES);
         assert!(!cache.contains_key("oldest"));
+    }
+
+    fn batch_request_payload(packed_signals: Option<serde_json::Value>) -> serde_json::Value {
+        let mut item = serde_json::json!({
+            "id": "candidate-packed",
+            "signals": [
+                {"time": 0, "type": "buy", "price": 100.0},
+                {"time": 60000, "type": "sell", "price": 105.0}
+            ],
+        });
+        if let Some(packed) = packed_signals {
+            item["packedSignals"] = packed;
+        }
+        serde_json::json!({
+            "data": [
+                {"time": 0, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.0, "volume": 1000.0},
+                {"time": 60000, "open": 105.0, "high": 106.0, "low": 104.0, "close": 105.0, "volume": 1000.0},
+                {"time": 120000, "open": 105.0, "high": 106.0, "low": 104.0, "close": 105.0, "volume": 1000.0}
+            ],
+            "items": [item],
+            "initialCapital": 10000.0,
+            "positionSizePercent": 100.0,
+            "commissionPercent": 0.0
+        })
+    }
+
+    const fn packed_rejection_message() -> &'static str {
+        "packedSignals"
+    }
+
+    #[tokio::test]
+    async fn batch_route_rejects_packed_signal_items() {
+        for packed in [
+            serde_json::json!([0.0, 0.0, 100.0, 0.0]),
+            serde_json::json!([]),
+        ] {
+            let mut payload = batch_request_payload(None);
+            payload["items"][0]["packedSignals"] = packed;
+            let request: BatchBacktestRequest =
+                serde_json::from_value(payload).expect("camelCase batch payload must deserialize");
+            let error = batch_backtest_handler(Json(request))
+                .await
+                .expect_err("packed items must be rejected");
+            assert_eq!(error.0, StatusCode::BAD_REQUEST);
+            assert!(error.1.contains(packed_rejection_message()));
+        }
+
+        // Without the field, the ordinary signals keep their results.
+        let request: BatchBacktestRequest =
+            serde_json::from_value(batch_request_payload(None)).unwrap();
+        let response = batch_backtest_handler(Json(request))
+            .await
+            .expect("ordinary batch should complete")
+            .0;
+        assert_eq!(response.results[0].result.total_trades, 1);
+    }
+
+    #[tokio::test]
+    async fn cached_batch_route_rejects_packed_items_before_cache_lookup() {
+        let state = AppState::default();
+        // A packed request with a cache ID that was never uploaded must fail
+        // validation, not report a missing cache entry.
+        let mut payload = batch_request_payload(None);
+        payload["cacheId"] = serde_json::json!("never-uploaded");
+        payload["items"][0]["packedSignals"] = serde_json::json!([]);
+        let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
+        let error = cached_batch_backtest_handler(State(state.clone()), Json(request))
+            .await
+            .expect_err("packed items must be rejected before cache lookup");
+        assert_eq!(error.0, StatusCode::BAD_REQUEST);
+        assert!(error.1.contains(packed_rejection_message()));
+
+        // Invalid cached IDs still report NOT_FOUND for ordinary requests.
+        let mut payload = batch_request_payload(None);
+        payload["cacheId"] = serde_json::json!("never-uploaded");
+        let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
+        let error = cached_batch_backtest_handler(State(state), Json(request))
+            .await
+            .expect_err("unknown cache id must 404");
+        assert_eq!(error.0, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn cached_batch_route_runs_ordinary_items_after_upload() {
+        let state = AppState::default();
+        let upload = cache_data_handler(
+            State(state.clone()),
+            Json(CacheDataRequest {
+                data: vec![
+                    OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+                    OHLCV::new(60000, 105.0, 106.0, 104.0, 105.0, 1000.0),
+                    OHLCV::new(120000, 105.0, 106.0, 104.0, 105.0, 1000.0),
+                ],
+                packed_data: None,
+            }),
+        )
+        .await
+        .expect("upload should succeed")
+        .0;
+        let cache_id = upload.cache_id;
+
+        let payload = serde_json::json!({
+            "cacheId": cache_id,
+            "items": [{
+                "id": "candidate-1",
+                "signals": [
+                    {"time": 0, "type": "buy", "price": 100.0},
+                    {"time": 60000, "type": "sell", "price": 105.0}
+                ]
+            }],
+            "initialCapital": 10000.0,
+            "positionSizePercent": 100.0,
+            "commissionPercent": 0.0
+        });
+        let request: CachedBatchBacktestRequest = serde_json::from_value(payload).unwrap();
+        let response = cached_batch_backtest_handler(State(state), Json(request))
+            .await
+            .expect("cached batch should complete")
+            .0;
+        assert_eq!(response.results[0].id, "candidate-1");
+        assert_eq!(response.results[0].result.total_trades, 1);
+    }
+
+    async fn post_json(
+        app: axum::Router,
+        uri: &str,
+        payload: serde_json::Value,
+    ) -> axum::http::Response<axum::body::Body> {
+        use tower::ServiceExt;
+        let request = axum::http::Request::builder()
+            .method(axum::http::Method::POST)
+            .uri(uri)
+            .header(axum::http::header::CONTENT_TYPE, "application/json")
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&payload).unwrap(),
+            ))
+            .expect("test request should build");
+        app.oneshot(request).await.expect("router should answer")
+    }
+
+    async fn response_body_text(response: axum::http::Response<axum::body::Body>) -> String {
+        let bytes = http_body_util::BodyExt::collect(response.into_body())
+            .await
+            .expect("response body should collect")
+            .to_bytes();
+        String::from_utf8(bytes.to_vec()).expect("response body should be utf-8")
+    }
+
+    fn batch_test_router(state: AppState) -> axum::Router {
+        axum::Router::new()
+            .route(
+                "/api/backtest/batch",
+                axum::routing::post(batch_backtest_handler),
+            )
+            .route(
+                "/api/backtest/batch/cached",
+                axum::routing::post(cached_batch_backtest_handler),
+            )
+            .with_state(state)
+    }
+
+    #[tokio::test]
+    async fn http_layer_preserves_packed_rejection_and_ordinary_success() {
+        let app = batch_test_router(AppState::default());
+
+        let mut packed_payload = batch_request_payload(None);
+        packed_payload["items"][0]["packedSignals"] = serde_json::json!([1.0, 0.0, 100.0, 3.0]);
+        let response = post_json(app.clone(), "/api/backtest/batch", packed_payload).await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let text = response_body_text(response).await;
+        assert!(text.contains(packed_rejection_message()));
+
+        let response = post_json(app, "/api/backtest/batch", batch_request_payload(None)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let text = response_body_text(response).await;
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["results"][0]["result"]["totalTrades"], 1);
+        assert!(parsed["processingTimeMs"].is_u64());
     }
 }
