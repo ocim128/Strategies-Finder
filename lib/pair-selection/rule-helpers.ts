@@ -57,6 +57,83 @@ export function hasCanonicalPairIdentity(candidate: PairCandidate): boolean {
         && candidate.pair === `${candidate.baseSymbol}+${candidate.quoteSymbol}`;
 }
 
+interface CohortEntry {
+    candidate: PairCandidate;
+    value: number;
+}
+
+interface CohortSeries {
+    entries: readonly CohortEntry[];
+    indexByCandidate: ReadonlyMap<PairCandidate, number>;
+}
+
+export interface CohortAlignment {
+    base: number | null;
+    quote: number | null;
+}
+
+function buildDirectional48BarSeries(
+    pool: readonly PairCandidate[],
+    read: (candidate: PairCandidate) => string,
+): ReadonlyMap<string, CohortSeries> {
+    const grouped = new Map<string, CohortEntry[]>();
+    for (const candidate of pool) {
+        const value = directionAdjusted(candidate, candidate.feat_fp_spread_log_return_b48_r1);
+        if (value === null) continue;
+        const key = read(candidate);
+        const entries = grouped.get(key) ?? [];
+        entries.push({ candidate, value });
+        grouped.set(key, entries);
+    }
+    const series = new Map<string, CohortSeries>();
+    for (const [key, entries] of grouped) {
+        const sorted = [...entries].sort((left, right) => left.value - right.value);
+        series.set(key, {
+            entries: sorted,
+            indexByCandidate: new Map(sorted.map((entry, index) => [entry.candidate, index] as const)),
+        });
+    }
+    return series;
+}
+
+function cohortMedianWithout(series: CohortSeries | undefined, candidate: PairCandidate): number | null {
+    if (!series) return null;
+    const removed = series.indexByCandidate.get(candidate);
+    if (removed === undefined) return median(series.entries.map((entry) => entry.value));
+    const remaining = series.entries.length - 1;
+    if (remaining <= 0) return null;
+    const valueAt = (index: number): number => series.entries[index >= removed ? index + 1 : index]!.value;
+    const middle = remaining >> 1;
+    return remaining % 2 === 1
+        ? valueAt(middle)
+        : (valueAt(middle - 1) + valueAt(middle)) / 2;
+}
+
+/**
+ * Single owner of the directional 48-bar cohort preparation shared by the
+ * cohort-based scoring rules: group direction-adjusted
+ * `feat_fp_spread_log_return_b48_r1` values by base and quote symbol, sort
+ * each group, and report each candidate's leave-one-out cohort median for
+ * both legs. The candidate is excluded from its own cohorts by object
+ * identity, so callers must score the candidates of the SAME pool instance
+ * they pass in. Nonfinite/missing features never enter a series; candidates
+ * with a singleton leg cohort (or no usable feature) report `null` for it.
+ * Memoized once per pool under one computation key shared by every rule that
+ * consumes the alignments.
+ */
+export function getDirectional48BarCohortAlignments(
+    pool: readonly PairCandidate[],
+): ReadonlyMap<PairCandidate, CohortAlignment> {
+    return memoByPool(pool, "directional-48-bar-cohort-alignments", () => {
+        const base = buildDirectional48BarSeries(pool, (candidate) => candidate.baseSymbol);
+        const quote = buildDirectional48BarSeries(pool, (candidate) => candidate.quoteSymbol);
+        return new Map(pool.map((candidate) => [candidate, {
+            base: cohortMedianWithout(base.get(candidate.baseSymbol), candidate),
+            quote: cohortMedianWithout(quote.get(candidate.quoteSymbol), candidate),
+        }] as const));
+    });
+}
+
 interface SharedLegCounts {
     legCounts: ReadonlyMap<string, number>;
     pairCounts: ReadonlyMap<string, number>;

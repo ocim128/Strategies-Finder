@@ -58,7 +58,13 @@ interface PairSelectionRule {
 - Pool-wide computations (event medians, MAD, overlap fractions) MUST use
   `memoByPool(pool, "<unique-key>", () => ...)` from `rule-helpers.ts` —
   un-memoized per-candidate pool scans caused multi-minute timeouts in
-  batch 1.
+  batch 1. The directional 48-bar cohort preparation (leave-one-out medians of
+  direction-adjusted `feat_fp_spread_log_return_b48_r1` over base- and
+  quote-symbol groups, scored candidate excluded by object identity) has ONE
+  owner: `getDirectional48BarCohortAlignments(pool)` in `rule-helpers.ts`,
+  memoized under a single shared key. Rules consume its read-only
+  candidate-to-alignment map and keep only their own sign conversion and
+  scoring arithmetic local; do not re-implement the preparation per rule.
 - Receipt `repositoryRelativeSourceFiles` entries are repository-relative paths,
   never absolute paths. A rule's `metadata.sourceFiles` must list the actual rule
   module and every imported scoring helper; listing only a test driver is not a
