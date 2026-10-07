@@ -665,3 +665,174 @@ describe("Rust single-run transport budgets", () => {
         expect(textCalls).to.equal(1);
     });
 });
+
+describe("Rust single-run result acceptance", () => {
+    function v2Trade(): Record<string, unknown> {
+        return {
+            id: 0,
+            type: "long",
+            entryTime: 1,
+            entryPrice: 100,
+            exitTime: 1,
+            exitPrice: 100,
+            pnl: 0,
+            pnlPercent: 0,
+            size: 1,
+            exitReason: "signal",
+        };
+    }
+
+    function tradeResponse(overrides: {
+        trades?: unknown[];
+        totalTrades: number;
+        winningTrades: number;
+        losingTrades: number;
+        netProfit?: number;
+        winRate?: number;
+        avgTrade?: number;
+        profitFactor?: number | null;
+    }): Record<string, unknown> {
+        const response = emptyBacktestResponse();
+        response.trades = overrides.trades ?? [];
+        response.totalTrades = overrides.totalTrades;
+        response.winningTrades = overrides.winningTrades;
+        response.losingTrades = overrides.losingTrades;
+        if (overrides.netProfit !== undefined) response.netProfit = overrides.netProfit;
+        if (overrides.winRate !== undefined) response.winRate = overrides.winRate;
+        if (overrides.avgTrade !== undefined) response.avgTrade = overrides.avgTrade;
+        if (overrides.profitFactor !== undefined) response.profitFactor = overrides.profitFactor;
+        return response;
+    }
+
+    function acceptanceClient(body: Record<string, unknown>): RustEngineClient {
+        const fetchImpl: typeof fetch = async (url) => {
+            if (String(url).endsWith("/api/health")) {
+                return new Response(JSON.stringify({
+                    status: "healthy",
+                    engine: "trading-engine-rust",
+                    protocolVersion: 2,
+                    capabilities: {},
+                }), { status: 200 });
+            }
+            return new Response(JSON.stringify(body), { status: 200 });
+        };
+        return new RustEngineClient("http://127.0.0.1:3030", fetchImpl);
+    }
+
+    it("rejects trade counts that do not reconcile", async () => {
+        const client = acceptanceClient(tradeResponse({
+            totalTrades: 2,
+            winningTrades: 1,
+            losingTrades: 0,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts winRate at the one-point tolerance edge and rejects beyond it", async () => {
+        const counts = { totalTrades: 10, winningTrades: 5, losingTrades: 5 };
+        const trades = [v2Trade(), v2Trade(), v2Trade(), v2Trade(), v2Trade()];
+        // 5/10 winners means an expected win rate of exactly 50; one point
+        // of drift is tolerated, anything beyond is rejected.
+        const atEdge = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 51,
+            avgTrade: 10,
+            profitFactor: 1,
+        }));
+        const atEdgeResult = await atEdge.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(atEdgeResult.ok, JSON.stringify(atEdgeResult)).to.equal(true);
+
+        const beyond = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 51.2,
+            avgTrade: 10,
+            profitFactor: 1,
+        }));
+        const beyondResult = await beyond.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(beyondResult).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts avgTrade within the 15% tolerance and rejects beyond it", async () => {
+        const counts = { totalTrades: 10, winningTrades: 5, losingTrades: 5 };
+        const trades = [v2Trade(), v2Trade(), v2Trade(), v2Trade(), v2Trade()];
+        // netProfit 100 over 10 trades expects avgTrade 10 with a 1.5
+        // tolerance (15% of the expectation).
+        const atEdge = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 50,
+            avgTrade: 11.5,
+            profitFactor: 1,
+        }));
+        const atEdgeResult = await atEdge.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(atEdgeResult.ok, JSON.stringify(atEdgeResult)).to.equal(true);
+
+        const beyond = acceptanceClient(tradeResponse({
+            ...counts,
+            trades,
+            netProfit: 100,
+            winRate: 50,
+            avgTrade: 11.6,
+            profitFactor: 1,
+        }));
+        const beyondResult = await beyond.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+        expect(beyondResult).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+
+    it("accepts a valid zero-trade result and normalizes null profitFactor to 0", async () => {
+        const client = acceptanceClient(tradeResponse({
+            totalTrades: 0,
+            winningTrades: 0,
+            losingTrades: 0,
+            profitFactor: null,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result.ok, JSON.stringify(result)).to.equal(true);
+        if (result.ok) expect(result.result.profitFactor).to.equal(0);
+    });
+
+    it("normalizes null profitFactor to infinity for an all-winning run", async () => {
+        const client = acceptanceClient(tradeResponse({
+            trades: [v2Trade()],
+            totalTrades: 1,
+            winningTrades: 1,
+            losingTrades: 0,
+            netProfit: 10,
+            winRate: 100,
+            avgTrade: 10,
+            profitFactor: null,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result.ok, JSON.stringify(result)).to.equal(true);
+        if (result.ok) expect(result.result.profitFactor).to.equal(Number.POSITIVE_INFINITY);
+    });
+
+    it("rejects null profitFactor for a mixed winning and losing run", async () => {
+        const client = acceptanceClient(tradeResponse({
+            trades: [v2Trade(), v2Trade()],
+            totalTrades: 2,
+            winningTrades: 1,
+            losingTrades: 1,
+            netProfit: 5,
+            winRate: 50,
+            avgTrade: 2.5,
+            profitFactor: null,
+        }));
+
+        const result = await client.runBacktestWithStatus(data, [], 10_000, 100, 0.1, settings);
+
+        expect(result).to.deep.include({ ok: false, reason: "malformed_response" });
+    });
+});

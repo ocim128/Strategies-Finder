@@ -167,4 +167,44 @@ describe("backtest executor cancellation", () => {
             rustEngine.runBacktestWithStatus = original;
         }
     });
+
+    it("falls back to TypeScript when the real client rejects a malformed HTTP result", async () => {
+        // The executor no longer re-validates Rust output: the concrete
+        // client's malformed_response rejection must be the acceptance
+        // boundary that sends this run to TypeScript.
+        const originalCheckHealth = rustEngine.checkHealth;
+        const clientInternals = rustEngine as unknown as { fetchImpl: typeof fetch };
+        const originalFetchImpl = clientInternals.fetchImpl;
+        rustEngine.checkHealth = async () => true;
+        clientInternals.fetchImpl = (async () => new Response(
+            JSON.stringify({ trades: "not-an-array" }),
+            { status: 200 },
+        )) as typeof fetch;
+
+        try {
+            const result = await executeBacktest({
+                ohlcvData: candles,
+                interval: "1h",
+                primarySymbol: "MALFORMED_HTTP_FALLBACK",
+                strategyKey: "malformed_http_fallback_test",
+                strategy,
+                strategyParams: {},
+                backtestSettings: settings,
+                capitalSettings: capital,
+                context: {
+                    nowSec: 9_999_999_999,
+                    blockRange: null,
+                    engineMode: "rust_preferred",
+                },
+            });
+
+            assert.strictEqual(result.engineUsed, "typescript");
+            assert.strictEqual(result.engineDiagnostics?.rustAttempted, true);
+            assert.strictEqual(result.engineDiagnostics?.typescriptReason, "malformed_response");
+            assert.ok(result.result.totalTrades >= 0);
+        } finally {
+            rustEngine.checkHealth = originalCheckHealth;
+            clientInternals.fetchImpl = originalFetchImpl;
+        }
+    });
 });
