@@ -807,7 +807,7 @@ enum IndicatorKind {
     VolumeSma,
     Rsi,
 }
-type IndicatorCache = RwLock<HashMap<(IndicatorKind, usize), Arc<Vec<f64>>>>;
+type IndicatorCache = RwLock<HashMap<(IndicatorKind, usize), Arc<OnceLock<Arc<Vec<f64>>>>>>;
 
 /// Request-scoped view over one OHLCV dataset. Column vectors materialize on
 /// first use, so requests that need no indicator avoid the four unconditional
@@ -822,29 +822,40 @@ pub(crate) struct MarketSeries<'a> {
     indicator_cache: IndicatorCache,
 }
 impl<'a> MarketSeries<'a> {
+    /// Return the indicator series for `(kind, period)`, computing it at most
+    /// once per key. The map lock is only held to take or insert the key's
+    /// cell; the computation itself runs unlocked so unrelated cold
+    /// indicators initialize concurrently. Initializers must not recursively
+    /// request their own key.
     fn get_or_compute<F>(&self, kind: IndicatorKind, period: usize, compute: F) -> Arc<Vec<f64>>
     where
         F: FnOnce() -> Vec<f64>,
     {
-        if let Some(cached) = self
-            .indicator_cache
-            .read()
-            .expect("market indicator cache lock poisoned")
-            .get(&(kind, period))
-        {
-            return cached.clone();
-        }
-
-        let mut cache = self
-            .indicator_cache
-            .write()
-            .expect("market indicator cache lock poisoned");
-        if let Some(cached) = cache.get(&(kind, period)) {
-            return cached.clone();
-        }
-        let computed = Arc::new(compute());
-        cache.insert((kind, period), computed.clone());
-        computed
+        let cell = {
+            let cache = self
+                .indicator_cache
+                .read()
+                .expect("market indicator cache lock poisoned");
+            match cache.get(&(kind, period)) {
+                Some(cell) => cell.clone(),
+                None => {
+                    drop(cache);
+                    let mut cache = self
+                        .indicator_cache
+                        .write()
+                        .expect("market indicator cache lock poisoned");
+                    // Double-checked: another caller may have inserted the
+                    // cell between the locks.
+                    cache
+                        .entry((kind, period))
+                        .or_insert_with(|| Arc::new(OnceLock::new()))
+                        .clone()
+                }
+            }
+        };
+        // A panicking initializer leaves the cell uninitialized, so the same
+        // key stays retryable and unrelated keys are unaffected.
+        cell.get_or_init(|| Arc::new(compute())).clone()
     }
 
     fn highs(&self) -> &[f64] {
@@ -1803,6 +1814,126 @@ mod tests {
                 .len(),
             1
         );
+
+        // Concurrent same-key callers must share one cell, run exactly one
+        // computation, and receive the same series pointer.
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Barrier;
+        let computations = AtomicUsize::new(0);
+        let start_line = Barrier::new(8);
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..8 {
+                let series = &market_series;
+                let start_line = &start_line;
+                let computations = &computations;
+                handles.push(scope.spawn(move || {
+                    start_line.wait();
+                    series.get_or_compute(IndicatorKind::Rsi, 14, || {
+                        computations.fetch_add(1, Ordering::SeqCst);
+                        calculate_rsi(series.closes(), 14)
+                    })
+                }));
+            }
+            let mut first_result: Option<Arc<Vec<f64>>> = None;
+            for handle in handles {
+                let series = handle.join().expect("indicator reader thread");
+                match &first_result {
+                    None => first_result = Some(series),
+                    Some(first) => assert!(Arc::ptr_eq(first, &series)),
+                }
+            }
+        });
+        assert_eq!(
+            computations.load(Ordering::SeqCst),
+            1,
+            "concurrent same-key callers must compute once"
+        );
+    }
+
+    #[test]
+    fn indicator_cells_initialize_outside_the_map_lock() {
+        let data = create_test_data(100);
+        let market_series = build_market_series(&data);
+        // Pre-warm one key so a warm hit exists while another key computes.
+        let warm = market_series.get_or_compute_ema(10);
+
+        let (compute_started_tx, compute_started_rx) = std::sync::mpsc::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let deadline = std::time::Duration::from_secs(10);
+        std::thread::scope(|scope| {
+            let series = &market_series;
+            let slow = scope.spawn(move || {
+                series.get_or_compute(IndicatorKind::Atr, 21, || {
+                    compute_started_tx
+                        .send(())
+                        .expect("compute-started signal receiver lives");
+                    release_rx.recv().expect("release signal sender lives");
+                    calculate_atr(series.highs(), series.lows(), series.closes(), 21)
+                })
+            });
+            compute_started_rx
+                .recv_timeout(deadline)
+                .expect("slow initializer must start");
+
+            // An unrelated cold key must complete while the slow key holds
+            // no map lock but is still computing.
+            let (unrelated_done_tx, unrelated_done_rx) = std::sync::mpsc::channel::<()>();
+            let unrelated = scope.spawn(move || {
+                let adx = series.get_or_compute_adx(5);
+                unrelated_done_tx
+                    .send(())
+                    .expect("unrelated signal receiver lives");
+                adx
+            });
+            unrelated_done_rx
+                .recv_timeout(deadline)
+                .expect("unrelated key must progress while another key computes");
+
+            // A warm hit must also complete during the slow computation.
+            let (warm_done_tx, warm_done_rx) = std::sync::mpsc::channel::<()>();
+            let warm_hit = scope.spawn(move || {
+                let again = series.get_or_compute_ema(10);
+                warm_done_tx.send(()).expect("warm signal receiver lives");
+                again
+            });
+            warm_done_rx
+                .recv_timeout(deadline)
+                .expect("warm hit must progress while another key computes");
+
+            release_tx.send(()).expect("release send");
+            let slow_result = slow.join().expect("slow thread joins");
+            let unrelated_result = unrelated.join().expect("unrelated thread joins");
+            let again = warm_hit.join().expect("warm thread joins");
+
+            assert!(Arc::ptr_eq(&warm, &again));
+            assert_eq!(slow_result.len(), data.len());
+            assert_eq!(unrelated_result.len(), data.len());
+        });
+    }
+
+    #[test]
+    fn panicking_indicator_initializer_leaves_the_cell_retryable() {
+        let data = create_test_data(50);
+        let market_series = build_market_series(&data);
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            market_series.get_or_compute(IndicatorKind::Ema, 9, || panic!("initializer boom"));
+        }));
+        assert!(panicked.is_err(), "the initializer panic must propagate");
+
+        // The same key retries cleanly after the panicking initializer, and
+        // unrelated keys stay usable: the map never poisons.
+        let closes: Vec<f64> = data.iter().map(|d| d.close).collect();
+        let recovered =
+            market_series.get_or_compute(IndicatorKind::Ema, 9, || calculate_ema(&closes, 9));
+        assert_eq!(recovered.len(), data.len());
+        let unrelated = market_series.get_or_compute_ema(11);
+        assert_eq!(unrelated.len(), data.len());
+        let warm = market_series.get_or_compute(IndicatorKind::Ema, 9, || {
+            panic!("must not recompute an initialized key")
+        });
+        assert!(Arc::ptr_eq(&recovered, &warm));
     }
 
     fn assert_column_state(
