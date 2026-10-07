@@ -87,21 +87,47 @@ pub struct BacktestResponse {
     result: BacktestResult,
     processing_time_ms: u64,
 }
+/// Diagnostic stage timings for one blocking worker invocation. These values
+/// feed structured logs only; the wire contract stays untouched.
+#[derive(Debug, Default, Clone, Copy)]
+struct WorkerStageTimings {
+    /// Milliseconds from dispatch until the blocking worker picked up the
+    /// closure, i.e. the blocking-pool queue wait.
+    pool_wait_ms: u64,
+    /// Milliseconds spent constructing the market series view. With lazy
+    /// columns this constructor is allocation-free; deferred column
+    /// materialization shows up under the simulation stage.
+    market_prep_ms: u64,
+    /// Wall time of the simulation work itself.
+    simulate_ms: u64,
+}
+fn elapsed_ms_since(start: Instant) -> u64 {
+    u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX)
+}
 // ============================================================================
 // Handlers
 // ============================================================================
-async fn run_on_blocking_pool<F, T>(work: F) -> Result<T, (StatusCode, String)>
+/// Run CPU-heavy work on the blocking pool. Returns the work result plus the
+/// pool-wait milliseconds measured from dispatch until the worker started.
+async fn run_on_blocking_pool<F, T>(work: F) -> Result<(T, u64), (StatusCode, String)>
 where
     F: FnOnce() -> T + Send + 'static,
     T: Send + 'static,
 {
-    tokio::task::spawn_blocking(work).await.map_err(|error| {
+    let dispatched_at = Instant::now();
+    let result = tokio::task::spawn_blocking(move || {
+        let pool_wait_ms = elapsed_ms_since(dispatched_at);
+        (work(), pool_wait_ms)
+    })
+    .await
+    .map_err(|error| {
         tracing::error!("CPU-bound backtest task failed: {}", error);
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Backtest worker task failed: {error}"),
         )
-    })
+    })?;
+    Ok(result)
 }
 /// Reject batch items that carry the legacy `packedSignals` field. The engine
 /// never implemented packed execution, and silently running such items
@@ -128,10 +154,28 @@ fn reject_unsupported_packed_signals(
 pub async fn backtest_handler(
     Json(req): Json<BacktestRequest>,
 ) -> Result<Json<BacktestResponse>, (StatusCode, String)> {
+    // Handler elapsed time starts immediately after successful JSON
+    // extraction and stops at result assembly, so extraction, middleware,
+    // serialization, and network time stay outside `processingTimeMs`.
     let start = Instant::now();
-    let result = run_on_blocking_pool(move || {
+    let span = tracing::info_span!(
+        "backtest_single",
+        route = "/api/backtest",
+        bars = req.data.len(),
+        compact = req.compact,
+        skip_drawdown = req.skip_drawdown,
+        skip_sharpe_ratio = req.skip_sharpe_ratio,
+    );
+    let completion_span = span.clone();
+    let ((result, market_prep_ms, simulate_ms), pool_wait_ms) = run_on_blocking_pool(move || {
+        // Enter the request span only inside the synchronous closure so the
+        // guard never spans an `.await`.
+        let _entered = span.enter();
+        let prep_started = Instant::now();
         let market_series = build_market_series(&req.data);
-        run_backtest_with_market_series_options(
+        let market_prep_ms = elapsed_ms_since(prep_started);
+        let simulate_started = Instant::now();
+        let result = run_backtest_with_market_series_options(
             &req.data,
             &req.signals,
             req.initial_capital,
@@ -144,12 +188,28 @@ pub async fn backtest_handler(
             req.skip_drawdown,
             req.skip_sharpe_ratio,
             &market_series,
-        )
+        );
+        let simulate_ms = elapsed_ms_since(simulate_started);
+        (result, market_prep_ms, simulate_ms)
     })
     .await?;
+    let processing_time_ms = elapsed_ms_since(start);
+    let timings = WorkerStageTimings {
+        pool_wait_ms,
+        market_prep_ms,
+        simulate_ms,
+    };
+    tracing::info!(
+        parent: &completion_span,
+        pool_wait_ms = timings.pool_wait_ms,
+        market_prep_ms = timings.market_prep_ms,
+        simulate_ms = timings.simulate_ms,
+        total_ms = processing_time_ms,
+        "backtest complete"
+    );
     Ok(Json(BacktestResponse {
         result,
-        processing_time_ms: start.elapsed().as_millis() as u64,
+        processing_time_ms,
     }))
 }
 /// Handle batch backtest request - runs multiple backtests in parallel
@@ -157,46 +217,80 @@ pub async fn batch_backtest_handler(
     Json(req): Json<BatchBacktestRequest>,
 ) -> Result<Json<BatchBacktestResponse>, (StatusCode, String)> {
     reject_unsupported_packed_signals(&req.items)?;
-    let response = run_on_blocking_pool(move || {
-        let start = Instant::now();
-        let market_series = build_market_series(&req.data);
-        // Run all backtests in parallel using rayon.
-        let results: Vec<BatchBacktestResultItem> = req
-            .items
-            .par_iter()
-            .map(|item| {
-                // Use item-specific settings if provided, otherwise use base settings
-                let settings = item
-                    .settings
-                    .clone()
-                    .unwrap_or_else(|| req.base_settings.clone());
-                let result = run_backtest_with_market_series_options(
-                    &req.data,
-                    &item.signals,
-                    req.initial_capital,
-                    req.position_size_percent,
-                    req.commission_percent,
-                    &settings,
-                    Some(&req.sizing),
-                    req.compact,
-                    false,
-                    req.skip_drawdown,
-                    req.skip_sharpe_ratio,
-                    &market_series,
-                );
-                BatchBacktestResultItem {
-                    id: item.id.clone(),
-                    result,
-                }
-            })
-            .collect();
-        let processing_time_ms = start.elapsed().as_millis() as u64;
-        BatchBacktestResponse {
-            results,
-            processing_time_ms,
-        }
-    })
-    .await?;
+    // The clock covers pool wait and the whole simulation, matching the
+    // single and cached-batch endpoints.
+    let start = Instant::now();
+    let span = tracing::info_span!(
+        "backtest_batch",
+        route = "/api/backtest/batch",
+        bars = req.data.len(),
+        items = req.items.len(),
+        compact = req.compact,
+        skip_drawdown = req.skip_drawdown,
+        skip_sharpe_ratio = req.skip_sharpe_ratio,
+    );
+    let completion_span = span.clone();
+    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
+        run_on_blocking_pool(move || {
+            let _entered = span.enter();
+            let prep_started = Instant::now();
+            let market_series = build_market_series(&req.data);
+            let market_prep_ms = elapsed_ms_since(prep_started);
+            let simulate_started = Instant::now();
+            // Run all backtests in parallel using rayon.
+            let results: Vec<BatchBacktestResultItem> = req
+                .items
+                .par_iter()
+                .map(|item| {
+                    // Use item-specific settings if provided, otherwise use base settings
+                    let settings = item
+                        .settings
+                        .clone()
+                        .unwrap_or_else(|| req.base_settings.clone());
+                    let result = run_backtest_with_market_series_options(
+                        &req.data,
+                        &item.signals,
+                        req.initial_capital,
+                        req.position_size_percent,
+                        req.commission_percent,
+                        &settings,
+                        Some(&req.sizing),
+                        req.compact,
+                        false,
+                        req.skip_drawdown,
+                        req.skip_sharpe_ratio,
+                        &market_series,
+                    );
+                    BatchBacktestResultItem {
+                        id: item.id.clone(),
+                        result,
+                    }
+                })
+                .collect();
+            let simulate_ms = elapsed_ms_since(simulate_started);
+            let response = BatchBacktestResponse {
+                results,
+                processing_time_ms: 0,
+            };
+            (response, market_prep_ms, simulate_ms)
+        })
+        .await?;
+    // The reported batch timing includes the blocking-pool wait, so it is
+    // stamped only after the worker completes.
+    response.processing_time_ms = elapsed_ms_since(start);
+    let timings = WorkerStageTimings {
+        pool_wait_ms,
+        market_prep_ms,
+        simulate_ms,
+    };
+    tracing::info!(
+        parent: &completion_span,
+        pool_wait_ms = timings.pool_wait_ms,
+        market_prep_ms = timings.market_prep_ms,
+        simulate_ms = timings.simulate_ms,
+        total_ms = response.processing_time_ms,
+        "batch backtest complete"
+    );
     Ok(Json(response))
 }
 /// Cache OHLCV data and return a cache ID
@@ -317,7 +411,18 @@ pub async fn cached_batch_backtest_handler(
     // Validate before touching the cache so unsupported requests never hit
     // simulation or dispatch.
     reject_unsupported_packed_signals(&req.items)?;
+    // The clock starts before the cache lookup and stops at result assembly,
+    // so cached-lookup and blocking-pool wait are part of the measurement.
     let start = Instant::now();
+    let span = tracing::info_span!(
+        "backtest_batch_cached",
+        route = "/api/backtest/batch/cached",
+        items = req.items.len(),
+        compact = req.compact,
+        skip_drawdown = req.skip_drawdown,
+        skip_sharpe_ratio = req.skip_sharpe_ratio,
+    );
+    let completion_span = span.clone();
     // Get cached data
     let data = get_cached_dataset(&state, &req.cache_id).await;
     let data = match data {
@@ -333,52 +438,71 @@ pub async fn cached_batch_backtest_handler(
         }
     };
     tracing::debug!(
-        "Running batch backtest with {} items against {} cached bars",
-        req.items.len(),
-        data.len()
+        parent: &span,
+        bars = data.len(),
+        "cache hit; dispatching batch simulation"
     );
-    let response = run_on_blocking_pool(move || {
-        let market_series = build_market_series(data.as_slice());
-        // Run all backtests in parallel using rayon.
-        let results: Vec<BatchBacktestResultItem> = req
-            .items
-            .par_iter()
-            .map(|item| {
-                let settings = item
-                    .settings
-                    .clone()
-                    .unwrap_or_else(|| req.base_settings.clone());
-                let result = run_backtest_with_market_series_options(
-                    data.as_slice(),
-                    &item.signals,
-                    req.initial_capital,
-                    req.position_size_percent,
-                    req.commission_percent,
-                    &settings,
-                    Some(&req.sizing),
-                    req.compact,
-                    false,
-                    req.skip_drawdown,
-                    req.skip_sharpe_ratio,
-                    &market_series,
-                );
-                BatchBacktestResultItem {
-                    id: item.id.clone(),
-                    result,
-                }
-            })
-            .collect();
-        let processing_time_ms = start.elapsed().as_millis() as u64;
-        BatchBacktestResponse {
-            results,
-            processing_time_ms,
-        }
-    })
-    .await?;
+    let bar_count = data.len();
+    let ((mut response, market_prep_ms, simulate_ms), pool_wait_ms) =
+        run_on_blocking_pool(move || {
+            let _entered = span.enter();
+            let prep_started = Instant::now();
+            let market_series = build_market_series(data.as_slice());
+            let market_prep_ms = elapsed_ms_since(prep_started);
+            let simulate_started = Instant::now();
+            // Run all backtests in parallel using rayon.
+            let results: Vec<BatchBacktestResultItem> = req
+                .items
+                .par_iter()
+                .map(|item| {
+                    let settings = item
+                        .settings
+                        .clone()
+                        .unwrap_or_else(|| req.base_settings.clone());
+                    let result = run_backtest_with_market_series_options(
+                        data.as_slice(),
+                        &item.signals,
+                        req.initial_capital,
+                        req.position_size_percent,
+                        req.commission_percent,
+                        &settings,
+                        Some(&req.sizing),
+                        req.compact,
+                        false,
+                        req.skip_drawdown,
+                        req.skip_sharpe_ratio,
+                        &market_series,
+                    );
+                    BatchBacktestResultItem {
+                        id: item.id.clone(),
+                        result,
+                    }
+                })
+                .collect();
+            let simulate_ms = elapsed_ms_since(simulate_started);
+            let response = BatchBacktestResponse {
+                results,
+                processing_time_ms: 0,
+            };
+            (response, market_prep_ms, simulate_ms)
+        })
+        .await?;
+    // The reported batch timing includes cache lookup and pool wait, so it is
+    // stamped only after the worker completes.
+    response.processing_time_ms = elapsed_ms_since(start);
+    let timings = WorkerStageTimings {
+        pool_wait_ms,
+        market_prep_ms,
+        simulate_ms,
+    };
     tracing::info!(
-        "Cached batch backtest: {} runs in {}ms",
-        response.results.len(),
-        response.processing_time_ms
+        parent: &completion_span,
+        bars = bar_count,
+        pool_wait_ms = timings.pool_wait_ms,
+        market_prep_ms = timings.market_prep_ms,
+        simulate_ms = timings.simulate_ms,
+        total_ms = response.processing_time_ms,
+        "cached batch backtest complete"
     );
     Ok(Json(response))
 }
@@ -479,11 +603,86 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     async fn blocking_pool_runner_uses_a_worker_thread() {
         let executor_thread = std::thread::current().id();
-        let worker_thread = run_on_blocking_pool(|| std::thread::current().id())
+        let (worker_thread, pool_wait_ms) = run_on_blocking_pool(|| std::thread::current().id())
             .await
             .expect("blocking worker should complete");
 
         assert_ne!(executor_thread, worker_thread);
+        // On this quiet runtime the worker starts immediately, but the
+        // attribution must still be a sane nonnegative value.
+        assert!(pool_wait_ms <= 1_000, "pool wait {pool_wait_ms}ms");
+    }
+
+    #[test]
+    fn pool_wait_attribution_includes_controlled_blocking_queue_time() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .max_blocking_threads(1)
+            .build()
+            .expect("single-blocking-thread runtime should build");
+        runtime.block_on(async {
+            // Occupy the only blocking thread with controlled work.
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let holder = tokio::task::spawn_blocking(move || {
+                // Hold the thread briefly even if the release signal wins the
+                // race, so the queued closure below observes a real wait.
+                let deadline = Instant::now() + std::time::Duration::from_millis(30);
+                while Instant::now() < deadline {
+                    if release_rx.try_recv().is_ok() {
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(1));
+                }
+            });
+            // Queue behind the holder, then release it.
+            let (_value, pool_wait_ms) = run_on_blocking_pool(|| 1_u8)
+                .await
+                .expect("queued worker should complete");
+            let _ = release_tx.send(());
+            holder.await.expect("holder task should join");
+
+            assert!(
+                pool_wait_ms >= 5,
+                "queued work must attribute its blocking-pool wait, got {pool_wait_ms}ms"
+            );
+        });
+    }
+
+    #[tokio::test]
+    async fn processing_time_fields_use_camel_case_nonnegative_integers() {
+        let request = make_backtest_request(false, false);
+        let single = backtest_handler(Json(request.clone()))
+            .await
+            .expect("single handler should complete")
+            .0;
+        let single_json = serde_json::to_value(BacktestResponse {
+            result: single.result,
+            processing_time_ms: single.processing_time_ms,
+        })
+        .unwrap();
+        assert!(single_json["processingTimeMs"].is_u64());
+
+        let batch = batch_backtest_handler(Json(BatchBacktestRequest {
+            data: request.data.clone(),
+            items: vec![crate::types::BatchBacktestItem {
+                id: "candidate-1".to_string(),
+                signals: request.signals.clone(),
+                packed_signals: None,
+                settings: None,
+            }],
+            initial_capital: request.initial_capital,
+            position_size_percent: request.position_size_percent,
+            commission_percent: request.commission_percent,
+            base_settings: request.settings.clone(),
+            sizing: request.sizing,
+            compact: request.compact,
+            skip_drawdown: false,
+            skip_sharpe_ratio: false,
+        }))
+        .await
+        .expect("batch handler should complete")
+        .0;
+        let batch_json = serde_json::to_value(&batch).unwrap();
+        assert!(batch_json["processingTimeMs"].is_u64());
     }
 
     #[test]
