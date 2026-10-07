@@ -304,9 +304,24 @@ Release compilation uses optimization level 3, LTO, and one codegen unit
 (`rust-engine/Cargo.toml`). Rayon parallelizes items in the generic batch
 endpoint.
 
-CPU-heavy backtests are dispatched through Tokio's blocking pool. The service's
-browser CORS policy permits the two default local Vite origins and an optional
-`VITE_DEV_SERVER_ORIGIN`; it does not use a wildcard origin policy.
+CPU-heavy backtests and cache uploads are dispatched through Tokio's blocking
+pool. The service's browser CORS policy permits the two default local Vite
+origins and an optional `VITE_DEV_SERVER_ORIGIN`; it does not use a wildcard
+origin policy.
+
+Admission to the CPU-heavy routes (`/api/backtest`, `/api/backtest/batch`,
+`/api/backtest/batch/cached`, `/api/data/cache`) is bounded by a shared
+semaphore configured by `RUST_ENGINE_MAX_IN_FLIGHT`, a positive integer read
+once at startup with a conservative default of 2; invalid values fail startup
+with a clear error and the effective limit is logged. Excess requests are
+rejected with 503 before their JSON body is parsed. `/api/health` and
+`/api/data/clear` stay outside the gate, and the CORS layer wraps it so
+rejected browser requests keep their CORS headers. An accepted request keeps
+its admission slot until its blocking computation settles, so a disconnected
+client does not free capacity while CPU work continues; completion, validation
+errors, cache misses, and panics all release the slot. The bound is a request
+count, not a byte or process-memory budget, and it does not cancel work that
+already started.
 
 The main Rust modules are:
 
@@ -334,7 +349,18 @@ The Rust engine normalizes settings, resolves only the indicators needed by the
 settings, prepares the supplied signals, and scans each candle. It maintains
 capital, one active position in the supported execution profile, optional
 Kelly state, trades, drawdown, and metrics. Its compact mode clears the equity
-curve and can clear trades unless the caller requests retained trades.
+curve and releases the trade storage entirely unless the caller requests
+retained trades.
+
+Market columns (highs/lows/closes/volumes) materialize lazily from the borrowed
+candles on first indicator use, so requests that need no indicator avoid the
+four `4 * N * 8`-byte column copies (~30.5 MiB per million bars). The view is
+request-scoped: it lives inside one blocking call and is never stored in shared
+state. Indicator series are cached per `(kind, period)` key in cells whose
+computation runs outside the map lock, so unrelated cold indicators initialize
+concurrently while same-key callers share one computation. `skipDrawdown` and
+`skipSharpeRatio` skip their metric work instead of discarding results after
+the fact.
 
 The Rust result model includes:
 
@@ -510,16 +536,25 @@ The basic batch contract is conceptually:
 ```
 
 Each item can override `settings`; otherwise `baseSettings` applies. The
-response contains `results` — an array of `{ id, result }` items, each
+legacy `packedSignals` item field remains deserializable but is unsupported:
+any batch request carrying it (including empty packed rows, with or without
+regular signals) is rejected with 400 before cache lookup or dispatch — the
+engine never implemented packed execution, and silently running such items
+produced plausible zero-trade results. An explicit JSON `null` keeps the
+historical absent semantics.
+
+The response contains `results` — an array of `{ id, result }` items, each
 correlating to its request item's id — plus `processingTimeMs`.
 
 ### Cached dataset request
 
 Large datasets can be uploaded once through `POST /api/data/cache` and then
-referenced by `cacheId` in `POST /api/backtest/batch/cached`. Cache IDs include
-the complete OHLCV content, not only a time range or bar count. The Rust working
-cache is bounded by entry and retained-bar limits; eviction is expected and
-causes callers to retry with raw data or fall back to TypeScript.
+referenced by `cacheId` in `POST /api/backtest/batch/cached`. Upload decoding
+and content hashing run on the blocking pool, so large payloads do not occupy
+async workers; no dataset-cache lock is held during decode/hash. Cache IDs
+include the complete OHLCV content, not only a time range or bar count. The
+Rust working cache is bounded by entry and retained-bar limits; eviction is
+expected and causes callers to retry with raw data or fall back to TypeScript.
 
 ### Safety and failure handling
 
@@ -556,8 +591,21 @@ When investigating a slow run, separate these timings:
 6. cache upload/hit/miss and fallback time.
 
 The Rust client logs both client elapsed time and the server's
-`processingTimeMs`. A small Rust processing time with a large client elapsed
-time indicates transport or queueing overhead, not a slow Rust simulation.
+`processingTimeMs`. `processingTimeMs` measures handler time: it starts
+immediately after the request JSON is extracted and stops at result assembly
+after the blocking worker completes. For the batch endpoints it therefore
+includes the cache lookup and the blocking-pool wait; request extraction,
+middleware, response serialization, and network time are excluded from all
+three simulation endpoints, so their durations are directly comparable. A
+small Rust processing time with a large client elapsed time indicates
+transport or queueing overhead, not a slow Rust simulation.
+
+The server also emits one structured completion log per accepted request
+(`backtest_single`, `backtest_batch`, `backtest_batch_cached`, `cache_upload`)
+with the route, bar/item counts, compact/skip options, and `poolWaitMs`,
+`marketPrepMs`, `simulateMs`, and `totalMs` stages. `marketPrepMs` covers only
+the market-series constructor; lazy column materialization intentionally
+lands under `simulateMs`.
 Similarly, a Finder run can remain TypeScript-heavy even with Rust enabled
 because signal generation, unsupported settings, fresh/OOS requirements, or
 fallback decisions occur before or around Rust simulation.
