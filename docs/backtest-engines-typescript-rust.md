@@ -429,8 +429,11 @@ The Rust result model includes:
 Rust's result is not accepted blindly. The TypeScript client and Finder adapters
 check transport limits, response shape, result IDs, duplicate/missing/unknown
 items, finite metrics, and consistency between trade counts and win/loss
-counts. A failed validation falls back to TypeScript rather than returning a
-partial batch.
+counts. A failed transport or payload check falls back to TypeScript for the
+whole dispatch; after a batch is delivered, Finder's per-item acceptance
+retains every valid entry and replays only the inconsistent, missing, or
+unknown items individually, so the final ranking can combine validated Rust
+entries with TypeScript replays.
 
 ### Rust client boundary
 
@@ -622,9 +625,14 @@ call is the one normalization and consistency boundary, and the executor
 trusts a successful client outcome instead of re-checking counts, win rate,
 or average trade. Finder's batch-side `isBacktestResultConsistent` stays in
 place because batch responses are untyped at the transport boundary and
-Finder additionally imposes a Sharpe bound. These failures produce a
-whole-batch fallback; partial Rust
-output is never mixed with TypeScript output for the same dispatch.
+Finder additionally imposes a Sharpe bound. Transport- and payload-level
+failures (HTTP errors, malformed or oversized responses, missing cache
+entries) reject the whole dispatch and fall back to TypeScript as one batch.
+A delivered batch is then accepted per item: Finder retains every consistent
+entry and replays only the inconsistent or missing ones individually (the
+single-runner and universe-runner fallback paths), so validated Rust output
+and TypeScript replay can coexist within one search. Unvalidated Rust output
+is never presented as a result.
 
 
 Rollback controls are intentionally independent:
