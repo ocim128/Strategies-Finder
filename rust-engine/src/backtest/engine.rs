@@ -10,7 +10,7 @@ use crate::types::{
     TradeSizingConfig, TradeSizingMode, TradeType, OHLCV,
 };
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, OnceLock, RwLock};
 /// Internal position state during backtest
 #[derive(Debug, Clone)]
 struct Position {
@@ -809,14 +809,19 @@ enum IndicatorKind {
 }
 type IndicatorCache = RwLock<HashMap<(IndicatorKind, usize), Arc<Vec<f64>>>>;
 
-pub(crate) struct MarketSeries {
-    highs: Vec<f64>,
-    lows: Vec<f64>,
-    closes: Vec<f64>,
-    volumes: Vec<f64>,
+/// Request-scoped view over one OHLCV dataset. Column vectors materialize on
+/// first use, so requests that need no indicator avoid the four unconditional
+/// `4 * N * 8`-byte copies; the borrow keeps the underlying candles alive for
+/// the duration of one blocking call and is never stored in shared state.
+pub(crate) struct MarketSeries<'a> {
+    data: &'a [OHLCV],
+    highs: OnceLock<Vec<f64>>,
+    lows: OnceLock<Vec<f64>>,
+    closes: OnceLock<Vec<f64>>,
+    volumes: OnceLock<Vec<f64>>,
     indicator_cache: IndicatorCache,
 }
-impl MarketSeries {
+impl<'a> MarketSeries<'a> {
     fn get_or_compute<F>(&self, kind: IndicatorKind, period: usize, compute: F) -> Arc<Vec<f64>>
     where
         F: FnOnce() -> Vec<f64>,
@@ -842,42 +847,63 @@ impl MarketSeries {
         computed
     }
 
+    fn highs(&self) -> &[f64] {
+        self.highs
+            .get_or_init(|| self.data.iter().map(|d| d.high).collect())
+    }
+
+    fn lows(&self) -> &[f64] {
+        self.lows
+            .get_or_init(|| self.data.iter().map(|d| d.low).collect())
+    }
+
+    fn closes(&self) -> &[f64] {
+        self.closes
+            .get_or_init(|| self.data.iter().map(|d| d.close).collect())
+    }
+
+    fn volumes(&self) -> &[f64] {
+        self.volumes
+            .get_or_init(|| self.data.iter().map(|d| d.volume).collect())
+    }
+
     fn get_or_compute_atr(&self, period: usize) -> Arc<Vec<f64>> {
         self.get_or_compute(IndicatorKind::Atr, period, || {
-            calculate_atr(&self.highs, &self.lows, &self.closes, period)
+            calculate_atr(self.highs(), self.lows(), self.closes(), period)
         })
     }
 
     fn get_or_compute_ema(&self, period: usize) -> Arc<Vec<f64>> {
         self.get_or_compute(IndicatorKind::Ema, period, || {
-            calculate_ema(&self.closes, period)
+            calculate_ema(self.closes(), period)
         })
     }
 
     fn get_or_compute_adx(&self, period: usize) -> Arc<Vec<f64>> {
         self.get_or_compute(IndicatorKind::Adx, period, || {
-            calculate_adx(&self.highs, &self.lows, &self.closes, period)
+            calculate_adx(self.highs(), self.lows(), self.closes(), period)
         })
     }
 
     fn get_or_compute_volume_sma(&self, period: usize) -> Arc<Vec<f64>> {
         self.get_or_compute(IndicatorKind::VolumeSma, period, || {
-            calculate_sma(&self.volumes, period)
+            calculate_sma(self.volumes(), period)
         })
     }
 
     fn get_or_compute_rsi(&self, period: usize) -> Arc<Vec<f64>> {
         self.get_or_compute(IndicatorKind::Rsi, period, || {
-            calculate_rsi(&self.closes, period)
+            calculate_rsi(self.closes(), period)
         })
     }
 }
-pub(crate) fn build_market_series(data: &[OHLCV]) -> MarketSeries {
+pub(crate) fn build_market_series(data: &[OHLCV]) -> MarketSeries<'_> {
     MarketSeries {
-        highs: data.iter().map(|d| d.high).collect(),
-        lows: data.iter().map(|d| d.low).collect(),
-        closes: data.iter().map(|d| d.close).collect(),
-        volumes: data.iter().map(|d| d.volume).collect(),
+        data,
+        highs: OnceLock::new(),
+        lows: OnceLock::new(),
+        closes: OnceLock::new(),
+        volumes: OnceLock::new(),
         indicator_cache: RwLock::new(HashMap::new()),
     }
 }
@@ -936,7 +962,7 @@ pub(crate) fn run_backtest_with_market_series_options(
     retain_trades: bool,
     skip_drawdown: bool,
     skip_sharpe_ratio: bool,
-    market_series: &MarketSeries,
+    market_series: &MarketSeries<'_>,
 ) -> BacktestResult {
     if data.is_empty() {
         return BacktestResult::default();
@@ -1777,6 +1803,199 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    fn assert_column_state(
+        series: &MarketSeries<'_>,
+        highs: bool,
+        lows: bool,
+        closes: bool,
+        volumes: bool,
+    ) {
+        assert_eq!(series.highs.get().is_some(), highs, "highs column");
+        assert_eq!(series.lows.get().is_some(), lows, "lows column");
+        assert_eq!(series.closes.get().is_some(), closes, "closes column");
+        assert_eq!(series.volumes.get().is_some(), volumes, "volumes column");
+    }
+
+    #[test]
+    fn market_series_leaves_columns_uninitialized_until_an_indicator_needs_them() {
+        let data = create_test_data(100);
+        let constructor = build_market_series(&data);
+        assert_column_state(&constructor, false, false, false, false);
+
+        let mut settings = flat_long_settings();
+        let no_indicator_signals = vec![Signal::buy(10 * 60000, 101.0)];
+        let market_series = build_market_series(&data);
+        let _unused = run_backtest_with_market_series_options(
+            &data,
+            &no_indicator_signals,
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+            false,
+            false,
+            false,
+            &market_series,
+        );
+        assert_column_state(&market_series, false, false, false, false);
+
+        settings.trend_ema_period = 14;
+        let ema_series = build_market_series(&data);
+        let _unused = run_backtest_with_market_series_options(
+            &data,
+            &no_indicator_signals,
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+            false,
+            false,
+            false,
+            &ema_series,
+        );
+        assert_column_state(&ema_series, false, false, true, false);
+
+        settings.trend_ema_period = 0;
+        settings.entry_confirmation = EntryConfirmationMode::Volume;
+        let volume_series = build_market_series(&data);
+        let _unused = run_backtest_with_market_series_options(
+            &data,
+            &no_indicator_signals,
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+            false,
+            false,
+            false,
+            &volume_series,
+        );
+        assert_column_state(&volume_series, false, false, false, true);
+
+        settings.entry_confirmation = EntryConfirmationMode::None;
+        settings.stop_loss_atr = 1.0;
+        settings.atr_period = 14;
+        let atr_series = build_market_series(&data);
+        let _unused = run_backtest_with_market_series_options(
+            &data,
+            &no_indicator_signals,
+            10_000.0,
+            100.0,
+            0.0,
+            &settings,
+            None,
+            false,
+            false,
+            false,
+            false,
+            &atr_series,
+        );
+        assert_column_state(&atr_series, true, true, true, false);
+    }
+
+    #[test]
+    fn market_series_lazily_built_columns_match_explicitly_collected_columns() {
+        let data = create_test_data(64);
+        let market_series = build_market_series(&data);
+
+        let expected_highs: Vec<f64> = data.iter().map(|d| d.high).collect();
+        let expected_lows: Vec<f64> = data.iter().map(|d| d.low).collect();
+        let expected_closes: Vec<f64> = data.iter().map(|d| d.close).collect();
+        let expected_volumes: Vec<f64> = data.iter().map(|d| d.volume).collect();
+
+        assert_eq!(market_series.highs(), expected_highs.as_slice());
+        assert_eq!(market_series.lows(), expected_lows.as_slice());
+        assert_eq!(market_series.closes(), expected_closes.as_slice());
+        assert_eq!(market_series.volumes(), expected_volumes.as_slice());
+
+        // Indicator values built on the lazily initialized columns must match
+        // the same formulas over the explicitly collected columns. ATR/ADX
+        // warm up with NaN whose payloads may differ, so compare element-wise
+        // treating any NaN as equal.
+        let assert_indicator_values_match = |actual: &[f64], expected: &[f64]| {
+            assert_eq!(actual.len(), expected.len());
+            for (index, (a, b)) in actual.iter().zip(expected.iter()).enumerate() {
+                assert!(
+                    a == b || (a.is_nan() && b.is_nan()),
+                    "indicator value {index}: actual {a} expected {b}"
+                );
+            }
+        };
+        let atr = market_series.get_or_compute_atr(7);
+        let expected_atr = calculate_atr(&expected_highs, &expected_lows, &expected_closes, 7);
+        assert_indicator_values_match(&atr, &expected_atr);
+        let adx = market_series.get_or_compute_adx(7);
+        let expected_adx = calculate_adx(&expected_highs, &expected_lows, &expected_closes, 7);
+        assert_indicator_values_match(&adx, &expected_adx);
+        let volume_sma = market_series.get_or_compute_volume_sma(5);
+        let expected_volume_sma = calculate_sma(&expected_volumes, 5);
+        assert_indicator_values_match(&volume_sma, &expected_volume_sma);
+    }
+
+    #[test]
+    fn market_series_concurrent_runners_share_initialized_columns() {
+        use std::sync::Barrier;
+        let data = create_test_data(200);
+        let market_series = build_market_series(&data);
+        let barrier = Barrier::new(4);
+        std::thread::scope(|scope| {
+            let mut handles = Vec::new();
+            for _ in 0..4 {
+                let series = &market_series;
+                let barrier = &barrier;
+                handles.push(scope.spawn(move || {
+                    barrier.wait();
+                    let ema = series.get_or_compute_ema(14);
+                    (ema, series.closes().to_vec())
+                }));
+            }
+            let mut results = Vec::new();
+            for handle in handles {
+                results.push(handle.join().expect("column reader thread"));
+            }
+            let (first_ema, first_closes) = &results[0];
+            for (ema, closes) in &results {
+                assert!(
+                    Arc::ptr_eq(first_ema, ema),
+                    "concurrent callers must share one series"
+                );
+                assert_eq!(closes.len(), first_closes.len());
+                assert_eq!(closes, first_closes);
+            }
+            assert!(market_series.closes.get().is_some());
+            assert_column_state(&market_series, false, false, true, false);
+        });
+    }
+
+    #[test]
+    fn market_series_preserves_empty_data_output() {
+        let data: Vec<OHLCV> = Vec::new();
+        let market_series = build_market_series(&data);
+        let result = run_backtest_with_market_series_options(
+            &data,
+            &[],
+            10_000.0,
+            100.0,
+            0.0,
+            &BacktestSettings::default(),
+            None,
+            false,
+            false,
+            false,
+            false,
+            &market_series,
+        );
+        assert_eq!(result.total_trades, 0);
+        assert_eq!(result.net_profit, 0.0);
+        assert!(result.trades.is_empty());
     }
     #[test]
     fn signal_time_fallback_uses_sorted_data_without_building_a_map() {
