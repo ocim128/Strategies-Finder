@@ -1,5 +1,5 @@
 //! API Routes and Handlers
-use crate::backtest::{build_market_series, run_backtest_with_market_series_options};
+use crate::backtest::{build_market_series, run_backtest_with_market_series_options, MarketSeries};
 use crate::types::{
     BacktestRequest, BacktestResult, BatchBacktestRequest, BatchBacktestResponse,
     BatchBacktestResultItem, Time, OHLCV,
@@ -214,6 +214,52 @@ fn reject_unsupported_packed_signals(
     }
     Ok(())
 }
+/// Simulate every batch item against one prepared market view. Both batch
+/// routes share this synchronous item loop; each handler keeps market
+/// preparation, stage clocks, validation, dispatch, and response assembly.
+/// An item's settings replace the base object wholesale; fields are never
+/// merged.
+#[allow(clippy::too_many_arguments)]
+fn run_batch_items(
+    data: &[OHLCV],
+    items: &[crate::types::BatchBacktestItem],
+    base_settings: &crate::types::BacktestSettings,
+    sizing: &crate::types::TradeSizingConfig,
+    initial_capital: f64,
+    position_size_percent: f64,
+    commission_percent: f64,
+    compact: bool,
+    skip_drawdown: bool,
+    skip_sharpe_ratio: bool,
+    market_series: &MarketSeries<'_>,
+) -> Vec<BatchBacktestResultItem> {
+    items
+        .par_iter()
+        .map(|item| {
+            let settings = item.settings.as_ref().unwrap_or(base_settings);
+            let result = run_backtest_with_market_series_options(
+                data,
+                &item.signals,
+                initial_capital,
+                position_size_percent,
+                commission_percent,
+                settings,
+                Some(sizing),
+                compact,
+                // Batch results never retain trades unless a later stage
+                // needs them; the kernel default for batches stays false.
+                false,
+                skip_drawdown,
+                skip_sharpe_ratio,
+                market_series,
+            );
+            BatchBacktestResultItem {
+                id: item.id.clone(),
+                result,
+            }
+        })
+        .collect()
+}
 /// Handle backtest request
 pub async fn backtest_handler(
     Extension(admission_permit): Extension<Arc<OwnedSemaphorePermit>>,
@@ -322,35 +368,19 @@ pub async fn batch_backtest_handler(
         let market_prep_ms = elapsed_ms_since(prep_started);
         let simulate_started = Instant::now();
         // Run all backtests in parallel using rayon.
-        let results: Vec<BatchBacktestResultItem> = req
-            .items
-            .par_iter()
-            .map(|item| {
-                // Use item-specific settings if provided, otherwise use base settings
-                let settings = item
-                    .settings
-                    .clone()
-                    .unwrap_or_else(|| req.base_settings.clone());
-                let result = run_backtest_with_market_series_options(
-                    &req.data,
-                    &item.signals,
-                    req.initial_capital,
-                    req.position_size_percent,
-                    req.commission_percent,
-                    &settings,
-                    Some(&req.sizing),
-                    req.compact,
-                    false,
-                    req.skip_drawdown,
-                    req.skip_sharpe_ratio,
-                    &market_series,
-                );
-                BatchBacktestResultItem {
-                    id: item.id.clone(),
-                    result,
-                }
-            })
-            .collect();
+        let results = run_batch_items(
+            &req.data,
+            &req.items,
+            &req.base_settings,
+            &req.sizing,
+            req.initial_capital,
+            req.position_size_percent,
+            req.commission_percent,
+            req.compact,
+            req.skip_drawdown,
+            req.skip_sharpe_ratio,
+            &market_series,
+        );
         let simulate_ms = elapsed_ms_since(simulate_started);
         let response = BatchBacktestResponse {
             results,
@@ -586,34 +616,19 @@ pub async fn cached_batch_backtest_handler(
         let market_prep_ms = elapsed_ms_since(prep_started);
         let simulate_started = Instant::now();
         // Run all backtests in parallel using rayon.
-        let results: Vec<BatchBacktestResultItem> = req
-            .items
-            .par_iter()
-            .map(|item| {
-                let settings = item
-                    .settings
-                    .clone()
-                    .unwrap_or_else(|| req.base_settings.clone());
-                let result = run_backtest_with_market_series_options(
-                    data.as_slice(),
-                    &item.signals,
-                    req.initial_capital,
-                    req.position_size_percent,
-                    req.commission_percent,
-                    &settings,
-                    Some(&req.sizing),
-                    req.compact,
-                    false,
-                    req.skip_drawdown,
-                    req.skip_sharpe_ratio,
-                    &market_series,
-                );
-                BatchBacktestResultItem {
-                    id: item.id.clone(),
-                    result,
-                }
-            })
-            .collect();
+        let results = run_batch_items(
+            data.as_slice(),
+            &req.items,
+            &req.base_settings,
+            &req.sizing,
+            req.initial_capital,
+            req.position_size_percent,
+            req.commission_percent,
+            req.compact,
+            req.skip_drawdown,
+            req.skip_sharpe_ratio,
+            &market_series,
+        );
         let simulate_ms = elapsed_ms_since(simulate_started);
         let response = BatchBacktestResponse {
             results,
@@ -1450,6 +1465,187 @@ mod tests {
         .0;
         assert_eq!(response.results[0].id, "candidate-1");
         assert_eq!(response.results[0].result.total_trades, 1);
+    }
+
+    // ======================================================================
+    // Direct and cached routes must agree on one heterogeneous batch. The
+    // shared item loop is exercised through both handlers so the comparison
+    // covers multiple IDs, base/item settings selection, long/short, both
+    // execution models, empty items/signals, full/compact output, and metric
+    // skip combinations — independent of elapsed timing.
+    // ======================================================================
+
+    fn heterogeneous_batch_data() -> Vec<OHLCV> {
+        vec![
+            OHLCV::new(0, 100.0, 101.0, 99.0, 100.0, 1000.0),
+            OHLCV::new(60000, 103.0, 104.0, 102.0, 103.0, 1000.0),
+            OHLCV::new(120000, 105.0, 106.0, 104.0, 105.0, 1000.0),
+            OHLCV::new(180000, 107.0, 108.0, 106.0, 107.0, 1000.0),
+        ]
+    }
+
+    fn heterogeneous_batch_items() -> Vec<crate::types::BatchBacktestItem> {
+        let item_settings = crate::types::BacktestSettings {
+            trade_direction: crate::types::TradeDirection::Short,
+            execution_model: crate::types::ExecutionModel::NextOpen,
+            ..crate::types::BacktestSettings::default()
+        };
+        vec![
+            // No item settings: base settings (long, signal_close) apply.
+            crate::types::BatchBacktestItem {
+                id: "base-long".to_string(),
+                signals: vec![Signal::buy(0, 100.0), Signal::sell(180000, 107.0)],
+                packed_signals: None,
+                settings: None,
+            },
+            // Item settings replace the base object; they never merge.
+            crate::types::BatchBacktestItem {
+                id: "short-next-open".to_string(),
+                signals: vec![Signal::sell(0, 100.0), Signal::buy(180000, 107.0)],
+                packed_signals: None,
+                settings: Some(item_settings),
+            },
+            // Ordinary empty signals stay a valid no-trade candidate.
+            crate::types::BatchBacktestItem {
+                id: "empty-signals".to_string(),
+                signals: Vec::new(),
+                packed_signals: None,
+                settings: None,
+            },
+        ]
+    }
+
+    async fn run_heterogeneous_batch_through_both_routes(
+        state: &AppState,
+        items: Vec<crate::types::BatchBacktestItem>,
+        compact: bool,
+        skip_drawdown: bool,
+        skip_sharpe_ratio: bool,
+    ) -> (serde_json::Value, serde_json::Value) {
+        let data = heterogeneous_batch_data();
+        let direct = batch_backtest_handler(
+            Extension(admission_permit(state)),
+            None,
+            Json(BatchBacktestRequest {
+                data: data.clone(),
+                items: items.clone(),
+                initial_capital: 10_000.0,
+                position_size_percent: 100.0,
+                commission_percent: 0.0,
+                base_settings: crate::types::BacktestSettings::default(),
+                sizing: crate::types::TradeSizingConfig::default(),
+                compact,
+                skip_drawdown,
+                skip_sharpe_ratio,
+            }),
+        )
+        .await
+        .expect("direct batch worker should complete")
+        .0;
+        let upload = cache_data_handler(
+            Extension(admission_permit(state)),
+            None,
+            State(state.clone()),
+            Json(CacheDataRequest {
+                data,
+                packed_data: None,
+            }),
+        )
+        .await
+        .expect("upload should succeed")
+        .0;
+        let cached = cached_batch_backtest_handler(
+            Extension(admission_permit(state)),
+            None,
+            State(state.clone()),
+            Json(CachedBatchBacktestRequest {
+                cache_id: upload.cache_id,
+                items,
+                initial_capital: 10_000.0,
+                position_size_percent: 100.0,
+                commission_percent: 0.0,
+                base_settings: crate::types::BacktestSettings::default(),
+                sizing: crate::types::TradeSizingConfig::default(),
+                compact,
+                skip_drawdown,
+                skip_sharpe_ratio,
+            }),
+        )
+        .await
+        .expect("cached batch worker should complete")
+        .0;
+        (
+            serde_json::to_value(direct.results).unwrap(),
+            serde_json::to_value(cached.results).unwrap(),
+        )
+    }
+
+    #[tokio::test]
+    async fn direct_and_cached_routes_match_on_a_heterogeneous_batch() {
+        let state = AppState::default();
+        let items = heterogeneous_batch_items();
+
+        // Full output retains trades and the equity curve.
+        let (direct_full, cached_full) =
+            run_heterogeneous_batch_through_both_routes(&state, items.clone(), false, false, false)
+                .await;
+        assert_eq!(direct_full, cached_full, "full-output results must match");
+        let ids: Vec<&str> = direct_full
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, vec!["base-long", "short-next-open", "empty-signals"]);
+        assert_eq!(direct_full[0]["result"]["totalTrades"], 1);
+        assert_eq!(direct_full[0]["result"]["trades"][0]["type"], "long");
+        assert_eq!(
+            direct_full[0]["result"]["trades"][0]["exitReason"],
+            "signal"
+        );
+        assert_eq!(direct_full[1]["result"]["totalTrades"], 1);
+        assert_eq!(direct_full[1]["result"]["trades"][0]["type"], "short");
+        assert_eq!(direct_full[2]["result"]["totalTrades"], 0);
+        assert!(
+            !direct_full[0]["result"]["equityCurve"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "full output must retain the equity curve"
+        );
+
+        // Compact output with both metric skips: skipped metrics are zero
+        // while trade counts stay identical to the full run.
+        let (direct_compact, cached_compact) =
+            run_heterogeneous_batch_through_both_routes(&state, items, true, true, true).await;
+        assert_eq!(
+            direct_compact, cached_compact,
+            "compact skipped-metric results must match"
+        );
+        assert_eq!(direct_compact[0]["result"]["maxDrawdown"], 0.0);
+        assert_eq!(direct_compact[0]["result"]["maxDrawdownPercent"], 0.0);
+        assert_eq!(direct_compact[0]["result"]["sharpeRatio"], 0.0);
+        assert!(
+            direct_compact[0]["result"]["equityCurve"]
+                .as_array()
+                .unwrap()
+                .is_empty(),
+            "compact output must clear the equity curve"
+        );
+        assert_eq!(
+            direct_compact[0]["result"]["totalTrades"],
+            direct_full[0]["result"]["totalTrades"]
+        );
+    }
+
+    #[tokio::test]
+    async fn empty_batch_items_yield_empty_results_on_both_routes() {
+        let state = AppState::default();
+        let (direct, cached) =
+            run_heterogeneous_batch_through_both_routes(&state, Vec::new(), true, false, false)
+                .await;
+        assert!(direct.as_array().unwrap().is_empty());
+        assert!(cached.as_array().unwrap().is_empty());
     }
 
     async fn post_json(
