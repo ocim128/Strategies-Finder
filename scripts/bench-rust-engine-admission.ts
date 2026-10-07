@@ -1,26 +1,29 @@
 /**
- * Admission-limit tuning benchmark for the Rust engine
- * (RUST_ENGINE_MAX_IN_FLIGHT, default 2).
+ * Raw-transport admission benchmark for the Rust engine
+ * (RUST_ENGINE_MAX_IN_FLIGHT).
  *
- * Purpose: the admission default is an evaluation starting point, not a
- * validated product setting. This harness drives the PRODUCTION
- * RustEngineClient transport (real fallback semantics: an in-flight 503
- * surfaces as `http_error`, which is what triggers TypeScript fallback and
- * cache-ID forgetting) with a concurrent Finder-like batch workload, and
- * compares candidate limits against a high-limit control.
+ * This is the RAW TRANSPORT half of the admission measurement story. It drives
+ * the production RustEngineClient with a concurrent batch workload and then
+ * COMPLETES every candidate through the production TypeScript fallback engine
+ * (lib/strategies runBacktestCompact — the same boundary the product falls
+ * back to), so wall time includes finishing failed candidates instead of
+ * dropping them. For the END-TO-END half (the real Finder Universe runner
+ * with its own fallback boundaries and diagnostics), see
+ * scripts/validate-finder-admission.ts. Neither run chooses the shipped
+ * admission default by itself.
  *
- * Per limit it records:
- * - total wall time for the fixed workload,
- * - transport outcomes by failure reason (http_error == fallback trigger),
- * - actual cache-upload POSTs (re-upload churn after failures),
- * - request latency p50/p95,
- * - peak RSS of the server process (Windows: sampled via PowerShell; other
- *   platforms report null).
+ * Per limit this records, kept in separate sections:
+ * - transport (raw): outcomes by failure reason, attempted vs successful
+ *   cache uploads, per-request latency;
+ * - end-to-end: candidates attempted, TypeScript fallback executions,
+ *   candidates completed with a valid result, and total wall time until
+ *   every candidate completed;
+ * - memory: `sampledMaxRssBytes` — the maximum of RSS samples taken every
+ *   250 ms from the server process via an async (non-blocking) sampler.
+ *   Sampling misses transient peaks between samples, so this is a sampled
+ *   maximum, NOT true peak RSS.
  *
- * This is a synthetic concurrent workload, not the Finder product loop.
- * Before rollout, run the same comparison against real Finder workloads
- * (Universe execution can use four Rust-preferred workers) and choose the
- * shipped default from those results.
+ * Samplers and servers are cleaned up on success, failure, and Ctrl+C.
  *
  * Run: esno scripts/bench-rust-engine-admission.ts [--limits 2,4,64]
  *           [--workers 4] [--rounds 8] [--bars 100000] [--items 16]
@@ -31,6 +34,10 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
 import { RustEngineClient } from "../lib/rust-engine-client";
+import {
+    MAX_OPEN_TRADES_UNLIMITED,
+    runBacktestCompact,
+} from "../lib/strategies";
 import type { BacktestSettings, OHLCVData, Signal } from "../lib/types/strategies";
 
 function parseString(name: string, fallback: string): string {
@@ -55,13 +62,19 @@ const SIGNALS_PER_ITEM = parseIntOption("signals", 1500);
 const PORT = parseIntOption("port", 3039);
 
 const ROOT = path.resolve(import.meta.dirname ?? ".", "..");
-const SERVER_BINARY = path.join(ROOT, "rust-engine", "target", "release", "trading-engine-server.exe");
+const SERVER_BINARY = path.join(
+    ROOT,
+    "rust-engine",
+    "target",
+    "release",
+    "trading-engine-server.exe",
+);
 
 /** Deterministic mulberry32 PRNG so every invocation drives the same data. */
 function mulberry32(seed: number): () => number {
     let state = seed >>> 0;
     return () => {
-        state = (state + 0x6D2B79F5) >>> 0;
+        state = (state + 0x6d2b79f5) >>> 0;
         let t = state;
         t = Math.imul(t ^ (t >>> 15), t | 1);
         t ^= t + Math.imul(t ^ (t >>> 7), t | 1);
@@ -71,7 +84,7 @@ function mulberry32(seed: number): () => number {
 }
 
 function buildData(count: number): OHLCVData[] {
-    const random = mulberry32(0xC0FFEE);
+    const random = mulberry32(0xc0ffee);
     const data: OHLCVData[] = [];
     let price = 100;
     for (let i = 0; i < count; i += 1) {
@@ -94,7 +107,7 @@ function buildData(count: number): OHLCVData[] {
 }
 
 function buildSignals(startBar: number, count: number): Signal[] {
-    const random = mulberry32(0xBEEF + startBar);
+    const random = mulberry32(0xbeef + startBar);
     const signals: Signal[] = [];
     for (let i = 0; i < count; i += 1) {
         const bar = startBar + i * 2;
@@ -107,18 +120,31 @@ function buildSignals(startBar: number, count: number): Signal[] {
     return signals;
 }
 
-type FetchCounts = { uploads: number; byStatus: Map<string, number> };
+type FetchCounts = {
+    uploadAttempts: number;
+    uploadsOk: number;
+    statusByKey: Map<string, number>;
+};
 
 function makeCountingFetch(counts: FetchCounts): typeof fetch {
     return (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        const response = await fetch(input, init);
-        const pathname = new URL(response.url).pathname;
-        if (pathname === "/api/data/cache" && init?.method === "POST") {
-            counts.uploads += 1;
+        try {
+            const response = await fetch(input, init);
+            const pathname = new URL(response.url).pathname;
+            if (pathname === "/api/data/cache" && init?.method === "POST") {
+                counts.uploadAttempts += 1;
+                if (response.ok) counts.uploadsOk += 1;
+            }
+            const key = `${pathname} ${response.status}`;
+            counts.statusByKey.set(key, (counts.statusByKey.get(key) ?? 0) + 1);
+            return response;
+        } catch (error) {
+            const pathname =
+                typeof input === "string" ? new URL(input).pathname : "unknown";
+            const key = `${pathname} transport-error`;
+            counts.statusByKey.set(key, (counts.statusByKey.get(key) ?? 0) + 1);
+            throw error;
         }
-        const key = `${pathname} ${response.status}`;
-        counts.byStatus.set(key, (counts.byStatus.get(key) ?? 0) + 1);
-        return response;
     }) as typeof fetch;
 }
 
@@ -131,7 +157,7 @@ function ensureReleaseBinary(): void {
 }
 
 function startServer(limit: number): ChildProcess {
-    const child = spawn(SERVER_BINARY, [], {
+    return spawn(SERVER_BINARY, [], {
         env: {
             ...process.env,
             RUST_ENGINE_PORT: String(PORT),
@@ -140,7 +166,6 @@ function startServer(limit: number): ChildProcess {
         },
         stdio: "ignore",
     });
-    return child;
 }
 
 async function waitHealthy(baseUrl: string, timeoutMs = 30_000): Promise<void> {
@@ -160,31 +185,57 @@ async function waitHealthy(baseUrl: string, timeoutMs = 30_000): Promise<void> {
 function stopServer(child: ChildProcess | undefined): void {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
     if (process.platform === "win32") {
-        spawnSync("taskkill", ["/PID", String(child.pid), "/F", "/T"], { stdio: "ignore" });
+        spawnSync("taskkill", ["/PID", String(child.pid), "/F", "/T"], {
+            stdio: "ignore",
+        });
     } else {
         child.kill("SIGKILL");
     }
 }
 
-type RssSampler = { stop: () => void; peakRssBytes: () => number | null };
+/**
+ * Genuinely asynchronous RSS sampler: each poll spawns PowerShell without
+ * blocking the benchmark's event loop (spawnSync here would stall every
+ * in-flight request for the duration of a PowerShell cold start). Samples
+ * every `intervalMs`; the reported maximum is a SAMPLED maximum and misses
+ * transient peaks between samples — it is not true peak RSS.
+ */
+type RssSampler = { stop: () => void; sampledMaxRssBytes: () => number | null };
 
-function samplePeakRss(pid: number | undefined): RssSampler {
+function sampleRss(pid: number | undefined, intervalMs = 250): RssSampler {
     if (process.platform !== "win32" || pid === undefined) {
-        return { stop: () => {}, peakRssBytes: () => null };
+        return { stop: () => {}, sampledMaxRssBytes: () => null };
     }
     let peak: number | null = null;
+    let inFlight = false;
     const timer = setInterval(() => {
-        const result = spawnSync(
+        if (inFlight) return;
+        inFlight = true;
+        const child = spawn(
             "powershell",
-            ["-NoProfile", "-Command", `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).WorkingSet64`],
-            { encoding: "utf8" },
+            [
+                "-NoProfile",
+                "-Command",
+                `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).WorkingSet64`,
+            ],
+            { stdio: ["ignore", "pipe", "ignore"] },
         );
-        const value = Number.parseInt((result.stdout ?? "").trim(), 10);
-        if (Number.isFinite(value) && (peak === null || value > peak)) peak = value;
-    }, 250);
+        child.stdout.on("data", (chunk: Buffer) => {
+            const value = Number.parseInt(chunk.toString().trim(), 10);
+            if (Number.isFinite(value) && (peak === null || value > peak)) {
+                peak = value;
+            }
+        });
+        child.on("close", () => {
+            inFlight = false;
+        });
+        child.on("error", () => {
+            inFlight = false;
+        });
+    }, intervalMs);
     return {
         stop: () => clearInterval(timer),
-        peakRssBytes: () => peak,
+        sampledMaxRssBytes: () => peak,
     };
 }
 
@@ -196,44 +247,73 @@ function percentile(sorted: number[], fraction: number): number {
 
 type LimitResult = {
     limit: number;
-    wallMs: number;
-    requests: number;
-    ok: number;
-    fallbacksByReason: Record<string, number>;
-    uploads: number;
-    latencyP50Ms: number;
-    latencyP95Ms: number;
-    peakRssBytes: number | null;
+    // Raw transport section.
+    transport: {
+        requests: number;
+        ok: number;
+        fallbacksByReason: Record<string, number>;
+        uploadAttempts: number;
+        uploadsOk: number;
+        latencyP50Ms: number;
+        latencyP95Ms: number;
+    };
+    // End-to-end section: every candidate finishes with a valid result.
+    endToEnd: {
+        candidates: number;
+        completedCandidates: number;
+        typescriptFallbackExecutions: number;
+        wallMsUntilAllCompleted: number;
+    };
+    memory: {
+        sampledMaxRssBytes: number | null;
+        note: string;
+    };
 };
+
+/** Registered by each workload so interruption can clean everything up. */
+const activeCleanups: Array<() => void> = [];
 
 async function runWorkload(limit: number): Promise<LimitResult> {
     const baseUrl = `http://127.0.0.1:${PORT}`;
-    const counts: FetchCounts = { uploads: 0, byStatus: new Map() };
+    const counts: FetchCounts = {
+        uploadAttempts: 0,
+        uploadsOk: 0,
+        statusByKey: new Map(),
+    };
     const client = new RustEngineClient(baseUrl, makeCountingFetch(counts));
     const baseSettings = {} as BacktestSettings;
 
     const child = startServer(limit);
-    const rss = samplePeakRss(child.pid);
+    const rss = sampleRss(child.pid);
+    const cleanup = () => {
+        rss.stop();
+        stopServer(child);
+    };
+    activeCleanups.push(cleanup);
     const fallbacksByReason: Record<string, number> = {};
     const latencies: number[] = [];
-    let requests = 0;
-    let ok = 0;
+    let transportRequests = 0;
+    let transportOk = 0;
+    let candidates = 0;
+    let completedCandidates = 0;
+    let fallbackExecutions = 0;
     try {
         await waitHealthy(baseUrl);
-        const healthy = await client.checkHealth();
-        if (!healthy) throw new Error("client health check failed against a healthy server");
+        if (!(await client.checkHealth())) {
+            throw new Error("client health check failed against a healthy server");
+        }
 
         const data = buildData(BAR_COUNT);
         const cacheId = await client.cacheData(data);
 
-        const started = performance.now();
+        const workloadStarted = performance.now();
         for (let round = 0; round < ROUNDS; round += 1) {
             const workers = Array.from({ length: WORKERS }, async (_, worker) => {
                 const items = Array.from({ length: ITEMS_PER_BATCH }, (_, item) => ({
                     id: `candidate-${round}-${worker}-${item}`,
                     signals: buildSignals(round * 997 + item * 31, SIGNALS_PER_ITEM),
                 }));
-                requests += 1;
+                candidates += 1;
                 const startedAt = performance.now();
                 const result =
                     cacheId !== null
@@ -258,41 +338,74 @@ async function runWorkload(limit: number): Promise<LimitResult> {
                               true,
                           );
                 latencies.push(performance.now() - startedAt);
+                transportRequests += 1;
                 if (result.ok) {
-                    ok += 1;
+                    transportOk += 1;
+                    completedCandidates += 1;
                 } else {
-                    fallbacksByReason[result.reason] = (fallbacksByReason[result.reason] ?? 0) + 1;
+                    fallbacksByReason[result.reason] =
+                        (fallbacksByReason[result.reason] ?? 0) + 1;
+                    // Complete the candidate through the production fallback
+                    // engine so wall time includes finishing failed work.
+                    fallbackExecutions += 1;
+                    for (const item of items) {
+                        runBacktestCompact(
+                            data,
+                            item.signals,
+                            10_000,
+                            100,
+                            0.1,
+                            { ...baseSettings, maxOpenTrades: MAX_OPEN_TRADES_UNLIMITED },
+                            { mode: "percent" },
+                        );
+                    }
+                    completedCandidates += 1;
                 }
-                // Every other round, one worker re-attempts an upload so churn
-                // after cache-ID forgetting is visible in the counts.
+                // Every other round one worker re-attempts an upload so
+                // churn (attempted vs successful uploads) is visible.
                 if (worker === 0 && round % 2 === 1) {
-                    requests += 1;
+                    transportRequests += 1;
                     const uploadStarted = performance.now();
                     const upload = await client.cacheData(data);
                     latencies.push(performance.now() - uploadStarted);
-                    if (upload !== null) ok += 1;
-                    else fallbacksByReason.upload_failed = (fallbacksByReason.upload_failed ?? 0) + 1;
+                    if (upload !== null) {
+                        transportOk += 1;
+                    } else {
+                        fallbacksByReason.upload_failed =
+                            (fallbacksByReason.upload_failed ?? 0) + 1;
+                    }
                 }
             });
             await Promise.all(workers);
         }
-        const wallMs = performance.now() - started;
-        rss.stop();
+        const wallMsUntilAllCompleted = performance.now() - workloadStarted;
         const sorted = [...latencies].sort((a, b) => a - b);
         return {
             limit,
-            wallMs: Math.round(wallMs),
-            requests,
-            ok,
-            fallbacksByReason,
-            uploads: counts.uploads,
-            latencyP50Ms: Math.round(percentile(sorted, 0.5)),
-            latencyP95Ms: Math.round(percentile(sorted, 0.95)),
-            peakRssBytes: rss.peakRssBytes(),
+            transport: {
+                requests: transportRequests,
+                ok: transportOk,
+                fallbacksByReason,
+                uploadAttempts: counts.uploadAttempts,
+                uploadsOk: counts.uploadsOk,
+                latencyP50Ms: Math.round(percentile(sorted, 0.5)),
+                latencyP95Ms: Math.round(percentile(sorted, 0.95)),
+            },
+            endToEnd: {
+                candidates,
+                completedCandidates,
+                typescriptFallbackExecutions: fallbackExecutions,
+                wallMsUntilAllCompleted: Math.round(wallMsUntilAllCompleted),
+            },
+            memory: {
+                sampledMaxRssBytes: rss.sampledMaxRssBytes(),
+                note: "max of 250 ms RSS samples; transient peaks between samples are missed; not true peak RSS",
+            },
         };
     } finally {
-        rss.stop();
-        stopServer(child);
+        cleanup();
+        const index = activeCleanups.indexOf(cleanup);
+        if (index !== -1) activeCleanups.splice(index, 1);
     }
 }
 
@@ -300,7 +413,9 @@ async function main(): Promise<void> {
     ensureReleaseBinary();
     const results: LimitResult[] = [];
     for (const limit of LIMITS) {
-        process.stdout.write(`running workload at RUST_ENGINE_MAX_IN_FLIGHT=${limit}...\n`);
+        process.stdout.write(
+            `running workload at RUST_ENGINE_MAX_IN_FLIGHT=${limit}...\n`,
+        );
         results.push(await runWorkload(limit));
         // Give the OS a moment to release the port between server runs.
         await new Promise((resolve) => setTimeout(resolve, 500));
@@ -309,32 +424,77 @@ async function main(): Promise<void> {
     const control = results.reduce((best, current) =>
         current.limit > best.limit ? current : best,
     );
-    process.stdout.write("\n| limit | wall ms | requests | ok | fallbacks | uploads | p50 ms | p95 ms | peak RSS MiB |\n");
-    process.stdout.write("| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    process.stdout.write(
+        "\nRaw transport section (client-visible outcomes only):\n| limit | requests | ok | failures by reason | upload attempts | uploads ok | p50 ms | p95 ms |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n",
+    );
     for (const result of results) {
-        const fallbacks = Object.entries(result.fallbacksByReason)
-            .map(([reason, count]) => `${reason}:${count}`)
-            .join(" ") || "0";
-        const peak = result.peakRssBytes === null ? "n/a" : Math.round(result.peakRssBytes / (1024 * 1024));
-        const delta = ((result.wallMs / control.wallMs - 1) * 100).toFixed(0);
+        const failures =
+            Object.entries(result.transport.fallbacksByReason)
+                .map(([reason, count]) => `${reason}:${count}`)
+                .join(" ") || "0";
         process.stdout.write(
-            `| ${result.limit} | ${result.wallMs} (${delta}% vs control) | ${result.requests} | ${result.ok} | ${fallbacks} | ${result.uploads} | ${result.latencyP50Ms} | ${result.latencyP95Ms} | ${peak} |\n`,
+            `| ${result.limit} | ${result.transport.requests} | ${result.transport.ok} | ${failures} | ${result.transport.uploadAttempts} | ${result.transport.uploadsOk} | ${result.transport.latencyP50Ms} | ${result.transport.latencyP95Ms} |\n`,
         );
+    }
+    process.stdout.write(
+        "\nEnd-to-end section (every candidate completed through fallback when needed):\n| limit | candidates | completed | TS fallback executions | wall ms until all completed | vs control |\n| --- | --- | --- | --- | --- | --- |\n",
+    );
+    for (const result of results) {
+        const delta = (
+            (result.endToEnd.wallMsUntilAllCompleted / control.endToEnd.wallMsUntilAllCompleted - 1) *
+            100
+        ).toFixed(0);
+        process.stdout.write(
+            `| ${result.limit} | ${result.endToEnd.candidates} | ${result.endToEnd.completedCandidates} | ${result.endToEnd.typescriptFallbackExecutions} | ${result.endToEnd.wallMsUntilAllCompleted} | ${delta}% |\n`,
+        );
+    }
+    process.stdout.write(
+        "\nMemory section (sampled, not true peak):\n| limit | sampled max RSS MiB |\n| --- | --- |\n",
+    );
+    for (const result of results) {
+        const peak =
+            result.memory.sampledMaxRssBytes === null
+                ? "n/a"
+                : Math.round(result.memory.sampledMaxRssBytes / (1024 * 1024));
+        process.stdout.write(`| ${result.limit} | ${peak} |\n`);
     }
 
     const outDir = path.join(ROOT, "artifacts");
     mkdirSync(outDir, { recursive: true });
     writeFileSync(
         path.join(outDir, "rust-admission-tuning.json"),
-        `${JSON.stringify({ generatedAt: new Date().toISOString(), options: { LIMITS, WORKERS, ROUNDS, BAR_COUNT, ITEMS_PER_BATCH, SIGNALS_PER_ITEM, PORT }, results }, null, 2)}\n`,
+        `${JSON.stringify(
+            {
+                generatedAt: new Date().toISOString(),
+                options: { LIMITS, WORKERS, ROUNDS, BAR_COUNT, ITEMS_PER_BATCH, SIGNALS_PER_ITEM, PORT },
+                results,
+            },
+            null,
+            2,
+        )}\n`,
     );
     process.stdout.write("\nJSON results: artifacts/rust-admission-tuning.json\n");
-    process.stdout.write(
-        "Reminder: this is a synthetic concurrent workload through the production client. Choose the shipped default from real Finder runs before rollout.\n",
-    );
 }
 
-main().catch((error) => {
+async function mainWithCleanup(): Promise<void> {
+    let interrupted = false;
+    const onSignal = () => {
+        if (interrupted) return;
+        interrupted = true;
+        process.stdout.write("\ninterrupted; cleaning up samplers and servers\n");
+        for (const cleanup of activeCleanups.splice(0)) cleanup();
+        process.exit(130);
+    };
+    process.on("SIGINT", onSignal);
+    try {
+        await main();
+    } finally {
+        process.off("SIGINT", onSignal);
+        for (const cleanup of activeCleanups.splice(0)) cleanup();
+    }
+}
+
+mainWithCleanup().catch((error) => {
     console.error("benchmark failed", error);
     process.exitCode = 1;
 });

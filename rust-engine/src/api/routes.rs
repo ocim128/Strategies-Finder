@@ -16,13 +16,14 @@ use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, RwLock, Semaphore};
 const MAX_DATA_CACHE_ENTRIES: usize = 512;
 const MAX_DATA_CACHE_BARS: usize = 16_000_000;
-/// Conservative starting admission bound for CPU-heavy routes. This is an
-/// evaluation default, not a validated product setting: before rollout,
-/// concurrent Finder runs must compare limits of 2 and 4 against the
-/// pre-admission behavior, measuring total duration, TypeScript fallback
-/// count, repeated cache uploads, and peak RSS. The
-/// `RUST_ENGINE_MAX_IN_FLIGHT` setting overrides it at startup.
-pub const DEFAULT_MAX_IN_FLIGHT: usize = 2;
+/// Admission is opt-in: when `RUST_ENGINE_MAX_IN_FLIGHT` is absent the
+/// engine keeps its pre-admission, unbounded behavior, and a configured
+/// positive integer bounds in-flight CPU-heavy work to that count. There is
+/// deliberately no built-in default: a bounded default shipped without real
+/// Finder validation produced heavy fallback churn in measurement, and no
+/// universal "safe" limit exists across machines and workloads. Run
+/// `scripts/validate-finder-admission.ts` against real workloads and set the
+/// variable explicitly from those results.
 /// Per-request identifier assigned by the admission middleware and carried
 /// into request spans so concurrent requests have distinguishable log
 /// records, including rejections.
@@ -42,24 +43,33 @@ pub struct AppState {
     /// Cache of OHLCV data indexed by hash
     pub data_cache: Arc<RwLock<HashMap<String, CachedDataset>>>,
     cache_access_counter: Arc<AtomicU64>,
-    /// Admission bound shared by every CPU-heavy route.
+    /// Admission bound shared by every CPU-heavy route. Unbounded admission
+    /// carries a max-capacity semaphore so the permit lifecycle is identical
+    /// in both modes.
     pub max_in_flight: Arc<Semaphore>,
     /// The configured admission limit, kept for structured diagnostics.
-    max_in_flight_limit: usize,
+    max_in_flight_limit: Option<usize>,
     request_counter: Arc<AtomicU64>,
 }
 impl AppState {
-    pub fn new(max_in_flight: usize) -> Self {
+    /// `Some(limit)` bounds in-flight CPU-heavy work; `None` keeps the
+    /// pre-admission unbounded behavior. Unbounded state carries a
+    /// max-capacity semaphore so the middleware and permit-lifetime paths are
+    /// identical in both modes and can never reject.
+    pub fn new(max_in_flight: Option<usize>) -> Self {
         Self {
             data_cache: Arc::new(RwLock::new(HashMap::new())),
             cache_access_counter: Arc::new(AtomicU64::new(0)),
-            max_in_flight: Arc::new(Semaphore::new(max_in_flight)),
+            max_in_flight: Arc::new(Semaphore::new(
+                max_in_flight.unwrap_or(Semaphore::MAX_PERMITS),
+            )),
             max_in_flight_limit: max_in_flight,
             request_counter: Arc::new(AtomicU64::new(0)),
         }
     }
-    /// The configured admission limit, for diagnostic events.
-    pub fn max_in_flight_limit(&self) -> usize {
+    /// The configured admission limit, for diagnostic events. `None` means
+    /// admission is disabled (pre-admission behavior).
+    pub fn max_in_flight_limit(&self) -> Option<usize> {
         self.max_in_flight_limit
     }
     /// Monotonic per-process request identifier for log correlation.
@@ -69,7 +79,7 @@ impl AppState {
 }
 impl Default for AppState {
     fn default() -> Self {
-        Self::new(DEFAULT_MAX_IN_FLIGHT)
+        Self::new(None)
     }
 }
 /// Request to cache OHLCV data

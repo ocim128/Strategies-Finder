@@ -310,37 +310,59 @@ origins and an optional `VITE_DEV_SERVER_ORIGIN`; it does not use a wildcard
 origin policy.
 
 Admission to the CPU-heavy routes (`/api/backtest`, `/api/backtest/batch`,
-`/api/backtest/batch/cached`, `/api/data/cache`) is bounded by a shared
-semaphore configured by `RUST_ENGINE_MAX_IN_FLIGHT`, a positive integer read
-once at startup with a conservative default of 2; invalid values fail startup
-with a clear error and the effective limit is logged. Excess requests are
-rejected with 503 before their JSON body is parsed. `/api/health` and
-`/api/data/clear` stay outside the gate, and the CORS layer wraps it so
-rejected browser requests keep their CORS headers. An accepted request keeps
-its admission slot from the gate through response construction, and handlers
-retain a second reference through their blocking computation, so capacity
-never frees while CPU work or result serialization is still running; a
-disconnected client does not free the slot either. Completion, validation
+`/api/backtest/batch/cached`, `/api/data/cache`) is opt-in via
+`RUST_ENGINE_MAX_IN_FLIGHT`, read once at startup. When the variable is
+absent the engine keeps its pre-admission, unbounded behavior — no gate, no
+rejections. When present it must be a positive integer that bounds in-flight
+CPU-heavy work; invalid values fail startup with a clear error and the
+effective mode (enabled with its limit, or disabled) is logged. There is
+deliberately no built-in default: no universal safe limit exists across
+machines and workloads, and a bounded default shipped without validation
+produced heavy fallback churn in measurement. Excess requests under a
+configured limit are rejected with 503 before their JSON body is parsed.
+`/api/health` and `/api/data/clear` stay outside the gate, and the CORS layer
+wraps it so rejected browser requests keep their CORS headers. An accepted
+request keeps its admission slot from the gate through response construction,
+and handlers retain a second reference through their blocking computation, so
+capacity never frees while CPU work or result serialization is still running;
+a disconnected client does not free the slot either. Completion, validation
 errors, cache misses, and panics all release the slot. The bound is a request
 count, not a byte or process-memory budget, and it does not cancel work that
 already started.
 
-The default of 2 is an evaluation starting point, not a validated product
-setting. Before rollout, run the real Finder workloads (including
-Rust-preferred Universe execution, which can use four workers) at limits 2
-and 4 and against the pre-admission behavior, comparing total run duration,
-TypeScript fallback count, repeated cache uploads (a readable 503 makes the
-cached client forget its cache ID), and peak RSS in isolated processes. Pick
-the default from those measurements and do not add retries merely to hide
-saturation. Until that comparison exists, treat admission tuning as
-incomplete. `scripts/bench-rust-engine-admission.ts` (JSON output in
-`artifacts/rust-admission-tuning.json`) drives the production client with a
-concurrent batch workload to make that comparison turnkey; on its synthetic
-workload limit 2 already shows heavy fallback churn (the transport sees the
-early 503-then-close as a connection reset, i.e. `network_error`, which
-triggers fallback and cache-ID forgetting) while limit 4 matches the
-high-limit control. Node `fetch` (undici) reports those resets instead of
-the readable 503; curl reads the same response cleanly.
+Choosing a limit requires measuring real workloads at candidate limits
+against the unbounded pre-admission behavior and comparing total duration,
+TypeScript fallback count, repeated cache uploads, and peak RSS in isolated
+processes; do not add retries merely to hide saturation. Two harnesses make
+that comparison turnkey:
+
+- `scripts/bench-rust-engine-admission.ts` — raw-transport measurement
+  through the production client with a synthetic concurrent batch workload;
+  wall time includes completing every failed candidate through the
+  production TypeScript fallback engine, so fallback churn shows up as real
+  added time (on that workload limit 2 completed 24 candidates in ~6.1 s
+  versus ~0.4 s at limit 4, with 12 TypeScript fallback executions). It
+  reports transport outcomes, attempted vs successful uploads, and server
+  memory as `sampledMaxRssBytes` — the max of 250 ms samples, not true peak
+  RSS (JSON in `artifacts/rust-admission-tuning.json`).
+- `scripts/validate-finder-admission.ts` — end-to-end measurement driving the
+  unchanged production Symbol Universe strategy-worker core (real registry,
+  settings resolver, client, and fallback boundaries) with concurrent
+  strategy tasks. As of 2026-10-07 it cannot produce real Rust transport
+  traffic from the built-in catalog: every built-in strategy is
+  Rust-ineligible through the production gates (signal-shape rejection of
+  diagnostic `reason` fields, plus the `metadata.role` gate on the Universe
+  batch path), so all candidates complete on TypeScript and `engineUsage`
+  reports `rustAttemptedRuns: 0`. Real Finder validation of admission limits
+  therefore remains open until a Rust-eligible production workload exists;
+  admission stays opt-in until then.
+
+Failure semantics for tuning: the cached client forgets its cache ID only
+when a cached batch reports `http_error`; connection-level resets surface as
+`network_error`, keep the cache ID, and trigger a plain TypeScript fallback.
+Node `fetch` (undici) reports the early 503-then-close for multi-megabyte
+in-flight uploads as such a connection reset; curl reads the same response
+cleanly.
 
 The main Rust modules are:
 

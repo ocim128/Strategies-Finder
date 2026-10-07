@@ -37,16 +37,18 @@ fn cors_origins(configured_origin: Option<&str>) -> Vec<HeaderValue> {
 }
 
 /// Parse the `RUST_ENGINE_MAX_IN_FLIGHT` admission setting. The value is read
-/// once at startup: it must be a positive integer, and the conservative
-/// default applies when unset.
-fn max_in_flight_from(value: Option<&str>) -> Result<usize, String> {
+/// once at startup. Admission is opt-in: when the variable is absent the
+/// engine keeps its pre-admission unbounded behavior, and when present it
+/// must be a positive integer that bounds in-flight CPU-heavy work.
+fn max_in_flight_from(value: Option<&str>) -> Result<Option<usize>, String> {
     match value {
-        None => Ok(routes::DEFAULT_MAX_IN_FLIGHT),
+        None => Ok(None),
         Some(raw) => raw
             .trim()
             .parse::<usize>()
             .ok()
             .filter(|limit| *limit > 0)
+            .map(Some)
             .ok_or_else(|| {
                 format!("RUST_ENGINE_MAX_IN_FLIGHT must be a positive integer, got '{raw}'")
             }),
@@ -66,7 +68,7 @@ async fn admission_gate(State(state): State<AppState>, request: Request, next: N
         tracing::warn!(
             request_id,
             route = %route,
-            limit = state.max_in_flight_limit(),
+            limit = state.max_in_flight_limit().unwrap_or(0),
             "admission rejected; engine busy"
         );
         return (
@@ -137,6 +139,14 @@ async fn main() {
                 std::process::exit(2);
             }
         };
+    match max_in_flight {
+        Some(limit) => tracing::info!(
+            "Admission enabled: {limit} in-flight CPU-heavy requests (RUST_ENGINE_MAX_IN_FLIGHT)"
+        ),
+        None => tracing::info!(
+            "Admission disabled: RUST_ENGINE_MAX_IN_FLIGHT is not set; CPU-heavy routes run unbounded (pre-admission behavior)"
+        ),
+    }
     // CORS configuration for browser access
     let configured_origin = std::env::var("VITE_DEV_SERVER_ORIGIN").ok();
     let cors = CorsLayer::new()
@@ -147,9 +157,6 @@ async fn main() {
         .allow_headers([header::CONTENT_TYPE]);
     // Shared application state (for data caching)
     let state = AppState::new(max_in_flight);
-    tracing::info!(
-        "Admission limit: {max_in_flight} in-flight CPU-heavy requests (RUST_ENGINE_MAX_IN_FLIGHT)"
-    );
     // Build router
     let app = build_router(state, cors);
     // Start server. Keep the historical default, but allow an isolated local
@@ -201,7 +208,7 @@ mod tests {
     use std::collections::HashMap;
     use std::sync::Mutex;
     use std::time::Duration;
-    use tokio::sync::OwnedSemaphorePermit;
+    use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
     #[test]
     fn cors_allows_only_expected_local_origins() {
@@ -254,9 +261,10 @@ mod tests {
 
     #[test]
     fn admission_config_requires_a_positive_integer() {
-        assert_eq!(max_in_flight_from(None), Ok(routes::DEFAULT_MAX_IN_FLIGHT));
-        assert_eq!(max_in_flight_from(Some("1")), Ok(1));
-        assert_eq!(max_in_flight_from(Some(" 4 ")), Ok(4));
+        // Absent configuration keeps the pre-admission unbounded behavior.
+        assert_eq!(max_in_flight_from(None), Ok(None));
+        assert_eq!(max_in_flight_from(Some("1")), Ok(Some(1)));
+        assert_eq!(max_in_flight_from(Some(" 4 ")), Ok(Some(4)));
         // Rust's usize parser accepts a leading '+', matching its semantics.
         for invalid in ["0", "-2", "abc", "", "1.5"] {
             let error = max_in_flight_from(Some(invalid))
@@ -478,7 +486,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn admission_rejects_overload_before_parsing_and_keeps_health_open() {
-        let state = AppState::new(1);
+        let state = AppState::new(Some(1));
         // Saturate the single admission slot directly.
         let held = state
             .max_in_flight
@@ -537,7 +545,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn admission_capacity_is_held_until_the_worker_settles() {
-        let state = AppState::new(1);
+        let state = AppState::new(Some(1));
         let registry = probe_registry();
         // Dropping the session releases the worker even if an assertion
         // below fails.
@@ -577,7 +585,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn admission_capacity_is_held_through_response_serialization() {
-        let state = AppState::new(1);
+        let state = AppState::new(Some(1));
         let registry = probe_registry();
         let serialize_a = probe_registry_entry(&registry, "serialize-a");
 
@@ -620,7 +628,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disconnect_retains_capacity_until_the_worker_settles() {
-        let state = AppState::new(1);
+        let state = AppState::new(Some(1));
         let registry = probe_registry();
         let worker_b = probe_registry_entry(&registry, "worker-b");
 
@@ -663,7 +671,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn completion_error_and_panic_paths_release_capacity() {
-        let state = AppState::new(1);
+        let state = AppState::new(Some(1));
 
         // /probe-error answers with its own validation status; /probe-panic
         // surfaces the failed worker join. Both must release capacity.
@@ -691,7 +699,7 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn protected_production_routes_accept_and_admit_normally() {
-        let state = AppState::new(1);
+        let state = AppState::new(Some(1));
         let app = build_router(state.clone(), test_cors());
 
         // Upload a tiny dataset: admitted, then the cached batch runs too.
@@ -824,7 +832,7 @@ mod tests {
         init_log_capture();
         let _guard = log_capture_lock().await;
 
-        let state = AppState::new(1);
+        let state = AppState::new(Some(1));
         let held = state
             .max_in_flight
             .clone()
@@ -853,12 +861,24 @@ mod tests {
     }
 
     #[test]
-    fn default_admission_state_uses_the_conservative_default() {
+    fn default_admission_state_keeps_pre_admission_unbounded_behavior() {
         let state = AppState::default();
+        assert_eq!(state.max_in_flight_limit(), None);
+        // A permit is always available when admission is disabled.
+        let permit = state
+            .max_in_flight
+            .clone()
+            .try_acquire_owned()
+            .expect("unbounded admission must never reject");
+        drop(permit);
         assert_eq!(
             state.max_in_flight.available_permits(),
-            routes::DEFAULT_MAX_IN_FLIGHT
+            Semaphore::MAX_PERMITS
         );
-        assert_eq!(routes::DEFAULT_MAX_IN_FLIGHT, 2);
+
+        // A configured limit still bounds the same semaphore.
+        let bounded = AppState::new(Some(2));
+        assert_eq!(bounded.max_in_flight_limit(), Some(2));
+        assert_eq!(bounded.max_in_flight.available_permits(), 2);
     }
 }
