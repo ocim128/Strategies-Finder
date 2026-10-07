@@ -54,8 +54,8 @@ UI / endpoint / Finder caller
      -> engine-selection fence
         -> TypeScript: runBacktest() or runBacktestCompact()
         -> Rust: RustEngineClient -> POST 127.0.0.1:3030/api/backtest
-           -> validate result
-           -> fallback to TypeScript when unavailable or inconsistent
+           -> accept and normalize once in the client (validateRustBacktestResult)
+           -> fallback to TypeScript when unavailable or rejected
   -> shared result post-processing and caller-specific presentation
 ```
 
@@ -232,8 +232,9 @@ to both wrappers. Cancellation behavior is unchanged: both wrappers throw
 
 Dollar and percentage drawdowns are maximized independently across every
 producing path (TypeScript fast path, shared fallback, combined books, the
-Rust streaming closure and `calculate_max_drawdown`, Monte Carlo chart paths,
-the path-dependency analyzer, and Finder synthetic pair-neutral metrics). The
+shared Rust scalar sample formula behind both Rust producers, Monte Carlo
+chart paths, the path-dependency analyzer, and Finder synthetic pair-neutral
+metrics). The
 worst relative loss may therefore come from a different peak than the worst
 dollar loss: the equity path 10000 -> 5000 -> 100000 -> 90000 reports
 `maxDrawdown = 10000` and `maxDrawdownPercent = 50` (the 50% loss from the
@@ -244,6 +245,14 @@ percentage drawdown whenever a larger dollar loss occurred from a higher peak;
 persisted Finder/Batch snapshots and archives retain those historical scalars
 and cannot be repaired without the original execution data, so corrected
 metrics require reruns.
+
+The Rust producers share one scalar update formula but keep distinct sample
+sources: compact mode streams every visited bar's marked equity and feeds the
+settled capital after end-of-data liquidation as one more sample, while full
+output replaces its final equity point with the settled capital before
+scanning. Terminal fees can therefore produce different maxima per mode (the
+compact extra sample keeps the pre-liquidation peak; the full replacement
+hides it), so no universal full/compact drawdown equality is asserted.
 
 #### Walk Forward exit-override parity
 
@@ -302,7 +311,11 @@ The Rust crate in this repository is a small local HTTP server. Its binary is
 configured in `rust-engine/src/main.rs` and binds to `127.0.0.1:3030`.
 Release compilation uses optimization level 3, LTO, and one codegen unit
 (`rust-engine/Cargo.toml`). Rayon parallelizes items in the generic batch
-endpoint.
+endpoints; the direct and cached batch handlers share one synchronous item
+loop (`run_batch_items`), which borrows the request's candles/items/settings
+and the per-batch `MarketSeries` while each handler keeps its own market
+preparation, stage clocks, validation, cache lookup, and dispatch. An item's
+settings replace the base settings object wholesale; fields are never merged.
 
 CPU-heavy backtests and cache uploads are dispatched through Tokio's blocking
 pool. The service's browser CORS policy permits the two default local Vite
@@ -603,7 +616,14 @@ The client bounds serialized request and response sizes, applies timeouts,
 propagates cancellation, and checks both the health status and engine identity
 before a batch. Generic results and Finder results pass structural and metric
 validation before they reach the UI; malformed output preserves an actionable
-fallback reason. These failures produce a whole-batch fallback; partial Rust
+fallback reason. Single-run acceptance is owned by
+`RustEngineClient.runBacktestWithStatus`: its `validateRustBacktestResult`
+call is the one normalization and consistency boundary, and the executor
+trusts a successful client outcome instead of re-checking counts, win rate,
+or average trade. Finder's batch-side `isBacktestResultConsistent` stays in
+place because batch responses are untyped at the transport boundary and
+Finder additionally imposes a Sharpe bound. These failures produce a
+whole-batch fallback; partial Rust
 output is never mixed with TypeScript output for the same dispatch.
 
 
