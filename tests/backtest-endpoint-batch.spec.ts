@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
-import { executeBacktest, executeBacktestFromSignals, getManifestFingerprint } from "../lib/backtest-executor";
+import { executeBacktest, getManifestFingerprint } from "../lib/backtest-executor";
 import type { OHLCVData, BacktestSettings, Strategy } from "../lib/types/strategies";
 import type { CapitalSettings } from "../lib/types/backtest";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
@@ -174,17 +174,21 @@ describe("backtest batch execution (multi-run parity)", () => {
             riskMaxHoldEnabled: true,
             riskMaxHoldBars: 1,
         };
+        let strategyExecuteCalls = 0;
         const strategy: Strategy = {
             name: "prepared-signal-reference",
             description: "test",
             defaultParams: {},
             paramLabels: {},
-            execute: (data) => [{
-                time: data[1]!.time,
-                type: "buy",
-                price: data[1]!.close,
-                barIndex: 1,
-            }],
+            execute: (data) => {
+                strategyExecuteCalls += 1;
+                return [{
+                    time: data[1]!.time,
+                    type: "buy",
+                    price: data[1]!.close,
+                    barIndex: 1,
+                }];
+            },
         };
 
         const referenceRun = await executeBacktest({
@@ -201,24 +205,33 @@ describe("backtest batch execution (multi-run parity)", () => {
                 engineMode: "typescript",
             },
         });
+        assert.strictEqual(strategyExecuteCalls, 1);
 
-        const replayRun = await executeBacktestFromSignals(
-            candles,
-            "5m",
-            [{
+        const replayRun = await executeBacktest({
+            ohlcvData: candles,
+            interval: "5m",
+            strategyKey: "prepared-signal-reference",
+            strategy,
+            strategyParams: {},
+            backtestSettings: settings,
+            capitalSettings: defaultCapital,
+            // Prepared signals are already fully prepared: strategy signal
+            // generation (and its invertSignals flip) is skipped entirely, so
+            // the sell signal fills exactly like the reference run's inverted
+            // buy instead of being inverted a second time.
+            preGeneratedSignals: [{
                 time: candles[1]!.time,
                 type: "sell",
                 price: candles[1]!.close,
                 barIndex: 1,
             }],
-            settings,
-            defaultCapital,
-            {
+            context: {
                 nowSec: 9999999999,
                 blockRange: null,
                 engineMode: "typescript",
-            }
-        );
+            },
+        });
+        assert.strictEqual(strategyExecuteCalls, 1, "prepared signals must skip strategy signal generation");
 
         assert.strictEqual(replayRun.result.totalTrades, referenceRun.result.totalTrades);
         assert.strictEqual(replayRun.result.trades[0]?.type, referenceRun.result.trades[0]?.type);

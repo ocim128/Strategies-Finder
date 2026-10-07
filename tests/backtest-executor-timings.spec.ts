@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import {
     executeBacktest,
-    executeBacktestFromSignals,
     resolveExecutorBacktestSettings,
 } from "../lib/backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../lib/backtest-capital-settings";
@@ -305,20 +304,28 @@ async function verifyAnalyticsOwnership(): Promise<void> {
     assert.ok(entryOnly.result.entryStats, "entry evaluation result keeps its entryStats");
     assert.equal(entryOnly.result.performanceAnalytics, undefined);
 
-    // Prepared-signal execution finalizes with TypeScript ownership: the
-    // full engine's Sharpe and analytics are preserved as computed.
+    // Prepared-signal execution skips strategy signal generation (the
+    // counting wrapper below is never invoked) but keeps the default
+    // full-result behavior: finalization runs with TypeScript ownership, so
+    // the full engine's Sharpe and analytics are preserved as computed.
     const primaryRun = await executeBacktest({
         ...commonRequest,
         backtestRunOptions: {},
     });
-    const fromSignals = await executeBacktestFromSignals(
-        data,
-        interval,
-        primaryRun.signals,
-        backtestSettings,
-        capitalSettings,
-        { nowSec: 1_800_000_000, blockRange: null, engineMode: "typescript" },
-    );
+    let preparedStrategyExecuteCalls = 0;
+    const fromSignals = await executeBacktest({
+        ...commonRequest,
+        strategy: {
+            ...parabolic_sar_confirmation,
+            execute: (data, params, settings) => {
+                preparedStrategyExecuteCalls += 1;
+                return parabolic_sar_confirmation.execute!(data, params, settings);
+            },
+        },
+        preGeneratedSignals: primaryRun.signals,
+        backtestRunOptions: {},
+    });
+    assert.equal(preparedStrategyExecuteCalls, 0, "prepared signals must skip strategy signal generation");
     assert.equal(fromSignals.engineUsed, "typescript");
     assert.ok(fromSignals.result.equityCurve.length > 1);
     assert.equal(

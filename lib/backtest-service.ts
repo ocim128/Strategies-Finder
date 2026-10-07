@@ -34,7 +34,7 @@ import {
     commitBacktestResult,
     ownsBacktestPublication,
 } from "./state-actions";
-import { executeBacktest, executeBacktestFromSignals } from "./backtest-executor";
+import { executeBacktest } from "./backtest-executor";
 import {
     getCapitalSettings as readCapitalSettings,
     getBacktestSettings as readBacktestSettings,
@@ -432,32 +432,6 @@ export class BacktestService {
         };
     }
 
-    private async runBacktestForPreparedSignals(
-        ohlcvData: OHLCVData[],
-        interval: string,
-        signals: Signal[],
-        settings: BacktestSettings,
-        capitalSettings: CapitalSettings,
-        forceTypescript: boolean
-    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        return executeBacktestFromSignals(
-            ohlcvData,
-            interval,
-            signals,
-            {
-                ...settings,
-                symbol: state.currentSymbol,
-                interval,
-            },
-            capitalSettings,
-            {
-                nowSec: Math.floor(Date.now() / 1000),
-                blockRange: state.blockRange,
-                engineMode: forceTypescript ? 'typescript' : 'auto',
-            }
-        );
-    }
-
     public requiresTypescriptEngine(settings: BacktestSettings): boolean {
         // Use shared helper for single-source-of-truth Rust eligibility
         return requiresTsEngine(settings);
@@ -510,23 +484,6 @@ export class BacktestService {
 
     private resolveSubscriptionCapitalSettings(backtestSettings: BacktestSettings): CapitalSettings {
         return resolveSubCapitalSettings(backtestSettings);
-    }
-
-    public async evaluateSignalsOnData(
-        ohlcvData: OHLCVData[],
-        interval: string,
-        signals: Signal[],
-        settings: BacktestSettings = this.getBacktestSettings(),
-        capitalSettings: CapitalSettings = this.getCapitalSettings()
-    ): Promise<{ result: BacktestResult; engineUsed: 'rust' | 'typescript' }> {
-        return this.runBacktestForPreparedSignals(
-            ohlcvData,
-            interval,
-            signals,
-            settings,
-            capitalSettings,
-            false
-        );
     }
 
     public addStrategyIndicators(params: StrategyParams) {

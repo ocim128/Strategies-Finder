@@ -156,6 +156,27 @@ window-owned WeakMap accessor and thread them through finalization; callers
 without a known-immutable window compute floors fresh, and analyses without
 trades never pay for floor preparation.
 
+### Prepared signals
+
+`executeBacktest` accepts `preGeneratedSignals`: fully prepared entry signals
+(like Finder's `preGeneratedSignals` replays in `finder-universe-oos.ts`,
+`finder-runner-universe.ts`, and `server-asset-is-search.ts`) skip primary
+strategy signal generation and confirmation generation entirely — strategy
+`execute` is not called, and invert/polarity is NOT re-applied, so callers
+pass signals already in their final polarity. Everything else runs as in a
+generated run: closed-candle selection, block-range filtering, exit-override
+resolution, strategy evaluation, engine selection, cancellation, and
+finalization.
+
+The former second pipeline for this — `executeBacktestFromSignals` in
+`lib/backtest-executor.ts` and `BacktestService.evaluateSignalsOnData` (with
+its private `runBacktestForPreparedSignals` wrapper) — was removed in October
+2026 as a dormant duplicate: no production caller remained. It differed
+semantically from the primary executor (it consumed prepared signals without
+exit-override resolution, strategy evaluation, or output controls), so it was
+deleted rather than wrapped; callers with prepared signals must use
+`executeBacktest` with `preGeneratedSignals`.
+
 ### Compact execution
 
 `runBacktestCompact()` is optimized for Finder loops. Its options can omit the

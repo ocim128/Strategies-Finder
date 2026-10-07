@@ -69,6 +69,53 @@ describe("backtest executor cancellation", () => {
         assert.strictEqual(rustCalls, 1);
     });
 
+    it("does not start TypeScript fallback after Rust cancels a prepared-signal run", async () => {
+        const original = rustEngine.runBacktestWithStatus;
+        let rustCalls = 0;
+        rustEngine.runBacktestWithStatus = async (..._args) => {
+            rustCalls += 1;
+            return { ok: false, reason: "cancelled" as const };
+        };
+        let executeCalls = 0;
+        const preparedStrategy: Strategy = {
+            ...strategy,
+            execute: (data, params, runSettings) => {
+                executeCalls += 1;
+                return strategy.execute!(data, params, runSettings);
+            },
+        };
+
+        let caught: unknown;
+        try {
+            await executeBacktest({
+                ohlcvData: candles,
+                interval: "1h",
+                primarySymbol: "CANCEL_PREPARED",
+                strategyKey: "cancellation_executor_test",
+                strategy: preparedStrategy,
+                strategyParams: {},
+                backtestSettings: settings,
+                capitalSettings: capital,
+                preGeneratedSignals: [{ time: candles[0]!.time, type: "buy", price: candles[0]!.close }],
+                context: {
+                    nowSec: 9_999_999_999,
+                    blockRange: null,
+                    engineMode: "rust_preferred",
+                },
+            });
+        } catch (error) {
+            caught = error;
+        } finally {
+            rustEngine.runBacktestWithStatus = original;
+        }
+
+        assert.ok(caught instanceof Error);
+        assert.strictEqual((caught as Error).name, "AbortError");
+        assert.strictEqual(rustCalls, 1);
+        // Prepared inputs skip strategy signal generation entirely.
+        assert.strictEqual(executeCalls, 0);
+    });
+
     it("honors an explicit TypeScript engine mode even when Rust is available", async () => {
         const original = rustEngine.runBacktestWithStatus;
         let rustCalls = 0;
