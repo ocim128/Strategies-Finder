@@ -1,7 +1,8 @@
-import puppeteer, { Page } from 'puppeteer';
+import puppeteer, { Page, type Dialog } from 'puppeteer';
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import { withTimeout } from './helpers/with-timeout';
 
 const requireFromHere = createRequire(import.meta.url);
 const vitePackagePath = requireFromHere.resolve('vite/package.json');
@@ -223,7 +224,85 @@ const verifySettingsWorkspace = async (page: Page): Promise<void> => {
     });
     await page.setViewport({ width: 1440, height: 1000 });
     await page.evaluate(() => { document.querySelector<HTMLElement>('.panel-content')!.scrollTop = 0; });
+    await verifyBulkConfigDeletion(page);
     console.log('Settings layout, search, autosave feedback, configuration drift and restore passed.');
+};
+
+const verifyBulkConfigDeletion = async (page: Page): Promise<void> => {
+    const deleteSelection = async (accept: boolean): Promise<void> => {
+        let onDialog: (dialog: Dialog) => void;
+        const handled = new Promise<void>((resolve, reject) => {
+            onDialog = dialog => {
+                (accept ? dialog.accept() : dialog.dismiss()).then(resolve, reject);
+            };
+            page.once('dialog', onDialog);
+        });
+        try {
+            await withTimeout(Promise.all([handled, page.click('#deleteSelectedConfigsBtn')]), 10000, 'Bulk deletion confirmation did not settle');
+        } finally {
+            page.off('dialog', onDialog!);
+        }
+    };
+    const names = ['Bulk setup A', 'Bulk <test> setup B'];
+    for (const name of names) {
+        await page.type('#configNameInput', name);
+        await page.click('#saveConfigBtn');
+        await page.waitForFunction(expected => (document.getElementById('configSelect') as HTMLSelectElement).value === expected, {}, name);
+    }
+    await page.click('#bulkDeleteConfigs summary');
+    await page.click('#bulkConfigList label:first-child input');
+    await page.keyboard.down('Shift');
+    try {
+        await page.click('#bulkConfigList label:last-child span');
+        await page.evaluate(() => {
+            if (document.querySelectorAll('#bulkConfigList input:checked').length !== 3) throw new Error('Shift-click on a label did not select the range');
+        });
+        await page.click('#bulkConfigList label:first-child input');
+        await page.evaluate(() => {
+            if (document.querySelectorAll('#bulkConfigList input:checked').length !== 0) throw new Error('Reverse Shift-click did not clear the range');
+        });
+    } finally {
+        await page.keyboard.up('Shift');
+    }
+    await page.click('#selectAllConfigs');
+    await page.evaluate(() => {
+        const input = Array.from(document.querySelectorAll<HTMLInputElement>('#bulkConfigList input')).find(input => input.value === 'TestConfig')!;
+        input.click();
+        if (!(document.getElementById('selectAllConfigs') as HTMLInputElement).indeterminate) throw new Error('Partial selection did not show mixed state');
+        if (document.getElementById('bulkConfigSelectionCount')!.textContent !== '2 selected') throw new Error('Bulk selection count incorrect');
+        if (!(document.getElementById('bulkConfigList')!.textContent!.includes('Bulk <test> setup B'))) throw new Error('Configuration name did not render as literal text');
+    });
+    await page.setViewport({ width: 390, height: 844 });
+    await page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>('.panel-content')!;
+        if (panel.scrollWidth > panel.clientWidth) throw new Error('Expanded bulk controls overflowed on mobile');
+    });
+    await page.setViewport({ width: 1440, height: 1000 });
+    await deleteSelection(false);
+    await page.evaluate(() => {
+        if ((window as any).__settingsManager.loadAllStrategyConfigs().length !== 3) throw new Error('Cancelled bulk deletion changed storage');
+    });
+    await deleteSelection(true);
+    await page.waitForFunction(() => (window as any).__settingsManager.loadAllStrategyConfigs().length === 1);
+    await page.evaluate(() => {
+        const manager = (window as any).__settingsManager;
+        const remaining = manager.loadAllStrategyConfigs();
+        if (remaining.length !== 1 || remaining[0].name !== 'TestConfig') throw new Error('Bulk deletion removed unchecked configurations');
+        if (manager.getActiveConfiguration() !== null) throw new Error('Bulk deletion did not clear loaded configuration tracking');
+        if (document.getElementById('settingsConfigStatus')!.textContent !== 'No configuration loaded') throw new Error('Tracking feedback stayed stale');
+        if (document.querySelectorAll('#configSelect option').length !== 2) throw new Error('Dropdown was not refreshed after bulk deletion');
+    });
+    await page.click('#selectAllConfigs');
+    await deleteSelection(true);
+    await page.waitForFunction(() => (window as any).__settingsManager.loadAllStrategyConfigs().length === 0);
+    await page.evaluate(() => {
+        if ((window as any).__settingsManager.loadAllStrategyConfigs().length !== 0) throw new Error('Select all did not delete all configurations');
+        if (!(document.getElementById('selectAllConfigs') as HTMLInputElement).disabled) throw new Error('Select all stayed enabled on an empty list');
+        if (!(document.getElementById('deleteSelectedConfigsBtn') as HTMLButtonElement).disabled) throw new Error('Bulk delete stayed enabled on an empty list');
+    });
+    await page.setViewport({ width: 1440, height: 1000 });
+    await page.evaluate(() => { document.querySelector<HTMLElement>('.panel-content')!.scrollTop = 0; });
+    console.log('Bulk configuration deletion, cancellation and mobile layout passed.');
 };
 
 const verifyFinderReloadPreview = async (page: Page): Promise<void> => {

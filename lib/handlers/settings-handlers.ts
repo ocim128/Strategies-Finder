@@ -23,6 +23,7 @@ import { createSettingsHandlersDom } from "./settings-handlers-dom";
 import { buildSharedSyntheticApplyPlan, type SharedChartContext } from "./settings-handlers-shared";
 
 const STRATEGY_CONFIGS_CHANGED_EVENT = "strategy-configs:changed";
+const bulkConfigSelectionAnchors = new WeakMap<HTMLElement, string>();
 
 const SHARED_DEFAULT_SYMBOL = 'ETHUSDT';
 const SHARED_DEFAULT_INTERVAL = '120m';
@@ -286,6 +287,27 @@ export function setupSettingsHandlers() {
             }
         });
     }
+
+    dom.selectAllConfigs?.addEventListener('change', () => {
+        if (dom.bulkConfigList) bulkConfigSelectionAnchors.delete(dom.bulkConfigList);
+        for (const checkbox of getBulkConfigCheckboxes(dom)) {
+            checkbox.checked = dom.selectAllConfigs!.checked;
+        }
+        syncBulkConfigSelection(dom);
+    });
+    dom.deleteSelectedConfigsBtn?.addEventListener('click', () => {
+        const names = new Set(getBulkConfigCheckboxes(dom).filter(input => input.checked).map(input => input.value));
+        if (names.size === 0) return;
+        if (!confirm(`Delete ${names.size} saved configuration${names.size === 1 ? '' : 's'}?\n\n${[...names].join('\n')}\n\nThis cannot be undone.`)) return;
+        if (!settingsManager.deleteStrategyConfigs(names)) {
+            uiManager.showToast('Failed to delete selected configurations. No configurations were deleted.', 'error');
+            return;
+        }
+        updateConfigDropdown();
+        notifyStrategyConfigsChanged();
+        uiManager.showToast(`${names.size} configuration${names.size === 1 ? '' : 's'} deleted`, 'info');
+        debugLogger.event('ui.config.bulk_deleted', { count: names.size });
+    });
 
     // Share Configuration Link controls
     const generateShareLinkBtn = dom.generateShareLinkBtn;
@@ -618,6 +640,68 @@ export function updateConfigDropdown(selectName?: string) {
 
     populateConfigSelect(configSelect, configs, '-- Select configuration --', currentValue);
     syncConfigActionButtons(dom, configSelect.value);
+    populateBulkConfigList(dom, configs);
+}
+
+function getBulkConfigCheckboxes(dom: ReturnType<typeof createSettingsHandlersDom>): HTMLInputElement[] {
+    return Array.from(dom.bulkConfigList?.querySelectorAll<HTMLInputElement>('input[type="checkbox"]') ?? []);
+}
+
+function syncBulkConfigSelection(dom: ReturnType<typeof createSettingsHandlersDom>): void {
+    const checkboxes = getBulkConfigCheckboxes(dom);
+    const count = checkboxes.filter(input => input.checked).length;
+    if (dom.selectAllConfigs) {
+        dom.selectAllConfigs.disabled = checkboxes.length === 0;
+        dom.selectAllConfigs.checked = count > 0 && count === checkboxes.length;
+        dom.selectAllConfigs.indeterminate = count > 0 && count < checkboxes.length;
+    }
+    if (dom.bulkConfigSelectionCount) dom.bulkConfigSelectionCount.textContent = `${count} selected`;
+    if (dom.deleteSelectedConfigsBtn) dom.deleteSelectedConfigsBtn.disabled = count === 0;
+}
+
+function populateBulkConfigList(dom: ReturnType<typeof createSettingsHandlersDom>, configs: readonly StrategyConfig[]): void {
+    if (!dom.bulkConfigList) return;
+    const selected = new Set(getBulkConfigCheckboxes(dom).filter(input => input.checked).map(input => input.value));
+    const list = dom.bulkConfigList;
+    const anchor = bulkConfigSelectionAnchors.get(list);
+    if (anchor && !configs.some(config => config.name === anchor)) bulkConfigSelectionAnchors.delete(list);
+    const fragment = document.createDocumentFragment();
+    for (const config of configs) {
+        const label = document.createElement('label');
+        label.className = 'config-bulk-option';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.value = config.name;
+        checkbox.checked = selected.has(config.name);
+        checkbox.addEventListener('click', event => {
+            const checkboxes = getBulkConfigCheckboxes(dom);
+            const anchorIndex = checkboxes.findIndex(input => input.value === bulkConfigSelectionAnchors.get(list));
+            const clickedIndex = checkboxes.indexOf(checkbox);
+            if (event.shiftKey && anchorIndex >= 0 && clickedIndex >= 0) {
+                const start = Math.min(anchorIndex, clickedIndex);
+                const end = Math.max(anchorIndex, clickedIndex);
+                for (let index = start; index <= end; index += 1) {
+                    checkboxes[index].checked = checkbox.checked;
+                }
+            }
+            bulkConfigSelectionAnchors.set(list, config.name);
+            syncBulkConfigSelection(dom);
+        });
+        checkbox.addEventListener('change', () => syncBulkConfigSelection(dom));
+        const text = document.createElement('span');
+        text.textContent = `${config.name} (${config.strategyKey})`;
+        label.appendChild(checkbox);
+        label.appendChild(text);
+        fragment.appendChild(label);
+    }
+    if (configs.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'param-hint';
+        empty.textContent = 'No saved configurations.';
+        fragment.appendChild(empty);
+    }
+    dom.bulkConfigList.replaceChildren(fragment);
+    syncBulkConfigSelection(dom);
 }
 
 /**

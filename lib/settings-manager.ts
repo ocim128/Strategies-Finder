@@ -453,24 +453,28 @@ class SettingsManager {
     }
 
     public deleteStrategyConfig(name: string): boolean {
-        const configs = this.loadAllStrategyConfigs();
-        const index = configs.findIndex(c => c.name === name);
+        return this.deleteStrategyConfigs(new Set([name]));
+    }
 
-        if (index >= 0) {
-            configs.splice(index, 1);
+    /** Delete the whole selection in one write, or leave every config untouched. */
+    public deleteStrategyConfigs(names: ReadonlySet<string>): boolean {
+        if (names.size === 0) return false;
+        const configs = this.loadAllStrategyConfigs();
+        const existingNames = new Set(configs.map(config => config.name));
+        if ([...names].every(name => existingNames.has(name))) {
             const saved = writePersistedJson({
                 ...STRATEGY_CONFIGS_STORAGE,
-                data: configs,
+                data: configs.filter(config => !names.has(config.name)),
                 onError: (error) => {
-                    debugLogger.error('settings.config_delete_failed', { error: error instanceof Error ? error.message : String(error), name });
+                    debugLogger.error('settings.config_delete_failed', { error: error instanceof Error ? error.message : String(error), names: [...names] });
                 },
             });
             if (saved) {
-                if (this.activeConfiguration?.config.name === name) {
+                if (this.activeConfiguration && names.has(this.activeConfiguration.config.name)) {
                     this.activeConfiguration = null;
                     this.notifyFeedback();
                 }
-                debugLogger.event('settings.config.deleted', { name });
+                debugLogger.event('settings.config.deleted', { names: [...names] });
                 return true;
             }
         }

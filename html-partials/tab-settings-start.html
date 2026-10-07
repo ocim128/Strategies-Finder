@@ -99,6 +99,17 @@
                         </div>
                     </div>
 
+                    <details class="config-bulk-delete" id="bulkDeleteConfigs">
+                        <summary>Bulk delete configurations</summary>
+                        <div class="param-hint">Click a configuration, then hold Shift and click another to select or clear the range.</div>
+                        <div class="config-bulk-toolbar">
+                            <label class="config-bulk-option"><input type="checkbox" id="selectAllConfigs" disabled /> Select all</label>
+                            <span id="bulkConfigSelectionCount" role="status" aria-live="polite">0 selected</span>
+                        </div>
+                        <div class="config-bulk-list" id="bulkConfigList" role="group" aria-label="Configurations to delete"></div>
+                        <button class="btn btn-ghost btn-compact config-action-btn--danger" id="deleteSelectedConfigsBtn" type="button" disabled>Delete selected…</button>
+                    </details>
+
                     <div class="settings-preset-label">Settings shown</div>
                     <div class="settings-preset-bar" id="settingsPresetBar">
                         <button class="settings-preset-btn" data-preset="simple" type="button">

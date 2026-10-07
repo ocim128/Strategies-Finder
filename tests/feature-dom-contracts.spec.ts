@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { UI_EVENT_HANDLER_REQUIRED_IDS } from "../lib/handlers/ui-event-handlers-dom";
+import { SETTINGS_BULK_DELETE_REQUIRED_IDS } from "../lib/handlers/settings-handlers-dom";
 import { STATE_SUBSCRIPTIONS_REQUIRED_IDS } from "../lib/handlers/state-subscriptions-dom";
 import { SETTINGS_WORKSPACE_REQUIRED_IDS, UI_MANAGER_REQUIRED_IDS } from "../lib/ui-manager-dom";
 import { RESULTS_RENDERER_REQUIRED_IDS } from "../lib/renderers/results-renderer-dom";
@@ -76,6 +77,7 @@ describe("Feature DOM contracts", () => {
         resultsRenderer: [...RESULTS_RENDERER_REQUIRED_IDS],
         tradesRenderer: [...TRADES_RENDERER_REQUIRED_IDS],
         settingsManager: [...SETTINGS_MANAGER_REQUIRED_IDS],
+        settingsBulkDelete: [...SETTINGS_BULK_DELETE_REQUIRED_IDS],
         settingsWorkspace: [...SETTINGS_WORKSPACE_REQUIRED_IDS],
 
         livePositions: [...LIVE_POSITIONS_REQUIRED_IDS],

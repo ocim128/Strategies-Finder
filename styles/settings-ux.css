@@ -252,6 +252,51 @@
     gap: var(--space-1-5);
 }
 
+.config-bulk-delete {
+    border-top: 1px solid var(--card-border);
+    padding-top: var(--space-2);
+    font-size: var(--font-size-sm);
+}
+
+.config-bulk-delete summary {
+    cursor: pointer;
+    color: var(--text-secondary);
+}
+
+.config-bulk-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: var(--space-2) 0;
+    color: var(--text-secondary);
+}
+
+.config-bulk-list {
+    max-height: 240px;
+    overflow-y: auto;
+    margin-bottom: var(--space-2);
+}
+
+.config-bulk-option {
+    user-select: none;
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-1) 0;
+    cursor: pointer;
+}
+
+.config-bulk-option input {
+    flex-shrink: 0;
+}
+
+.config-bulk-option span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
 .strategy-workspace-card--config .config-input-row,
 .strategy-workspace-card--config .config-list-wrapper {
     gap: var(--space-1-5);
