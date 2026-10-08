@@ -16,6 +16,14 @@ Validation routing compares canonical filesystem roots, so directory junctions
 and Windows short directory names do not exclude genuine application changes.
 Paths outside a nested app remain outside its validation scope.
 
+Routing ownership: [scripts/validation-map.ts](../scripts/validation-map.ts)
+owns the rule catalogue, pure plan construction, and `normalizeChangedPaths`,
+the one changed-path canonicalization shared with the Git collector in
+[scripts/validate-changes.ts](../scripts/validate-changes.ts). A plan that
+selects `full-js` drops the focused trio (both typechecks and the focused spec
+run) because `npm run ci` contains them; a future composite check would need an
+explicit policy change rather than new metadata.
+
 ```bash
 npm run test -- finder-engine.spec.ts --list
 npm run --silent test -- finder-engine.spec.ts --list --json
