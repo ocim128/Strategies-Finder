@@ -221,6 +221,37 @@ function detailsResponderFor(
     return gate ? gate.then(body) : body();
 }
 
+/**
+ * Give every captured operation a bounded chance to settle without letting
+ * one settlement failure skip the remaining attempts or propagate: returns
+ * the settlement failures for reporting and never throws.
+ */
+async function settleCapturedOperations(ops: Array<Promise<unknown>>, label: string): Promise<unknown[]> {
+    const failures: unknown[] = [];
+    for (const op of ops) {
+        try {
+            await withTimeout(op.catch(() => {}), 2_000, `${label} to settle during cleanup`);
+        } catch (cleanupError) {
+            failures.push(cleanupError);
+        }
+    }
+    return failures;
+}
+
+/**
+ * Cleanup failures after a failed body are reported alongside the preserved
+ * primary failure; after a passing body they are the test's only failure
+ * signal, so the first one is rethrown.
+ */
+function finishCleanup(bodyFailed: boolean, failures: unknown[], label: string): void {
+    if (failures.length === 0) return;
+    if (bodyFailed) {
+        console.error(`${label} cleanup failures (primary failure preserved):`, failures);
+        return;
+    }
+    throw failures[0];
+}
+
 describe("Asset Opportunity Explorer service", () => {
     let elements: Map<string, any>;
 
@@ -398,6 +429,7 @@ describe("Asset Opportunity Explorer service", () => {
             refreshOps.push(op);
             return op;
         };
+        let bodyFailed = false;
         try {
             dom.explorerRefreshBtn.listeners.get("click")![0]!();
             expect(refreshOps, "the click handler started the refresh operation").to.have.length(1);
@@ -405,10 +437,16 @@ describe("Asset Opportunity Explorer service", () => {
             expect(requestedUrls.some((url) => url.includes("refresh=1")), "refresh issued a forced catalog request").to.equal(true);
             expect(dom.explorerHorizonSelect.value).to.equal("12");
             expect(dom.explorerRunSelect.value).to.equal("run-a");
+        } catch (error) {
+            bodyFailed = true;
+            throw error;
         } finally {
-            delete (service as any).refresh;
-            for (const op of refreshOps) {
-                await withTimeout(op.catch(() => {}), 2_000, "the refresh operation to settle during cleanup");
+            try {
+                const failures = await settleCapturedOperations(refreshOps, "the refresh operation");
+                finishCleanup(bodyFailed, failures, "refresh");
+            } finally {
+                // Restoration executes even when settlement times out.
+                delete (service as any).refresh;
             }
         }
     });
@@ -438,6 +476,7 @@ describe("Asset Opportunity Explorer service", () => {
             detailOps.push(op);
             return op;
         };
+        let bodyFailed = false;
         try {
             (service as any).selectRange("expectancy", 12, 24);
             await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 1, 2_000, "first detail in flight");
@@ -456,15 +495,20 @@ describe("Asset Opportunity Explorer service", () => {
             (service as any).selectRange("expectancy", 12, 12);
             await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 2, 2_000, "second detail requested");
             await waitFor(() => dom.explorerDetailTitle.textContent.includes("12–12"), 2_000, "second detail rendered");
+        } catch (error) {
+            bodyFailed = true;
+            throw error;
         } finally {
             // Failure paths still release a held detail response, give every
             // captured operation a bounded chance to settle, and restore the
-            // overridden method.
+            // overridden method even when one settlement times out.
             releaseDetails();
-            for (const op of detailOps) {
-                await withTimeout(op.catch(() => {}), 2_000, "a captured detail operation to settle during cleanup");
+            try {
+                const failures = await settleCapturedOperations(detailOps, "a captured detail operation");
+                finishCleanup(bodyFailed, failures, "detail");
+            } finally {
+                delete (service as any).loadDetails;
             }
-            delete (service as any).loadDetails;
         }
     });
 
@@ -493,6 +537,7 @@ describe("Asset Opportunity Explorer service", () => {
             detailOps.push(op);
             return op;
         };
+        let bodyFailed = false;
         try {
             (service as any).selectRange("sort_a", 12, 24);
             await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 1, 2_000, "sort_a detail in flight");
@@ -507,15 +552,75 @@ describe("Asset Opportunity Explorer service", () => {
             // settled; a visible newer title alone would prove nothing.
             expect(dom.explorerDetailTitle.textContent).to.contain("sort_b");
             expect(dom.explorerDetailTitle.textContent).to.not.contain("sort_a");
+        } catch (error) {
+            bodyFailed = true;
+            throw error;
         } finally {
             // Failure paths still release the held response, give every
             // captured operation a bounded chance to settle, and restore the
-            // overridden method.
+            // overridden method even when one settlement times out.
             releaseA();
-            for (const op of detailOps) {
-                await withTimeout(op.catch(() => {}), 2_000, "a captured detail operation to settle during cleanup");
+            try {
+                const failures = await settleCapturedOperations(detailOps, "a captured detail operation");
+                finishCleanup(bodyFailed, failures, "detail");
+            } finally {
+                delete (service as any).loadDetails;
             }
-            delete (service as any).loadDetails;
         }
+    });
+
+    it("detail cleanup restores the method and stays bounded when a response never arrives", async () => {
+        // Verifies the failure path the stale-response cases rely on: a detail
+        // response that stays gated past the cleanup deadline must not wedge
+        // the run, must not skip method restoration, and must not replace the
+        // primary deadline failure with a cleanup error.
+        let releaseDetails!: () => void;
+        const detailsGate = new Promise<void>((resolve) => { releaseDetails = resolve; });
+        responder = (url) => {
+            if (url.includes("catalog")) return { status: 200, body: catalogPayload([fixtureRun()]) };
+            if (url.includes("heatmap")) return { status: 200, body: heatmapPayload("snap-1") };
+            if (url.includes("details")) {
+                const detailRequests = requestedUrls.filter((candidate) => candidate.includes("details")).length;
+                return detailsResponderFor(url, detailRequests === 1 ? detailsGate : undefined);
+            }
+            return { status: 404, body: {} };
+        };
+        const { service, dom } = createService();
+        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "initial heatmap loaded");
+        const originalLoadDetails = (service as any).loadDetails;
+        const detailOps: Array<Promise<void>> = [];
+        (service as any).loadDetails = function (this: unknown, offset: number) {
+            const op = originalLoadDetails.call(this, offset);
+            detailOps.push(op);
+            return op;
+        };
+        try {
+            (service as any).selectRange("expectancy", 12, 24);
+            expect(detailOps, "the gated detail operation was captured").to.have.length(1);
+            // The response stays gated, so settlement fails at the deadline —
+            // this is the primary failure the cleanup must not mask.
+            let primaryError: unknown = null;
+            try {
+                await withTimeout(detailOps[0]!, 250, "the gated detail operation to settle");
+            } catch (error) {
+                primaryError = error;
+            }
+            expect((primaryError as Error).message).to.match(/the gated detail operation to settle/);
+        } finally {
+            try {
+                const startedAt = Date.now();
+                const failures = await settleCapturedOperations(detailOps, "the gated detail operation");
+                expect(failures, "the unsettled operation is reported, not thrown").to.have.length(1);
+                expect(Date.now() - startedAt, "bounded settlement, not an indefinite wait").to.be.lessThan(10_000);
+            } finally {
+                // Restoration executes even though settlement failed.
+                delete (service as any).loadDetails;
+                expect((service as any).loadDetails, "method restoration always executes").to.equal(originalLoadDetails);
+            }
+        }
+        // The gate now releases: the captured operation still settles through
+        // the restored method, so no fixture work stays pending after the test.
+        releaseDetails();
+        await withTimeout(detailOps[0]!, 2_000, "the released detail operation to settle after cleanup");
     });
 });
