@@ -42,6 +42,8 @@ type AdaptiveTakeProfitHistoryUpdate = {
 export { precomputeIndicators };
 
 type BacktestRunOptions = {
+    /** Adverse-only stop stress, keyed by timeKey. Signals, TP and indicators use the original candles. */
+    stopLossStressRanges?: ReadonlyMap<string, { high: number; low: number }>;
     includeAdvancedAnalytics?: boolean;
     includeSharpeRatio?: boolean;
     collectDiagnostics?: boolean;
@@ -56,6 +58,21 @@ type BacktestRunOptions = {
     /** Cooperative cancellation hook for server-side batch execution. */
     isCancelled?: () => boolean;
 };
+
+function getStopLossStressRange(
+    candle: OHLCVData,
+    ranges: BacktestRunOptions['stopLossStressRanges'],
+    exitOptions?: Parameters<typeof processPositionExits>[4],
+): { high: number; low: number } | undefined {
+    if (!ranges || exitOptions?.openOnly) return undefined;
+    const range = ranges.get(timeKey(candle.time));
+    if (!range || !Number.isFinite(range.high) || !Number.isFinite(range.low)
+        || range.low <= 0 || range.high < Math.max(candle.open, candle.close, candle.high)
+        || range.low > Math.min(candle.open, candle.close, candle.low)) {
+        throw new Error(`Missing or invalid stop-loss stress range at ${String(candle.time)}.`);
+    }
+    return range;
+}
 
 export interface BacktestEndpointSelection {
     result: BacktestResult;
@@ -705,6 +722,7 @@ function runSinglePositionFinderFastPath(args: {
     } = args;
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
+    const stopLossStressRanges = options?.stopLossStressRanges;
     const retainTradeHistory = options?.requireTradeHistory === true;
     const endpointEnabled = options?.endpointSelectionLastDataTime !== undefined;
     const endpointLastDataTime = options?.endpointSelectionLastDataTime ?? null;
@@ -854,7 +872,8 @@ function runSinglePositionFinderFastPath(args: {
         options?: Parameters<typeof processPositionExits>[4]
     ): boolean => {
         if (!position) return false;
-        const exitTrigger = processPositionExits(candle, position, config, slippageRate, options, barIndex);
+        const exitTrigger = processPositionExits(candle, position, config, slippageRate, options, barIndex,
+            getStopLossStressRange(candle, stopLossStressRanges, options));
         if (!exitTrigger) return false;
         return recordExit(position, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason).fullyClosed;
     };
@@ -1883,7 +1902,8 @@ function runFallbackPositionSimulation(args: {
 
     const tryProcessExitsAfterEntry = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
         updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-        const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, barIndex);
+        const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, barIndex,
+            getStopLossStressRange(candle, options?.stopLossStressRanges));
         let fullyClosed = false;
         if (exitTrigger) {
             ({ fullyClosed } = recordExit(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));
@@ -1904,7 +1924,8 @@ function runFallbackPositionSimulation(args: {
             return;
         }
 
-        const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, barIndex);
+        const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, barIndex,
+            getStopLossStressRange(candle, options?.stopLossStressRanges));
         if (stopLossTrigger) {
             const { fullyClosed } = recordExit(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
             if (fullyClosed) {
@@ -2114,7 +2135,8 @@ function runFallbackPositionSimulation(args: {
             }
 
             if (config.executionModel === 'next_open' && openedThisBar && !config.allowSameBarExit) {
-                const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, i);
+                const stopLossTrigger = processPositionExits(candle, pos, config, slippageRate, STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS, i,
+                    getStopLossStressRange(candle, options?.stopLossStressRanges));
                 if (stopLossTrigger) {
                     const { fullyClosed } = recordExit(pos, candle, stopLossTrigger.exitPrice, stopLossTrigger.exitSize, stopLossTrigger.exitReason);
                     if (fullyClosed) {
@@ -2125,7 +2147,8 @@ function runFallbackPositionSimulation(args: {
             }
 
             updateSmartSizingPosition(config, smartSizingPositionState, pos, candle);
-            const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, i);
+            const exitTrigger = processPositionExits(candle, pos, config, slippageRate, undefined, i,
+                getStopLossStressRange(candle, options?.stopLossStressRanges));
             let fullyClosed = false;
             if (exitTrigger) {
                 ({ fullyClosed } = recordExit(pos, candle, exitTrigger.exitPrice, exitTrigger.exitSize, exitTrigger.exitReason));

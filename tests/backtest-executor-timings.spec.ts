@@ -7,6 +7,7 @@ import { resolveCapitalSettingsFromRaw } from "../lib/backtest-capital-settings"
 import { calculateSharpeRatioFromEquityCurve, calculateSharpeRatioFromReturns } from "../lib/strategies/performance-metrics";
 import { parabolic_sar_confirmation } from "../lib/strategies/lib/parabolic_sar_confirmation";
 import { rustEngine } from "../lib/rust-engine-client";
+import { timeKey } from "../lib/strategies/backtest/backtest-utils";
 import type {
     BacktestResult,
     BacktestSettings,
@@ -56,6 +57,18 @@ const commonRequest = {
 };
 
 async function main(): Promise<void> {
+    const stressed = await executeBacktest({
+        ...commonRequest,
+        preResolvedSettings:resolveExecutorBacktestSettings({tradeDirection:'long',executionModel:'signal_close',riskMode:'percentage',stopLossEnabled:true,stopLossPercent:0.19},interval),
+        context:{...commonRequest.context,engineMode:'rust_preferred',useRustEnginePreference:true},
+        backtestRunOptions:{
+            includeAdvancedAnalytics:false,includeSharpeRatio:false,skipResultPostProcessing:true,
+            stopLossStressRanges:new Map(data.map(bar=>[timeKey(bar.time),{high:bar.high*1.01,low:bar.low*0.99}])),
+        },
+    });
+    assert.equal(stressed.engineUsed,'typescript');
+    assert.equal(stressed.engineDiagnostics?.rustAttempted,false);
+    assert.ok(stressed.engineDiagnostics?.typescriptReason?.includes('Stop-loss stress ranges require TypeScript'));
     const baseline = await executeBacktest({
         ...commonRequest,
         backtestRunOptions: {

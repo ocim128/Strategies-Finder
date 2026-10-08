@@ -26,6 +26,50 @@ function bar(time: number, overrides: Partial<OHLCVData> = {}): OHLCVData {
 }
 
 describe('synthetic pair dataset builder', () => {
+    it('exposes opposite intrabar paths as an outer envelope only when stress is selected', () => {
+        const base = [bar(0, { open: 100, high: 101, low: 99, close: 100 })];
+        const quote = [bar(0, { open: 100, high: 101, low: 99, close: 100 })];
+        const matched = buildSyntheticPairDataset({ base, quote, interval: '30m' }).bars[0];
+        const stress = buildSyntheticPairDataset({ base, quote, interval: '30m', wickMode: 'worst_case' }).bars[0];
+        assert.equal(matched.high, 1);
+        assert.equal(matched.low, 1);
+        assert.equal(stress.high, 101 / 99);
+        assert.equal(stress.low, 99 / 101);
+        assert.equal(stress.open, matched.open);
+        assert.equal(stress.close, matched.close);
+        assert.equal(stress.volume, matched.volume);
+    });
+
+    it('refuses invalid positive-price bounds instead of silently narrowing the stress range', () => {
+        for (const overrides of [{low:0}, {low:-1}, {high:Infinity}, {high:98}, {low:101}]) {
+            assert.throws(() => buildSyntheticPairDataset({
+                base:[bar(0, {open:100, high:101, low:99, close:100})],
+                quote:[bar(0, {open:100, high:101, low:99, close:100, ...overrides})],
+                interval:'30m', wickMode:'worst_case',
+            }));
+        }
+    });
+
+    it('preserves the stress mode through payload aggregation and the normalized fused pipeline', async () => {
+        const base = [bar(0, {open:100, high:101, low:99, close:100}), bar(1800, {open:100, high:102, low:98, close:100})];
+        const quote = base.map(candle => ({...candle}));
+        const payload = buildSyntheticPairPayload({baseSymbol:'MU•',quoteSymbol:'CRWD•',interval:'4h',sourceInterval:'30m',base,quote,wickMode:'worst_case'});
+        assert.equal(payload.source.wickMode,'worst_case');
+        assert.equal(payload.data[0].high,102/98);
+        assert.equal(payload.data[0].low,98/102);
+        const results = [];
+        for (const assumeNormalizedLegs of [false,true]) {
+            results.push(await buildSyntheticPairFromLegs({
+                baseSymbol:'MU•',quoteSymbol:'CRWD•',interval:'4h',targetBars:100,
+                fetchLeg:async symbol => symbol==='MU•'?base:quote,
+                wickMode:'worst_case', assumeNormalizedLegs,
+            }));
+        }
+        assert.deepEqual(results[0].bars,results[1].bars);
+        assert.equal(results[1].bars[0].high,102/98);
+        assert.equal(results[1].bars[0].low,98/102);
+    });
+
     it('requests enough raw source bars to preserve the target final bar count after sub-bar aggregation', () => {
         assert.equal(resolveSyntheticSourceBars(50_000, 5), 250_000);
         assert.equal(resolveSyntheticSourceBars(50_000, 12), 600_000);

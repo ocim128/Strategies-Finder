@@ -4,7 +4,7 @@ import { calculateBacktestStats, OHLCVData, Signal, Time, Trade, type BacktestSe
 import { calculateSharpeRatioFromEquityCurve } from '../lib/strategies/performance-metrics';
 import { runBacktest, runBacktestCompact } from '../lib/strategies/index';
 import { precomputeIndicators } from '../lib/strategies/backtest';
-import { normalizeBacktestSettings, compareTime } from '../lib/strategies/backtest/backtest-utils';
+import { normalizeBacktestSettings, compareTime, timeKey } from '../lib/strategies/backtest/backtest-utils';
 import { mergeExitStrategySignals } from '../lib/exit-strategy-merge';
 import { buildPositionFromSignal } from '../lib/strategies/backtest/position-builder';
 import { getOpenPositionForScanner } from '../lib/strategies/backtest/signal-preparation';
@@ -13,6 +13,66 @@ import { resolveBacktestSettingsFromRaw } from '../lib/backtest-settings-resolve
 import { resolveEntryRiskTargets } from '../lib/entry-risk-targets';
 import { buildSelectionResult } from '../lib/finder/endpoint';
 import { ADVANCED_SIZING_DEFAULTS } from '../lib/advanced-sizing-settings';
+import { buildStopStressRanges } from '../scripts/stress-synthetic-stops';
+
+describe('Adverse-only synthetic stop stress', () => {
+    const flat = (time: number): OHLCVData => ({time:time as Time,open:1,high:1,low:1,close:1,volume:100});
+    const optionsFor = (data:OHLCVData[], index:number, range:{high:number;low:number}) => ({
+        stopLossStressRanges:new Map(data.map((bar,i)=>[timeKey(bar.time),i===index?range:{high:bar.high,low:bar.low}])),
+        requireTradeHistory:true, omitEquityCurve:true, includeSharpeRatio:false,
+    });
+    for (const side of ['long','short'] as const) {
+        for (const executionModel of ['next_open','signal_close','next_close'] as const) {
+            it(`checks the adverse envelope for ${side} / ${executionModel} in full and compact paths`, () => {
+                const data = [flat(1),flat(2),flat(3),flat(4)];
+                const signals:Signal[] = [{time:data[0].time,type:side==='long'?'buy':'sell',price:1}];
+                const settings:BacktestSettings = {executionModel,tradeDirection:side,riskMode:'percentage',stopLossEnabled:true,stopLossPercent:0.19,disableSignalExits:true,slippageBps:10};
+                const options = optionsFor(data,2,{high:1.02,low:0.98});
+                const baseline = runBacktest(data,signals,10000,100,0,settings);
+                expect(baseline.trades[0].exitReason).to.equal('end_of_data');
+                const full = runBacktest(data,signals,10000,100,0,settings,undefined,undefined,options);
+                const compact = runBacktestCompact(data,signals,10000,100,0,settings,undefined,undefined,options);
+                expect(full.trades[0].exitReason).to.equal('stop_loss');
+                expect(full.trades[0].exitTime).to.equal(data[2].time);
+                expect(compact.trades).to.deep.equal(full.trades);
+                expect(data[2].low).to.equal(1);
+            });
+        }
+        it(`keeps original TP checks and gives a possible SL priority for ${side}`, () => {
+            const data = [flat(1),flat(2),flat(3),flat(4)];
+            const signals:Signal[] = [{time:data[0].time,type:side==='long'?'buy':'sell',price:1}];
+            const settings:BacktestSettings = {executionModel:'next_open',tradeDirection:side,riskMode:'percentage',stopLossEnabled:true,stopLossPercent:0.19,takeProfitEnabled:true,takeProfitPercent:0.5,disableSignalExits:true};
+            const favorableOnly = side==='long'?{high:1.1,low:1}:{high:1,low:0.9};
+            const noInventedTp = runBacktest(data,signals,10000,100,0,settings,undefined,undefined,optionsFor(data,2,favorableOnly));
+            expect(noInventedTp.trades[0].exitReason).to.equal('end_of_data');
+            if(side==='long') data[2].high=1.01; else data[2].low=0.99;
+            const stressed = runBacktest(data,signals,10000,100,0,settings,undefined,undefined,optionsFor(data,2,{high:1.02,low:0.98}));
+            expect(stressed.trades[0].exitReason).to.equal('stop_loss');
+        });
+        it(`checks next-open entry-bar stops in combined ${side} execution`, () => {
+            const data = [flat(1),flat(2),flat(3)];
+            const signals:Signal[] = [{time:data[0].time,type:side==='long'?'buy':'sell',price:1}];
+            const settings:BacktestSettings = {executionModel:'next_open',tradeDirection:'combined',riskMode:'percentage',stopLossEnabled:true,stopLossPercent:0.19,disableSignalExits:true};
+            const options = optionsFor(data,1,{high:1.02,low:0.98});
+            for(const run of [runBacktest,runBacktestCompact]) {
+                const result=run(data,signals,10000,100,0,settings,undefined,undefined,options);
+                expect(result.trades[0].exitReason).to.equal('stop_loss');
+                expect(result.trades[0].entryTime).to.equal(result.trades[0].exitTime);
+            }
+        });
+    }
+    it('rejects missing stress ranges instead of silently reverting to optimistic fills', () => {
+        const data=[flat(1),flat(2),flat(3)];
+        expect(() => runBacktest(data,[{time:data[0].time,type:'buy',price:1}],10000,100,0,
+            {executionModel:'next_open',riskMode:'percentage',stopLossEnabled:true,stopLossPercent:0.19},undefined,undefined,{stopLossStressRanges:new Map()}))
+            .to.throw('Missing or invalid stop-loss stress range');
+    });
+    it('uses only the known open for unfinished bars', () => {
+        const ranges=buildStopStressRanges([{...flat(0),high:1.1,low:0.9},{...flat(14400),high:2,low:0.5}],'4h',15000);
+        expect(ranges.get(timeKey(0 as Time))).to.deep.equal({high:1.1,low:0.9});
+        expect(ranges.get(timeKey(14400 as Time))).to.deep.equal({high:1,low:1});
+    });
+});
 describe('Exit merge order does not change fills (event-sweep plan, phase 4)', () => {
     const data: OHLCVData[] = [
         { time: 1 as Time, open: 100, high: 100, low: 100, close: 100, volume: 1000 },
@@ -3135,4 +3195,3 @@ describe('Maximum percentage drawdown is measured independently of dollars', () 
         expect(ranked[1]).to.equal(deepEarlyDip);
     });
 });
-

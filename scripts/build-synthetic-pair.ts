@@ -4,11 +4,13 @@ import * as path from "node:path";
 import { fetchBinanceDataWithLimit } from "../lib/dataProviders/binance";
 import type { OHLCVData } from "../lib/types/strategies";
 import { parseOhlcvDataFile } from "./lib/ohlcv-file";
+import { parseIntervalSeconds } from "../lib/interval-utils";
 import {
     buildSyntheticPairPayload,
     deriveSyntheticSymbol,
     pickSourceInterval,
     type SyntheticPairPayload,
+    type SyntheticWickMode,
 } from "./lib/synthetic-pair";
 
 export type CliOptions = {
@@ -20,6 +22,8 @@ export type CliOptions = {
     outPath: string;
     baseFile?: string;
     quoteFile?: string;
+    wickMode?: SyntheticWickMode;
+    sourceInterval?: string;
     help?: boolean;
 };
 
@@ -37,6 +41,8 @@ function printUsage(): void {
         "  --out <path>             Output JSON path (default: price-data/synthetic/<SYMBOL>-<interval>.json)",
         "  --base-file <path>       Optional local JSON file for base bars",
         "  --quote-file <path>      Optional local JSON file for quote bars",
+        "  --wick-mode <mode>       matched (default) or worst_case (outer-envelope stress candles)",
+        "  --source-interval <tf>   Explicit finer leg interval, including for local JSON files",
         "  --help, -h               Show usage",
         "",
         "Examples:",
@@ -59,6 +65,8 @@ export function parseCliOptions(argv: string[]): CliOptions {
     let outPath: string | undefined;
     let baseFile: string | undefined;
     let quoteFile: string | undefined;
+    let wickMode: SyntheticWickMode = 'matched';
+    let sourceInterval: string | undefined;
 
     for (let i = 0; i < argv.length; i += 1) {
         const arg = argv[i];
@@ -76,6 +84,14 @@ export function parseCliOptions(argv: string[]): CliOptions {
         if (arg === "--out" && next) { outPath = next; i += 1; continue; }
         if (arg === "--base-file" && next) { baseFile = next; i += 1; continue; }
         if (arg === "--quote-file" && next) { quoteFile = next; i += 1; continue; }
+        if (arg === "--wick-mode") {
+            if (next !== 'matched' && next !== 'worst_case') fail('--wick-mode must be matched or worst_case.');
+            wickMode = next; i += 1; continue;
+        }
+        if (arg === "--source-interval") {
+            if (!next || next.startsWith('--')) fail('--source-interval requires an interval.');
+            sourceInterval = next.trim().toLowerCase(); i += 1; continue;
+        }
     }
 
     if (!baseSymbol) fail("--base-symbol is required.");
@@ -87,9 +103,16 @@ export function parseCliOptions(argv: string[]): CliOptions {
     const normalizedQuote = quoteSymbol.trim().toUpperCase();
     const normalizedSymbol = symbol?.trim().toUpperCase() || deriveSyntheticSymbol(normalizedBase, normalizedQuote);
     const resolvedInterval = interval.trim().toLowerCase();
+    if (sourceInterval) {
+        const targetSeconds = parseIntervalSeconds(resolvedInterval);
+        const sourceSeconds = parseIntervalSeconds(sourceInterval);
+        if (!targetSeconds || !sourceSeconds || sourceSeconds > targetSeconds || targetSeconds % sourceSeconds !== 0) {
+            fail('--source-interval must divide the target interval exactly and cannot be coarser.');
+        }
+    }
     const resolvedOutPath = outPath
         ? path.resolve(outPath)
-        : path.resolve("price-data", "synthetic", `${normalizedSymbol}-${resolvedInterval}.json`);
+        : path.resolve("price-data", "synthetic", `${normalizedSymbol}-${resolvedInterval}${wickMode === 'worst_case' ? '-stress' : ''}.json`);
 
     return {
         baseSymbol: normalizedBase,
@@ -100,6 +123,8 @@ export function parseCliOptions(argv: string[]): CliOptions {
         outPath: resolvedOutPath,
         baseFile,
         quoteFile,
+        wickMode,
+        sourceInterval,
     };
 }
 
@@ -113,6 +138,10 @@ function printRunSummary(
 ): void {
     console.log(`[SyntheticPair] Base=${payload.source.baseSymbol} Quote=${payload.source.quoteSymbol} Interval=${payload.interval}`);
     console.log(`[SyntheticPair] SyntheticSymbol=${payload.symbol} Method=${payload.source.method}`);
+    if (payload.source.wickMode === 'worst_case') {
+        console.log('[SyntheticPair] STRESS: outer-envelope wicks; chart import regenerates strategy signals and can add TP touches.');
+        console.log('[SyntheticPair] Use synthetic:stress-stops for adverse-only stops with original signals and TP checks.');
+    }
     console.log(`[SyntheticPair] FetchedBase=${baseBars} FetchedQuote=${quoteBars} SyntheticBars=${payload.bars} Dropped=${droppedBars}`);
     console.log(`[SyntheticPair] Output=${filePath}`);
 }
@@ -140,7 +169,9 @@ export async function run(argv: string[]): Promise<void> {
         return;
     }
 
-    const source = options.baseFile || options.quoteFile
+    const source = options.sourceInterval
+        ? { sourceInterval: options.sourceInterval, ratio: parseIntervalSeconds(options.interval)! / parseIntervalSeconds(options.sourceInterval)! }
+        : options.baseFile || options.quoteFile
         ? null
         : pickSourceInterval(options.interval);
     const sourceInterval = source?.sourceInterval ?? options.interval;
@@ -181,6 +212,7 @@ export async function run(argv: string[]): Promise<void> {
         quote: quoteBars,
         minBars: 1,
         sourceInterval: source?.sourceInterval,
+        wickMode: options.wickMode,
     });
 
     fs.mkdirSync(path.dirname(options.outPath), { recursive: true });

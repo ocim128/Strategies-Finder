@@ -98,6 +98,8 @@ export interface BacktestExecutorRequest {
     strategyExecutionContext?: StrategyExecutionContext;
     /** Optional low-level run controls for bulk research callers that do not need full chart artifacts. */
     backtestRunOptions?: {
+        /** TypeScript-only adverse stop envelope, keyed by timeKey. Never persisted as settings. */
+        stopLossStressRanges?: ReadonlyMap<string, { high: number; low: number }>;
         includeAdvancedAnalytics?: boolean;
         includeSharpeRatio?: boolean;
         collectDiagnostics?: boolean;
@@ -588,6 +590,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const signalShapeUnsupported = hasUnsupportedRustSignalShape(mergedSignals);
     const requiredRustCapabilities = getRequiredRustCapabilities(resolvedSettings);
     if (!signalShapeUnsupported
+        && !req.backtestRunOptions?.stopLossStressRanges
         && !rustCapabilities
         && requiredRustCapabilities.length > 0
         && shouldAttemptRust(req.context.engineMode ?? "auto", false, req.context.useRustEnginePreference)) {
@@ -599,6 +602,9 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     }
     throwIfBacktestCancelled(req.context.signal);
     const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings, rustCapabilities);
+    if (req.backtestRunOptions?.stopLossStressRanges) {
+        typescriptRequirementReasons.push("Stop-loss stress ranges require TypeScript");
+    }
     if (rustHealthUnavailable) typescriptRequirementReasons.unshift("health_unavailable");
     if (signalShapeUnsupported) typescriptRequirementReasons.push("signal_shape_unsupported");
     if (req.backtestRunOptions?.forceDisableSignalExits === true) {

@@ -539,6 +539,15 @@ semantics Rust does not represent, including:
 - adaptive percentage take profit;
 - disabled signal exits.
 
+Internal `backtestRunOptions.stopLossStressRanges` also requires TypeScript.
+This transient map, keyed by `timeKey`, supplies conservative synthetic
+high/low bounds for stop checks only. Signals, indicators, entries, TP,
+trailing updates and ordinary closing prices retain the original candles.
+Missing or invalid intrabar ranges fail rather than silently omitting stress.
+The CLI runner excludes future wicks from unfinished next-open boundary bars.
+These ranges are not persisted settings or part of the Rust/HTTP wire shape;
+see [synthetic stop stress](synthetic-pairs.md#conservative-stop-loss-stress-test).
+
 The current Rust kernel has parity coverage for non-zero slippage: it applies
 slippage to entries and ordinary exits with direction-correct sides, leaves the
 final end-of-data close raw, and calculates trade `pnlPercent` from fee-aware

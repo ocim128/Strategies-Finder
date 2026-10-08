@@ -24,6 +24,7 @@
     "bench:arm-worker-reuse": "esno scripts/bench-finder-arm-worker-reuse.ts",
     "research:open-score": "esno scripts/replay-open-score-run.ts",
     "synthetic:pair": "esno scripts/build-synthetic-pair.ts",
+    "synthetic:stress-stops": "esno scripts/stress-synthetic-stops.ts",
     "ibkr:aggregate": "esno scripts/ibkr-aggregate-csv.ts",
     "data:preflight": "esno scripts/data-integrity-preflight.ts",
     "strategies:sync-manifest": "esno scripts/sync-strategy-manifest.ts",

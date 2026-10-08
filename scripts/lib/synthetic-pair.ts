@@ -20,6 +20,8 @@ import { getLocalDailyDatasetConfig, isIbkrSymbol } from '../../lib/local-daily-
 // ============================================================================
 
 export type SyntheticMethod = 'ratio';
+/** Outer OHLC envelope for a stress scenario; not synchronized historical prices. */
+export type SyntheticWickMode = 'matched' | 'worst_case';
 
 export interface SyntheticPairDatasetMeta {
     baseBars: number;
@@ -38,6 +40,7 @@ export interface SyntheticPairPayloadSource {
     quoteSymbol: string;
     method: SyntheticMethod;
     sourceInterval?: string;
+    wickMode?: SyntheticWickMode;
 }
 
 export interface SyntheticPairPayload {
@@ -63,6 +66,7 @@ export interface BuildSyntheticPairDatasetOptions {
     quote: unknown;
     interval: string;
     minBars?: number;
+    wickMode?: SyntheticWickMode;
 }
 
 export interface BuildSyntheticPairPayloadOptions {
@@ -75,6 +79,7 @@ export interface BuildSyntheticPairPayloadOptions {
     minBars?: number;
     generatedAt?: string;
     sourceInterval?: string;
+    wickMode?: SyntheticWickMode;
 }
 
 // ============================================================================
@@ -102,12 +107,13 @@ export class SyntheticAlignmentError extends Error {
 export function buildSyntheticPairDataset(
     options: BuildSyntheticPairDatasetOptions
 ): SyntheticPairDataset {
-    const { base, quote, minBars = 1 } = options;
+    const { base, quote, minBars = 1, wickMode = 'matched' } = options;
 
     return buildSyntheticPairDatasetFromNormalizedCandles({
         base: parseOhlcvBars(base),
         quote: parseOhlcvBars(quote),
         minBars,
+        wickMode,
     });
 }
 
@@ -121,8 +127,9 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
     base: readonly OHLCVData[];
     quote: readonly OHLCVData[];
     minBars?: number;
+    wickMode?: SyntheticWickMode;
 }): SyntheticPairDataset {
-    const { base: baseBars, quote: quoteBars, minBars = 1 } = options;
+    const { base: baseBars, quote: quoteBars, minBars = 1, wickMode = 'matched' } = options;
 
     if (quoteBars.length === 0) {
         throw new SyntheticQuoteError('Quote bars must contain at least one aligned candle.');
@@ -160,6 +167,7 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
         }
 
         matchedBars += 1;
+        if (wickMode === 'worst_case') validateStressLegs(baseBar, quoteBar);
         const open = safeDiv(baseBar.open, quoteBar.open);
         const close = safeDiv(baseBar.close, quoteBar.close);
 
@@ -169,12 +177,11 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
             continue;
         }
 
-        // Compute the ratio at each OHLC point using same-instant prices.
-        // The old formula (base.high/quote.low) conflated extremes from
-        // different moments, inflating the bar range by 3-18× for correlated
-        // legs and creating phantom TP/SL fills in backtests.
-        const rHigh = safeDiv(baseBar.high, quoteBar.high);
-        const rLow = safeDiv(baseBar.low, quoteBar.low);
+        // Matched extrema are an inner range approximation: leg highs/lows
+        // need not occur together. Cross-extrema form an outer uncertainty
+        // envelope, deliberately selectable for stress tests only.
+        const rHigh = safeDiv(baseBar.high, wickMode === 'worst_case' ? quoteBar.low : quoteBar.high);
+        const rLow = safeDiv(baseBar.low, wickMode === 'worst_case' ? quoteBar.high : quoteBar.low);
         let high = Math.max(open, close);
         let low = Math.min(open, close);
         if (Number.isFinite(rHigh)) {
@@ -227,13 +234,13 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
 export function buildSyntheticPairPayload(
     options: BuildSyntheticPairPayloadOptions
 ): SyntheticPairPayload {
-    const { baseSymbol, quoteSymbol, interval, base, quote, minBars = 1, generatedAt, sourceInterval } = options;
+    const { baseSymbol, quoteSymbol, interval, base, quote, minBars = 1, generatedAt, sourceInterval, wickMode = 'matched' } = options;
     const normalizedBase = normalizeSymbol(baseSymbol);
     const normalizedQuote = normalizeSymbol(quoteSymbol);
     const symbol = normalizeSymbol(options.symbol ?? deriveSyntheticSymbol(normalizedBase, normalizedQuote));
 
     const buildInterval = sourceInterval ?? interval;
-    const dataset = buildSyntheticPairDataset({ base, quote, interval: buildInterval, minBars });
+    const dataset = buildSyntheticPairDataset({ base, quote, interval: buildInterval, minBars, wickMode });
     const finalBars = sourceInterval
         ? aggregateSyntheticBars(dataset.bars, interval)
         : dataset.bars;
@@ -248,6 +255,7 @@ export function buildSyntheticPairPayload(
             quoteSymbol: normalizedQuote,
             method: 'ratio',
             sourceInterval,
+            ...(wickMode === 'worst_case' ? { wickMode } : {}),
         },
         bars: finalBars.length,
         data: finalBars.map((bar) => ({
@@ -395,6 +403,7 @@ export async function buildSyntheticPairFromLegs(args: {
     tailSliceBars?: number;
     minBars?: number;
     assumeNormalizedLegs?: boolean;
+    wickMode?: SyntheticWickMode;
     /**
      * When true, an empty base or quote leg yields an empty `bars` array
      * instead of throwing SyntheticAlignmentError / SyntheticQuoteError.
@@ -405,6 +414,7 @@ export async function buildSyntheticPairFromLegs(args: {
 }): Promise<SyntheticPairFromLegsResult> {
     const { interval, targetBars, fetchLeg, baseSymbol, quoteSymbol } = args;
     const minBars = args.minBars ?? 1;
+    const wickMode = args.wickMode ?? 'matched';
     // Disk-aware seed: when one or both legs are IBKR, restrict candidates to
     // intervals IBKR actually stores. pickSourceInterval('1d') would otherwise
     // pick '2h' (ratio 12) which no IBKR symbol has on disk — this filter
@@ -461,9 +471,10 @@ export async function buildSyntheticPairFromLegs(args: {
                 quote,
                 targetInterval: interval,
                 minBars,
+                wickMode,
             })
-            : buildSyntheticPairDatasetFromNormalizedCandles({ base, quote, minBars }))
-        : buildSyntheticPairDataset({ base, quote, interval: effectiveInterval, minBars });
+            : buildSyntheticPairDatasetFromNormalizedCandles({ base, quote, minBars, wickMode }))
+        : buildSyntheticPairDataset({ base, quote, interval: effectiveInterval, minBars, wickMode });
     const bars = subdivided && !args.assumeNormalizedLegs
         ? aggregateSyntheticBars(dataset.bars, interval)
         : dataset.bars;
@@ -491,8 +502,9 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
     quote: readonly OHLCVData[];
     targetInterval: string;
     minBars?: number;
+    wickMode?: SyntheticWickMode;
 }): SyntheticPairDataset {
-    const { base: baseBars, quote: quoteBars, targetInterval, minBars = 1 } = options;
+    const { base: baseBars, quote: quoteBars, targetInterval, minBars = 1, wickMode = 'matched' } = options;
     if (quoteBars.length === 0) {
         throw new SyntheticQuoteError('Quote bars must contain at least one aligned candle.');
     }
@@ -502,7 +514,7 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
 
     const targetSecs = parseIntervalSeconds(targetInterval);
     if (!targetSecs || targetSecs <= 0) {
-        return buildSyntheticPairDatasetFromNormalizedCandles({ base: baseBars, quote: quoteBars, minBars });
+        return buildSyntheticPairDatasetFromNormalizedCandles({ base: baseBars, quote: quoteBars, minBars, wickMode });
     }
 
     const syntheticBars: OHLCVData[] = [];
@@ -538,6 +550,7 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
         }
 
         matchedBars += 1;
+        if (wickMode === 'worst_case') validateStressLegs(baseBar, quoteBar);
         const open = safeDiv(baseBar.open, quoteBar.open);
         const close = safeDiv(baseBar.close, quoteBar.close);
         if (!Number.isFinite(open) || !Number.isFinite(close)) {
@@ -546,8 +559,8 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
             continue;
         }
 
-        const rHigh = safeDiv(baseBar.high, quoteBar.high);
-        const rLow = safeDiv(baseBar.low, quoteBar.low);
+        const rHigh = safeDiv(baseBar.high, wickMode === 'worst_case' ? quoteBar.low : quoteBar.high);
+        const rLow = safeDiv(baseBar.low, wickMode === 'worst_case' ? quoteBar.high : quoteBar.low);
         let high = Math.max(open, close);
         let low = Math.min(open, close);
         if (Number.isFinite(rHigh)) {
@@ -732,4 +745,14 @@ function safeDiv(numerator: number, denominator: number): number {
     }
 
     return numerator / denominator;
+}
+
+function validateStressLegs(base: OHLCVData, quote: OHLCVData): void {
+    for (const [label, candle] of [['base', base], ['quote', quote]] as const) {
+        if (![candle.open, candle.high, candle.low, candle.close].every(value => Number.isFinite(value) && value > 0)
+            || candle.high < Math.max(candle.open, candle.close)
+            || candle.low > Math.min(candle.open, candle.close)) {
+            throw new SyntheticQuoteError(`Worst-case wicks require valid positive ${label} OHLC at ${String(candle.time)}.`);
+        }
+    }
 }

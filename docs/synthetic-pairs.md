@@ -64,7 +64,42 @@ For each aligned timestamp, the synthetic candle is computed as a ratio:
 - `low = min(open, close, base.high / quote.high, base.low / quote.low)`
 - `volume = min(base.volume, quote.volume)`
 
-By default the UI and CLI also try to fetch a finer divisible source interval, build the ratio on those sub-bars, then aggregate back to the target interval. This captures more realistic intrabar extremes than building directly from target-timeframe bars.
+The two legs' highs and lows need not occur at the same instant. These matched-extreme divisions approximate an inner range; they can miss ratio excursions within a source candle. By default the UI and CLI try to fetch a finer divisible source interval, build the ratio on those sub-bars, then aggregate back to the target interval. This reduces the uncertainty without resolving the path inside each source candle.
+
+### Conservative stop-loss stress test
+
+Use `synthetic:stress-stops` to assume that each source candle's adverse leg extremes coincide:
+
+- Long SL uses `base.low / quote.high` as the possible low.
+- Short SL uses `base.high / quote.low` as the possible high.
+- The source envelopes are aggregated to the target timeframe.
+- A possible stop touch takes priority over TP, including stops on `next_open` entry bars.
+- Strategy signals, indicator calculations, entry prices, TP checks, trailing updates and final closing prices use the original matched candles. The widened favorable wick cannot award an additional TP.
+- Unfinished target bars contribute only their known opening price; their future wicks are excluded.
+
+This is an adverse stop scenario, not a reconstruction of synchronized prices or a mathematical worst-case bound on total portfolio PNL. Earlier stops change position availability and subsequent entries. Stop gaps and slippage retain the ordinary engine behavior.
+
+Save a copied endpoint request body as `config.json` and run against the two local seed CSVs or OHLCV JSON files. The strategy key must be supplied because the copied body may omit it. On Windows PowerShell use `npm.cmd` to preserve argument names:
+
+```powershell
+npm.cmd run synthetic:stress-stops -- --config config.json --strategy dmi_direction_confirmation --base-file price-data/ibkr/csv/30m/MU.csv --quote-file price-data/ibkr/csv/30m/CRWD.csv --source-interval 30m --out artifacts/mu-crwd-stop-stress
+```
+
+The runner uses the endpoint's fixed profile: $10,000 initial capital, $1,000 trade amount and 0.1% commission per side. It runs in TypeScript and preserves the supplied parameters, settings, evaluation time and block range. It rebuilds the dataset from the files; the request's `dataset.ref` is not read. For an exact comparison, use the seed snapshots that produced that reference.
+
+Output includes `report.json`, baseline/stress trade lists, `baseline.json` and `envelope.json`. Inspect the report to compare baseline and stress metrics. Importing `envelope.json` into the chart produces a different experiment: it also changes strategy indicators/signals and widens TP checks. It does not reproduce the adverse-only stop run.
+
+The transform APIs and generation CLI also support an explicit outer-envelope mode:
+
+```powershell
+npm.cmd run synthetic:pair -- --base-symbol MU --quote-symbol CRWD --symbol MU-CRWD-STRESS --interval 4h --bars 50000 --base-file mu-30m.json --quote-file crwd-30m.json --source-interval 30m --wick-mode worst_case
+```
+
+This generates `high = max(open, close, base.high / quote.low)` and `low = min(open, close, base.low / quote.high)`. The payload records `source.wickMode: "worst_case"`, and the default output filename ends in `-stress.json`. Stress generation rejects malformed or non-positive aligned leg OHLC rather than quietly narrowing the range. Ordinary generation remains `matched` by default, including existing chart, Batch and Finder loaders.
+
+The `--source-interval` override accepts a source that divides the target exactly, including local JSON inputs. The default source selector has a 12:1 subdivision cap: a `4h` run normally selects `30m`, even when finer catalog intervals exist. Explicit finer data reduces the stress envelope; use the actual interval of the supplied files.
+
+Internal executor callers can supply `backtestRunOptions.stopLossStressRanges`, a map keyed by `timeKey`, to run the same adverse-only checks. These transient ranges require TypeScript; they are not saved settings or part of the HTTP endpoint request contract. Every intrabar candle checked while a position is active must have a valid positive envelope encompassing its original range. Full, compact, combined, and single-position simulations share this contract.
 
 ### Alignment
 
@@ -122,7 +157,7 @@ Old configs without `syntheticPair` metadata continue to work normally (backward
 
 ### Execution realism
 
-Sub-bar reconstruction reduces false TP/SL fills materially, but synthetic pairs are still research-grade. They do not model cross-leg latency, spread, borrow, hedge slippage, or partial fills. For execution-grade validation, use lower-timeframe or tick data and treat the synthetic pair as signal research rather than fill-truth.
+Sub-bar reconstruction reduces uncertainty, but synthetic pairs are still research-grade. Matched wicks can omit stop touches; outer-envelope wicks can assume touches that never happened. They do not model cross-leg latency, spread, borrow, hedge slippage, or partial fills. For execution-grade validation, use lower-timeframe or tick data and treat the synthetic pair as signal research rather than fill-truth.
 
 ### Volume
 
@@ -144,6 +179,7 @@ Synthetic bar count is limited by the overlap between the two input series. If o
 |---|---|
 | Pure transform module | `scripts/lib/synthetic-pair.ts` |
 | CLI script | `scripts/build-synthetic-pair.ts` |
+| Adverse-only stop stress runner | `scripts/stress-synthetic-stops.ts` |
 | Data Mining UI wiring | `lib/data-mining-manager.ts` (see `generateSyntheticPair()`) |
 | Data Mining DOM contract | `lib/data-mining-dom.ts` |
 | HTML controls | `html-partials/tab-datamining.html` |

@@ -103,7 +103,8 @@ export function processPositionExits(
     config: NormalizedSettings,
     slippageRate: number,
     options: PositionExitOptions = DEFAULT_POSITION_EXIT_OPTIONS,
-    currentBarIndex?: number
+    currentBarIndex?: number,
+    stopLossStressRange?: { high: number; low: number },
 ): PositionExitTrigger | null {
     const isShortPosition = position.direction === 'short';
     const exitSide = exitSideForDirection(position.direction);
@@ -114,8 +115,8 @@ export function processPositionExits(
         const stopHit = options.openOnly
             ? isStopLossHitAtOpen(candle, stopLoss, isShortPosition)
             : isShortPosition
-                ? greaterThanOrNearlyEqual(candle.high, stopLoss)
-                : lessThanOrNearlyEqual(candle.low, stopLoss);
+                ? greaterThanOrNearlyEqual(Math.max(candle.high, stopLossStressRange?.high ?? candle.high), stopLoss)
+                : lessThanOrNearlyEqual(Math.min(candle.low, stopLossStressRange?.low ?? candle.low), stopLoss);
         if (stopHit) {
             const stopExitPrice = resolveStopLossExitPrice(candle, stopLoss, isShortPosition);
             return {
