@@ -1,5 +1,6 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { afterEach, describe, it, beforeEach } from "node:test";
+import { afterEach, describe, it, beforeEach, type TestContext } from "node:test";
+import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { expect } from "chai";
@@ -7,12 +8,14 @@ import {
     __acquireCryptoSyncOwnerForTests,
     __getCryptoSyncRunStateForTests,
     __resetCryptoSyncStateForTests,
+    fetchCryptoKlines,
     getCryptoCsvPath,
     parseCryptoCsvCandleLines,
     processCryptoSyncBatch,
     writeCryptoCsv,
 } from "../lib/crypto-data/crypto-data-vite-plugin";
 import { buildCryptoSyncRequestPlans, expandCryptoSymbols } from "../lib/crypto-data/crypto-symbol-plans";
+import { isAbortError, isTimeoutError } from "../lib/dataProviders/fetch-helpers";
 
 // Per-spec tempdir root for `writeCryptoCsv` round-trip fixtures. Previously
 // these wrote under `price-data/crypto/csv/<interval>/` relative to cwd, which
@@ -428,6 +431,246 @@ describe("processCryptoSyncBatch reattach snapshot (Findings 1 & 6)", () => {
             updatedAt: "2026-07-12T00:00:01.000Z",
         };
         expect(sample.completedTargets).to.have.length(1);
+    });
+});
+
+/**
+ * Timeout-vs-Stop policy for the inline Binance kline fetcher.
+ *
+ * The kline fetch path is exercised with a mocked global `fetch` because a
+ * batch-only injected fetcher cannot verify host failover. Mock timers drive
+ * the 30s attempt deadlines and the retry backoff so no test waits on real
+ * time. The policy under test (mirroring `fetchKlinesBatch` in
+ * lib/dataProviders/binance.ts):
+ * - a per-attempt/per-host deadline (TimeoutError) is a host failure that
+ *   falls through to the next base and eventually rejects as a plain error;
+ * - only caller cancellation (AbortError not caused by the deadline, or an
+ *   already-aborted caller signal) ends the request/batch immediately.
+ */
+describe("fetchCryptoKlines timeout vs Stop policy", () => {
+    const originalFetch = globalThis.fetch;
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+    });
+
+    const KLINE_ROWS = [[1700000000000, "100", "110", "95", "105", "1.5"]];
+    const klinesResponse = (): Response => new Response(JSON.stringify(KLINE_ROWS), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+    });
+    const hostOf = (input: unknown): string => new URL(String(input)).host;
+    const drain = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+    /**
+     * Advance mock timers until `op` settles. Each 31s tick clears every due
+     * attempt deadline (30s) and retry backoff (≤500ms); timers scheduled while
+     * ticking within the same window fire too, so the loop converges in far
+     * fewer iterations than the number of scheduled timers.
+     */
+    async function tickUntilSettled(t: TestContext, op: Promise<unknown>, maxTicks = 400): Promise<void> {
+        let settled = false;
+        op.then(() => { settled = true; }, () => { settled = true; });
+        for (let i = 0; i < maxTicks && !settled; i += 1) {
+            await drain();
+            t.mock.timers.tick(31_000);
+        }
+        await drain();
+    }
+
+    const pendedFetch = (init: RequestInit | undefined): Promise<Response> => new Promise<Response>((_resolve, reject) => {
+        init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+    });
+
+    it("fails over to the next host when an attempt deadline fires (timeout is not Stop)", async (t) => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const hosts: string[] = [];
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            hosts.push(hostOf(input));
+            if (hostOf(input) === "data-api.binance.vision") {
+                return pendedFetch(init); // first host: every attempt hits its deadline
+            }
+            return klinesResponse();
+        }) as typeof fetch;
+
+        const op = fetchCryptoKlines("BTCUSDT", "4h", 10, "spot", null);
+        await tickUntilSettled(t, op);
+        const candles = await op;
+
+        // The deadline fired on every attempt against the first host before
+        // failover; the second host succeeded on its first attempt.
+        expect(hosts.filter((host) => host === "data-api.binance.vision")).to.have.length(3);
+        expect(hosts[hosts.length - 1]).to.equal("api.binance.com");
+        expect(candles).to.have.length(1);
+        expect(candles[0]!.time).to.equal(1700000000);
+        expect(candles[0]!.close).to.equal(105);
+    });
+
+    it("exhausts every host on deadlines and rejects without reporting cancellation", async (t) => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        let calls = 0;
+        globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+            calls += 1;
+            return pendedFetch(init);
+        }) as typeof fetch;
+
+        const op = fetchCryptoKlines("BTCUSDT", "4h", 10, "spot", null);
+        await tickUntilSettled(t, op);
+        await assert.rejects(op, (error: unknown) => {
+            const message = error instanceof Error ? error.message : String(error);
+            return /Binance API unavailable/.test(message) && !isAbortError(error) && !isTimeoutError(error);
+        });
+        // 7 default spot hosts x the 3-attempt retry budget each.
+        expect(calls).to.equal(21);
+    });
+
+    it("stops immediately on caller cancellation during a request", async () => {
+        const controller = new AbortController();
+        let calls = 0;
+        globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+            calls += 1;
+            return pendedFetch(init);
+        }) as typeof fetch;
+
+        const op = assert.rejects(
+            fetchCryptoKlines("BTCUSDT", "4h", 10, "spot", null, controller.signal),
+            (error: unknown) => isAbortError(error) && !isTimeoutError(error),
+        );
+        await drain();
+        controller.abort();
+        await op;
+        // No same-host retry and no failover once the caller stopped the run.
+        expect(calls).to.equal(1);
+    });
+
+    it("keeps the attempt deadline active while a kline body stalls, then fails over", async (t) => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const hosts: string[] = [];
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+            const host = hostOf(input);
+            hosts.push(host);
+            if (host === "data-api.binance.vision") {
+                // Headers arrive immediately, but the JSON body never
+                // completes until the attempt deadline aborts it.
+                const signal = init!.signal!;
+                return new Response(new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+                    },
+                }));
+            }
+            return klinesResponse();
+        }) as typeof fetch;
+
+        const op = fetchCryptoKlines("BTCUSDT", "4h", 10, "spot", null);
+        await tickUntilSettled(t, op);
+        const candles = await op;
+
+        // The stalled body consumed the full retry budget of the first host
+        // (headers + body inside one 30s deadline per attempt) before the
+        // failover; the outcome is a parsed candle, not a hang or cancellation.
+        expect(hosts.filter((host) => host === "data-api.binance.vision")).to.have.length(3);
+        expect(hosts[hosts.length - 1]).to.equal("api.binance.com");
+        expect(candles).to.have.length(1);
+        expect(candles[0]!.close).to.equal(105);
+    });
+
+    it("observes caller Stop while a kline body is stalled after headers arrive", async () => {
+        const controller = new AbortController();
+        let calls = 0;
+        globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+            calls += 1;
+            const signal = init!.signal!;
+            return new Response(new ReadableStream<Uint8Array>({
+                start(controller) {
+                    signal.addEventListener("abort", () => controller.error(signal.reason), { once: true });
+                },
+            }));
+        }) as typeof fetch;
+
+        const op = assert.rejects(
+            fetchCryptoKlines("BTCUSDT", "4h", 10, "spot", null, controller.signal),
+            (error: unknown) => isAbortError(error) && !isTimeoutError(error),
+        );
+        await drain();
+        expect(calls).to.equal(1);
+        controller.abort(); // mid-body, after headers arrived
+        await op;
+        expect(calls).to.equal(1); // Stop ends the request without another attempt
+    });
+
+    it("stops during the retry backoff instead of retrying or failing over", async (t) => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const controller = new AbortController();
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            throw new Error("ECONNRESET");
+        }) as typeof fetch;
+
+        const op = assert.rejects(
+            fetchCryptoKlines("BTCUSDT", "4h", 10, "spot", null, controller.signal),
+            (error: unknown) => isAbortError(error) && !isTimeoutError(error),
+        );
+        await drain();
+        expect(calls).to.equal(1);
+        controller.abort(); // while the first attempt's backoff is pending
+        await op;
+        expect(calls).to.equal(1);
+    });
+});
+
+describe("processCryptoSyncBatch timeout vs Stop policy", () => {
+    beforeEach(() => __resetCryptoSyncStateForTests());
+    afterEach(() => __resetCryptoSyncStateForTests());
+
+    it("reports an exhausted-timeout symbol as symbol_failed and keeps the batch running", async () => {
+        const events: Array<Record<string, unknown>> = [];
+        const stubFetcher = async (symbol: string) => {
+            if (symbol === "SLOWUSDT") throw new DOMException("Provider request timed out", "TimeoutError");
+            return { symbol, bars: 10, fetchedBars: 10, lastTime: 1 };
+        };
+        const owner = __acquireCryptoSyncOwnerForTests();
+        await processCryptoSyncBatch(
+            { symbols: ["SLOWUSDT", "BTCUSDT"], interval: "4h" },
+            true,
+            (event) => events.push(event),
+            owner,
+            { fetcher: stubFetcher as never },
+        );
+        const failed = events.filter((event) => event.type === "symbol_failed");
+        expect(failed).to.have.length(1);
+        expect((failed[0] as Record<string, unknown>).symbol).to.equal("SLOWUSDT");
+        expect(events.filter((event) => event.type === "symbol")
+            .map((event) => (event as Record<string, unknown>).symbol))
+            .to.deep.equal(["BTCUSDT"]);
+        const done = events[events.length - 1] as Record<string, unknown>;
+        expect(done.cancelled).to.equal(false);
+        expect(done.ok).to.equal(false);
+        const run = __getCryptoSyncRunStateForTests();
+        expect(run!.failed).to.equal(1);
+        expect(run!.completed).to.equal(1);
+    });
+
+    it("treats a caller abort carrying a TimeoutError reason as Stop, not a symbol failure", async () => {
+        const events: Array<Record<string, unknown>> = [];
+        const controller = new AbortController();
+        const stubFetcher = async () => {
+            const reason = new DOMException("Caller deadline", "TimeoutError");
+            controller.abort(reason);
+            throw reason;
+        };
+        const owner = __acquireCryptoSyncOwnerForTests();
+        await processCryptoSyncBatch(
+            { symbols: ["BTCUSDT", "ETHUSDT"], interval: "4h" },
+            true,
+            (event) => events.push(event),
+            owner,
+            { fetcher: stubFetcher as never, signal: controller.signal },
+        );
+        const done = events[events.length - 1] as Record<string, unknown>;
+        expect(done.cancelled).to.equal(true);
+        expect(events.filter((event) => event.type === "symbol_failed")).to.have.length(0);
     });
 });
 

@@ -18,7 +18,7 @@ import {
     getPersistedAlertSignalEntryTime,
 } from './alert-signal-utils';
 import { fetchBybitTradFiLatest } from './dataProviders/bybit';
-import { fetchWithTimeoutAndRetry } from './dataProviders/fetch-helpers';
+import { fetchAndConsumeWithTimeoutAndRetry } from './dataProviders/fetch-helpers';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
 import { state } from './state';
@@ -794,9 +794,21 @@ class LivePositionsService {
                         : 'https://api.binance.com/api/v3/ticker/price';
                     // Cap the price-ticker fetch so a stalled Binance request can't
                     // retain PRICE_REQUESTS indefinitely and delay price refresh.
-                    const response = await fetchWithTimeoutAndRetry(
+                    // The JSON is consumed inside the deadline scope so a stalled
+                    // body settles through the same per-attempt deadline as the
+                    // headers; terminal error bodies are cancelled in the same
+                    // scope so a failed attempt releases its connection.
+                    const outcome = await fetchAndConsumeWithTimeoutAndRetry(
                         `${endpoint}?symbol=${normalizedSymbol}`,
                         {},
+                        async (response) => {
+                            if (!response.ok) {
+                                await response.body?.cancel();
+                                return { ok: false as const, price: null };
+                            }
+                            const data = await response.json() as { price: string };
+                            return { ok: true as const, price: parseFloat(data.price) };
+                        },
                         {
                             timeoutMs: 5_000,
                             maxAttempts: 2,
@@ -804,20 +816,26 @@ class LivePositionsService {
                             baseDelayMs: 250,
                         },
                     );
-                    if (!response.ok) throw new Error('Price fetch failed');
+                    if (!outcome.ok) throw new Error('Price fetch failed');
 
-                    const data = await response.json() as { price: string };
-                    const price = parseFloat(data.price);
-                    if (Number.isFinite(price)) {
-                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
-                        return price;
+                    if (Number.isFinite(outcome.price)) {
+                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price: outcome.price, timestamp: Date.now() });
+                        return outcome.price;
                     }
                 }
             } catch (err) {
                 try {
-                    const response = await fetchWithTimeoutAndRetry(
+                    const outcome = await fetchAndConsumeWithTimeoutAndRetry(
                         `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${normalizedSymbol}`,
                         {},
+                        async (response) => {
+                            if (!response.ok) {
+                                await response.body?.cancel();
+                                return { ok: false as const, price: null };
+                            }
+                            const data = await response.json() as { result?: { list?: Array<{ lastPrice: string }> } };
+                            return { ok: true as const, price: parseFloat(data.result?.list?.[0]?.lastPrice || '') };
+                        },
                         {
                             timeoutMs: 5_000,
                             maxAttempts: 2,
@@ -825,13 +843,11 @@ class LivePositionsService {
                             baseDelayMs: 250,
                         },
                     );
-                    if (!response.ok) throw new Error('Bybit price fetch failed');
+                    if (!outcome.ok) throw new Error('Bybit price fetch failed');
 
-                    const data = await response.json() as { result?: { list?: Array<{ lastPrice: string }> } };
-                    const price = parseFloat(data.result?.list?.[0]?.lastPrice || '');
-                    if (Number.isFinite(price)) {
-                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
-                        return price;
+                    if (Number.isFinite(outcome.price)) {
+                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price: outcome.price, timestamp: Date.now() });
+                        return outcome.price;
                     }
                 } catch (bybitErr) {
                     // Log both the primary (Binance) and fallback (Bybit)
@@ -852,6 +868,20 @@ class LivePositionsService {
 
         PRICE_REQUESTS.set(normalizedSymbol, request);
         return request;
+    }
+
+    /**
+     * Test seam: drive a single quote request without running the full
+     * subscription poll, and reset the module-level quote caches between
+     * specs. Not a public API.
+     */
+    __fetchCurrentPriceForTests(symbol: string, interval: string, provider: DataProvider): Promise<number | null> {
+        return this.fetchCurrentPrice(symbol, interval, provider);
+    }
+
+    __resetLivePriceCachesForTests(): void {
+        PRICE_CACHE.clear();
+        PRICE_REQUESTS.clear();
     }
 
     private getActiveChartPrice(symbol: string, interval: string): number | null {
