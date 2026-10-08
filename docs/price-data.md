@@ -52,6 +52,37 @@ lookback. WebSocket construction starts a handshake; only a current socket's
 `open` event resets reconnect attempts and emits `data.stream.connected`.
 Failures before opening retain the existing exponential backoff and ceiling.
 
+The shared in-memory `DataCache` (browser `DataManager` and the server
+singleton in `server-data-fetcher-factory.ts`) carries a dual budget: the
+64-entry LRU plus a retained-points cap (`DataCache.DEFAULT_MAX_POINTS`, one
+million candle points; constructor-overridable, `Infinity` restores
+entry-count-only retention). Accounted per-key lengths are independent of the
+mutable cached arrays, so the totals only move on set, update, removal,
+invalidation, clear, and the explicit `notifyCandleArrayMutation` the realtime
+stream path calls after accepted length changes (last-bar replaces keep the
+length). Eviction removes the matching sync metadata; an oversized dataset
+stays available to its caller but is not retained. `points` and `evictions`
+expose scalar statistics for tests.
+
+## Live quotes
+
+`LivePositionsService.fetchCurrentPrice` resolves the requested provider
+before any shortcut. The quote cache and the in-flight request map are keyed
+by normalized symbol plus provider, so spot and futures subscriptions for one
+symbol never share a cached or in-flight quote. Bybit TradFi keys also carry
+the normalized fallback interval because the fallback candle price depends on
+it; Binance and Bybit ticker keys stay interval-independent. Pending-request
+cleanup is identity-safe: a finishing request only clears the slot it still
+owns.
+
+The active-chart shortcut donates the loaded chart close only when the loaded
+context provably matches the request: the provider must be Binance and
+`DataManager.getLoadedContextKey()` (loaded symbol, interval, and Binance
+market) must equal the requested context. `state.binanceMarketType` alone is
+not enough because it can change before replacement data loads. Imported or
+synthetic data (no loaded context) and non-Binance providers skip the
+shortcut and fetch a quote.
+
 ## Chart display modes and live ticks
 
 `state.ohlcvData` always holds raw OHLCV and is the only input to strategies,
@@ -115,6 +146,18 @@ an `AbortError` for that deadline. Binance then tries its next endpoint after
 exhausting timeout retries. Caller cancellation stops retries and failover
 immediately, including when the caller's abort reason is `TimeoutError`.
 
+The crypto sync plugin's inline kline fetcher (`crypto-data-vite-plugin.ts`)
+and the live-price Binance/Bybit ticker branches follow the same policy:
+`TimeoutError` is a host failure that consumes the retry/host budget and then
+fails over (or reaches `symbol_failed` for the crypto batch), while only an
+aborted caller signal or a non-timeout `AbortError` cancels. The kline and
+ticker consumers parse JSON inside the deadline scope and cancel terminal
+error bodies in the same scope, so body stalls settle through the configured
+per-attempt deadline (30 seconds per crypto attempt, 5 seconds per ticker
+attempt) instead of pinning a request or a batch symbol indefinitely. These
+are per-attempt deadlines: Retry-After backoff and multi-endpoint failover
+mean they are not a single whole-operation wall-clock limit.
+
 Binance backward pagination accepts a page only when its cursor moves strictly
 backward and its final open time respects the requested end time. A stalled
 or invalid page stops pagination and emits `data.fetch.pagination_stalled`;
@@ -131,8 +174,18 @@ The next `/series-meta` read rebuilds count, first/last timestamps, and the
 update timestamp from committed candles; `summary=true` writes rebuild
 immediately. Other series remain cached. This keeps Binance synthetic-pair
 fingerprints fresh after appends and historical corrections without a full
-summary scan on every stream write. Update timestamps retain Unix-second
-precision, so corrections within the same second can share a fingerprint.
+summary scan on every stream write.
+
+Because update timestamps retain Unix-second precision, corrections within
+the same second would otherwise share a fingerprint with the data they
+replaced. Each accepted `/store-ohlcv` request therefore also increments a
+monotonic per-series write counter (`series_revisions`) inside the same
+transaction — first writes land at revision 1, and a rollback undoes candles,
+invalidation, and revision together. `/series-meta` responses carry
+`revision`; series without a counter row (external seed data, older
+databases) read as 0. Revision guarantees cover writes through this plugin,
+not external SQL edits. The synthetic-pair disk cache folds the revision into
+Binance leg segments and treats metadata without one as a legacy endpoint.
 
 ## SQLite authorization
 
@@ -207,7 +260,7 @@ automatically on the next stat — no explicit clear.
 ## Validation
 
 ```powershell
-npm run test -- data-persistence data-fetcher.spec.ts candle-cache data-manager-stream.browser.spec.ts point-bounded-parsed-cache.spec.ts fetch-helpers.spec.ts local-sqlite local-route-authorization.spec.ts server-crypto-csv-loader.spec.ts server-ibkr-csv-loader.spec.ts batch-backtest-server-loader-parity.spec.ts finder-server-loader-parity.spec.ts
+npm run test -- data-persistence data-fetcher.spec.ts candle-cache data-cache.spec.ts data-manager-stream.browser.spec.ts point-bounded-parsed-cache.spec.ts fetch-helpers.spec.ts local-sqlite local-route-authorization.spec.ts server-crypto-csv-loader.spec.ts server-ibkr-csv-loader.spec.ts batch-backtest-server-loader-parity.spec.ts finder-server-loader-parity.spec.ts crypto-data-vite-plugin.spec.ts live-positions-service.browser.spec.ts synthetic-pair-disk-cache.spec.ts
 npm run typecheck
 npm run typecheck:tests
 ```

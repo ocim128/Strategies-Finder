@@ -644,6 +644,18 @@ include the complete OHLCV content, not only a time range or bar count. The
 Rust working cache is bounded by entry and retained-bar limits; eviction is
 expected and causes callers to retry with raw data or fall back to TypeScript.
 
+Client-side, `RustEngineClient` deduplicates uploads by hashing every candle,
+index, and OHLCV field into two seeded accumulators
+(`RustEngineClient.getDataCacheKey`). Values mix as raw Float64 bit patterns
+over a single reusable scratch buffer — no decimal rounding — so low-priced
+candles that differ below any rounding grid produce different keys and
+re-upload. Identity matches what `cacheData` actually serializes: `-0` and
+`0` share one key (JSON writes both as `0`), and every non-finite value
+shares one canonical key (JSON writes all of them as `null`). This is a
+noncryptographic cache key, not a collision guarantee; the mapping is
+in-memory per client, so a client restart starts fresh and cannot reuse IDs
+computed by a previous binary.
+
 ### Safety and failure handling
 
 The client bounds serialized request and response sizes, applies timeouts,

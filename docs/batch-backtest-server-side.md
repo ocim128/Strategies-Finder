@@ -684,7 +684,12 @@ disk-first routing itself (`fetchServerHistoricalDataWithFetcher` /
 server loader; each loader still retains its own `DataFetcher` identity, loader
 LRUs, fingerprint memo, and invalidation policy (Batch relies on CSV mtime
 invalidation, while Finder additionally clears parsed CSV caches between
-runs). Worker-thread
+runs). Synthetic-pair disk-cache fingerprints fold the per-series SQLite
+write revision into Binance legs, so same-second historical repairs rebuild
+the pair instead of serving stale ratios; the v9 cache version makes that
+switchover a one-time rebuild. See the
+[price-data guide](price-data.md#sqlite-metadata-freshness) for the
+revision contract. Worker-thread
 reads and synthetic-cache writes use their thread as the blocking boundary,
 avoiding Node's shared filesystem thread-pool bottleneck. Hosts with at least 48 GiB of
 RAM automatically raise each server loader's leg/pair LRUs from the 24/16

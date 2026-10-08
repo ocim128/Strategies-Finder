@@ -62,6 +62,31 @@ sorted by path regardless of completion order. `npm run --silent test:json`
 prints the summary as one JSON object. Use a failed spec's log to investigate
 before rerunning only that spec.
 
+## Hosted CI caches
+
+`.github/workflows/strategies-finder-test-specs.yml` reuses three artifact
+families without inferring any test outcome from a cache:
+
+- Puppeteer browsers: a job-level `PUPPETEER_CACHE_DIR` under the runner temp
+  directory is cached ahead of `npm ci` in both the unit and e2e jobs (both
+  launch Puppeteer). Keys are `puppeteer-<os>-<arch>-<lockfile hash>`.
+- Cargo: the rust job caches `~/.cargo/registry`, `~/.cargo/git`, and
+  `rust-engine/target` after toolchain install. The exact key includes the
+  dtolnay toolchain `cachekey` (compiler identity and platform) plus a
+  `rust-engine/Cargo.lock` hash; the restore prefix omits the lockfile hash so
+  a dependency change rebuilds incrementally instead of evicting everything.
+  fmt/test/clippy always run.
+- Test timing history: the unit job restores only
+  `artifacts/test-logs/timings.json` before `npm run ci` (never `latest/`).
+  Keys carry the timing `formatVersion`, runner OS, and Node version, and end
+  with `<run id>-<run attempt>`; saves happen only after a green run under
+  that unique key, so immutable cache entries cannot freeze scheduling
+  history.
+
+Remove the corresponding steps to restore cold-cache behavior. Net savings
+depend on hosted download/compile versus cache-transfer time and are verified
+from workflow logs, not locally.
+
 ## RTK as the primary agent CLI
 
 [RTK](https://github.com/rtk-ai/rtk) is a local CLI that filters command output
