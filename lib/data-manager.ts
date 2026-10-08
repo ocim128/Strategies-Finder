@@ -5,6 +5,7 @@ import {
     getBinanceMarketTypeForProvider,
     isBinanceDataProvider,
     type BinanceDataProvider,
+    type BinanceMarketType,
 } from "./binance-market";
 import { state } from "./state";
 import { debugLogger } from "./debug-logger";
@@ -176,6 +177,22 @@ export class DataManager {
 
     public getChartLookbackBars(): number | null {
         return this.chartLookbackBars;
+    }
+
+    /**
+     * Test seam: install (or clear) the loaded-context marker as if a dataset
+     * had finished loading for this exact symbol/interval/Binance market, so
+     * quote-identity specs can drive getLoadedContextKey without running a
+     * full setSymbol load. Not a public API.
+     */
+    public __setLoadedContextForTests(
+        symbol: string | null,
+        interval: string | null,
+        binanceMarketType: BinanceMarketType = state.binanceMarketType,
+    ): void {
+        this.loadedSymbol = symbol;
+        this.loadedInterval = interval;
+        this.loadedBinanceMarketType = binanceMarketType;
     }
 
     public getLoadedContextKey(): string | null {

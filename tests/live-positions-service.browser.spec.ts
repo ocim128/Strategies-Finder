@@ -24,7 +24,10 @@
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { livePositionsService } from "../lib/live-positions-service";
+import { state } from "../lib/state";
+import { dataManager } from "../lib/data-manager";
 import type { DataProvider } from "../lib/types/data-providers";
+import type { OHLCVData, Time } from "../lib/strategies/index";
 
 const originalFetch = globalThis.fetch;
 
@@ -151,5 +154,191 @@ describe("live price ticker deadlines", () => {
         // Binance exhausted its 2 attempts, then the Bybit fallback answered.
         assert.deepEqual(calls.filter((host) => host === "binance"), ["binance", "binance"]);
         assert.deepEqual(calls.filter((host) => host === "bybit"), ["bybit"]);
+    });
+});
+
+describe("live price provider identity", () => {
+    beforeEach(() => {
+        livePositionsService.__resetLivePriceCachesForTests();
+    });
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        livePositionsService.__resetLivePriceCachesForTests();
+    });
+
+    it("never shares a quote between spot and futures requests for one symbol", async () => {
+        const urls: string[] = [];
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const url = String(input);
+            urls.push(url);
+            return tickerResponse(url.includes("fapi") ? "65200" : "65100");
+        }) as typeof fetch;
+
+        const [spot, futures] = await Promise.all([
+            fetchQuote("BTCUSDT", "binance"),
+            fetchQuote("BTCUSDT", "binance-futures"),
+        ]);
+
+        assert.equal(spot, 65100);
+        assert.equal(futures, 65200);
+        // Each subscription drove its own transport instead of joining the
+        // other market's in-flight quote.
+        assert.equal(urls.length, 2);
+    });
+
+    it("deduplicates concurrent requests for the same provider and symbol", async () => {
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            return tickerResponse("65101");
+        }) as typeof fetch;
+
+        const [first, second] = await Promise.all([
+            fetchQuote("BTCUSDT", "binance"),
+            fetchQuote("BTCUSDT", "binance"),
+        ]);
+
+        assert.equal(first, 65101);
+        assert.equal(second, 65101);
+        assert.equal(calls, 1);
+    });
+
+    it("serves TTL-fresh repeat quotes from the cache and refetches after expiry", async (t) => {
+        t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            return tickerResponse(calls === 1 ? "65102" : "65103");
+        }) as typeof fetch;
+
+        assert.equal(await fetchQuote("BTCUSDT", "binance"), 65102);
+        assert.equal(await fetchQuote("BTCUSDT", "binance"), 65102);
+        assert.equal(calls, 1);
+
+        // Half the 30s poll interval: the TTL is 15s.
+        t.mock.timers.tick(15_001);
+        assert.equal(await fetchQuote("BTCUSDT", "binance"), 65103);
+        assert.equal(calls, 2);
+    });
+
+    it("scopes the Bybit TradFi quote by its normalized fallback interval", async () => {
+        const intervals: string[] = [];
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (!url.includes("tradfi-kline")) return new Response("{}", { status: 404 });
+            const interval = new URL(url, "https://local.test").searchParams.get("interval") ?? "";
+            intervals.push(interval);
+            const list = interval === "1"
+                ? [] // the 1m probe returns nothing, so the interval fallback decides
+                : [[1700000000000, "99", "101", "98", interval === "D+2" ? "100" : "55", "0"]];
+            return new Response(JSON.stringify({ retCode: 0, result: { list } }), {
+                status: 200,
+                headers: { "content-type": "application/json" },
+            });
+        }) as typeof fetch;
+
+        const [daily, fourHour] = await Promise.all([
+            fetchQuote("AAPL", "bybit-tradfi", "1d"),
+            fetchQuote("AAPL", "bybit-tradfi", "4h"),
+        ]);
+
+        assert.equal(daily, 100);
+        assert.equal(fourHour, 55);
+        // Both interval quotes ran their own fallback fetch ('1' probes plus
+        // one D+2 / one 60 request) instead of sharing one cached candle price.
+        assert.deepEqual(intervals.filter((value) => value === "D+2"), ["D+2"]);
+        assert.deepEqual(intervals.filter((value) => value === "60"), ["60"]);
+    });
+});
+
+describe("live price active-chart shortcut eligibility", () => {
+    const chartCandles: OHLCVData[] = [
+        { time: 1700000000 as Time, open: 100, high: 110, low: 95, close: 105, volume: 1 },
+        { time: 1700003600 as Time, open: 105, high: 115, low: 100, close: 108, volume: 1 },
+    ];
+
+    const installTickerCounter = (): { calls: () => number } => {
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            return tickerResponse("65200");
+        }) as typeof fetch;
+        return { calls: () => calls };
+    };
+
+    beforeEach(() => {
+        livePositionsService.__resetLivePriceCachesForTests();
+        state.currentSymbol = "BTCUSDT";
+        state.currentInterval = "4h";
+        state.binanceMarketType = "spot";
+        state.ohlcvData = chartCandles;
+    });
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        livePositionsService.__resetLivePriceCachesForTests();
+        state.currentSymbol = "ETHUSDT";
+        state.currentInterval = "1d";
+        state.binanceMarketType = "spot";
+        state.ohlcvData = [];
+        dataManager.__setLoadedContextForTests(null, null);
+    });
+
+    it("reuses the loaded chart close without a request when the loaded context matches", async () => {
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        const transport = installTickerCounter();
+
+        const price = await fetchQuote("BTCUSDT", "binance", "4h");
+
+        assert.equal(price, 108);
+        assert.equal(transport.calls(), 0);
+    });
+
+    it("skips the shortcut when the loaded market differs from the requested provider", async () => {
+        // Spot data is loaded, but the subscription quotes Binance futures —
+        // the same selection-change window the shortcut used to get wrong.
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        const transport = installTickerCounter();
+
+        const price = await fetchQuote("BTCUSDT", "binance-futures", "4h");
+
+        assert.equal(price, 65200);
+        assert.equal(transport.calls(), 1);
+    });
+
+    it("skips the shortcut when no dataset finished loading (imported data)", async () => {
+        dataManager.__setLoadedContextForTests(null, null);
+        const transport = installTickerCounter();
+
+        const price = await fetchQuote("BTCUSDT", "binance", "4h");
+
+        assert.equal(price, 65200);
+        assert.equal(transport.calls(), 1);
+    });
+
+    it("skips the shortcut for a symbol mismatch or a non-Binance provider", async () => {
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        // Serve the TradFi '1m' probe directly so each non-Binance quote is a
+        // single fetch.
+        let calls = 0;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            calls += 1;
+            const url = String(input);
+            if (url.includes("tradfi-kline")) {
+                return new Response(JSON.stringify({
+                    retCode: 0,
+                    result: { list: [[1700000000000, "65000", "65201", "64999", "65200", "0"]] },
+                }), { status: 200, headers: { "content-type": "application/json" } });
+            }
+            return tickerResponse("65200");
+        }) as typeof fetch;
+
+        // Loaded BTCUSDT but the subscription asks for ETHUSDT.
+        assert.equal(await fetchQuote("ETHUSDT", "binance", "4h"), 65200);
+        // TradFi candles have no tracked provenance, so no shortcut even with
+        // a matching symbol/interval context.
+        assert.equal(await fetchQuote("BTCUSDT", "bybit-tradfi", "4h"), 65200);
+        assert.equal(calls, 2);
     });
 });
