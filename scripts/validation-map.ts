@@ -520,7 +520,10 @@ export function buildValidationPlan(input: ValidationPlanInput): ValidationPlan 
         specByKey.set(toMatchKey(spec), toPosixPath(spec));
     }
 
-    const matchesByRuleId = new Map<string, PlannedRuleMatch>();
+    // Encounter-ordered accumulation keyed by the catalogue rule objects.
+    // Diagnostics keep first-encounter rule order; report records are
+    // materialized in catalogue order at the end of planning.
+    const matchedPathsByRule = new Map<ValidationRule, string[]>();
     const unmatchedPaths: string[] = [];
     const selfFilters = new Set<string>();
 
@@ -536,20 +539,12 @@ export function buildValidationPlan(input: ValidationPlanInput): ValidationPlan 
             ? matchedRules.filter(rule => rule.checks.length === 0)
             : matchedRules;
         for (const rule of effectiveRules) {
-            let match = matchesByRuleId.get(rule.id);
-            if (!match) {
-                match = {
-                    ruleId: rule.id,
-                    summary: rule.summary,
-                    paths: [],
-                    guides: [...rule.guides],
-                    testFilters: [...rule.testFilters],
-                    checks: [...rule.checks],
-                    notes: [...(rule.notes ?? [])],
-                };
-                matchesByRuleId.set(rule.id, match);
+            let paths = matchedPathsByRule.get(rule);
+            if (!paths) {
+                paths = [];
+                matchedPathsByRule.set(rule, paths);
             }
-            match.paths.push(changed);
+            paths.push(changed);
         }
 
         if (CHANGED_SPEC_PATTERN.test(key)) {
@@ -572,10 +567,10 @@ export function buildValidationPlan(input: ValidationPlanInput): ValidationPlan 
 
     const issues: string[] = [];
     const ruleFilters: string[] = [];
-    for (const match of matchesByRuleId.values()) {
-        for (const filter of match.testFilters) {
+    for (const [rule] of matchedPathsByRule) {
+        for (const filter of rule.testFilters) {
             if (selectTests(input.availableSpecs, [filter]).length === 0) {
-                issues.push(`Rule "${match.ruleId}" filter "${filter}" matches zero known specs.`);
+                issues.push(`Rule "${rule.id}" filter "${filter}" matches zero known specs.`);
             } else {
                 ruleFilters.push(filter);
             }
@@ -586,10 +581,10 @@ export function buildValidationPlan(input: ValidationPlanInput): ValidationPlan 
     }
 
     const rawChecks = new Set<ValidationCheckId>();
-    for (const match of matchesByRuleId.values()) {
-        for (const checkId of match.checks) {
+    for (const [rule] of matchedPathsByRule) {
+        for (const checkId of rule.checks) {
             if (!CHECKS_BY_ID.has(checkId)) {
-                throw new ValidationMapError([`Rule "${match.ruleId}" references unknown check "${checkId}".`]);
+                throw new ValidationMapError([`Rule "${rule.id}" references unknown check "${checkId}".`]);
             }
             rawChecks.add(checkId);
         }
@@ -623,17 +618,26 @@ export function buildValidationPlan(input: ValidationPlanInput): ValidationPlan 
         : [];
 
     const guides = new Set<string>();
-    for (const match of matchesByRuleId.values()) {
-        for (const guide of match.guides) guides.add(guide);
+    for (const [rule] of matchedPathsByRule) {
+        for (const guide of rule.guides) guides.add(guide);
     }
 
-    const matches = [...matchesByRuleId.values()]
-        .sort((left, right) => {
-            const leftIndex = VALIDATION_RULES.findIndex(rule => rule.id === left.ruleId);
-            const rightIndex = VALIDATION_RULES.findIndex(rule => rule.id === right.ruleId);
-            return leftIndex - rightIndex;
-        })
-        .map(match => ({ ...match, paths: [...match.paths].sort(compareStrings) }));
+    // Report records are built exactly once, in catalogue order. Every array
+    // is copied so callers cannot mutate catalogue metadata or another plan.
+    const matches: PlannedRuleMatch[] = [];
+    for (const rule of VALIDATION_RULES) {
+        const paths = matchedPathsByRule.get(rule);
+        if (!paths) continue;
+        matches.push({
+            ruleId: rule.id,
+            summary: rule.summary,
+            paths: [...paths].sort(compareStrings),
+            guides: [...rule.guides],
+            testFilters: [...rule.testFilters],
+            checks: [...rule.checks],
+            notes: [...(rule.notes ?? [])],
+        });
+    }
 
     return {
         formatVersion: VALIDATION_PLAN_FORMAT_VERSION,

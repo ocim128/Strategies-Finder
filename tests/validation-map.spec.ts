@@ -160,6 +160,85 @@ describe("validation plan routing", () => {
         assert.ok(plan.selectedSpecs.includes("tests/batch-backtest-server-loader-parity.spec.ts"));
     });
 
+    it("keeps complete match metadata in catalogue order across overlapping rules", () => {
+        const changed = [
+            "lib/batch-backtest/runner.ts",
+            "lib/batch-backtest/batch-dataset-loader-core.ts",
+            "lib/finder/finder-ui-dom.ts",
+            "lib/finder-manager.ts",
+        ];
+        const plan = planFor(changed);
+        assert.deepEqual(ruleIds(plan), ["finder", "batch", "dom-contract", "shared-dataset-loaders"]);
+
+        const finderMatch = plan.matches.find(match => match.ruleId === "finder");
+        assert.ok(finderMatch);
+        assert.equal(finderMatch.summary, VALIDATION_RULES.find(rule => rule.id === "finder")?.summary);
+        assert.deepEqual(finderMatch.paths, ["lib/finder-manager.ts", "lib/finder/finder-ui-dom.ts"]);
+        assert.deepEqual(finderMatch.guides, ["docs/finder.md", "docs/finder-server-side.md"]);
+        assert.deepEqual(finderMatch.testFilters, ["finder-"]);
+        assert.deepEqual(finderMatch.checks, ["typecheck", "typecheck:tests", "focused-tests"]);
+        assert.deepEqual(finderMatch.notes, []);
+
+        const loaderMatch = plan.matches.find(match => match.ruleId === "shared-dataset-loaders");
+        assert.ok(loaderMatch);
+        assert.deepEqual(loaderMatch.paths, ["lib/batch-backtest/batch-dataset-loader-core.ts"]);
+        assert.deepEqual(loaderMatch.guides, ["docs/finder-server-side.md", "docs/batch-backtest-server-side.md"]);
+        assert.deepEqual(loaderMatch.testFilters, ["loader-parity", "server-ibkr-csv-loader", "server-crypto-csv-loader"]);
+        assert.deepEqual(loaderMatch.checks, ["typecheck", "typecheck:tests", "focused-tests"]);
+
+        const batchMatch = plan.matches.find(match => match.ruleId === "batch");
+        assert.ok(batchMatch);
+        assert.deepEqual(batchMatch.paths, ["lib/batch-backtest/batch-dataset-loader-core.ts", "lib/batch-backtest/runner.ts"]);
+
+        const domMatch = plan.matches.find(match => match.ruleId === "dom-contract");
+        assert.ok(domMatch);
+        assert.deepEqual(domMatch.paths, ["lib/finder/finder-ui-dom.ts"]);
+    });
+
+    it("builds equal plans for equivalent inputs regardless of order or repetition", () => {
+        const changed = [
+            "lib/batch-backtest/runner.ts",
+            "lib/batch-backtest/batch-dataset-loader-core.ts",
+            "lib/finder/finder-ui-dom.ts",
+            "lib/finder-manager.ts",
+        ];
+        const plan = planFor(changed);
+        assert.deepEqual(planFor([...changed].reverse()), plan);
+        assert.deepEqual(planFor([...changed]), plan);
+    });
+
+    it("copies match arrays so callers cannot corrupt catalogue metadata or later plans", () => {
+        const changed = ["lib/finder/finder-engine.ts", "lib/batch-backtest/runner.ts"];
+        const snapshot = structuredClone(planFor(changed));
+        const mutated = planFor(changed);
+        mutated.matches[0].paths.push("lib/Injected.ts");
+        mutated.matches[0].guides.push("docs/bogus.md");
+        mutated.matches[0].testFilters.push("bogus-");
+        mutated.matches[0].checks.push("e2e");
+        mutated.matches[0].notes.push("bogus note");
+        mutated.unmatchedPaths.push("lib/extra.ts");
+        assert.deepEqual(planFor(changed), snapshot);
+    });
+
+    it("reports multiple unmatched filters as ordered rule-attributed issues", () => {
+        assert.throws(
+            () => buildValidationPlan({
+                changedPaths: ["lib/batch-backtest/runner.ts", "lib/finder/finder-engine.ts"],
+                availableSpecs: ["tests/feature-dom-contracts.spec.ts"],
+            }),
+            (error: unknown) => {
+                if (!(error instanceof ValidationMapError)) return false;
+                assert.deepEqual(error.issues, [
+                    'Rule "batch" filter "batch-" matches zero known specs.',
+                    'Rule "batch" filter "sp500-top-mean-" matches zero known specs.',
+                    'Rule "batch" filter "trade-ledger-" matches zero known specs.',
+                    'Rule "finder" filter "finder-" matches zero known specs.',
+                ]);
+                return true;
+            },
+        );
+    });
+
     it("keeps full-js alone for a shared-core change instead of the focused trio", () => {
         const plan = planFor(["lib/persisted-json.ts"]);
         assert.deepEqual(ruleIds(plan), ["shared-backtest-core"]);
