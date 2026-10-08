@@ -22,6 +22,8 @@ import type { BatchStatusResponse, BatchStreamEvent } from "../lib/batch-backtes
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
+import { waitFor } from "./helpers/wait-for";
+import { withTimeout } from "./helpers/with-timeout";
 
 // The plugin holds module-scope state (runOwner, artifact files, etc.). The
 // handlers under test mutate that state, so each test must reset the relevant
@@ -587,27 +589,17 @@ describe("batch-backtest server plugin processRunBatch", () => {
         const owner = 9015;
         setRunOwnerForTests(owner);
 
-        // Drive the run with a controllable loader so we can observe
-        // currentSymbol mid-run (after the first symbol starts, before the
-        // second completes). We resolve datasets one at a time via a gate.
-        let firstStarted = false;
-        const gate = { releaseSecond: false };
+        // Drive the run with a controllable loader: DOWN's data stays held
+        // behind a gate resolved by the test, so the run cannot finish before
+        // the mid-run snapshot is observed.
+        let releaseDown!: () => void;
+        const downGate = new Promise<void>((resolve) => { releaseDown = resolve; });
         const loader = (symbol: string): Promise<OHLCVData[]> => {
-            if (symbol === "UP") {
-                firstStarted = true;
-                return Promise.resolve(datasets.get(symbol) ?? []);
-            }
-            // Block the second symbol's load until we snapshot.
-            return new Promise<OHLCVData[]>((resolve) => {
-                const check = () => {
-                    if (gate.releaseSecond) resolve(datasets.get(symbol) ?? []);
-                    else setTimeout(check, 5);
-                };
-                check();
-            });
+            if (symbol === "DOWN") return downGate.then(() => datasets.get(symbol) ?? []);
+            return Promise.resolve(datasets.get(symbol) ?? []);
         };
 
-        const runPromise = processRunBatch(
+        const run = processRunBatch(
             {
                 interval: "5m",
                 strategyKey: STRATEGY_KEY,
@@ -622,30 +614,26 @@ describe("batch-backtest server plugin processRunBatch", () => {
             () => {},
             owner,
         );
+        try {
+            // UP starts immediately; DOWN's load is parked behind the gate.
+            // Wait for a populated snapshot entry instead of sleeping past the
+            // settling window.
+            await waitFor(() => getRunStateForTests()?.currentSymbol != null, 2000, "a populated currentSymbol mid-run");
+            expect(["UP", "DOWN"]).to.include(getRunStateForTests()?.currentSymbol, "currentSymbol should be populated mid-run");
 
-        // Wait until the runner has started the first symbol, then poll the
-        // snapshot for a non-null currentSymbol before the run finishes.
-        await new Promise<void>((resolve) => {
-            const tick = () => {
-                if (firstStarted) resolve();
-                else setTimeout(tick, 5);
-            };
-            tick();
-        });
-        // Give the runner a moment to set currentSymbol for whichever symbol
-        // is currently atop the loop (UP first, then DOWN).
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        const midRunSymbol = getRunStateForTests()?.currentSymbol;
-        expect(["UP", "DOWN"]).to.include(midRunSymbol, "currentSymbol should be populated mid-run");
+            releaseDown();
+            await withTimeout(run, 5000, "the gated run to settle");
 
-        gate.releaseSecond = true;
-        await runPromise;
-
-        // After completion, currentSymbol is cleared.
-        expect(getRunStateForTests()?.currentSymbol).to.equal(null);
-
-        setRunOwnerForTests(0);
-        await releaseLastResults("test_end");
+            // After completion, currentSymbol is cleared.
+            expect(getRunStateForTests()?.currentSymbol).to.equal(null);
+        } finally {
+            // Failure paths still release the held loader, settle the run, and
+            // reset the plugin's terminal ownership/artifact state.
+            releaseDown();
+            await run.catch(() => { /* the body's failure takes precedence */ });
+            setRunOwnerForTests(0);
+            await releaseLastResults("test_end");
+        }
     });
 
     it("Stop force-bumps the run owner (lost-ownership propagation)", async () => {
