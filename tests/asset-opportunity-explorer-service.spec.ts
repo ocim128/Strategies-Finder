@@ -8,6 +8,7 @@ import type {
     AssetOpportunityExplorerHeatmapResponse,
 } from "../lib/asset-opportunity-explorer/types";
 import { waitFor } from "./helpers/wait-for";
+import { withTimeout } from "./helpers/with-timeout";
 
 function fakeEl(): any {
     const listeners = new Map<string, Array<(ev?: unknown) => void>>();
@@ -391,24 +392,31 @@ describe("Asset Opportunity Explorer service", () => {
         // real click handler still starts it, then await its original promise
         // instead of sleeping past the settling window.
         const originalRefresh = (service as any).refresh;
-        let refreshOp: Promise<void> | null = null;
+        const refreshOps: Array<Promise<void>> = [];
         (service as any).refresh = () => {
-            refreshOp = originalRefresh.call(service);
-            return refreshOp;
+            const op: Promise<void> = originalRefresh.call(service);
+            refreshOps.push(op);
+            return op;
         };
         try {
             dom.explorerRefreshBtn.listeners.get("click")![0]!();
-            await refreshOp!;
+            expect(refreshOps, "the click handler started the refresh operation").to.have.length(1);
+            await withTimeout(refreshOps[0]!, 2_000, "the refresh operation to settle");
+            expect(requestedUrls.some((url) => url.includes("refresh=1")), "refresh issued a forced catalog request").to.equal(true);
+            expect(dom.explorerHorizonSelect.value).to.equal("12");
+            expect(dom.explorerRunSelect.value).to.equal("run-a");
         } finally {
             delete (service as any).refresh;
+            for (const op of refreshOps) {
+                await withTimeout(op.catch(() => {}), 2_000, "the refresh operation to settle during cleanup");
+            }
         }
-        expect(requestedUrls.some((url) => url.includes("refresh=1")), "refresh issued a forced catalog request").to.equal(true);
-        expect(dom.explorerHorizonSelect.value).to.equal("12");
-        expect(dom.explorerRunSelect.value).to.equal("run-a");
     });
 
     it("still loads details after an in-flight detail request was interrupted", async () => {
-        let releaseDetails: (() => void) | null = null;
+        // The promise executor assigns this synchronously, so the release
+        // function is always set before any await below.
+        let releaseDetails!: () => void;
         const detailsGate = new Promise<void>((resolve) => { releaseDetails = resolve; });
         responder = (url) => {
             if (url.includes("catalog")) return { status: 200, body: catalogPayload([fixtureRun()]) };
@@ -440,19 +448,30 @@ describe("Asset Opportunity Explorer service", () => {
             dom.explorerHorizonSelect.listeners.get("change")![0]!();
             await waitFor(() => requestedUrls.filter((url) => url.includes("heatmap")).length === 2, 2_000, "heatmap reloaded");
             await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "replacement heatmap completed");
-            releaseDetails!();
-            await detailOps[0]!;
+            releaseDetails();
+            const staleOp = detailOps[0];
+            expect(staleOp, "the gated detail operation was captured").to.not.equal(undefined);
+            await withTimeout(staleOp!, 2_000, "the stale detail operation to settle");
             // The old code dead-locked here: the second selection produced no request.
             (service as any).selectRange("expectancy", 12, 12);
             await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 2, 2_000, "second detail requested");
             await waitFor(() => dom.explorerDetailTitle.textContent.includes("12–12"), 2_000, "second detail rendered");
         } finally {
+            // Failure paths still release a held detail response, give every
+            // captured operation a bounded chance to settle, and restore the
+            // overridden method.
+            releaseDetails();
+            for (const op of detailOps) {
+                await withTimeout(op.catch(() => {}), 2_000, "a captured detail operation to settle during cleanup");
+            }
             delete (service as any).loadDetails;
         }
     });
 
     it("discards a superseded detail response for a different sort selection", async () => {
-        let releaseA: (() => void) | null = null;
+        // The promise executor assigns this synchronously, so the release
+        // function is always set before any await below.
+        let releaseA!: () => void;
         const gateA = new Promise<void>((resolve) => { releaseA = resolve; });
         responder = (url) => {
             if (url.includes("catalog")) return { status: 200, body: catalogPayload([fixtureRun()]) };
@@ -479,12 +498,23 @@ describe("Asset Opportunity Explorer service", () => {
             await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 1, 2_000, "sort_a detail in flight");
             (service as any).selectRange("sort_b", 12, 24);
             await waitFor(() => dom.explorerDetailTitle.textContent.includes("sort_b"), 2_000, "sort_b detail rendered");
-            releaseA!();
-            await detailOps[0]!;
-            // The late sort_a response must not replace sort_b's rendered detail.
+            releaseA();
+            const staleOp = detailOps[0];
+            expect(staleOp, "the superseded sort_a detail operation was captured").to.not.equal(undefined);
+            await withTimeout(staleOp!, 2_000, "the superseded sort_a detail operation to settle");
+            // The late sort_a response must not replace sort_b's rendered
+            // detail — asserted only after the older operation actually
+            // settled; a visible newer title alone would prove nothing.
             expect(dom.explorerDetailTitle.textContent).to.contain("sort_b");
             expect(dom.explorerDetailTitle.textContent).to.not.contain("sort_a");
         } finally {
+            // Failure paths still release the held response, give every
+            // captured operation a bounded chance to settle, and restore the
+            // overridden method.
+            releaseA();
+            for (const op of detailOps) {
+                await withTimeout(op.catch(() => {}), 2_000, "a captured detail operation to settle during cleanup");
+            }
             delete (service as any).loadDetails;
         }
     });
