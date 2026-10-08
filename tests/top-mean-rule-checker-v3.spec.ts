@@ -32,7 +32,7 @@ import type {
     CandidateOutcomeRecord,
     PoolSnapshotRecord,
 } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
-import type { PoolRuleArchive } from "../scripts/analyze-pool-rules";
+import type { PoolRuleArchive } from "../lib/batch-backtest/top-mean-rule-archive";
 
 const DECISION_TIME = Math.floor(Date.parse("2025-06-01T00:00:00.000Z") / 1000);
 const EVENT_ID = `4h:${DECISION_TIME}`;

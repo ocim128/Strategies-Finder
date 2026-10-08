@@ -11,9 +11,13 @@ import {
     MAX_ACTIVE_BOOTSTRAP_SAMPLES,
     MAX_ACTIVE_BOOTSTRAP_SEED,
     MAX_ACTIVE_TIE_VERSION,
-    PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC,
 } from "../lib/batch-backtest/max-active-research-contract";
-import { bootstrapBlockMedian, splitChronologicalBlocks, type PoolRuleArchive } from "../scripts/analyze-pool-rules";
+import {
+    bootstrapBlockMedian,
+    splitChronologicalBlocks,
+    PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC,
+    type PoolRuleArchive,
+} from "../lib/batch-backtest/top-mean-rule-archive";
 import type { CandidateOutcomeRecord, PoolSnapshotRecord } from "../lib/batch-backtest/batch-open-score-usd-replay-engine";
 
 const ASSETS = ["AAA", "BBB", "CCC"] as const;

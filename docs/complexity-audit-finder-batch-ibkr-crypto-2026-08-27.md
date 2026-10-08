@@ -66,7 +66,7 @@ This is not merely a formatter or an alternate Batch preset. It has its own coor
 
 **Why it is more complex than necessary**
 
-The normal Batch path already evaluates submitted pairs. `OPEN_SCORE USD` already provides the retained-artifact analysis surface. The repository’s own research notes say that TOP_MEAN asset pruning was abandoned and that the historical selector arms are retained as diagnostics (`docs/mine-timing-validation-findings.md`, `docs/pairlist-selection-research.md`). A dedicated coordinator therefore maintains a large execution product around a research result that has not demonstrated adoption.
+The normal Batch path already evaluates submitted pairs. `OPEN_SCORE USD` already provides the retained-artifact analysis surface. The repository’s own research notes say that TOP_MEAN asset pruning was abandoned and that the historical selector arms are retained as diagnostics (`docs/mine-timing-validation-findings.md`). A dedicated coordinator therefore maintains a large execution product around a research result that has not demonstrated adoption.
 
 **Simplest alternative**
 

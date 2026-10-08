@@ -31,8 +31,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 - [trade-ledger.md](trade-ledger.md) - Archived trade-ledger formats, replay eligibility, and offline checker compatibility.
 - [asset-opportunity-explorer.md](asset-opportunity-explorer.md) - descriptive heatmap over the Asset Opportunity holdout archive: routes, cell semantics, coverage reporting, and limits.
-- [mine-timing-validation-findings.md](mine-timing-validation-findings.md) - historical research findings (mostly negative) on removed Mine/signal-event diagnostics, spread-quality metrics, and OPEN_SCORE USD selection. Read this before re-introducing any removed diagnostic surface.
-- [pairlist-selection-research.md](pairlist-selection-research.md) - completed preregistered pool-selection research record; the registered candidate failed its adoption rule and the walk-forward machinery was retired.
+- [mine-timing-validation-findings.md](mine-timing-validation-findings.md) - historical research findings (mostly negative) on removed Mine/signal-event diagnostics, spread-quality metrics, OPEN_SCORE USD selection, and ex-ante pool (pairlist) selection. Read this before re-introducing any removed diagnostic surface.
 
 ## Records and Audits
 

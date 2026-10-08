@@ -219,3 +219,48 @@ Mine Prediction / Mine A/B HTTP endpoints, Portfolio Fit, Mine Timing,
 Stability Mine, and signal-event replay were removed after the negative
 results. The pure compute module `lib/spread-quality/spread-quality-engine.ts`
 is retained but is not currently wired to a server route.
+
+---
+
+## Ex-ante pool (pairlist) selection — negative result, machinery removed (2026-10)
+
+The preregistered pairlist-selection research asked whether a lookahead-free
+pool could beat the hindsight-chosen TOP_MEAN pairlist. It could not qualify:
+
+- The registered candidate `OPEN_SCORE_RAW_COUNT_LEX_V1` (2026-08-24) was
+  never validated: its discovery-window CI crossed zero with 6/10 positive
+  blocks, and it was not confirmed by later data.
+- The registered walk-forward experiment `TOP_MEAN_RAW_UNIQUE_WF_V1`
+  (method `CORR_SCALE_STABILITY35_V1`, corrected R4, 36/36 folds, 1,224
+  mature H48 events) failed the preregistered adoption rule
+  (`CORRECTED_FAIL_CONFIRMED`, independently reproduced): H48 delta
+  `+0.00404`, CI `[+0.00103, +0.00757]` — positive but below the required
+  `>= 0.005` — with 22/36 positive cutoffs (required 24) and incremental
+  P&L `$8,566.75` below the uniform-control P95 `$13,157.44`.
+- `TOP_MEAN_RAW_UNIQUE` itself remains a retained offline diagnostic arm in
+  OPEN_SCORE; the failure retired only the walk-forward machinery, not the
+  diagnostic arm or the production TOP_MEAN selector.
+
+Removed with the closed research (the full preregistration and decision
+record remain in git history under `docs/pairlist-selection-research.md`):
+
+- `scripts/analyze-pool-rules.ts` and `scripts/analyze-tied-set.ts` with
+  their focused specs (P1/P2 pool-rule and tied-set analysis CLIs).
+- The research-only `PAIRLIST_POOL_RULE_*` parameters
+  (lookback, breadth, pool sizes/horizons, pool version, EMA sample events,
+  paired floor) from `lib/batch-backtest/max-active-research-contract.ts`.
+
+Retained because they outlive the research:
+
+- The offline TOP_MEAN rule checker `scripts/top-mean-rule-checker.ts` and
+  its three focused specs. Its read-side helpers (archive loading,
+  chronological blocks, block-bootstrap intervals) and the frozen
+  discovery/validation windows and CI quantiles now live in
+  `lib/batch-backtest/top-mean-rule-archive.ts`.
+- The Phase 0b archive instrumentation (`pool-snapshots.jsonl`,
+  `candidate-outcomes.jsonl` via `lib/batch-backtest/sp500-top-mean-archive-log.ts`)
+  and all completed run archives; `archive/pool-analysis/` artifacts stay
+  machine-local (gitignored) for audit and reproducibility.
+
+Do not reintroduce ex-ante pool selection without a new preregistered
+validation design; do not retune the retired rules against the same windows.

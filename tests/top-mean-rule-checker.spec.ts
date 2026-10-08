@@ -13,18 +13,18 @@ import {
 import {
     bootstrapBlockMeans,
     splitChronologicalBlocks,
+    PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC,
+    PAIRLIST_POOL_RULE_DISCOVERY_TO_SEC,
+    PAIRLIST_POOL_RULE_VALIDATION_FROM_SEC,
+    PAIRLIST_POOL_RULE_VALIDATION_TO_SEC,
     type PoolRuleArchive,
     type PoolRuleValuePoint,
-} from "../scripts/analyze-pool-rules";
+} from "../lib/batch-backtest/top-mean-rule-archive";
 import {
     MAX_ACTIVE_BLOCK_COUNT,
     MAX_ACTIVE_BOOTSTRAP_SAMPLES,
     MAX_ACTIVE_BOOTSTRAP_SEED,
     MAX_ACTIVE_TIE_VERSION,
-    PAIRLIST_POOL_RULE_DISCOVERY_FROM_SEC,
-    PAIRLIST_POOL_RULE_DISCOVERY_TO_SEC,
-    PAIRLIST_POOL_RULE_VALIDATION_FROM_SEC,
-    PAIRLIST_POOL_RULE_VALIDATION_TO_SEC,
     tieBreakDigest,
 } from "../lib/batch-backtest/max-active-research-contract";
 import type {

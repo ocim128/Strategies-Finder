@@ -368,6 +368,5 @@ These are intentionally narrower than the repo itself:
 - `docs/synthetic-pairs.md`: synthetic pair generation and supported surfaces
 - `docs/strategy-authoring.md`: built-in strategy authoring guide
 - `docs/mine-timing-validation-findings.md`: historical negative findings behind the removal of Mine/selection diagnostic surfaces
-- `docs/pairlist-selection-research.md`: completed preregistered pool-selection research record (candidate failed its adoption rule)
 - `workers/README.md`: Worker endpoints, cron behavior, D1 setup, Telegram
 - `DEPLOY_TO_VERCEL.md`: deployment notes
