@@ -28,6 +28,7 @@ import { CURRENT_SNAPSHOT_SELECTOR, LATEST_SELECTION_CONTENT_SELECTOR } from "..
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { FINDER_SUPPORT_ARMS_V2 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { createEmptyAssetSwitchSummary } from "../lib/batch-backtest/open-score-replay/asset-switch";
+import type { BatchRunController } from "../lib/batch-backtest/browser/batch-run-controller";
 
 function fakeEl(): any {
     return createFakeBatchElement();
@@ -119,6 +120,9 @@ function topMeanResultFixture(): any {
 function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
     const dom = fakeDom();
     const s = svc();
+    // Narrowly typed test boundary: the run controller owns the seeded
+    // analysis prerequisites; deeper controller internals stay encapsulated.
+    const batchRun: BatchRunController = s.batchRun;
     s.dom = dom;
     // Mounted content nodes are independent of the full-results HTML in this
     // minimal harness. Real DOM identity/focus is covered by the E2E smoke.
@@ -129,25 +133,18 @@ function setupForAnalysis(fingerprint = "fp-test"): BatchBacktestDom {
             : selector === LATEST_SELECTION_CONTENT_SELECTOR ? latestContent : null
     ) as typeof dom.batchBacktestSp500TopMeanResults.querySelector;
     s.bindEvents(dom);
-    s.batchRun.setServerHasArtifacts(true);
-    s.lastRunFingerprint = fingerprint;
-    s.lastRunInterval = "5m";
-    s.lastRunStrategyKey = "test";
-    s.analysisInFlight = false;
-    s.analysisCancelRequested = false;
-    s.pendingStopPromise = null;
-    s.activeServerRunId = null;
-    // Reset Balanced Generator state so a previous test's remembered
-    // provenance does not leak into the next test.
-    s.activePairListProvenance = null;
-    s.lastBalancedPairListResult = null;
-    s.runInFlight = false;
-    s.batchActionInFlight = false;
-    s.topMeanReattachInFlight = false;
-    s.topMean.setActiveTopMeanRunId(null);
-    s.serverRunActive = false;
+    // Seed only the analysis prerequisites on their owner. beforeEach already
+    // supplies a fresh service, so every lock/reset/ownership flag (analysis,
+    // pending Stop, active run ids, busy flags, TOP_MEAN run id, Balanced
+    // Generator state) holds its constructor default here.
+    batchRun.setServerHasArtifacts(true);
+    batchRun.setLastRunFingerprint(fingerprint);
+    batchRun.setLastRunInterval("5m");
     (globalThis as any).localStorage._store.clear();
-    s.buildCurrentRunFingerprint = () => fingerprint;
+    // The redundant default resets previously refreshed the pair-list
+    // controls as a side effect; render the initial idle state explicitly
+    // once instead.
+    s.syncPairListControls();
     return dom;
 }
 
@@ -899,6 +896,10 @@ describe("BatchBacktestService analysis lifecycle", () => {
             await svc().runOpenScoreUsdReplay();
         });
         expect(requestBody.capTiltWeight).to.equal("similarCap2x");
+        // The replay's prerequisites come from the seeded run-owner state
+        // (fixture correction), not from inert service properties.
+        expect(requestBody.interval).to.equal("5m");
+        expect(requestBody.fingerprint).to.equal("fp-test");
     });
 
     it("submits an explicitly checked archive toggle and does not persist it", async () => {
