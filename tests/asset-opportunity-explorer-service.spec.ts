@@ -7,6 +7,7 @@ import type {
     AssetOpportunityExplorerCatalogResponse,
     AssetOpportunityExplorerHeatmapResponse,
 } from "../lib/asset-opportunity-explorer/types";
+import { waitFor } from "./helpers/wait-for";
 
 function fakeEl(): any {
     const listeners = new Map<string, Array<(ev?: unknown) => void>>();
@@ -190,15 +191,6 @@ function detailsPayload(
     };
 }
 
-async function waitFor(predicate: () => boolean, label: string): Promise<void> {
-    const deadline = Date.now() + 2_000;
-    while (Date.now() < deadline) {
-        if (predicate()) return;
-        await new Promise((resolve) => setTimeout(resolve, 5));
-    }
-    throw new Error(`timed out waiting for ${label}`);
-}
-
 /** Fresh service with the fake selects defaulted like a real browser would. */
 function createService(): { service: AssetOpportunityExplorerService; dom: any } {
     const service = new AssetOpportunityExplorerService();
@@ -282,7 +274,7 @@ describe("Asset Opportunity Explorer service", () => {
     it("shows the empty state when the catalog has no runs", async () => {
         responder = () => ({ status: 200, body: catalogPayload([]) });
         const { dom } = createService();
-        await waitFor(() => dom.explorerStatus.textContent.includes("Catalog loaded"), "catalog loaded");
+        await waitFor(() => dom.explorerStatus.textContent.includes("Catalog loaded"), 2_000, "catalog loaded");
         expect(dom.explorerEmpty.hidden).to.equal(false);
         expect(dom.explorerHeatmapSection.hidden).to.equal(true);
     });
@@ -295,13 +287,14 @@ describe("Asset Opportunity Explorer service", () => {
             return { status: 200, body: heatmapPayload("snap-1") };
         };
         const { dom } = createService();
-        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), "initial heatmap visible");
+        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "initial heatmap visible");
         expect(dom.explorerEmpty.hidden).to.equal(true);
 
         failRefresh = true;
         dom.explorerRefreshBtn.listeners.get("click")![0]!();
         await waitFor(
             () => dom.explorerStatus.textContent.includes("Refresh failed") && dom.explorerStatus.textContent.includes("stale"),
+            2_000,
             "stale status",
         );
         // The previous view stays visible rather than being blanked.
@@ -325,11 +318,11 @@ describe("Asset Opportunity Explorer service", () => {
             return { status: 200, body: {} };
         };
         const { service } = createService();
-        await waitFor(() => requestedUrls.filter((candidate) => candidate.includes("heatmap")).length === 1, "first heatmap in flight");
+        await waitFor(() => requestedUrls.filter((candidate) => candidate.includes("heatmap")).length === 1, 2_000, "first heatmap in flight");
         void (service as any).loadHeatmap();
-        await waitFor(() => requestedUrls.filter((candidate) => candidate.includes("heatmap")).length === 2, "second heatmap sent");
+        await waitFor(() => requestedUrls.filter((candidate) => candidate.includes("heatmap")).length === 2, 2_000, "second heatmap sent");
         releaseFirst!();
-        await waitFor(() => (service as any).heatmap?.snapshotId === "snap-2", "newest snapshot retained");
+        await waitFor(() => (service as any).heatmap?.snapshotId === "snap-2", 2_000, "newest snapshot retained");
         // The obsolete snap-1 response must never overwrite the newer snapshot.
         expect((service as any).heatmap.snapshotId).to.equal("snap-2");
     });
@@ -344,11 +337,11 @@ describe("Asset Opportunity Explorer service", () => {
             return { status: 404, body: { error: "unknown" } };
         };
         const { service, dom } = createService();
-        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), "heatmap visible");
+        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "heatmap visible");
 
         (service as any).selectRange("expectancy", 12, 24);
-        await waitFor(() => dom.explorerDetailTitle.textContent.includes("expectancy"), "detail rendered");
-        await waitFor(() => dom.explorerDetailStatus.textContent.includes("Showing"), "detail settled");
+        await waitFor(() => dom.explorerDetailTitle.textContent.includes("expectancy"), 2_000, "detail rendered");
+        await waitFor(() => dom.explorerDetailStatus.textContent.includes("Showing"), 2_000, "detail settled");
         expect(dom.explorerDetailTitle.textContent).to.contain("expectancy");
         expect(dom.explorerDetailSummary.textContent).to.contain("equal-holdout mean");
         expect(dom.explorerDetailRows.children.length).to.equal(1);
@@ -377,11 +370,11 @@ describe("Asset Opportunity Explorer service", () => {
             return { status: 200, body: heatmapPayload("snap-1") };
         };
         const { dom } = createService();
-        await waitFor(() => requestedUrls.some((url) => url.includes("batchRunId=run-a")), "initial heatmap for run-a");
+        await waitFor(() => requestedUrls.some((url) => url.includes("batchRunId=run-a")), 2_000, "initial heatmap for run-a");
         // The user picks run B; the change handler rebuilds the options.
         dom.explorerRunSelect.value = "run-b";
         dom.explorerRunSelect.listeners.get("change")![0]!();
-        await waitFor(() => requestedUrls.some((url) => url.includes("batchRunId=run-b")), "heatmap for run-b");
+        await waitFor(() => requestedUrls.some((url) => url.includes("batchRunId=run-b")), 2_000, "heatmap for run-b");
         expect(dom.explorerRunSelect.value).to.equal("run-b");
         const lastHeatmap = requestedUrls.filter((url) => url.includes("heatmap")).slice(-1)[0]!;
         expect(lastHeatmap).to.contain("batchRunId=run-b");
@@ -392,11 +385,24 @@ describe("Asset Opportunity Explorer service", () => {
             if (url.includes("catalog")) return { status: 200, body: catalogPayload([fixtureRun()]) };
             return { status: 200, body: heatmapPayload("snap-1") };
         };
-        const { dom } = createService();
-        await waitFor(() => dom.explorerHorizonSelect.value === "12", "default horizon 12");
-        dom.explorerRefreshBtn.listeners.get("click")![0]!();
-        await waitFor(() => requestedUrls.filter((url) => url.includes("refresh=1")).length === 1, "refresh sent");
-        await new Promise((resolve) => setTimeout(resolve, 30));
+        const { service, dom } = createService();
+        await waitFor(() => dom.explorerHorizonSelect.value === "12", 2_000, "default horizon 12");
+        // Observe the refresh operation itself: wrap the instance method so the
+        // real click handler still starts it, then await its original promise
+        // instead of sleeping past the settling window.
+        const originalRefresh = (service as any).refresh;
+        let refreshOp: Promise<void> | null = null;
+        (service as any).refresh = () => {
+            refreshOp = originalRefresh.call(service);
+            return refreshOp;
+        };
+        try {
+            dom.explorerRefreshBtn.listeners.get("click")![0]!();
+            await refreshOp!;
+        } finally {
+            delete (service as any).refresh;
+        }
+        expect(requestedUrls.some((url) => url.includes("refresh=1")), "refresh issued a forced catalog request").to.equal(true);
         expect(dom.explorerHorizonSelect.value).to.equal("12");
         expect(dom.explorerRunSelect.value).to.equal("run-a");
     });
@@ -414,21 +420,35 @@ describe("Asset Opportunity Explorer service", () => {
             return { status: 404, body: {} };
         };
         const { service, dom } = createService();
-        await waitFor(() => requestedUrls.some((url) => url.includes("heatmap")), "heatmap loaded");
-        (service as any).selectRange("expectancy", 12, 24);
-        await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 1, "first detail in flight");
-        // Changing the horizon bumps the heatmap generation while the detail
-        // request is still pending. The stale response is discarded (a horizon
-        // change clears the selection), but the detail loading state must
-        // release so later selections still trigger requests.
-        dom.explorerHorizonSelect.listeners.get("change")![0]!();
-        await waitFor(() => requestedUrls.filter((url) => url.includes("heatmap")).length === 2, "heatmap reloaded");
-        releaseDetails!();
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        // The old code dead-locked here: the second selection produced no request.
-        (service as any).selectRange("expectancy", 12, 12);
-        await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 2, "second detail requested");
-        await waitFor(() => dom.explorerDetailTitle.textContent.includes("12–12"), "second detail rendered");
+        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "initial heatmap loaded");
+        // Retain the first detail operation so its release can be observed
+        // without a settling sleep.
+        const originalLoadDetails = (service as any).loadDetails;
+        const detailOps: Array<Promise<void>> = [];
+        (service as any).loadDetails = function (this: unknown, offset: number) {
+            const op = originalLoadDetails.call(this, offset);
+            detailOps.push(op);
+            return op;
+        };
+        try {
+            (service as any).selectRange("expectancy", 12, 24);
+            await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 1, 2_000, "first detail in flight");
+            // Changing the horizon bumps the heatmap generation while the detail
+            // request is still pending. The stale response is discarded (a horizon
+            // change clears the selection), but the detail loading state must
+            // release so later selections still trigger requests.
+            dom.explorerHorizonSelect.listeners.get("change")![0]!();
+            await waitFor(() => requestedUrls.filter((url) => url.includes("heatmap")).length === 2, 2_000, "heatmap reloaded");
+            await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "replacement heatmap completed");
+            releaseDetails!();
+            await detailOps[0]!;
+            // The old code dead-locked here: the second selection produced no request.
+            (service as any).selectRange("expectancy", 12, 12);
+            await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 2, 2_000, "second detail requested");
+            await waitFor(() => dom.explorerDetailTitle.textContent.includes("12–12"), 2_000, "second detail rendered");
+        } finally {
+            delete (service as any).loadDetails;
+        }
     });
 
     it("discards a superseded detail response for a different sort selection", async () => {
@@ -444,15 +464,28 @@ describe("Asset Opportunity Explorer service", () => {
             return { status: 404, body: {} };
         };
         const { service, dom } = createService();
-        await waitFor(() => requestedUrls.some((url) => url.includes("heatmap")), "heatmap loaded");
-        (service as any).selectRange("sort_a", 12, 24);
-        await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 1, "sort_a detail in flight");
-        (service as any).selectRange("sort_b", 12, 24);
-        await waitFor(() => dom.explorerDetailTitle.textContent.includes("sort_b"), "sort_b detail rendered");
-        releaseA!();
-        await new Promise((resolve) => setTimeout(resolve, 30));
-        // The late sort_a response must not replace sort_b's rendered detail.
-        expect(dom.explorerDetailTitle.textContent).to.contain("sort_b");
-        expect(dom.explorerDetailTitle.textContent).to.not.contain("sort_a");
+        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "initial heatmap loaded");
+        // Retain the older sort_a operation: releasing its response must be
+        // observed to settle before asserting the display.
+        const originalLoadDetails = (service as any).loadDetails;
+        const detailOps: Array<Promise<void>> = [];
+        (service as any).loadDetails = function (this: unknown, offset: number) {
+            const op = originalLoadDetails.call(this, offset);
+            detailOps.push(op);
+            return op;
+        };
+        try {
+            (service as any).selectRange("sort_a", 12, 24);
+            await waitFor(() => requestedUrls.filter((url) => url.includes("details")).length === 1, 2_000, "sort_a detail in flight");
+            (service as any).selectRange("sort_b", 12, 24);
+            await waitFor(() => dom.explorerDetailTitle.textContent.includes("sort_b"), 2_000, "sort_b detail rendered");
+            releaseA!();
+            await detailOps[0]!;
+            // The late sort_a response must not replace sort_b's rendered detail.
+            expect(dom.explorerDetailTitle.textContent).to.contain("sort_b");
+            expect(dom.explorerDetailTitle.textContent).to.not.contain("sort_a");
+        } finally {
+            delete (service as any).loadDetails;
+        }
     });
 });
