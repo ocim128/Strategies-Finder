@@ -5,8 +5,9 @@
  * wiring. Browser-only.
  *
  * Capture happens at the existing boundaries (input events with a debounced
- * write, `captureFinderUiState()` at run start, and Copy Configuration);
- * nothing else samples the controls mid-await.
+ * write, and Copy Configuration); actual run submission reads the controls
+ * through `readOptions()` only — it does not call `captureFinderUiState()`
+ * or persist UI state. Nothing else samples the controls mid-await.
  */
 import { setVisible } from "../../dom-utils";
 import { state } from "../../state";
@@ -207,6 +208,103 @@ private readFinderNumberInput(input: HTMLInputElement, fallback: number, min?: n
 	const value = parseInputNumber(input.value);
 	if (value === null) return fallback;
 	return min === undefined ? value : Math.max(min, value);
+}
+
+// Identical form conversions shared by the capture and execution boundaries
+// live here so each conversion has exactly one source. Policies that differ
+// between capture and submission (bounds caps, text maxima, enablement gates)
+// stay explicit at their own call sites below.
+
+/** Rounded numeric input, the shared shape of the common Finder search fields. */
+private readRoundedInput(input: HTMLInputElement, fallback: number, min: number): number {
+	return Math.round(this.readFinderNumberInput(input, fallback, min));
+}
+
+private readArmPerformanceEnums(): {
+	rankingSort: FinderPersistedUiState["armPerformanceRankingSort"];
+	measurement: FinderPersistedUiState["armPerformanceMeasurement"];
+	replayMode: FinderPersistedUiState["armPerformanceReplayMode"];
+} {
+	const dom = this.deps.getDom();
+	return {
+		rankingSort: dom.finderArmPerformanceRankingSort.value === "selected_asset" ? "selected_asset" : "overall_ordering",
+		measurement: dom.finderArmPerformanceMeasurement.value === "ranking_consistency" ? "ranking_consistency" : "return",
+		replayMode: dom.finderArmPerformanceReplayMode.value === "asset_switch" ? "asset_switch" : "horizon",
+	};
+}
+
+private readArmPerformanceHorizon(): number {
+	return Math.max(1, Math.min(1_000, this.readRoundedInput(
+		this.deps.getDom().finderArmPerformanceHorizon,
+		DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
+		1,
+	)));
+}
+
+/** Asset Opportunity group: identical parsing at capture and execution boundaries. */
+private readAssetOpportunityInputs(): {
+	symbols: string[];
+	candidatePoolSize: number;
+	minFreshSupport: number;
+	includeOpenPositions: boolean;
+	oosMeasurementMode: FinderPersistedUiState["assetOpportunityOosMeasurementMode"];
+	oosHorizonBasis: FinderPersistedUiState["assetOpportunityOosHorizonBasis"];
+	oosIgnoreLastBars: number;
+	evalLastBars: number;
+	evalWindowMode: FinderPersistedUiState["assetOpportunityEvalWindowMode"];
+	oosHorizons: number[];
+} {
+	const dom = this.deps.getDom();
+	return {
+		symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
+		candidatePoolSize: Math.max(1, Math.min(50, this.readRoundedInput(
+			dom.finderAssetCandidatePoolSize,
+			DEFAULT_FINDER_UI_STATE.assetOpportunityCandidatePoolSize,
+			1,
+		))),
+		minFreshSupport: Math.max(1, Math.min(50, this.readRoundedInput(
+			dom.finderAssetMinFreshSupport,
+			DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
+			1,
+		))),
+		includeOpenPositions: dom.finderAssetIncludeOpenPositions.checked,
+		oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(dom.finderAssetOosMeasurementMode.value),
+		oosHorizonBasis: normalizeFinderAssetOosHorizonBasis(dom.finderAssetOosHorizonBasis.value),
+		oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(this.readFinderNumberInput(
+			dom.finderAssetOosIgnoreLastBars,
+			DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
+			0,
+		)),
+		evalLastBars: normalizeFinderAssetEvalLastBars(this.readFinderNumberInput(
+			dom.finderAssetEvalWindowBars,
+			DEFAULT_FINDER_UI_STATE.assetOpportunityEvalWindowBars,
+			0,
+		)),
+		evalWindowMode: normalizeFinderAssetEvalWindowMode(dom.finderAssetEvalWindowMode.value),
+		oosHorizons: normalizeFinderAssetOosHorizons(dom.finderAssetOosHorizons.value),
+	};
+}
+
+/**
+ * Universe filter inputs shared by capture and execution. The profitable
+ * ratio is returned unclamped: capture clamps it to [0, 1] for persistence,
+ * while execution defers that clamp to `buildFinderUniverseOptions`.
+ */
+private readUniverseInputs(): {
+	minActiveSymbols: number;
+	minTotalTrades: number;
+	minProfitableActiveRatio: number;
+	universeSort: FinderPersistedUiState["universeSort"];
+	universeSortSecondary: FinderPersistedUiState["universeSortSecondary"];
+} {
+	const dom = this.deps.getDom();
+	return {
+		minActiveSymbols: this.readRoundedInput(dom.finderUniverseMinActiveSymbols, DEFAULT_FINDER_UI_STATE.universeMinActiveSymbols, 1),
+		minTotalTrades: this.readRoundedInput(dom.finderUniverseMinTotalTrades, DEFAULT_FINDER_UI_STATE.universeMinTotalTrades, 0),
+		minProfitableActiveRatio: this.readFinderNumberInput(dom.finderUniverseMinProfitableActiveRatio, DEFAULT_FINDER_UI_STATE.universeMinProfitableActiveRatio, 0),
+		universeSort: normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort),
+		universeSortSecondary: normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
+	};
 }
 
 applyPersistedUiStateToDom(): void {
@@ -517,15 +615,14 @@ initUniverseUI(): void {
 
 private captureUniverseUiState(persist = true): void {
 	const dom = this.deps.getDom();
+	const universe = this.readUniverseInputs();
 	this.uiState.universeSymbolsText = dom.finderUniverseSymbols.value;
-	this.uiState.universeMinActiveSymbols = Math.max(1, Math.round(this.readFinderNumberInput(dom.finderUniverseMinActiveSymbols, DEFAULT_FINDER_UI_STATE.universeMinActiveSymbols, 1)));
-	this.uiState.universeMinTotalTrades = Math.max(0, Math.round(this.readFinderNumberInput(dom.finderUniverseMinTotalTrades, DEFAULT_FINDER_UI_STATE.universeMinTotalTrades, 0)));
-	this.uiState.universeMinProfitableActiveRatio = Math.max(
-		0,
-		Math.min(1, this.readFinderNumberInput(dom.finderUniverseMinProfitableActiveRatio, DEFAULT_FINDER_UI_STATE.universeMinProfitableActiveRatio, 0))
-	);
-	this.uiState.universeSort = normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort);
-	this.uiState.universeSortSecondary = normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary);
+	this.uiState.universeMinActiveSymbols = universe.minActiveSymbols;
+	this.uiState.universeMinTotalTrades = universe.minTotalTrades;
+	// Capture-only persistence clamp; execution clamps in buildFinderUniverseOptions.
+	this.uiState.universeMinProfitableActiveRatio = Math.max(0, Math.min(1, universe.minProfitableActiveRatio));
+	this.uiState.universeSort = universe.universeSort;
+	this.uiState.universeSortSecondary = universe.universeSortSecondary;
 	this.updateUniverseSummary();
 	if (persist) {
 		this.saveUiState();
@@ -721,6 +818,8 @@ initFinderSettingsPersistenceUI(): void {
 captureFinderUiState(persist = true): void {
 	const dom = this.deps.getDom();
 	const sortItems = Array.from(dom.finderSortList.querySelectorAll<HTMLElement>(".finder-sort-item"));
+	const armEnums = this.readArmPerformanceEnums();
+	const assetOpportunity = this.readAssetOpportunityInputs();
 	this.uiState.sortPrimary = normalizeFinderMetric(dom.finderSort.value, DEFAULT_FINDER_UI_STATE.sortPrimary);
 	this.uiState.sortSecondary = normalizeFinderMetric(dom.finderSortSecondary.value, DEFAULT_FINDER_UI_STATE.sortSecondary);
 	this.uiState.useAdvancedSort = dom.finderAdvancedToggle.checked;
@@ -737,75 +836,45 @@ captureFinderUiState(persist = true): void {
 	this.uiState.dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
 	this.uiState.dataRangeFrom = normalizeFinderDateInput(dom.finderDataRangeFrom.value) ?? "";
 	this.uiState.dataRangeTo = normalizeFinderDateInput(dom.finderDataRangeTo.value) ?? "";
-	this.uiState.topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
-	this.uiState.maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
+	this.uiState.topN = this.readRoundedInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1);
+	this.uiState.maxRuns = this.readRoundedInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1);
 	this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
-	this.uiState.steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
+	this.uiState.steps = this.readRoundedInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2);
 	this.uiState.freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
 	this.uiState.exitStrategyOverrideEnabled = dom.finderExitStrategyOverrideToggle.checked;
 	this.uiState.tradeFilterEnabled = dom.finderTradesToggle.checked;
-	this.uiState.minTrades = Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0));
+	this.uiState.minTrades = this.readRoundedInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0);
 	this.uiState.maxTradesText = dom.finderTradesMax.value.trim();
 	this.uiState.oosValidationEnabled = dom.finderOosValidationToggle.checked;
-	this.uiState.armPerformanceHorizon = Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(
-		dom.finderArmPerformanceHorizon,
-		DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
-		1,
-	))));
-	this.uiState.armPerformanceRankingSort = dom.finderArmPerformanceRankingSort.value === "selected_asset" ? "selected_asset" : "overall_ordering";
-	this.uiState.armPerformanceMeasurement = dom.finderArmPerformanceMeasurement.value === "ranking_consistency" ? "ranking_consistency" : "return";
-	this.uiState.armPerformanceReplayMode = dom.finderArmPerformanceReplayMode.value === "asset_switch" ? "asset_switch" : "horizon";
+	this.uiState.armPerformanceHorizon = this.readArmPerformanceHorizon();
+	this.uiState.armPerformanceRankingSort = armEnums.rankingSort;
+	this.uiState.armPerformanceMeasurement = armEnums.measurement;
+	this.uiState.armPerformanceReplayMode = armEnums.replayMode;
 	this.uiState.armPerformanceExcludeTopContributor = dom.finderArmPerformanceExcludeTopContributor.checked;
 	this.uiState.armPerformanceEventFilterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
-	this.uiState.armPerformanceMinEvents = Math.max(1, Math.min(1_000_000, Math.round(this.readFinderNumberInput(
+	// Capture-only persistence cap; submission does not clamp this bound.
+	this.uiState.armPerformanceMinEvents = Math.max(1, Math.min(1_000_000, this.readRoundedInput(
 		dom.finderArmPerformanceMinEvents,
 		DEFAULT_FINDER_UI_STATE.armPerformanceMinEvents,
 		1,
-	))));
+	)));
 	this.uiState.armPerformanceMaxEventsText = dom.finderArmPerformanceMaxEvents.value.trim();
 	this.uiState.armPerformanceSelectionCooldownEnabled = dom.finderArmPerformanceSelectionCooldownEnabled.checked;
-	this.uiState.armPerformanceSelectionCooldownBars = Math.max(1, Math.min(10_000, Math.round(this.readFinderNumberInput(
+	// Capture-only persistence cap; submission does not clamp this bound.
+	this.uiState.armPerformanceSelectionCooldownBars = Math.max(1, Math.min(10_000, this.readRoundedInput(
 		dom.finderArmPerformanceSelectionCooldownBars,
 		DEFAULT_FINDER_UI_STATE.armPerformanceSelectionCooldownBars,
 		1,
-	))));
-	this.uiState.assetOpportunityCandidatePoolSize = Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
-		dom.finderAssetCandidatePoolSize,
-		DEFAULT_FINDER_UI_STATE.assetOpportunityCandidatePoolSize,
-		1,
-	))));
-	this.uiState.assetOpportunityMinFreshSupport = Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
-		dom.finderAssetMinFreshSupport,
-		DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
-		1,
-	))));
-	this.uiState.assetOpportunityIncludeOpenPositions = dom.finderAssetIncludeOpenPositions.checked;
-	this.uiState.assetOpportunityOosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
-		dom.finderAssetOosMeasurementMode.value,
-	);
-	this.uiState.assetOpportunityOosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
-		dom.finderAssetOosHorizonBasis.value,
-	);
-	this.uiState.assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
-		this.readFinderNumberInput(
-			dom.finderAssetOosIgnoreLastBars,
-			DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
-			0,
-		),
-	);
-	this.uiState.assetOpportunityOosHorizons = normalizeFinderAssetOosHorizons(
-		dom.finderAssetOosHorizons.value,
-	).join(",");
-	this.uiState.assetOpportunityEvalWindowMode = normalizeFinderAssetEvalWindowMode(
-		dom.finderAssetEvalWindowMode.value,
-	);
-	this.uiState.assetOpportunityEvalWindowBars = normalizeFinderAssetEvalLastBars(
-		this.readFinderNumberInput(
-			dom.finderAssetEvalWindowBars,
-			DEFAULT_FINDER_UI_STATE.assetOpportunityEvalWindowBars,
-			0,
-		),
-	);
+	)));
+	this.uiState.assetOpportunityCandidatePoolSize = assetOpportunity.candidatePoolSize;
+	this.uiState.assetOpportunityMinFreshSupport = assetOpportunity.minFreshSupport;
+	this.uiState.assetOpportunityIncludeOpenPositions = assetOpportunity.includeOpenPositions;
+	this.uiState.assetOpportunityOosMeasurementMode = assetOpportunity.oosMeasurementMode;
+	this.uiState.assetOpportunityOosHorizonBasis = assetOpportunity.oosHorizonBasis;
+	this.uiState.assetOpportunityOosIgnoreLastBars = assetOpportunity.oosIgnoreLastBars;
+	this.uiState.assetOpportunityOosHorizons = assetOpportunity.oosHorizons.join(",");
+	this.uiState.assetOpportunityEvalWindowMode = assetOpportunity.evalWindowMode;
+	this.uiState.assetOpportunityEvalWindowBars = assetOpportunity.evalLastBars;
 	this.uiState.assetOpportunityOosBatchEnabled = dom.finderAssetOosBatchToggle.checked;
 	const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
 		dom.finderAssetOosBatchStart.value,
@@ -915,15 +984,15 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 		.map(el => (el as HTMLElement).dataset.value as FinderMetric | undefined);
 	const mode = scope === 'current_chart' || scope === 'arm_performance' ? dom.finderMode.value as FinderMode : 'random';
 	const dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
-	const topN = Math.round(this.readFinderNumberInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1));
-	const steps = Math.round(this.readFinderNumberInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2));
+	const topN = this.readRoundedInput(dom.finderTopN, DEFAULT_FINDER_UI_STATE.topN, 1);
+	const steps = this.readRoundedInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2);
 	const rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
-	const maxRuns = Math.round(this.readFinderNumberInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1));
+	const maxRuns = this.readRoundedInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1);
 	const tradeFilterEnabled = scope !== 'symbol_universe'
 		&& scope !== 'strategy_quality'
 		&& scope !== 'arm_performance'
 		&& dom.finderTradesToggle.checked;
-	const minTrades = tradeFilterEnabled ? Math.round(this.readFinderNumberInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0)) : 0;
+	const minTrades = tradeFilterEnabled ? this.readRoundedInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0) : 0;
 	const maxTrades = tradeFilterEnabled
 		? Math.round(this.readFinderNumberInput(dom.finderTradesMax, Number.POSITIVE_INFINITY, 0))
 		: Number.POSITIVE_INFINITY;
@@ -955,37 +1024,35 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 	options.scope = scope;
 	if (scope === 'arm_performance') {
 		const dateMode = dataSlice === 'date_range' ? 'date_range' : 'full';
-		const replayMode = dom.finderArmPerformanceReplayMode.value === "asset_switch" ? "asset_switch" : "horizon";
-		const measurement = dom.finderArmPerformanceMeasurement.value === "ranking_consistency" ? "ranking_consistency" : "return";
+		const armEnums = this.readArmPerformanceEnums();
+		const { measurement, replayMode } = armEnums;
 		options.armPerformance = {
 			measurement,
-			rankingSort: dom.finderArmPerformanceRankingSort.value === "selected_asset" ? "selected_asset" : "overall_ordering",
-			...(measurement === "ranking_consistency" && replayMode === "asset_switch" ? { rankingHorizon: Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(dom.finderArmPerformanceHorizon, DEFAULT_FINDER_UI_STATE.armPerformanceHorizon, 1)))) } : {}),
+			rankingSort: armEnums.rankingSort,
+			...(measurement === "ranking_consistency" && replayMode === "asset_switch" ? { rankingHorizon: this.readArmPerformanceHorizon() } : {}),
 			replayMode,
 			...(replayMode === "horizon" ? {
-				horizon: Math.max(1, Math.min(1_000, Math.round(this.readFinderNumberInput(
-					dom.finderArmPerformanceHorizon,
-					DEFAULT_FINDER_UI_STATE.armPerformanceHorizon,
-					1,
-				)))),
+				horizon: this.readArmPerformanceHorizon(),
 			} : {}),
 			dateMode,
 			scoringBasis: measurement === "return" && dom.finderArmPerformanceExcludeTopContributor.checked ? "exclude_top_contributor" : "raw",
 			eventFilterEnabled: dom.finderArmPerformanceEventFilterEnabled.checked,
-			minEvents: Math.max(1, Math.round(this.readFinderNumberInput(
+			// Submission deliberately has no persistence cap here: unlike
+			// capture, an oversized minimum is the operator's explicit choice.
+			minEvents: Math.max(1, this.readRoundedInput(
 				dom.finderArmPerformanceMinEvents,
 				DEFAULT_FINDER_UI_STATE.armPerformanceMinEvents,
 				1,
-			))),
+			)),
 			maxEvents: dom.finderArmPerformanceMaxEvents.value.trim() === ""
 				? null
 				: Math.round(this.readFinderNumberInput(dom.finderArmPerformanceMaxEvents, Number.POSITIVE_INFINITY, 1)),
 			selectionCooldownEnabled: replayMode === "horizon" && dom.finderArmPerformanceSelectionCooldownEnabled.checked,
-			selectionCooldownBars: Math.max(1, Math.round(this.readFinderNumberInput(
+			selectionCooldownBars: Math.max(1, this.readRoundedInput(
 				dom.finderArmPerformanceSelectionCooldownBars,
 				DEFAULT_FINDER_UI_STATE.armPerformanceSelectionCooldownBars,
 				1,
-			))),
+			)),
 		};
 		options.dataSlice = dateMode === 'date_range' ? 'date_range' : 'all';
 		options.oosValidationEnabled = false;
@@ -994,52 +1061,28 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 		options.sortPriority = options.sortPriority.filter((metric) => metric !== "exitAlpha");
 	}
 	if (scope === 'symbol_universe' || scope === 'strategy_quality') {
+		const universe = this.readUniverseInputs();
 		options.universe = buildFinderUniverseOptions({
 			symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
-			minActiveSymbols: Math.round(this.readFinderNumberInput(dom.finderUniverseMinActiveSymbols, DEFAULT_FINDER_UI_STATE.universeMinActiveSymbols, 1)),
-			minTotalTrades: Math.round(this.readFinderNumberInput(dom.finderUniverseMinTotalTrades, DEFAULT_FINDER_UI_STATE.universeMinTotalTrades, 0)),
-			minProfitableActiveRatio: this.readFinderNumberInput(
-				dom.finderUniverseMinProfitableActiveRatio,
-				DEFAULT_FINDER_UI_STATE.universeMinProfitableActiveRatio,
-				0
-			),
-			primarySort: normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort),
-			secondarySort: normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
+			minActiveSymbols: universe.minActiveSymbols,
+			minTotalTrades: universe.minTotalTrades,
+			minProfitableActiveRatio: universe.minProfitableActiveRatio,
+			primarySort: universe.universeSort,
+			secondarySort: universe.universeSortSecondary,
 		});
 	} else if (scope === 'asset_opportunity') {
+		const assetOpportunity = this.readAssetOpportunityInputs();
 		options.assetOpportunity = {
-			symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
-			candidatePoolSize: Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
-				dom.finderAssetCandidatePoolSize,
-				DEFAULT_FINDER_UI_STATE.assetOpportunityCandidatePoolSize,
-				1,
-			)))),
-			minFreshSupport: Math.max(1, Math.min(50, Math.round(this.readFinderNumberInput(
-				dom.finderAssetMinFreshSupport,
-				DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport,
-				1,
-			)))),
-			includeOpenPositions: dom.finderAssetIncludeOpenPositions.checked,
-			oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
-				dom.finderAssetOosMeasurementMode.value,
-			),
-			oosHorizonBasis: normalizeFinderAssetOosHorizonBasis(
-				dom.finderAssetOosHorizonBasis.value,
-			),
-			oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(this.readFinderNumberInput(
-				dom.finderAssetOosIgnoreLastBars,
-				DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
-				0,
-			)),
-			evalLastBars: normalizeFinderAssetEvalLastBars(this.readFinderNumberInput(
-				dom.finderAssetEvalWindowBars,
-				DEFAULT_FINDER_UI_STATE.assetOpportunityEvalWindowBars,
-				0,
-			)),
-			evalWindowMode: normalizeFinderAssetEvalWindowMode(
-				dom.finderAssetEvalWindowMode.value,
-			),
-			oosHorizons: normalizeFinderAssetOosHorizons(dom.finderAssetOosHorizons.value),
+			symbols: assetOpportunity.symbols,
+			candidatePoolSize: assetOpportunity.candidatePoolSize,
+			minFreshSupport: assetOpportunity.minFreshSupport,
+			includeOpenPositions: assetOpportunity.includeOpenPositions,
+			oosMeasurementMode: assetOpportunity.oosMeasurementMode,
+			oosHorizonBasis: assetOpportunity.oosHorizonBasis,
+			oosIgnoreLastBars: assetOpportunity.oosIgnoreLastBars,
+			evalLastBars: assetOpportunity.evalLastBars,
+			evalWindowMode: assetOpportunity.evalWindowMode,
+			oosHorizons: assetOpportunity.oosHorizons,
 		};
 	}
 

@@ -1793,6 +1793,169 @@ describe("Finder Arm Performance scope controls", () => {
     });
 });
 
+describe("Finder controls shared form conversion", () => {
+    const stubBacktestSettings = {
+        executionModel: "next_open",
+        disableSignalExits: false,
+        exitStrategyOverrideEnabled: false,
+    } as const;
+
+    function makeControls(dom: any): FinderControls {
+        return new FinderControls({
+            getDom: () => dom,
+            setStatus: () => {},
+            renderLatestResults: () => {},
+            populateResortOptions: () => {},
+            applyResort: () => {},
+            requestRun: () => {},
+            renderRandomBenchmark: () => {},
+            selection: { getVisibleStrategyKeys: () => [] } as any,
+        });
+    }
+
+    it("reads the Asset Opportunity group through one conversion for capture and submission", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = makeControls(dom);
+        dom.finderScope.value = "asset_opportunity";
+        controls.uiState.scope = "asset_opportunity";
+        dom.finderUniverseSymbols.value = "aaa, BBB\naaa";
+        dom.finderAssetCandidatePoolSize.value = "99";
+        dom.finderAssetMinFreshSupport.value = "0";
+        dom.finderAssetIncludeOpenPositions.checked = true;
+        dom.finderAssetOosMeasurementMode.value = "next_exit";
+        dom.finderAssetOosHorizonBasis.value = "quote_only";
+        dom.finderAssetOosIgnoreLastBars.value = "7";
+        dom.finderAssetEvalWindowMode.value = "range_bar";
+        dom.finderAssetEvalWindowBars.value = "120";
+        dom.finderAssetOosHorizons.value = "2, 4, 6";
+
+        controls.captureFinderUiState(false);
+        expect(controls.uiState.assetOpportunityCandidatePoolSize).to.equal(50);
+        expect(controls.uiState.assetOpportunityMinFreshSupport).to.equal(1);
+        expect(controls.uiState.assetOpportunityIncludeOpenPositions).to.equal(true);
+        expect(controls.uiState.assetOpportunityOosMeasurementMode).to.equal("next_exit");
+        expect(controls.uiState.assetOpportunityOosHorizonBasis).to.equal("quote_only");
+        expect(controls.uiState.assetOpportunityOosIgnoreLastBars).to.equal(7);
+        expect(controls.uiState.assetOpportunityEvalWindowMode).to.equal("range_bar");
+        expect(controls.uiState.assetOpportunityEvalWindowBars).to.equal(120);
+        // Persistence keeps horizons as comma-separated text.
+        expect(controls.uiState.assetOpportunityOosHorizons).to.equal("2,4,6");
+
+        const options = controls.readOptions(stubBacktestSettings);
+        expect(options.assetOpportunity).to.deep.equal({
+            symbols: ["AAA", "BBB"],
+            candidatePoolSize: 50,
+            minFreshSupport: 1,
+            includeOpenPositions: true,
+            oosMeasurementMode: "next_exit",
+            oosHorizonBasis: "quote_only",
+            oosIgnoreLastBars: 7,
+            evalLastBars: 120,
+            evalWindowMode: "range_bar",
+            // Execution receives the parsed horizon array.
+            oosHorizons: [2, 4, 6],
+        });
+    });
+
+    it("records capture-only bounds caps that submission deliberately lacks", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = makeControls(dom);
+        dom.finderScope.value = "arm_performance";
+        controls.uiState.scope = "arm_performance";
+        dom.finderArmPerformanceMinEvents.value = "2000000";
+        dom.finderArmPerformanceSelectionCooldownBars.value = "20000";
+        dom.finderArmPerformanceHorizon.value = "5000";
+
+        controls.captureFinderUiState(false);
+        // Capture clamps the persisted preferences...
+        expect(controls.uiState.armPerformanceMinEvents).to.equal(1_000_000);
+        expect(controls.uiState.armPerformanceSelectionCooldownBars).to.equal(10_000);
+        expect(controls.uiState.armPerformanceHorizon).to.equal(1_000);
+
+        const options = controls.readOptions(stubBacktestSettings);
+        // ...while submission applies only the shared lower bound.
+        expect(options.armPerformance!.minEvents).to.equal(2_000_000);
+        expect(options.armPerformance!.selectionCooldownBars).to.equal(20_000);
+        // The horizon clamp is identical on both boundaries by design.
+        expect(options.armPerformance!.horizon).to.equal(1_000);
+    });
+
+    it("keeps text maxima, trade gating, and cooldown gating submission-only", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = makeControls(dom);
+        dom.finderScope.value = "current_chart";
+        dom.finderTradesToggle.checked = true;
+        dom.finderTradesMin.value = "30";
+        dom.finderTradesMax.value = "";
+        dom.finderArmPerformanceSelectionCooldownEnabled.checked = true;
+
+        // Capture stores editable preferences even while gates would disable them.
+        controls.captureFinderUiState(false);
+        expect(controls.uiState.minTrades).to.equal(30);
+        expect(controls.uiState.maxTradesText).to.equal("");
+        expect(controls.uiState.armPerformanceSelectionCooldownEnabled).to.equal(true);
+
+        const options = controls.readOptions(stubBacktestSettings);
+        expect(options.minTrades).to.equal(30);
+        expect(options.maxTrades).to.equal(Number.POSITIVE_INFINITY);
+        // Outside the Arm scope no cooldown gate applies at all.
+        expect(options.armPerformance).to.equal(undefined);
+
+        dom.finderScope.value = "arm_performance";
+        dom.finderArmPerformanceReplayMode.value = "asset_switch";
+        const switchOptions = controls.readOptions(stubBacktestSettings);
+        expect(switchOptions.armPerformance!.selectionCooldownEnabled).to.equal(false);
+        expect(switchOptions.armPerformance!.maxEvents).to.equal(null);
+
+        dom.finderTradesToggle.checked = false;
+        const gated = controls.readOptions(stubBacktestSettings);
+        expect(gated.tradeFilterEnabled).to.equal(false);
+        expect(gated.minTrades).to.equal(0);
+        expect(gated.maxTrades).to.equal(Number.POSITIVE_INFINITY);
+        // The stored preference survives the disabled toggle.
+        expect(controls.uiState.minTrades).to.equal(30);
+
+        dom.finderArmPerformanceMaxEvents.value = "500";
+        controls.captureFinderUiState(false);
+        expect(controls.uiState.armPerformanceMaxEventsText).to.equal("500");
+        expect(controls.readOptions(stubBacktestSettings).armPerformance!.maxEvents).to.equal(500);
+    });
+
+    it("keeps the scope mode gate submission-only and persists the captured mode", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = makeControls(dom);
+        dom.finderScope.value = "symbol_universe";
+        controls.uiState.scope = "symbol_universe";
+        dom.finderMode.value = "genetic";
+
+        controls.captureFinderUiState(false);
+        expect(controls.uiState.mode).to.equal("genetic");
+        expect(controls.readOptions(stubBacktestSettings).mode).to.equal("random");
+    });
+
+    it("keeps previous valid batch bounds on invalid capture and reports errors at submission", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = makeControls(dom);
+        dom.finderScope.value = "asset_opportunity";
+        controls.uiState.scope = "asset_opportunity";
+        dom.finderAssetOosBatchToggle.checked = true;
+        dom.finderAssetOosBatchStart.value = "3";
+        dom.finderAssetOosBatchEnd.value = "8";
+
+        controls.captureFinderUiState(false);
+        expect(controls.uiState.assetOpportunityOosBatchStartBars).to.equal(3);
+        expect(controls.uiState.assetOpportunityOosBatchEndBars).to.equal(8);
+
+        dom.finderAssetOosBatchEnd.value = "2";
+        controls.captureFinderUiState(false);
+        expect(controls.uiState.assetOpportunityOosBatchStartBars).to.equal(3, "invalid capture keeps previous valid bounds");
+        expect(controls.uiState.assetOpportunityOosBatchEndBars).to.equal(8);
+
+        const batchRange = controls.readBatchHoldoutRange();
+        expect(batchRange.error).to.be.a("string").that.is.not.empty;
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Copy Diagnostics availability transitions (regression)
 // ---------------------------------------------------------------------------
