@@ -475,6 +475,25 @@ export function toMatchKey(value: string): string {
     return toPosixPath(value).toLowerCase();
 }
 
+/**
+ * Canonical changed-path list shared by the collector and the planner: empty
+ * strings are dropped, duplicates are detected on the match key with the first
+ * slash-normalized spelling retained, and the result is sorted by normalized
+ * key with the plain comparator. Paths are never trimmed or resolved on disk.
+ */
+export function normalizeChangedPaths(paths: readonly string[]): string[] {
+    const seen = new Set<string>();
+    const unique: string[] = [];
+    for (const changed of paths) {
+        const key = toMatchKey(changed);
+        if (!key || seen.has(key)) continue;
+        seen.add(key);
+        unique.push(toPosixPath(changed));
+    }
+    unique.sort((left, right) => compareStrings(toMatchKey(left), toMatchKey(right)));
+    return unique;
+}
+
 /** Prefix that preserves directory boundaries: `lib/finder` -> `lib/finder/`. */
 function directoryPrefix(directory: string): string {
     const normalized = toMatchKey(directory);
@@ -505,15 +524,7 @@ function compareStrings(left: string, right: string): number {
  * raises `ValidationMapError` instead of an apparently clean plan.
  */
 export function buildValidationPlan(input: ValidationPlanInput): ValidationPlan {
-    const changedPaths: string[] = [];
-    const seenPaths = new Set<string>();
-    for (const changed of input.changedPaths) {
-        const key = toMatchKey(changed);
-        if (!key || seenPaths.has(key)) continue;
-        seenPaths.add(key);
-        changedPaths.push(toPosixPath(changed));
-    }
-    changedPaths.sort((left, right) => compareStrings(toMatchKey(left), toMatchKey(right)));
+    const changedPaths = normalizeChangedPaths(input.changedPaths);
 
     const specByKey = new Map<string, string>();
     for (const spec of input.availableSpecs) {

@@ -7,6 +7,7 @@ import {
     buildValidationPlan,
     describeCheckCommand,
     inspectValidationMap,
+    normalizeChangedPaths,
     VALIDATION_CHECKS,
     VALIDATION_PLAN_FORMAT_VERSION,
     VALIDATION_RULES,
@@ -415,6 +416,21 @@ describe("validation plan routing", () => {
         const plan = planFor(["LIB\\FINDER\\Finder-Engine.TS"]);
         assert.deepEqual(ruleIds(plan), ["finder"]);
         assert.deepEqual(plan.unmatchedPaths, []);
+    });
+
+    it("canonicalizes changed paths once for collector and planner", () => {
+        const input = ["lib\\Finder\\A.ts", "lib/finder/a.ts", "", "docs/Late.md", "lib/finder/A.ts"];
+        const normalized = normalizeChangedPaths(input);
+        assert.deepEqual(normalized, ["docs/Late.md", "lib/Finder/A.ts"]);
+        assert.deepEqual(
+            input,
+            ["lib\\Finder\\A.ts", "lib/finder/a.ts", "", "docs/Late.md", "lib/finder/A.ts"],
+            "input must not be mutated",
+        );
+
+        assert.deepEqual(normalizeChangedPaths([]), []);
+        assert.deepEqual(normalizeChangedPaths(["", ""]), []);
+        assert.deepEqual(normalizeChangedPaths(normalized), normalized, "canonicalization is idempotent");
     });
 
     it("deduplicates and sorts changed paths deterministically", () => {

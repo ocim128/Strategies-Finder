@@ -138,6 +138,28 @@ describe("git change collection", () => {
         assert.deepEqual(changes.outOfScopePaths, []);
     });
 
+    it("collects a staged file edited again once and hands its identity to the planner", async () => {
+        const root = createFixtureRepo();
+        const baseCommit = git(["rev-parse", "HEAD"], root).trim();
+        git(["checkout", "-b", "feature"], root);
+        write(path.join(root, "lib", "tracked.ts"), "export const tracked = 2;\n");
+        git(["add", "-A"], root);
+        git(["commit", "-m", "branch work"], root);
+        // The same path now arrives from the committed diff, the staged index,
+        // and the working tree; the collector must report it exactly once.
+        write(path.join(root, "lib", "tracked.ts"), "export const tracked = 3;\n");
+        git(["add", "lib/tracked.ts"], root);
+        fs.writeFileSync(path.join(root, "lib", "tracked.ts"), "export const tracked = 4;\n", "utf8");
+
+        const changes = await collectChangedPaths({ appRoot: root, base: baseCommit });
+        assert.deepEqual(changes.paths, ["lib/tracked.ts"]);
+
+        // The collector's output already satisfies the planner's canonical
+        // form, so planning must not reshape path identity or order.
+        const plan = buildValidationPlan({ changedPaths: changes.paths, availableSpecs: [] });
+        assert.deepEqual(plan.changedPaths, changes.paths);
+    });
+
     it("reports both rename paths and deletions", async () => {
         const root = createFixtureRepo();
         write(path.join(root, "renamed-old.txt"), "rename me\n");

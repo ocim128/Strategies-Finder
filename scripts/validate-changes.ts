@@ -18,8 +18,7 @@ import {
     buildValidationPlan,
     describeCheckCommand,
     getValidationCheck,
-    toPosixPath,
-    toMatchKey,
+    normalizeChangedPaths,
     ValidationMapError,
     VALIDATION_PLAN_FORMAT_VERSION,
     type ValidationCheckId,
@@ -223,25 +222,11 @@ export function parseStatusZ(output: string): StatusEntry[] {
     return entries;
 }
 
-function dedupeSort(values: readonly string[]): string[] {
-    const seen = new Set<string>();
-    const unique: string[] = [];
-    for (const value of values) {
-        const key = toMatchKey(value);
-        if (seen.has(key)) continue;
-        seen.add(key);
-        unique.push(toPosixPath(value));
-    }
-    unique.sort((left, right) => {
-        const leftKey = toMatchKey(left);
-        const rightKey = toMatchKey(right);
-        if (leftKey < rightKey) return -1;
-        if (leftKey > rightKey) return 1;
-        return 0;
-    });
-    return unique;
-}
-
+/**
+ * Split Git paths into app-root-relative in-scope paths and out-of-scope Git
+ * paths. Roots are canonicalized but path strings are returned raw; slash
+ * conversion and deduplication happen once at the collector result boundary.
+ */
 function scopePathsToAppRoot(
     gitPaths: readonly string[],
     gitRoot: string,
@@ -253,7 +238,7 @@ function scopePathsToAppRoot(
     const scopedGitRoot = fs.realpathSync.native(gitRoot);
     const scopedAppRoot = fs.realpathSync.native(appRoot);
     if (path.relative(scopedAppRoot, scopedGitRoot) === "") {
-        return { inScope: [...gitPaths].map(toPosixPath), outOfScope: [] };
+        return { inScope: [...gitPaths], outOfScope: [] };
     }
     const inScope: string[] = [];
     const outOfScope: string[] = [];
@@ -261,10 +246,10 @@ function scopePathsToAppRoot(
         const absolute = path.resolve(scopedGitRoot, gitPath);
         const relative = path.relative(scopedAppRoot, absolute);
         if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
-            outOfScope.push(toPosixPath(gitPath));
+            outOfScope.push(gitPath);
             continue;
         }
-        inScope.push(toPosixPath(relative));
+        inScope.push(relative);
     }
     return { inScope, outOfScope };
 }
@@ -336,8 +321,8 @@ export async function collectChangedPaths(options: {
         base,
         baseCommit,
         mergeBase,
-        paths: dedupeSort(inScope),
-        outOfScopePaths: dedupeSort(outOfScope),
+        paths: normalizeChangedPaths(inScope),
+        outOfScopePaths: normalizeChangedPaths(outOfScope),
     };
 }
 
