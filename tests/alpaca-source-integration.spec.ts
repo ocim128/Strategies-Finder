@@ -691,7 +691,13 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
     it("writes the catalog once per completed symbol and stops writing after Stop", async () => {
         const symbols = ["C0", "C1", "C2", "C3", "C4", "C5"];
         const events: Array<Record<string, unknown>> = [];
-        const deferred = new Map<string, () => void>();
+        // A fetch is RELEASED when the test calls its resolver and COMPLETED
+        // only when the fetcher's body has run to completion afterwards.
+        // Entries are never removed on release, so a drain observation that
+        // requires every known fetch to be completed cannot succeed while any
+        // operation is still gated.
+        const pendingFetches = new Map<string, () => void>();
+        const completedFetches = new Set<string>();
         const controller = new AbortController();
         const alpacaFetcher = (async (
             _cat: unknown,
@@ -701,8 +707,8 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
             _syncOnly: boolean,
             signal?: AbortSignal,
         ) => {
-            await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
-            deferred.delete(symbol);
+            await new Promise<void>((resolveFetch) => pendingFetches.set(symbol, resolveFetch));
+            completedFetches.add(symbol);
             // Mirror syncOneAlpacaSymbol: an aborted signal yields a cancelled
             // result with NO writes (the CSV/catalog write is skipped).
             if (signal?.aborted) {
@@ -719,30 +725,49 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
             { signal: controller.signal, alpacaFetcher: alpacaFetcher as never },
         );
 
-        await waitFor(() => deferred.size === 3, 2000, "the first 3 symbols to dispatch");
-        for (const symbol of ["C0", "C1", "C2"]) deferred.get(symbol)!();
+        await waitFor(() => pendingFetches.size === 3, 2000, "the first 3 symbols to dispatch");
+        for (const symbol of ["C0", "C1", "C2"]) pendingFetches.get(symbol)!();
         await waitFor(
             () => __getIbkrCatalogWriteCountForTests() === 3,
             2000,
             "one catalog write per completed symbol",
         );
 
-        // Stop mid-flight: resolve the in-flight window so the workers observe
-        // the aborted signal and return cancelled results (no writes), and no
-        // further symbols are dispatched.
+        // Stop mid-flight, but keep C5 gated across a later turn: the drain
+        // observation below must not succeed while one fetch is merely
+        // dispatched, so the no-late-write assertions only run after real
+        // completion.
         controller.abort();
-        await waitFor(() => deferred.size > 0, 2000, "the next window to be in flight");
-        for (const [symbol, resolveFetch] of [...deferred]) {
-            deferred.delete(symbol);
-            resolveFetch();
-        }
-        await run;
-        // `await run` does not drain the sibling fetches: the batch settles at
-        // the cancelled release (characterized below). Wait for the aborted
-        // window's fetches to settle — the macrotask poll then also proves
-        // their release processing ran — before asserting absence of late
+        await waitFor(
+            () => ["C3", "C4", "C5"].every((symbol) => pendingFetches.has(symbol)),
+            2000,
+            "the aborted window to be in flight",
+        );
+        pendingFetches.get("C3")!();
+        pendingFetches.get("C4")!();
+        // The batch settles at C3's cancelled release while C5 is still gated
+        // (characterized in the suite below); the deadline only guards a
+        // regression that would keep the promise pending.
+        await withTimeout(run, 5000, "the batch to settle at the cancelled release");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.equal(pendingFetches.has("C5"), true, "the gated sibling must still be pending before its release");
+        assert.equal(completedFetches.has("C5"), false, "a gated fetch is not complete, so the drain cannot be satisfied yet");
+
+        pendingFetches.get("C5")!();
+        await waitFor(
+            () => completedFetches.size === symbols.length && pendingFetches.size === symbols.length,
+            2000,
+            "every dispatched fetch operation to complete",
+        );
+        // Completion boundary, verified against the implementation: the
+        // worker computes each outcome and releases it synchronously in the
+        // same continuation that resumes after `await fetcher(...)`, and a
+        // released "result" outcome enqueues its catalog write on the
+        // writeCatalogSerialized chain, whose bodies also run as microtasks.
+        // One macrotask checkpoint after the last fetch completion therefore
+        // runs strictly after all outcome releases and any queued catalog
         // writes.
-        await waitFor(() => deferred.size === 0, 2000, "the cancelled window's fetches to settle");
+        await new Promise((resolve) => setTimeout(resolve, 0));
         assert.equal(
             __getIbkrCatalogWriteCountForTests(),
             3,
