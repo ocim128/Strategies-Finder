@@ -1,139 +1,40 @@
 import { expect } from 'chai';
 import { afterEach, beforeEach, describe, it } from 'node:test';
-import { clearLocalDailyCsvCachesForSymbols, loadCachedCandles, loadFreshIbkrCandlesFromPriceData, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from '../lib/candle-cache';
-
-type StoredRecord = {
-    key: string;
-    symbol: string;
-    interval: string;
-    candles: Array<{
-        time: number;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-    }>;
-    updatedAt: number;
-    source: string;
-};
-
-class FakeObjectStore {
-    constructor(private readonly records: Map<string, StoredRecord>) {}
-
-    get(key: string) {
-        const request: {
-            result?: StoredRecord;
-            onsuccess: null | (() => void);
-            onerror: null | (() => void);
-        } = {
-            result: undefined,
-            onsuccess: null,
-            onerror: null,
-        };
-
-        queueMicrotask(() => {
-            request.result = this.records.get(key);
-            request.onsuccess?.();
-        });
-
-        return request;
-    }
-
-    put(record: StoredRecord) {
-        this.records.set(record.key, structuredClone(record));
-    }
-}
-
-class FakeTransaction {
-    public oncomplete: null | (() => void) = null;
-    public onerror: null | (() => void) = null;
-
-    constructor(private readonly records: Map<string, StoredRecord>) {}
-
-    objectStore() {
-        return new FakeObjectStore(this.records);
-    }
-
-    complete() {
-        queueMicrotask(() => {
-            this.oncomplete?.();
-        });
-    }
-}
-
-class FakeDb {
-    public objectStoreNames = {
-        contains: (_name: string) => true,
-    };
-
-    constructor(private readonly records: Map<string, StoredRecord>) {}
-
-    createObjectStore() {
-        return new FakeObjectStore(this.records);
-    }
-
-    transaction(_name: string, _mode: string) {
-        const tx = new FakeTransaction(this.records);
-        queueMicrotask(() => tx.complete());
-        return tx;
-    }
-}
-
-class FakeIndexedDbFactory {
-    private readonly records = new Map<string, StoredRecord>();
-    private readonly db = new FakeDb(this.records);
-
-    open() {
-        const request: {
-            result: FakeDb;
-            onupgradeneeded: null | (() => void);
-            onsuccess: null | (() => void);
-            onerror: null | (() => void);
-            error?: Error;
-        } = {
-            result: this.db,
-            onupgradeneeded: null,
-            onsuccess: null,
-            onerror: null,
-        };
-
-        queueMicrotask(() => {
-            request.onupgradeneeded?.();
-            request.onsuccess?.();
-        });
-
-        return request;
-    }
-
-    clear() {
-        this.records.clear();
-    }
-}
+import { clearCachedCandlesDatabase, clearLocalDailyCsvCachesForSymbols, loadCachedCandles, loadFreshIbkrCandlesFromPriceData, loadSeedCandlesFromPriceData, mergeCandles, saveCachedCandles } from '../lib/candle-cache';
+import { FakeCandleIndexedDb } from './helpers/fake-candle-indexeddb';
 
 describe('Candle cache', () => {
-    const indexedDbFactory = new FakeIndexedDbFactory();
     const originalIndexedDb = (globalThis as Record<string, unknown>).indexedDB;
     const originalFetch = globalThis.fetch;
+    let idb: FakeCandleIndexedDb;
 
-    beforeEach(() => {
-        indexedDbFactory.clear();
-        clearLocalDailyCsvCachesForSymbols();
+    beforeEach(async () => {
+        // Close any database connection a previous test retained before
+        // replacing the factory it is bound to.
+        await clearCachedCandlesDatabase();
+        idb = new FakeCandleIndexedDb();
         Object.defineProperty(globalThis, 'indexedDB', {
-            value: indexedDbFactory,
+            value: idb as unknown as IDBFactory,
             configurable: true,
             writable: true,
         });
+        clearLocalDailyCsvCachesForSymbols();
     });
 
-    afterEach(() => {
-        Object.defineProperty(globalThis, 'indexedDB', {
-            value: originalIndexedDb,
-            configurable: true,
-            writable: true,
-        });
-        globalThis.fetch = originalFetch;
-        clearLocalDailyCsvCachesForSymbols();
+    afterEach(async () => {
+        try {
+            // Clear while the fake factory is installed so the retained
+            // connection closes against it, then restore the real globals.
+            await clearCachedCandlesDatabase();
+        } finally {
+            Object.defineProperty(globalThis, 'indexedDB', {
+                value: originalIndexedDb,
+                configurable: true,
+                writable: true,
+            });
+            globalThis.fetch = originalFetch;
+            clearLocalDailyCsvCachesForSymbols();
+        }
     });
 
     it('merges already-parsed candles with sorted dedupe semantics on the fallback path', () => {
