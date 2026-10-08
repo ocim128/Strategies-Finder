@@ -11,7 +11,6 @@ import type { FinderSelectedStrategy } from "./finder/finder-runner";
 import { FinderParamSpace } from "./finder/finder-param-space";
 import { FinderUI } from "./finder/finder-ui";
 import { refreshFinderSettingsSummaries } from "./finder/browser/finder-workspace";
-import { ASSET_OPPORTUNITY_ALL_SORTS } from "./finder/finder-asset-opportunity-metrics";
 import { debugLogger } from "./debug-logger";
 import { DEFAULT_FINDER_UI_STATE, emptyFinderLatestResults } from "./finder/browser/finder-settings";
 import type { FinderRunStatusSnapshot } from "./finder/server/finder-stream-types";
@@ -33,10 +32,6 @@ import { FinderServerSession, createFinderStatusRequestSignal, type FinderSessio
 import { FinderControls } from "./finder/browser/finder-controls";
 import { coalesceAnimationFrame } from "./render-scheduler";
 import { FinderRunController } from "./finder/browser/finder-run-controller";
-import {
-	runAssetOpportunityBatchFinderServer,
-	type BatchHoldoutRange,
-} from "./finder/browser/workflows/asset-opportunity";
 import type { FinderRunHost } from "./finder/browser/workflows/finder-run-host";
 import {
 	getArmPerformanceDiagnosticsText,
@@ -303,30 +298,6 @@ export class FinderManager {
 	/** Run/Stop orchestration lives in the controller. */
 	public async runFinder(): Promise<void> {
 		await this.controller.runFinder();
-	}
-
-	/** @internal facade seam preserving the batch consumer's positional contract for integration tests. */
-	async runAssetOpportunityBatchFinderServer(
-		options: FinderOptions,
-		selectedStrategies: FinderSelectedStrategy[],
-		exitStrategyCandidates: FinderSelectedStrategy[] | undefined,
-		runId: string,
-		startTime: number,
-		range: BatchHoldoutRange,
-		archiveSort: import("./finder/finder-asset-opportunity-metrics").FinderAssetOpportunityArchiveSort | null = null,
-	): Promise<unknown> {
-		return runAssetOpportunityBatchFinderServer({
-			host: this.runHost(),
-			store: this.resultStore,
-			session: this.session,
-			options,
-			selectedStrategies,
-			exitStrategyCandidates,
-			runId,
-			startTime,
-			range,
-			archiveSort,
-		});
 	}
 
 	private getScope(): FinderScope {
@@ -759,10 +730,6 @@ export class FinderManager {
 		if (!metric) {
 			this.resultStore.restoreRunSort();
 			this.renderLatestResults();
-			return;
-		}
-		if (this.resultStore.latestResults.scope === 'asset_opportunity' && metric === ASSET_OPPORTUNITY_ALL_SORTS) {
-			this.setStatus('All Sorts is for batch archive output; choose a specific metric to re-sort displayed results.');
 			return;
 		}
 		this.resultStore.applyResortMetric(metric);

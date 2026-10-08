@@ -31,7 +31,10 @@ import { clearFinderActiveServerRun, readFinderActiveServerRun } from "../lib/fi
 import { runUniverseFinder } from "../lib/finder/browser/workflows/symbol-universe";
 import { runCurrentChartFinder } from "../lib/finder/browser/workflows/current-chart";
 import { runStrategyQualityFinder } from "../lib/finder/browser/workflows/strategy-quality";
-import { runAssetOpportunityFinder } from "../lib/finder/browser/workflows/asset-opportunity";
+import {
+    runAssetOpportunityFinder,
+    runAssetOpportunityBatchFinderServer,
+} from "../lib/finder/browser/workflows/asset-opportunity";
 import type { FinderRunHost } from "../lib/finder/browser/workflows/finder-run-host";
 import type { FinderRunStatusSnapshot } from "../lib/finder/server/finder-stream-types";
 import type {
@@ -1449,11 +1452,9 @@ describe("Finder facade terminal adoption (integration)", () => {
     });
 });
 
+// These stream-contract tests run the exported workflow functions against
+// fresh collaborators (recording host, store, session) — no manager facade.
 describe("FinderManager Asset Opportunity stream contracts", () => {
-    beforeEach(() => {
-        resetFacadeCollaborators();
-    });
-
     it("surfaces a recovered single-run fatal instead of persisting successful results", async () => {
         const host = makeRecordingRunHost();
         const session = new FinderServerSession();
@@ -1494,22 +1495,28 @@ describe("FinderManager Asset Opportunity stream contracts", () => {
     });
 
     it("does not turn a recovered batch fatal into a successful outcome", async () => {
+        const host = makeRecordingRunHost();
+        const session = new FinderServerSession();
+        const store = new FinderResultStore(() => {});
         const runId = "batch-fatal-recovery";
-        manager().session.activeRunId = runId;
+        session.activeRunId = runId;
         const options: any = {
             mode: "random",
             scope: "asset_opportunity",
             topN: 1,
             assetOpportunity: { symbols: ["AAA"] },
         };
-        const request = manager().runAssetOpportunityBatchFinderServer(
+        const request = runAssetOpportunityBatchFinderServer({
+            host,
+            store,
+            session,
             options,
-            [],
-            undefined,
+            selectedStrategies: [],
+            exitStrategyCandidates: undefined,
             runId,
-            performance.now(),
-            { start: 1, end: 1 },
-        );
+            startTime: performance.now(),
+            range: { start: 1, end: 1, error: null },
+        });
 
         mockFetch.resolveFirst(makeNdjsonResponse([{
             type: "asset_batch_fatal",
@@ -1543,8 +1550,11 @@ describe("FinderManager Asset Opportunity stream contracts", () => {
     });
 
     it("retains the latest batch diagnostics and asset counts from terminal events", async () => {
+        const host = makeRecordingRunHost();
+        const session = new FinderServerSession();
+        const store = new FinderResultStore(() => {});
         const runId = "batch-diagnostics";
-        manager().session.activeRunId = runId;
+        session.activeRunId = runId;
         const assetDiagnostics: any = {
             totalAssets: 2,
             assetsWithFreshEntry: 1,
@@ -1568,15 +1578,17 @@ describe("FinderManager Asset Opportunity stream contracts", () => {
             topN: 1,
             assetOpportunity: { symbols: ["AAA", "BBB"] },
         };
-        const request = manager().runAssetOpportunityBatchFinderServer(
+        const request = runAssetOpportunityBatchFinderServer({
+            host,
+            store,
+            session,
             options,
-            [],
-            undefined,
+            selectedStrategies: [],
+            exitStrategyCandidates: undefined,
             runId,
-            performance.now(),
-            { start: 1, end: 1 },
-            "freshSignalLibraries",
-        );
+            startTime: performance.now(),
+            range: { start: 1, end: 1, error: null },
+        });
 
         const submittedBody = JSON.parse(String(mockFetch.requests[0]?.init?.body));
         expect(submittedBody.archiveSort).to.equal(ASSET_OPPORTUNITY_ALL_SORTS);

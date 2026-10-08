@@ -346,7 +346,6 @@ export async function runAssetOpportunityBatchFinder(args: AssetOpportunityWorkf
 		uiManager.showToast(range.error, 'error');
 		return false;
 	}
-	const archiveSort: FinderAssetOpportunityArchiveSort | null = ASSET_OPPORTUNITY_ALL_SORTS;
 
 	const exitStrategyCandidates = await args.strategies.resolveExitStrategyCandidates(options, selectedStrategies);
 	const runId = session.generateRunId();
@@ -363,7 +362,6 @@ export async function runAssetOpportunityBatchFinder(args: AssetOpportunityWorkf
 		runId,
 		startTime,
 		range,
-		archiveSort,
 	});
 
 	if (session.isActive(runId)) {
@@ -399,9 +397,10 @@ export async function runAssetOpportunityBatchFinderServer(args: {
 	runId: string;
 	startTime: number;
 	range: BatchHoldoutRange;
-	archiveSort: FinderAssetOpportunityArchiveSort | null;
 }): Promise<ServerAssetOpportunityRunOutcome> {
 	const { host, store, session, options, selectedStrategies, exitStrategyCandidates, runId, startTime, range } = args;
+	// The batch archive policy is fixed server-side: every request archives
+	// All Sorts, and browser callers cannot supply an alternative.
 	const archiveSort: FinderAssetOpportunityArchiveSort | null = ASSET_OPPORTUNITY_ALL_SORTS;
 	const settings = backtestService.getBacktestSettings();
 	const capitalSettings = backtestService.getCapitalSettings();
