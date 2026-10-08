@@ -629,14 +629,6 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
     beforeEach(() => __resetIbkrSyncStateForTests());
     afterEach(() => __resetIbkrSyncStateForTests());
 
-    const waitFor = async (predicate: () => boolean, what: string, timeoutMs = 2000): Promise<void> => {
-        const startedAt = Date.now();
-        while (!predicate()) {
-            if (Date.now() - startedAt > timeoutMs) throw new Error(`timed out waiting for ${what}`);
-            await new Promise((resolveSleep) => setTimeout(resolveSleep, 5));
-        }
-    };
-
     it("keeps at most 3 symbols in flight and releases symbol events in ascending index order", async () => {
         // Deferred worker: each symbol's completion is held until the test
         // resolves it, so in-flight concurrency is directly observable. The
@@ -666,7 +658,7 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
             { alpacaFetcher: alpacaFetcher as never },
         );
 
-        await waitFor(() => deferred.size === 3, "the dispatch frontier to fill 3 slots");
+        await waitFor(() => deferred.size === 3, 2000, "the dispatch frontier to fill 3 slots");
         assert.equal(maxInFlight, 3, "concurrency must be bounded at 3 in-flight symbols");
 
         // Drain all 7 symbols, resolving whatever is currently in flight
@@ -674,7 +666,7 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
         // out-of-order completion against the ordered release loop).
         let resolved = 0;
         while (resolved < symbols.length) {
-            await waitFor(() => deferred.size > 0, "in-flight work to resolve");
+            await waitFor(() => deferred.size > 0, 2000, "in-flight work to resolve");
             for (const [symbol, resolveFetch] of [...deferred]) {
                 deferred.delete(symbol);
                 resolveFetch();
@@ -710,6 +702,7 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
             signal?: AbortSignal,
         ) => {
             await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
+            deferred.delete(symbol);
             // Mirror syncOneAlpacaSymbol: an aborted signal yields a cancelled
             // result with NO writes (the CSV/catalog write is skipped).
             if (signal?.aborted) {
@@ -726,10 +719,11 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
             { signal: controller.signal, alpacaFetcher: alpacaFetcher as never },
         );
 
-        await waitFor(() => deferred.size === 3, "the first 3 symbols to dispatch");
+        await waitFor(() => deferred.size === 3, 2000, "the first 3 symbols to dispatch");
         for (const symbol of ["C0", "C1", "C2"]) deferred.get(symbol)!();
         await waitFor(
             () => __getIbkrCatalogWriteCountForTests() === 3,
+            2000,
             "one catalog write per completed symbol",
         );
 
@@ -737,10 +731,18 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
         // the aborted signal and return cancelled results (no writes), and no
         // further symbols are dispatched.
         controller.abort();
-        await waitFor(() => deferred.size > 0, "the next window to be in flight");
-        for (const [, resolveFetch] of [...deferred]) resolveFetch();
+        await waitFor(() => deferred.size > 0, 2000, "the next window to be in flight");
+        for (const [symbol, resolveFetch] of [...deferred]) {
+            deferred.delete(symbol);
+            resolveFetch();
+        }
         await run;
-        await new Promise((resolveSleep) => setTimeout(resolveSleep, 50));
+        // `await run` does not drain the sibling fetches: the batch settles at
+        // the cancelled release (characterized below). Wait for the aborted
+        // window's fetches to settle — the macrotask poll then also proves
+        // their release processing ran — before asserting absence of late
+        // writes.
+        await waitFor(() => deferred.size === 0, 2000, "the cancelled window's fetches to settle");
         assert.equal(
             __getIbkrCatalogWriteCountForTests(),
             3,
