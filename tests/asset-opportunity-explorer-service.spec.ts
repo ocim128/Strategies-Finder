@@ -573,7 +573,10 @@ describe("Asset Opportunity Explorer service", () => {
         // Verifies the failure path the stale-response cases rely on: a detail
         // response that stays gated past the cleanup deadline must not wedge
         // the run, must not skip method restoration, and must not replace the
-        // primary deadline failure with a cleanup error.
+        // primary failure with a cleanup error. An induced early assertion
+        // failure mid-scenario proves the unconditional outer cleanup still
+        // releases the gate, settles the captured operation, and restores the
+        // method.
         let releaseDetails!: () => void;
         const detailsGate = new Promise<void>((resolve) => { releaseDetails = resolve; });
         responder = (url) => {
@@ -594,33 +597,63 @@ describe("Asset Opportunity Explorer service", () => {
             detailOps.push(op);
             return op;
         };
+        let bodyFailed = false;
+        let inducedError: unknown = null;
+        let cleanupFailures: unknown[] = [];
+        let cleanupDurationMs = 0;
+        let releasedOpSettled = false;
         try {
-            (service as any).selectRange("expectancy", 12, 24);
-            expect(detailOps, "the gated detail operation was captured").to.have.length(1);
-            // The response stays gated, so settlement fails at the deadline —
-            // this is the primary failure the cleanup must not mask.
-            let primaryError: unknown = null;
             try {
-                await withTimeout(detailOps[0]!, 250, "the gated detail operation to settle");
+                (service as any).selectRange("expectancy", 12, 24);
+                expect(detailOps, "the gated detail operation was captured").to.have.length(1);
+                // The response stays gated, so settlement fails at the body
+                // deadline — the primary failure the cleanup must not mask.
+                let primaryError: unknown = null;
+                try {
+                    await withTimeout(detailOps[0]!, 250, "the gated detail operation to settle");
+                } catch (error) {
+                    primaryError = error;
+                }
+                expect((primaryError as Error).message).to.match(/the gated detail operation to settle/);
+                // Induce an early assertion failure: everything after this
+                // point is cleanup that must run unconditionally.
+                expect.fail("induced early assertion failure");
             } catch (error) {
-                primaryError = error;
+                bodyFailed = true;
+                inducedError = error;
             }
-            expect((primaryError as Error).message).to.match(/the gated detail operation to settle/);
         } finally {
-            try {
-                const startedAt = Date.now();
-                const failures = await settleCapturedOperations(detailOps, "the gated detail operation");
-                expect(failures, "the unsettled operation is reported, not thrown").to.have.length(1);
-                expect(Date.now() - startedAt, "bounded settlement, not an indefinite wait").to.be.lessThan(10_000);
-            } finally {
-                // Restoration executes even though settlement failed.
-                delete (service as any).loadDetails;
-                expect((service as any).loadDetails, "method restoration always executes").to.equal(originalLoadDetails);
+            // Unconditional cleanup in assertion-proof order: bounded
+            // settlement attempts while the gate is still held, then release
+            // and final settlement so no fixture work stays pending, then
+            // guaranteed restoration. Nothing here throws, so no step can be
+            // skipped and the primary failure cannot be masked.
+            const startedAt = Date.now();
+            cleanupFailures = await settleCapturedOperations(detailOps, "the gated detail operation");
+            cleanupDurationMs = Date.now() - startedAt;
+            releaseDetails();
+            const captured = detailOps[0];
+            if (captured) {
+                try {
+                    await withTimeout(captured, 2_000, "the released detail operation to settle after cleanup");
+                    releasedOpSettled = true;
+                } catch (error) {
+                    cleanupFailures.push(error);
+                }
             }
+            delete (service as any).loadDetails;
+            finishCleanup(bodyFailed, cleanupFailures, "detail cleanup");
         }
-        // The gate now releases: the captured operation still settles through
-        // the restored method, so no fixture work stays pending after the test.
-        releaseDetails();
-        await withTimeout(detailOps[0]!, 2_000, "the released detail operation to settle after cleanup");
+        // Post-cleanup assertions run after the mechanical work, so a failure
+        // here can no longer prevent release, settlement, or restoration.
+        expect((inducedError as Error).message, "the induced early failure is preserved as the primary failure")
+            .to.include("induced early assertion failure");
+        expect(cleanupFailures, "the unsettled operation is reported, not thrown").to.have.length(1);
+        expect(cleanupDurationMs, "bounded settlement, not an indefinite wait").to.be.lessThan(10_000);
+        expect(releasedOpSettled, "the gate released and the captured operation settled").to.equal(true);
+        expect((service as any).loadDetails, "method restoration always executes").to.equal(originalLoadDetails);
+        // The released response rendered through the service, proving the
+        // operation completed rather than merely resolving.
+        expect(dom.explorerDetailTitle.textContent).to.contain("expectancy");
     });
 });
