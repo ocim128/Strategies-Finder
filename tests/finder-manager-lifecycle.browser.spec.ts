@@ -45,6 +45,7 @@ import type {
     FinderUniverseSymbolResult,
 } from "../lib/types/finder";
 import type { OHLCVData, Strategy, Time } from "../lib/types/strategies";
+import { waitFor } from "./helpers/wait-for";
 
 // ---------------------------------------------------------------------------
 // Fake browser environment
@@ -471,18 +472,6 @@ function makeRecordingSessionHost(): RecordingSessionHost {
 }
 
 /**
- * Poll a condition on real timers with a bounded deadline; used to observe
- * asynchronous adoption/poll progress in session lifecycle tests.
- */
-async function waitFor(predicate: () => boolean, timeoutMs = 2_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (!predicate()) {
-        if (Date.now() > deadline) throw new Error("waitFor: condition not met within timeout");
-        await new Promise((resolve) => setTimeout(resolve, 2));
-    }
-}
-
-/**
  * Shorten every poll delay so Stop-during-sleep, backoff, and retry
  * exhaustion cases finish instantly. Timing policy itself is covered by the
  * production defaults staying untouched.
@@ -781,8 +770,8 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         persistActiveServerRun("poll-done");
         const reattach = session.reattachToActiveServerRun(host);
         mockFetch.resolveFirst(runningSnapshot("poll-done"));
-        await waitFor(() => session.activeRunId === "poll-done");
-        await waitFor(() => mockFetch.requests.length >= 1); // first poll after the initial wait
+        await waitFor(() => session.activeRunId === "poll-done", 2_000, "reattach to adopt poll-done");
+        await waitFor(() => mockFetch.requests.length >= 1, 2_000, "first poll after the initial wait");
         mockFetch.resolveFirst(terminalDoneSnapshot("poll-done", [makeCandidate()]));
         await reattach;
 
@@ -802,8 +791,8 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
             persistActiveServerRun("gone-later");
             const reattach = session.reattachToActiveServerRun(host);
             mockFetch.resolveFirst(runningSnapshot("gone-later"));
-            await waitFor(() => session.activeRunId === "gone-later");
-            await waitFor(() => mockFetch.requests.length >= 1);
+            await waitFor(() => session.activeRunId === "gone-later", 2_000, "reattach to adopt gone-later");
+            await waitFor(() => mockFetch.requests.length >= 1, 2_000, "poll after adopting gone-later");
             mockFetch.resolveFirst(makeResponse({ ok: false }, 404));
             await reattach;
             expect(host.calls.status.some((text) => text.includes("dev server restarted"))).to.equal(true);
@@ -818,8 +807,8 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
             persistActiveServerRun("rejected-later");
             const reattach = session.reattachToActiveServerRun(host);
             mockFetch.resolveFirst(runningSnapshot("rejected-later"));
-            await waitFor(() => session.activeRunId === "rejected-later");
-            await waitFor(() => mockFetch.requests.length >= 1);
+            await waitFor(() => session.activeRunId === "rejected-later", 2_000, "reattach to adopt rejected-later");
+            await waitFor(() => mockFetch.requests.length >= 1, 2_000, "poll after adopting rejected-later");
             mockFetch.resolveFirst(makeResponse({ ok: false }));
             await reattach;
             expect(host.calls.status.some((text) => text.includes("no longer active"))).to.equal(true);
@@ -842,7 +831,7 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         persistActiveServerRun("sleepy-run");
         const reattach = session.reattachToActiveServerRun(host);
         mockFetch.resolveFirst(runningSnapshot("sleepy-run")); // probe adopted the run
-        await waitFor(() => session.activeRunId === "sleepy-run");
+        await waitFor(() => session.activeRunId === "sleepy-run", 2_000, "reattach to adopt sleepy-run");
         expect(mockFetch.count).to.equal(1); // probe only; the first poll waits out its interval
 
         const stoppedAt = Date.now();
@@ -866,7 +855,7 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         session.timing = { ...session.timing, failureBackoffMs: [50] };
         session.activeRunId = "run-a";
         const recovery = session.recoverActiveServerRun("run-a", "symbol_universe", host);
-        await waitFor(() => mockFetch.requests.length >= 1);
+        await waitFor(() => mockFetch.requests.length >= 1, 2_000, "recovery's first status request");
         mockFetch.rejectFirst(new Error("boom")); // failure #1, then a 50ms backoff
         session.stopReattachPoll();               // lands inside the backoff sleep
         const recovered = await recovery;
@@ -883,10 +872,10 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         session.statusRequestTimeoutMs = 10;
         session.activeRunId = "run-a";
         const recovery = session.recoverActiveServerRun("run-a", "symbol_universe", host);
-        await waitFor(() => mockFetch.requests.length >= 1);
+        await waitFor(() => mockFetch.requests.length >= 1, 2_000, "the status request to be issued");
         const firstRequest = mockFetch.requests[0];
-        await waitFor(() => firstRequest?.init?.signal?.aborted === true); // timed out on its own
-        await waitFor(() => mockFetch.requests.length >= 2); // the loop retried: failure, not Stop
+        await waitFor(() => firstRequest?.init?.signal?.aborted === true, 2_000, "the status request to time out on its own");
+        await waitFor(() => mockFetch.requests.length >= 2, 2_000, "the loop to retry after the timeout");
         mockFetch.requests.shift(); // drop the settled timed-out request
         mockFetch.resolveFirst(terminalDoneSnapshot("run-a", [makeCandidate()]));
 
@@ -910,7 +899,7 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         persistActiveServerRun("old-run");
         const reattach = session.reattachToActiveServerRun(host);
         mockFetch.resolveFirst(runningSnapshot("old-run")); // probe adopted old-run
-        await waitFor(() => session.activeRunId === "old-run");
+        await waitFor(() => session.activeRunId === "old-run", 2_000, "reattach to adopt old-run");
 
         // A newer run takes ownership while the old poll loop is sleeping.
         session.activeRunId = "new-run";
@@ -933,8 +922,8 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         persistActiveServerRun("old-run");
         const reattach = session.reattachToActiveServerRun(host);
         mockFetch.resolveFirst(runningSnapshot("old-run")); // probe adopted old-run
-        await waitFor(() => session.activeRunId === "old-run");
-        await waitFor(() => mockFetch.requests.length >= 1); // old run's poll fetch is in flight
+        await waitFor(() => session.activeRunId === "old-run", 2_000, "reattach to adopt old-run");
+        await waitFor(() => mockFetch.requests.length >= 1, 2_000, "the old run's poll fetch to be in flight");
 
         // A newer run takes ownership while the stale request is pending, and
         // THEN the stale request lands as HTTP 404. Before the post-await
@@ -968,11 +957,11 @@ describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
         persistActiveServerRun("flaky-run");
         const reattach = session.reattachToActiveServerRun(host);
         mockFetch.resolveFirst(runningSnapshot("flaky-run"));
-        await waitFor(() => session.activeRunId === "flaky-run");
+        await waitFor(() => session.activeRunId === "flaky-run", 2_000, "reattach to adopt flaky-run");
 
         // Three consecutive poll failures exhaust the >2 budget.
         for (let round = 0; round < 3; round += 1) {
-            await waitFor(() => mockFetch.requests.length >= 1);
+            await waitFor(() => mockFetch.requests.length >= 1, 2_000, "the next flaky-run poll request");
             mockFetch.rejectFirst(new Error("boom"));
         }
         await reattach;
@@ -1020,9 +1009,9 @@ describe("FinderServerSession poll delay sequences", () => {
         const recorder = recordSetTimeoutDelays();
         try {
             const recovery = session.recoverActiveServerRun("run-a", "symbol_universe", host);
-            await waitFor(() => mockFetch.requests.length >= 1);
+            await waitFor(() => mockFetch.requests.length >= 1, 2_000, "recovery's first status request");
             mockFetch.rejectFirst(new Error("boom"));
-            await waitFor(() => mockFetch.requests.length >= 1); // the retry
+            await waitFor(() => mockFetch.requests.length >= 1, 2_000, "the backoff retry");
             mockFetch.resolveFirst(terminalDoneSnapshot("run-a", [makeCandidate()]));
 
             const recovered = await recovery;
@@ -1043,10 +1032,10 @@ describe("FinderServerSession poll delay sequences", () => {
         try {
             const reattach = session.reattachToActiveServerRun(host);
             mockFetch.resolveFirst(runningSnapshot("retry-cadence")); // probe adopts
-            await waitFor(() => session.activeRunId === "retry-cadence");
-            await waitFor(() => mockFetch.requests.length >= 1); // poll #1 (after the initial wait)
+            await waitFor(() => session.activeRunId === "retry-cadence", 2_000, "reattach to adopt retry-cadence");
+            await waitFor(() => mockFetch.requests.length >= 1, 2_000, "poll #1 after the initial wait");
             mockFetch.rejectFirst(new Error("boom"));
-            await waitFor(() => mockFetch.requests.length >= 1); // the retry
+            await waitFor(() => mockFetch.requests.length >= 1, 2_000, "the backoff retry");
             mockFetch.resolveFirst(terminalDoneSnapshot("retry-cadence", [makeCandidate()]));
 
             await reattach;
@@ -1068,12 +1057,12 @@ describe("FinderServerSession poll delay sequences", () => {
         try {
             const reattach = session.reattachToActiveServerRun(host);
             mockFetch.resolveFirst(runningSnapshot("step-down")); // probe adopts
-            await waitFor(() => session.activeRunId === "step-down");
+            await waitFor(() => session.activeRunId === "step-down", 2_000, "reattach to adopt step-down");
             // fastPollCount=2: delays before polls #1..#2 use the fast
             // interval (pollIndex 0 and 1), the delay before poll #3 uses the
             // long interval (pollIndex 2).
             for (const terminal of [false, false, true]) {
-                await waitFor(() => mockFetch.requests.length >= 1);
+                await waitFor(() => mockFetch.requests.length >= 1, 2_000, "the next step-down poll request");
                 mockFetch.resolveFirst(terminal
                     ? terminalDoneSnapshot("step-down", [makeCandidate()])
                     : runningSnapshot("step-down"));
@@ -1965,12 +1954,12 @@ describe("Finder Re-Sort scope transitions", () => {
         try {
             expect(mockFetch.requests[0]!.url).to.include("includePreview=1");
             mockFetch.resolveFirst(running);
-            await waitFor(() => mockFetch.requests.length > 0);
+            await waitFor(() => mockFetch.requests.length > 0, 2_000, "the live preview poll");
             expect(m.resultStore.latestResults.results[0]?.params.threshold).to.equal(1);
             expect(m.resultStore.symbolUniverseRunResults).to.have.length(0, "preview is not the terminal inventory");
             const better = makeCandidate({ threshold: 2 }, 100);
             mockFetch.resolveFirst({ ...running, previewResults: { scope: "symbol_universe", results: [better] } });
-            await waitFor(() => mockFetch.requests.length > 0);
+            await waitFor(() => mockFetch.requests.length > 0, 2_000, "the updated live preview poll");
             expect(m.resultStore.latestResults.results[0]?.params.threshold).to.equal(2);
             mockFetch.resolveFirst(terminalDoneSnapshot("universe-live-preview", [row, better]));
             await reattach;
