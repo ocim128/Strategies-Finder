@@ -243,6 +243,46 @@ describe("git change collection", () => {
         assert.deepEqual(changes.paths, ["inside.txt"]);
         assert.deepEqual(changes.outOfScopePaths, ["outside.txt"]);
     });
+
+    it("keeps dot-leading in-app names while rejecting parent traversal", async () => {
+        const root = createFixtureRepo();
+        const appRoot = path.join(root, "app");
+        write(path.join(appRoot, "..cache.ts"), "cache\n");
+        write(path.join(appRoot, "..cache", "inside.ts"), "nested\n");
+        write(path.join(root, "sibling.txt"), "sibling\n");
+        write(path.join(root, "..leading-parent.txt"), "parent\n");
+        write(path.join(root, "other", "..parent-side.ts"), "other\n");
+
+        const changes = await collectChangedPaths({ appRoot });
+        assert.deepEqual(changes.paths, ["..cache.ts", "..cache/inside.ts"]);
+        assert.deepEqual(
+            changes.outOfScopePaths,
+            ["..leading-parent.txt", "other/..parent-side.ts", "sibling.txt"],
+        );
+
+        // Valid dot-leading changes must reach the planner instead of
+        // disappearing from the validation plan.
+        const plan = buildValidationPlan({ changedPaths: changes.paths, availableSpecs: [] });
+        assert.deepEqual(plan.changedPaths, changes.paths);
+        assert.ok(plan.unmatchedPaths.includes("..cache.ts"));
+        assert.ok(plan.unmatchedPaths.includes("..cache/inside.ts"));
+    });
+
+    it("keeps dot-leading in-app names when scoped through a directory alias", async () => {
+        const root = createFixtureRepo();
+        const aliasParent = fs.mkdtempSync(path.join(os.tmpdir(), "validate-changes-alias-dot-"));
+        fixtureRoots.push(aliasParent);
+        const alias = path.join(aliasParent, "repo");
+        fs.symlinkSync(root, alias, process.platform === "win32" ? "junction" : "dir");
+        const appRoot = path.join(alias, "app");
+        write(path.join(root, "app", "..cache.ts"), "cache\n");
+        write(path.join(root, "app", "..cache", "inside.ts"), "nested\n");
+        write(path.join(root, "outside", "..sibling.ts"), "sibling\n");
+
+        const changes = await collectChangedPaths({ appRoot });
+        assert.deepEqual(changes.paths, ["..cache.ts", "..cache/inside.ts"]);
+        assert.deepEqual(changes.outOfScopePaths, ["outside/..sibling.ts"]);
+    });
 });
 
 describe("runner summary evidence", () => {

@@ -245,7 +245,10 @@ function scopePathsToAppRoot(
     for (const gitPath of gitPaths) {
         const absolute = path.resolve(scopedGitRoot, gitPath);
         const relative = path.relative(scopedAppRoot, absolute);
-        if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        // Only real parent traversal leaves the app root. A leading ".." in a
+        // file name ("..cache.ts") or directory ("..cache/inside.ts") stays
+        // in scope, so the prefix check must respect the separator boundary.
+        if (!relative || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
             outOfScope.push(gitPath);
             continue;
         }
