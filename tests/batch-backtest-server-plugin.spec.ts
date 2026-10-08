@@ -614,6 +614,8 @@ describe("batch-backtest server plugin processRunBatch", () => {
             () => {},
             owner,
         );
+        let bodyFailed = false;
+        let cleanupFailures: unknown[] = [];
         try {
             // UP starts immediately; DOWN's load is parked behind the gate.
             // Wait for a populated snapshot entry instead of sleeping past the
@@ -626,14 +628,107 @@ describe("batch-backtest server plugin processRunBatch", () => {
 
             // After completion, currentSymbol is cleared.
             expect(getRunStateForTests()?.currentSymbol).to.equal(null);
+        } catch (error) {
+            bodyFailed = true;
+            throw error;
         } finally {
-            // Failure paths still release the held loader, settle the run, and
-            // reset the plugin's terminal ownership/artifact state.
-            releaseDown();
-            await run.catch(() => { /* the body's failure takes precedence */ });
-            setRunOwnerForTests(0);
-            await releaseLastResults("test_end");
+            try {
+                // Release the held dataset first so only a genuine defect can
+                // keep the run pending past the cleanup deadline.
+                releaseDown();
+                if (bodyFailed) {
+                    // Stop-equivalent ownership reset (the effect the Stop
+                    // handler has on processRunBatch) before waiting for
+                    // settlement, so a wedged run unwinds at its next await
+                    // boundary instead of blocking cleanup forever.
+                    setRunOwnerForTests(0);
+                    await withTimeout(run.catch(() => {}), 1000, "the run to settle after the ownership reset");
+                }
+            } catch (cleanupError) {
+                cleanupFailures.push(cleanupError);
+            } finally {
+                // Terminal reset runs even when bounded settlement timed out.
+                setRunOwnerForTests(0);
+                try {
+                    await releaseLastResults("test_end");
+                } catch (releaseError) {
+                    cleanupFailures.push(releaseError);
+                }
+                if (cleanupFailures.length > 0) {
+                    if (bodyFailed) {
+                        // The primary failure is already propagating; surface
+                        // the cleanup problems without masking it.
+                        console.error("mid-run cleanup failures (primary failure preserved):", cleanupFailures);
+                    } else {
+                        throw cleanupFailures[0];
+                    }
+                }
+            }
         }
+    });
+
+    it("bounded cleanup unwinds a stalled run without waiting out the runner timeout", async () => {
+        // Verifies the failure path the mid-run regression relies on: with a
+        // dataset gate that NEVER releases, the withTimeout deadline fires,
+        // the Stop-equivalent ownership reset is issued, cleanup settlement
+        // stays bounded, and the terminal ownership/artifact reset still
+        // executes. The test ends promptly instead of hanging until the
+        // runner's 120-second process timeout.
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", makeCandles([100, 105, 110, 115, 120])],
+            ["DOWN", makeCandles([100, 95, 90, 85, 80])],
+        ]);
+        const owner = 9018;
+        setRunOwnerForTests(owner);
+
+        // A gate that is never resolved models the stalled operation.
+        const stalledGate = new Promise<void>(() => {});
+        const loader = (symbol: string): Promise<OHLCVData[]> => {
+            if (symbol === "DOWN") return stalledGate.then(() => datasets.get(symbol) ?? []);
+            return Promise.resolve(datasets.get(symbol) ?? []);
+        };
+
+        const run = processRunBatch(
+            {
+                interval: "5m",
+                strategyKey: STRATEGY_KEY,
+                strategy: testStrategy,
+                strategyParams: { threshold: 1 },
+                backtestSettings: settings,
+                capitalSettings,
+                symbols: ["UP", "DOWN"],
+                loadDataset: loader,
+                minUsableBars: 1,
+            },
+            () => {},
+            owner,
+        );
+        const startedAt = Date.now();
+        let primaryError: unknown = null;
+        try {
+            await waitFor(() => getRunStateForTests()?.currentSymbol != null, 2000, "a populated currentSymbol mid-run");
+            try {
+                await withTimeout(run, 250, "the stalled run to settle");
+                assert.fail("withTimeout must reject while the dataset gate is held");
+            } catch (error) {
+                primaryError = error;
+            }
+            assert.match((primaryError as Error).message, /the stalled run to settle/);
+        } finally {
+            // Same cleanup contract as the mid-run regression.
+            setRunOwnerForTests(0);
+            try {
+                await withTimeout(run.catch(() => {}), 1000, "the stalled run to settle during cleanup");
+            } catch {
+                // Expected: the loader stays gated, so settlement gives up at
+                // the deadline and the terminal reset below still runs.
+            } finally {
+                setRunOwnerForTests(0);
+                await releaseLastResults("test_end");
+                expect(getRunStateForTests(), "ownership reset executed despite the stalled run").to.equal(null);
+            }
+        }
+        assert.ok(Date.now() - startedAt < 10_000, "bounded cleanup must terminate promptly");
     });
 
     it("Stop force-bumps the run owner (lost-ownership propagation)", async () => {
