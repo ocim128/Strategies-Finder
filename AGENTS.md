@@ -2,9 +2,18 @@
 
 Use this file as a short task router. Read the guide and tests for the feature you are changing; inspect its callers and current worktree before editing. Run **npm run validate:changes** to map the current Git changes to candidate guides and focused checks with reasons; it assists the routing below but cannot determine every semantic impact.
 
+## Command execution: RTK required
+
+- **RTK is the primary CLI for AI agents in this repo.** Run `rtk --version` at session start and execute shell commands through RTK. Commands elsewhere in this guide name the underlying operation; apply this wrapping rule when running them.
+- Use supported filters: `rtk git status --short`, `rtk git diff`, `rtk git log -5 --oneline`, `rtk rg`, and `rtk tsc --noEmit`. On Windows use `rtk rg`, because `rtk grep` requires a separate `grep` binary.
+- Use **`rtk proxy <command> [args...]`** for unsupported commands and output that must remain exact. This keeps RTK as the entry point while preserving output and tracking usage. Run this repo's custom checks as `rtk proxy npm.cmd run test -- <filter>` and `rtk proxy npm.cmd run validate:changes` (use `npm` on non-Windows systems). Also proxy JSON output, exact source reads, patch review, and failure logs; generic `rtk test` / `rtk summary` filters hide required details from these custom checks.
+- For PowerShell cmdlets or scripts, proxy the explicit shell, for example `rtk proxy powershell -NoProfile -Command 'Get-Content AGENTS.md'`. Native file/edit tools do not need wrapping.
+- If RTK is missing, install it or repair PATH using [RTK setup](docs/testing.md#rtk-as-the-primary-agent-cli). Do not silently fall back to a raw-command workflow; report a setup limitation if the environment prevents installation. Bootstrap commands needed to install or locate RTK are exempt.
+- Filtering can omit information. Recover exact details with `rtk proxy` and inspect saved logs before diagnosing failures. Keep required checks and their pass/fail criteria intact.
+
 ## Before editing
 
-1. Run **git status --short** and preserve unrelated work.
+1. Run **rtk git status --short** and preserve unrelated work.
 2. Find the owning implementation, its nearest focused spec, and any generated or persisted contract it touches.
 3. Read the matching row below. Read **README.md** for repo orientation; read **index.ts** and **lib/app-bootstrap.ts** when changing startup.
 4. Keep the patch focused. State assumptions when they affect behavior, and report checks accurately.
