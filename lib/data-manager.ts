@@ -741,11 +741,13 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
 
         const currentData = state.ohlcvData;
         let changed = false;
+        let cachedLengthChanged = false;
         let evictedHead = false;
         let gapBars = 0;
         if (currentData.length === 0) {
             commitOhlcvData([updatedCandle], 'realtime_replace_empty');
             changed = true;
+            cachedLengthChanged = true;
         } else {
             const lastCandle = currentData[currentData.length - 1];
             const lastClose = Number(lastCandle.close);
@@ -769,6 +771,7 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
             } else if (updatedCandle.time > lastCandle.time) {
                 gapBars = countRealtimeGapBars(lastCandle.time, updatedCandle.time, streamInterval);
                 currentData.push(updatedCandle);
+                cachedLengthChanged = true;
                 const activeLimit = this.chartLookbackBars ?? DATA_CHART_TOTAL_LIMIT;
                 if (currentData.length > activeLimit) {
                     const overflow = currentData.length - activeLimit;
@@ -786,6 +789,23 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
         }
 
         if (!changed) return 0;
+
+        // The stream path mutates the cached array reference in place without
+        // a commitOhlcvData round-trip, so the cache's retained-point
+        // accounting only stays truthful if notified here. Only accepted
+        // length-changing mutations (new bar, head eviction, first candle)
+        // move the total; last-bar replaces keep the length.
+        if (cachedLengthChanged) {
+            const persistSymbolEarly = this.streamSymbol || state.currentSymbol;
+            const persistIntervalEarly = this.streamInterval || state.currentInterval;
+            this.cache.notifyCandleArrayMutation(
+                this.fetcher.buildCacheKey(
+                    persistSymbolEarly,
+                    this.getStorageInterval(persistIntervalEarly),
+                    this.streamProvider || this.getProvider(persistSymbolEarly),
+                ),
+            );
+        }
 
         // The stream path mutates state.ohlcvData in place without a
         // commitOhlcvData emit, so keep the crosshair lookup map in sync here —
