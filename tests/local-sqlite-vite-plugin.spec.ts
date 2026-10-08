@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, describe, it } from "node:test";
 import { DatabaseSync } from "node:sqlite";
+import { mkdtempSync, rmSync } from "node:fs";
 import { Readable } from "node:stream";
-import { isTrustedLocalRequest, localSqlitePlugin, __testInternals } from "../lib/local-sqlite-vite-plugin";
+import { tmpdir } from "node:os";
+import { resolve } from "node:path";
+import { initializeSqliteSchema, isTrustedLocalRequest, localSqlitePlugin, __testInternals } from "../lib/local-sqlite-vite-plugin";
 import { encodeBinaryOhlcvRows } from "../lib/ohlcv-binary";
 
 const originalToken = process.env.LOCAL_PROXY_TOKEN;
@@ -27,6 +30,10 @@ describe("SQLite metadata invalidation", () => {
             CREATE TABLE series_meta (
                 symbol TEXT, interval TEXT, provider TEXT, bars_count INTEGER,
                 first_time INTEGER, last_time INTEGER, updated_at INTEGER,
+                PRIMARY KEY(symbol, interval)
+            );
+            CREATE TABLE series_revisions (
+                symbol TEXT, interval TEXT, revision INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(symbol, interval)
             );
         `);
@@ -94,6 +101,135 @@ describe("SQLite metadata invalidation", () => {
         assert.equal(result.status, 500);
         assert.equal(db.prepare("SELECT COUNT(*) AS count FROM candles").get()?.count, 1);
         assert.equal(db.prepare("SELECT bars_count FROM series_meta").get()?.bars_count, 1);
+    });
+
+    it("advances the series revision on every committed write, for JSON and binary payloads", async () => {
+        for (const format of ["json", "binary"] as const) {
+            db.exec("DELETE FROM series_revisions");
+            const write = async () => format === "json"
+                ? request("POST", "/store-ohlcv", { symbol: "BTCUSDT", interval: "1h", candles: [candle(1700000000)] })
+                : request("POST", "/store-ohlcv?symbol=BTCUSDT&interval=1h", Buffer.from(encodeBinaryOhlcvRows([candle(1700000000)])));
+            assert.equal((await write()).status, 200);
+            assert.equal(db.prepare("SELECT revision FROM series_revisions WHERE symbol = 'BTCUSDT' AND interval = '1h'").get()?.revision, 1);
+            assert.equal((await write()).status, 200);
+            assert.equal(db.prepare("SELECT revision FROM series_revisions WHERE symbol = 'BTCUSDT' AND interval = '1h'").get()?.revision, 2);
+        }
+    });
+
+    it("changes the revision for a same-second repair whose metadata rollup is frozen", async t => {
+        t.mock.timers.enable({ apis: ["Date"], now: 1701000000000 });
+        await request("POST", "/store-ohlcv", { symbol: "BTCUSDT", interval: "1h", summary: true, candles: [candle(1700000000)] });
+        const before = await request("GET", "/series-meta?symbol=BTCUSDT&interval=1h");
+
+        // No clock movement at all: the repair lands in the same unix second,
+        // so updatedAt stays identical and only the revision can distinguish.
+        await request("POST", "/store-ohlcv", { symbol: "BTCUSDT", interval: "1h", candles: [candle(1700000000, 1.5)] });
+        const after = await request("GET", "/series-meta?symbol=BTCUSDT&interval=1h");
+
+        assert.equal(after.body.updatedAt, before.body.updatedAt);
+        assert.equal(after.body.barsCount, before.body.barsCount);
+        assert.equal(after.body.lastTime, before.body.lastTime);
+        assert.equal(after.body.revision, Number(before.body.revision) + 1);
+    });
+
+    it("reports revision 0 for series without plugin writes and counts series independently", async () => {
+        // Candles seeded externally (bypassing the plugin) have no revision row.
+        db.exec("INSERT INTO candles VALUES ('ETHUSDT', '1h', 1700000000, 1, 2, 0.5, 1, 1, 'Binance', 'seed', 1700000000)");
+        const seeded = await request("GET", "/series-meta?symbol=ETHUSDT&interval=1h");
+        assert.equal(seeded.body.revision, 0);
+        assert.equal(seeded.body.barsCount, 1);
+
+        await request("POST", "/store-ohlcv", { symbol: "BTCUSDT", interval: "1h", candles: [candle(1700000000)] });
+        await request("POST", "/store-ohlcv", { symbol: "BTCUSDT", interval: "4h", candles: [candle(1700000000)] });
+        assert.equal((await request("GET", "/series-meta?symbol=BTCUSDT&interval=1h")).body.revision, 1);
+        assert.equal((await request("GET", "/series-meta?symbol=BTCUSDT&interval=4h")).body.revision, 1);
+        // The seeded series is untouched by the BTCUSDT writes.
+        assert.equal((await request("GET", "/series-meta?symbol=ETHUSDT&interval=1h")).body.revision, 0);
+    });
+
+    it("rolls the revision back together with candles when a write fails", async () => {
+        await request("POST", "/store-ohlcv", { symbol: "BTCUSDT", interval: "1h", summary: true, candles: [candle(1700000000)] });
+        const before = db.prepare("SELECT revision FROM series_revisions WHERE symbol = 'BTCUSDT' AND interval = '1h'").get()?.revision;
+        db.exec("CREATE TRIGGER reject_invalidation AFTER DELETE ON series_meta BEGIN SELECT RAISE(ABORT, 'forced metadata failure'); END;");
+        await request("POST", "/store-ohlcv", { symbol: "BTCUSDT", interval: "1h", candles: [candle(1700003600)] });
+        const after = db.prepare("SELECT revision FROM series_revisions WHERE symbol = 'BTCUSDT' AND interval = '1h'").get()?.revision;
+        assert.equal(after, before);
+    });
+});
+
+describe("SQLite schema initialization", () => {
+    it("adds every table to a fresh file database in a temp directory", () => {
+        const dir = mkdtempSync(resolve(tmpdir(), "sf-sqlite-init-"));
+        const dbPath = resolve(dir, "market-data.sqlite");
+        try {
+            const db = new DatabaseSync(dbPath);
+            initializeSqliteSchema(db);
+            for (const table of ["candles", "series_meta", "series_revisions"]) {
+                assert.ok(db.prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?`).get(table), table);
+            }
+            assert.equal(db.prepare("SELECT revision FROM series_revisions WHERE symbol = 'X'").get(), undefined);
+            db.close();
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    it("upgrades an old-schema database additively and persists revisions across reopen", async () => {
+        const dir = mkdtempSync(resolve(tmpdir(), "sf-sqlite-upgrade-"));
+        const dbPath = resolve(dir, "market-data.sqlite");
+        try {
+            // Simulate a database written before series_revisions existed.
+            const old = new DatabaseSync(dbPath);
+            old.exec(`
+                CREATE TABLE candles (
+                    symbol TEXT, interval TEXT, time INTEGER, open REAL, high REAL,
+                    low REAL, close REAL, volume REAL, provider TEXT, source TEXT,
+                    updated_at INTEGER, PRIMARY KEY(symbol, interval, time)
+                );
+                CREATE TABLE series_meta (
+                    symbol TEXT, interval TEXT, provider TEXT, bars_count INTEGER,
+                    first_time INTEGER, last_time INTEGER, updated_at INTEGER,
+                    PRIMARY KEY(symbol, interval)
+                );
+                INSERT INTO candles VALUES ('BTCUSDT', '1h', 1700000000, 1, 2, 0.5, 1, 1, 'Binance', 'seed', 1700000000);
+            `);
+            old.close();
+
+            // Server startup opens the existing database and initializes it.
+            const reopened = new DatabaseSync(dbPath);
+            try {
+                initializeSqliteSchema(reopened);
+                // Retained candle data is untouched by the additive upgrade.
+                assert.equal(reopened.prepare("SELECT COUNT(*) AS count FROM candles").get()?.count, 1);
+
+                // The plugin can write through the upgraded database.
+                __testInternals.setSqliteDbForTests(reopened);
+                const configure = localSqlitePlugin().configureServer as (server: unknown) => void;
+                let handler!: (req: unknown, res: unknown) => Promise<void>;
+                configure({ middlewares: { use: (_path: string, registered: typeof handler) => { handler = registered; } } });
+                const req = Readable.from([JSON.stringify({ symbol: "BTCUSDT", interval: "1h", candles: [{ time: 1700003600, open: 1, high: 2, low: 0.5, close: 2, volume: 1 }] })]);
+                Object.assign(req, {
+                    method: "POST", url: "/store-ohlcv", socket: { remoteAddress: "127.0.0.1" },
+                    headers: { host: "localhost:5173", "content-type": "application/json" },
+                });
+                const res = { statusCode: 0, setHeader: () => {}, end: () => {} };
+                await handler(req, res);
+            } finally {
+                __testInternals.resetSqliteDbForTests();
+                reopened.close();
+            }
+
+            // Restart persistence: a fresh connection sees the revision.
+            const after = new DatabaseSync(dbPath);
+            try {
+                assert.equal(after.prepare("SELECT revision FROM series_revisions WHERE symbol = 'BTCUSDT' AND interval = '1h'").get()?.revision, 1);
+                assert.equal(after.prepare("SELECT COUNT(*) AS count FROM candles").get()?.count, 2);
+            } finally {
+                after.close();
+            }
+        } finally {
+            rmSync(dir, { recursive: true, force: true });
+        }
     });
 });
 

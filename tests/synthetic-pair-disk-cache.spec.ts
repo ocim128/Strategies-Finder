@@ -193,8 +193,40 @@ test("file-backed round-trip: store then load returns the same bars", async () =
 // Binance (crypto) legs
 // --------------------------------------------------------------------------
 
-test("binance fingerprint uses series_meta.lastTime, barsCount, and updatedAt", async () => {
+test("binance fingerprint uses series_meta.lastTime, barsCount, updatedAt, and the write revision", async () => {
     __setSeriesMetaFetcherForTests(async (_symbol, _interval) => ({
+        ok: true,
+        lastTime: 1782914400,
+        barsCount: 65003,
+        updatedAt: 1778000000,
+        revision: 4,
+    }));
+    const fp = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
+    assert.equal(typeof fp, "string");
+    assert.ok(fp!.includes("binance:BTCUSDT:1h:1782914400:65003:1778000000:4"));
+    assert.ok(fp!.includes("binance:PAXGUSDT:1h:1782914400:65003:1778000000:4"));
+});
+
+test("binance fingerprint changes when only the write revision moves (same-second repair)", async () => {
+    // The repair scenario the revision exists for: a historical bar is
+    // rewritten within the same unix second, so updatedAt, barsCount, and
+    // lastTime all stand still and only the monotonic counter can distinguish.
+    let revision = 7;
+    __setSeriesMetaFetcherForTests(async () => ({
+        ok: true,
+        lastTime: 1782914400,
+        barsCount: 65003,
+        updatedAt: 1778000000,
+        revision,
+    }));
+    const before = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
+    revision = 8;
+    const after = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
+    assert.notEqual(before, after, "fingerprint must change when the write revision moves");
+});
+
+test("metadata without a revision uses an explicit legacy segment (older endpoint)", async () => {
+    __setSeriesMetaFetcherForTests(async () => ({
         ok: true,
         lastTime: 1782914400,
         barsCount: 65003,
@@ -202,8 +234,23 @@ test("binance fingerprint uses series_meta.lastTime, barsCount, and updatedAt", 
     }));
     const fp = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
     assert.equal(typeof fp, "string");
-    assert.ok(fp!.includes("binance:BTCUSDT:1h:1782914400:65003:1778000000"));
-    assert.ok(fp!.includes("binance:PAXGUSDT:1h:1782914400:65003:1778000000"));
+    // The legacy segment is tagged, so it can never collide with a segment
+    // produced by a revision-aware endpoint for the same numbers.
+    assert.ok(fp!.includes("binance-legacy:BTCUSDT:1h:1782914400:65003:1778000000"));
+    assert.ok(!fp!.includes("binance:BTCUSDT:1h:"));
+});
+
+test("a malformed supplied revision bypasses disk caching instead of fabricating 0", async () => {
+    for (const revision of [Number.NaN, "3", -1, 1.5] as unknown as Array<number | null>) {
+        __setSeriesMetaFetcherForTests(async () => ({
+            ok: true,
+            lastTime: 1782914400,
+            barsCount: 65003,
+            updatedAt: 1778000000,
+            revision,
+        }));
+        assert.equal(await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h"), null, `revision: ${String(revision)}`);
+    }
 });
 
 test("a stalled SQLite metadata body stops fingerprint loading at its deadline", async t => {
@@ -229,9 +276,9 @@ test("a stalled SQLite metadata body stops fingerprint loading at its deadline",
     }
 });
 
-test("binance fingerprint folds updatedAt=0 when series_meta omits it (cold cache / older endpoint)", async () => {
-    // updatedAt intentionally absent — every field on SeriesMetaResponse is
-    // optional, so the bare object is a valid response.
+test("binance fingerprint folds updatedAt=0 when series_meta omits it (cold cache / legacy endpoint)", async () => {
+    // updatedAt and revision intentionally absent — every field on
+    // SeriesMetaResponse is optional, so the bare object is a valid response.
     __setSeriesMetaFetcherForTests(async () => ({
         ok: true,
         lastTime: 1782914400,
@@ -239,7 +286,7 @@ test("binance fingerprint folds updatedAt=0 when series_meta omits it (cold cach
     }));
     const fp = await computeSeedFingerprint("BTCUSDT", "PAXGUSDT", "1h");
     assert.equal(typeof fp, "string");
-    assert.ok(fp!.includes("binance:BTCUSDT:1h:1782914400:65003:0"));
+    assert.ok(fp!.includes("binance-legacy:BTCUSDT:1h:1782914400:65003:0"));
 });
 
 test("binance fingerprint changes when updatedAt moves but lastTime and barsCount stay fixed (Finding 2)", async () => {
@@ -307,11 +354,12 @@ test("binance cache hit invalidates when series_meta.lastTime changes between st
 // --------------------------------------------------------------------------
 
 test("mixed pair fingerprint combines file: and binance: segments", async () => {
+    // No revision in the stub: the binance leg uses the legacy segment shape.
     __setSeriesMetaFetcherForTests(async (_symbol, _interval) => ({ ok: true, lastTime: 1782914400, barsCount: 65003 }));
     const fp = await computeSeedFingerprint(BASE_SYMBOL, "BTCUSDT", SOURCE_INTERVAL);
     assert.equal(typeof fp, "string");
     assert.ok(fp!.includes(`file:AAPL:${SOURCE_INTERVAL}:`));
-    assert.ok(fp!.includes(`binance:BTCUSDT:${SOURCE_INTERVAL}:1782914400:65003:0`));
+    assert.ok(fp!.includes(`binance-legacy:BTCUSDT:${SOURCE_INTERVAL}:1782914400:65003:0`));
 });
 
 test("mixed pair round-trip works", async () => {
