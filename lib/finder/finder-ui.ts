@@ -1,5 +1,9 @@
 import { RANKING_MEASUREMENT_SEMANTICS } from "../batch-backtest/open-score-replay/types";
-import { appendFinderResultsTable } from "./finder-results-table";
+import {
+    appendFinderResultsTable,
+    FINDER_METRIC_DATA,
+    type FinderTableMetricKey,
+} from "./finder-results-table";
 import { getFinderArmRankingMetric, getFinderArmPerformanceRankValue, getFinderCausalAvailabilityDetails, resolveFinderArmRankingHorizon } from "./finder-arm-performance-metrics";
 import { setVisible } from "../dom-utils";
 import { createFinderUiDom, type FinderUiDom } from "./finder-ui-dom";
@@ -110,9 +114,9 @@ export class FinderUI {
             metrics.className = "finder-metrics";
             const result = getFinderDisplayResult(item);
 
-                metrics.appendChild(this.createMetricChip(`Net ${formatNullableCurrency(result.netProfit)}`));
-                metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(result.profitFactor)}`));
-                metrics.appendChild(this.createMetricChip(`Sharpe ${result.sharpeRatio.toFixed(2)}`));
+                metrics.appendChild(this.createTableMetricChip("Net", formatNullableCurrency(result.netProfit), "net"));
+                metrics.appendChild(this.createTableMetricChip("PF", formatProfitFactor(result.profitFactor), "pf"));
+                metrics.appendChild(this.createTableMetricChip("Sharpe", result.sharpeRatio.toFixed(2), "sharpe"));
                 if (Number.isFinite(item.compositeEdgeRatio)) {
                     metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
                 }
@@ -125,8 +129,8 @@ export class FinderUI {
                 if (typeof result.tradeTimingQuality?.exitScore === "number") {
                     metrics.appendChild(this.createMetricChip(`Exit ${formatUiScore(result.tradeTimingQuality.exitScore)}`));
                 }
-                metrics.appendChild(this.createMetricChip(`DD ${result.maxDrawdownPercent.toFixed(2)}%`));
-                metrics.appendChild(this.createMetricChip(`Trades ${result.totalTrades}`));
+                metrics.appendChild(this.createTableMetricChip("DD", `${result.maxDrawdownPercent.toFixed(2)}%`, "dd"));
+                metrics.appendChild(this.createTableMetricChip("Trades", String(result.totalTrades), "trades"));
                 if (item.oosResult && item.oosVerdict) {
                     const oos = item.oosResult;
                     metrics.appendChild(this.createOosMetricChip(oos.netProfit, oos.profitFactor, oos.totalTrades, item.oosVerdict));
@@ -173,18 +177,18 @@ export class FinderUI {
 
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
-            metrics.appendChild(this.createMetricChip(`Robust ${item.robustUniverseScore.toFixed(1)}`));
+            metrics.appendChild(this.createTableMetricChip("Robust", item.robustUniverseScore.toFixed(1), "robust"));
             metrics.appendChild(this.createMetricChip(item.oosAggregate
                 ? `Stable ${item.windowStabilityScore.toFixed(1)}`
                 : "Stable --"));
-            metrics.appendChild(this.createMetricChip(`Ratio ${(item.profitableActiveRatio * 100).toFixed(1)}%`));
-            metrics.appendChild(this.createMetricChip(`Active ${item.activeSymbols}`));
+            metrics.appendChild(this.createTableMetricChip("Ratio", `${(item.profitableActiveRatio * 100).toFixed(1)}%`, "ratio"));
+            metrics.appendChild(this.createTableMetricChip("Active", String(item.activeSymbols), "active"));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
-            metrics.appendChild(this.createMetricChip(`Med Exp ${item.medianExpectancy.toFixed(2)}`));
+            metrics.appendChild(this.createTableMetricChip("Med Exp", item.medianExpectancy.toFixed(2), "medExp"));
             metrics.appendChild(this.createMetricChip(item.medianSharpeAvailable
                 ? `Med Sharpe ${item.medianSharpe.toFixed(2)}`
                 : "Med Sharpe --"));
-            metrics.appendChild(this.createMetricChip(`Med PF ${formatProfitFactor(item.medianProfitFactor)}`));
+            metrics.appendChild(this.createTableMetricChip("Med PF", formatProfitFactor(item.medianProfitFactor), "medPf"));
             if (item.medianCompositeEdgeRatio > 0) {
                 metrics.appendChild(this.createMetricChip(`Med ER ${item.medianCompositeEdgeRatio.toFixed(2)}`));
             }
@@ -203,7 +207,7 @@ export class FinderUI {
                 metrics.appendChild(this.createMetricChip(`Med R/DD ${returnDrawdown}`));
             }
             metrics.appendChild(this.createMetricChip(`Worst ${formatNullableCurrency(item.worstNetProfit)}`));
-            metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
+            metrics.appendChild(this.createTableMetricChip("Trades", String(item.totalTrades), "trades"));
             if (item.oosAggregate) {
                 metrics.appendChild(this.createUniverseOosChip(item.oosAggregate));
             }
@@ -440,14 +444,14 @@ export class FinderUI {
                 metrics.appendChild(this.createMetricChip(`Signals ${item.freshSignalLibraryCount}`));
             }
             metrics.appendChild(this.createMetricChip(`Rank ${item.historicalRank}/${item.totalCandidatesEvaluated}`));
-            metrics.appendChild(this.createMetricChip(`Support ${item.support.freshSameDirection}/${item.support.poolSize}`));
-            metrics.appendChild(this.createMetricChip(`Agree ${(item.support.directionAgreementRatio * 100).toFixed(0)}%`));
-            metrics.appendChild(this.createMetricChip(`Exp ${selection.expectancy.toFixed(2)}`));
-            metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(selection.profitFactor)}`));
-            metrics.appendChild(this.createMetricChip(`Net ${formatNullableCurrency(selection.netProfit)}`));
+            metrics.appendChild(this.createTableMetricChip("Support", `${item.support.freshSameDirection}/${item.support.poolSize}`, "support"));
+            metrics.appendChild(this.createTableMetricChip("Agree", `${(item.support.directionAgreementRatio * 100).toFixed(0)}%`, "agree"));
+            metrics.appendChild(this.createTableMetricChip("Exp", selection.expectancy.toFixed(2), "exp"));
+            metrics.appendChild(this.createTableMetricChip("PF", formatProfitFactor(selection.profitFactor), "pf"));
+            metrics.appendChild(this.createTableMetricChip("Net", formatNullableCurrency(selection.netProfit), "net"));
             metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
-            metrics.appendChild(this.createMetricChip(`Trades ${selection.totalTrades}`));
+            metrics.appendChild(this.createTableMetricChip("Trades", String(selection.totalTrades), "trades"));
             if (item.eodOpenTradePnl !== undefined) {
                 metrics.appendChild(this.createMetricChip(`Open EOD ${formatNullableCurrency(item.eodOpenTradePnl)}`));
             }
@@ -573,19 +577,19 @@ export class FinderUI {
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
             metrics.appendChild(this.createMetricChip(`Avg Exp ${item.averageExpectancy.toFixed(2)}`));
-            metrics.appendChild(this.createMetricChip(`Med Exp ${item.medianExpectancy.toFixed(2)}`));
-            metrics.appendChild(this.createMetricChip(`PF ${formatProfitFactor(item.profitFactor)}`));
+            metrics.appendChild(this.createTableMetricChip("Med Exp", item.medianExpectancy.toFixed(2), "medExp"));
+            metrics.appendChild(this.createTableMetricChip("PF", formatProfitFactor(item.profitFactor), "pf"));
             metrics.appendChild(this.createMetricChip(`Avg PF ${formatProfitFactor(item.averageProfitFactor)}`));
             metrics.appendChild(this.createMetricChip(item.sharpeAvailableSymbols > 0
                 ? `Sharpe ${item.averageSharpe.toFixed(2)}`
                 : "Sharpe --"));
-            metrics.appendChild(this.createMetricChip(`PnL ${formatNullableCurrency(item.totalNetProfit)}`));
-            metrics.appendChild(this.createMetricChip(`Trades ${item.totalTrades}`));
+            metrics.appendChild(this.createTableMetricChip("PnL", formatNullableCurrency(item.totalNetProfit), "pnl"));
+            metrics.appendChild(this.createTableMetricChip("Trades", String(item.totalTrades), "trades"));
             metrics.appendChild(this.createMetricChip(`WR ${item.weightedWinRate.toFixed(1)}%`));
-            metrics.appendChild(this.createMetricChip(`Active ${item.activeSymbols}/${item.requestedSymbols}`));
+            metrics.appendChild(this.createTableMetricChip("Active", `${item.activeSymbols}/${item.requestedSymbols}`, "active"));
             metrics.appendChild(this.createMetricChip(`Prof ${item.profitableSymbols}`));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
-            metrics.appendChild(this.createMetricChip(`Worst DD ${item.worstMaxDrawdownPercent.toFixed(2)}%`));
+            metrics.appendChild(this.createTableMetricChip("Worst DD", `${item.worstMaxDrawdownPercent.toFixed(2)}%`, "worstDd"));
             if (item.oos) {
                 metrics.appendChild(this.createMetricChip(`OOS PnL ${formatNullableCurrency(item.oos.totalNetProfit)}`));
                 metrics.appendChild(this.createMetricChip(`OOS PF ${formatProfitFactor(item.oos.profitFactor)}`));
@@ -746,15 +750,15 @@ export class FinderUI {
             if (ranking) {
                 const sortValue = getFinderArmPerformanceRankValue({}, arm, item.replayMode, undefined, "raw", "ranking_consistency", rankingMetric, filter.rankingSort);
                 const sortLabel = filter.rankingSort === "selected_asset" ? "Selected asset sort score" : "Ordering CI lower";
-                metrics.appendChild(this.createMetricChip(`${sortLabel} ${percent(sortValue)}`));
-                metrics.appendChild(this.createMetricChip(`Rank eligibility ${sortValue !== null ? "available" : rankingMetric?.status === "no_events" ? "no events" : rankingMetric ? "insufficient confidence" : "rerun required"}`));
-                metrics.appendChild(this.createMetricChip(`Selected asset score ${percent(rankingMetric?.top1Superiority)}`));
-                metrics.appendChild(this.createMetricChip(`Best asset frequency ${percent(rankingMetric?.soleFirstPlaceRate)}`));
+                metrics.appendChild(this.createTableMetricChip(sortLabel, percent(sortValue), "rankingSortScore"));
+                metrics.appendChild(this.createTableMetricChip("Rank eligibility", sortValue !== null ? "available" : rankingMetric?.status === "no_events" ? "no events" : rankingMetric ? "insufficient confidence" : "rerun required", "rankEligibility"));
+                metrics.appendChild(this.createTableMetricChip("Selected asset score", percent(rankingMetric?.top1Superiority), "selectedAssetScore"));
+                metrics.appendChild(this.createTableMetricChip("Best asset frequency", percent(rankingMetric?.soleFirstPlaceRate), "bestAssetFrequency"));
                 metrics.appendChild(this.createMetricChip(`Shared first place ${percent(rankingMetric?.sharedFirstPlaceRate)}`));
-                metrics.appendChild(this.createMetricChip(`Overall ordering accuracy ${percent(rankingMetric?.meanAccuracy)}`));
+                metrics.appendChild(this.createTableMetricChip("Overall ordering accuracy", percent(rankingMetric?.meanAccuracy), "overallOrderingAccuracy"));
             }
-			const appendSwitchPnlChip = (label: string, value: number | null): void => {
-				const chip = this.createMetricChip(`${label} ${formatNullableCurrency(value)}`);
+			const appendSwitchPnlChip = (label: string, value: number | null, key: FinderTableMetricKey): void => {
+				const chip = this.createTableMetricChip(label, formatNullableCurrency(value), key);
 				if (value !== null && Number.isFinite(value)) {
 					chip.classList.add("finder-metric-value");
 					if (value > 0) chip.classList.add("positive");
@@ -767,19 +771,25 @@ export class FinderUI {
 				const switchMetric = selectedSwitchMetric;
 				const contributorExclusion = switchMetric?.topContributorExclusion;
 				if (!switchMetric) metrics.appendChild(this.createMetricChip("Replay data: rerun required"));
-				if (!ranking && switchMetric && switchMetric.status !== "complete") metrics.appendChild(this.createMetricChip(`Status ${switchMetric.status.replaceAll("_", " ")}`));
+				if (!ranking && switchMetric && switchMetric.status !== "complete") {
+					const statusText = `Status ${switchMetric.status.replaceAll("_", " ")}`;
+					metrics.appendChild(this.createMetricChip(statusText, { key: "status", value: statusText }));
+				}
 				appendSwitchPnlChip("Total net P&L", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedTotalNetPnl ?? null
-					: switchMetric?.totalNetPnl ?? null);
+					: switchMetric?.totalNetPnl ?? null, "totalNetPnl");
 				appendSwitchPnlChip("Realized", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedRealizedNetPnl ?? null
-					: switchMetric?.realizedNetPnl ?? null);
+					: switchMetric?.realizedNetPnl ?? null, "realized");
 				appendSwitchPnlChip("Open", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedOpenPositionNetPnl ?? null
-					: switchMetric?.openPositionNetPnl ?? null);
-				if (ranking && switchMetric && switchMetric.status !== "complete") metrics.appendChild(this.createMetricChip(`Status ${switchMetric.status.replaceAll("_", " ")}`));
-				technicalMetrics.appendChild(this.createMetricChip(`Completed trades ${switchMetric?.completedTrades ?? "n/a"} · entries ${switchMetric?.enteredCount ?? "n/a"}`));
-				technicalMetrics.appendChild(this.createMetricChip(`Costs ${formatNullableCurrency(switchMetric?.totalCosts ?? null)}`));
+					: switchMetric?.openPositionNetPnl ?? null, "open");
+				if (ranking && switchMetric && switchMetric.status !== "complete") {
+					const statusText = `Status ${switchMetric.status.replaceAll("_", " ")}`;
+					technicalMetrics.appendChild(this.createMetricChip(statusText, { key: "status", value: statusText }));
+				}
+				technicalMetrics.appendChild(this.createTableMetricChip("Completed trades", `${switchMetric?.completedTrades ?? "n/a"} · entries ${switchMetric?.enteredCount ?? "n/a"}`, "completedTrades"));
+				technicalMetrics.appendChild(this.createTableMetricChip("Costs", formatNullableCurrency(switchMetric?.totalCosts ?? null), "costs"));
 				if (effectiveBasis === "exclude_top_contributor") {
 					metrics.appendChild(this.createMetricChip("TOP CONTRIBUTOR EXCLUDED"));
 					metrics.appendChild(this.createMetricChip(`Excluded ${contributorExclusion?.asset ?? "n/a"} (${formatNullableCurrency(contributorExclusion?.contributionNetPnl ?? null)})`));
@@ -790,14 +800,14 @@ export class FinderUI {
 					? item.metricsExTopContributor?.[arm]
 					: item.metrics?.[arm];
 				technicalMetrics.appendChild(this.createMetricChip(effectiveBasis === "raw" ? "RAW" : "TOP CONTRIBUTOR EXCLUDED"));
-				technicalMetrics.appendChild(this.createMetricChip(`Events ${horizonMetric?.events ?? "n/a"}`));
-				metrics.appendChild(this.createMetricChip(`${ranking ? "Replay mean" : "Mean"} ${formatPct(horizonMetric?.topMean ?? null)}`));
-				technicalMetrics.appendChild(this.createMetricChip(`Random ${formatPct(horizonMetric?.randomMean ?? null)}`));
-				technicalMetrics.appendChild(this.createMetricChip(`DeltaMed ${formatPct(horizonMetric?.delta ?? null)}`));
+				technicalMetrics.appendChild(this.createTableMetricChip("Events", String(horizonMetric?.events ?? "n/a"), "events"));
+				metrics.appendChild(this.createTableMetricChip(ranking ? "Replay mean" : "Mean", formatPct(horizonMetric?.topMean ?? null), "mean"));
+				technicalMetrics.appendChild(this.createTableMetricChip("Random", formatPct(horizonMetric?.randomMean ?? null), "random"));
+				technicalMetrics.appendChild(this.createTableMetricChip("DeltaMed", formatPct(horizonMetric?.delta ?? null), "deltaMed"));
 				technicalMetrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(horizonMetric?.ciLower ?? null)}, ${formatPct(horizonMetric?.ciUpper ?? null)}]`));
 			}
             if (ranking) {
-                metrics.appendChild(this.createMetricChip(`Scored events ${rankingMetric?.scoredEvents ?? "n/a"}`));
+                metrics.appendChild(this.createTableMetricChip("Scored events", String(rankingMetric?.scoredEvents ?? "n/a"), "scoredEvents"));
                 technicalMetrics.appendChild(this.createMetricChip(rankingMetric ? "Ranking data: " + rankingMetric.status.replaceAll("_", " ") : "Rerun required"));
                 technicalMetrics.appendChild(this.createMetricChip(`Semantics ${item.rankingMeasurement?.semanticsVersion ?? "n/a"}`));
                 if (item.rankingMeasurement && item.rankingMeasurement.horizonBars !== rankingHorizon) {
@@ -866,8 +876,13 @@ export class FinderUI {
                 metrics,
             }));
         });
-        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "arm_performance");
-        else list.appendChild(fragment);
+        if (this.resultsView === "table") {
+            appendFinderResultsTable(list, fragment, "arm_performance", {
+                replayMode,
+                ranking,
+                rankingSort: filter.rankingSort === "selected_asset" ? "selected_asset" : "overall_ordering",
+            });
+        } else list.appendChild(fragment);
     }
 
     /**
@@ -937,10 +952,24 @@ export class FinderUI {
         container.style.display = "";
     }
 
-    private createMetricChip(text: string): HTMLSpanElement {
+    private createMetricChip(
+        text: string,
+        metric?: { key: FinderTableMetricKey; value: string },
+    ): HTMLSpanElement {
         const span = document.createElement("span");
         span.textContent = text;
+        if (metric) {
+            // Table-consumed chips carry explicit metric identity so the
+            // comparison table never parses card wording.
+            span.setAttribute(FINDER_METRIC_DATA.key, metric.key);
+            span.setAttribute(FINDER_METRIC_DATA.value, metric.value);
+        }
         return span;
+    }
+
+    /** One `label value` chip that the comparison table reads by metric key. */
+    private createTableMetricChip(label: string, value: string, key: FinderTableMetricKey): HTMLSpanElement {
+        return this.createMetricChip(`${label} ${value}`, { key, value });
     }
 
     private createAssetOosOverview(

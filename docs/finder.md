@@ -81,9 +81,17 @@ Cards/Table selects how the current result inventory is displayed. Table
 columns follow the scope: chart performance, universe aggregates, fresh-entry
 support, baseline quality, or the selected arm's return/P&L/ranking measurement.
 Tables reuse the formatted card metrics, preserving unavailable values and
-contributor-exclusion basis. Parameters, all remaining metrics, and existing
-lazy symbol/measurement breakdowns are available under Parameters & details.
-OOS verdict badges and incomplete replay status remain visible in the table.
+contributor-exclusion basis. Card/table identity is explicit: each table
+column names a stable metric key, and the card chip that feeds it carries that
+key plus its already formatted value (data attributes written by
+`FinderUI.createMetricChip`, read by `lib/finder/finder-results-table.ts`).
+The table never parses card wording, so renaming a label cannot change column
+identity, and Arm column selection is resolved once per render from the
+replay mode, measurement, and ranking sort rather than inferred from card
+texts. A column whose chip metadata is missing falls back to `--`.
+Parameters, all remaining metrics, and existing lazy symbol/measurement
+breakdowns are available under Parameters & details. OOS verdict badges and
+incomplete replay status remain visible in the table.
 
 Apply uses the same candidate index and guards in both views; quality audits
 remain read only, and cached-preview Apply restrictions remain in place.
