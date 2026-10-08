@@ -1869,6 +1869,29 @@ describe("Finder controls shared form conversion", () => {
         });
     });
 
+    it("keeps settings capture from parsing the symbol list while submission parses it once", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = makeControls(dom);
+        dom.finderScope.value = "asset_opportunity";
+        controls.uiState.scope = "asset_opportunity";
+        dom.finderUniverseSymbols.value = "aaa, BBB\naaa";
+        const parsedInputs: string[] = [];
+        const originalParse = (controls as any).parseUniverseSymbols.bind(controls);
+        (controls as any).parseUniverseSymbols = (raw: string) => {
+            parsedInputs.push(raw);
+            return originalParse(raw);
+        };
+
+        // Ordinary settings capture keeps the raw text and never parses it.
+        controls.captureFinderUiState(false);
+        expect(parsedInputs, "capture must not parse the pair list").to.deep.equal([]);
+
+        // Run-boundary submission parses the list exactly once.
+        const options = controls.readOptions(stubBacktestSettings);
+        expect(parsedInputs).to.have.length(1);
+        expect(options.assetOpportunity!.symbols).to.deep.equal(["AAA", "BBB"]);
+    });
+
     it("records capture-only bounds caps that submission deliberately lacks", () => {
         const dom: any = createFakeFinderManagerDom();
         const controls = makeControls(dom);
@@ -2455,6 +2478,44 @@ describe("FinderUI Arm Performance preview actions", () => {
         for (const measurement of ["return", "ranking_consistency"] as const) {
             new FinderUI().renderArmPerformanceResults([{ ...base, replayMode: "asset_switch", assetSwitchMetrics }], null, "TOP_RAW", false, "raw", { measurement });
             expect(texts(elsById.get("finderList"))).to.include("Status incomplete");
+        }
+    });
+
+    it("keeps ranking replay status outside the Measurement details disclosure", () => {
+        // Regression: ranking moved the status chip into technicalMetrics,
+        // which lives inside the collapsible Measurement details panel —
+        // closing the panel hid an incomplete replay status that baseline
+        // kept visible.
+        const { horizon: _horizon, metrics: _metrics, ...base } = makeArmCandidate(0, 1, 1);
+        const summary: AssetSwitchArmSummary = {
+            status: "incomplete", enteredCount: 6, completedTrades: 5,
+            realizedNetPnl: -30, openPositionNetPnl: 8.5, totalNetPnl: -21.5, partialRealizedNetPnl: 0,
+            completedHoldingDurationSec: 0, averageCompletedHoldingDurationSec: null, totalCosts: 1.25,
+            openPosition: null, pendingOrder: null,
+            diagnosticCounts: { missingTarget: 0, invalidTimestamp: 0, invalidPrice: 0, dataGap: 0, staleMark: 0, unvaluedPosition: 0 },
+        };
+        const assetSwitchMetrics = Object.fromEntries(Object.keys(_metrics!).map((arm) => [arm, summary])) as Extract<FinderArmPerformanceCandidate, { replayMode: "asset_switch" }>["assetSwitchMetrics"];
+        const findNodes = (node: any, predicate: (node: any) => boolean): any[] => [
+            ...(predicate(node) ? [node] : []), ...(node.children ?? []).flatMap((child: any) => findNodes(child, predicate)),
+        ];
+        const statusChip = (node: any) => node.textContent === "Status incomplete";
+        for (const measurement of ["return", "ranking_consistency"] as const) {
+            const ui = new FinderUI();
+            // The shared fake list accumulates across renders; isolate this pass.
+            const list = (globalThis as any).document.getElementById("finderList");
+            list.children = [];
+            ui.renderArmPerformanceResults([{ ...base, replayMode: "asset_switch", assetSwitchMetrics }], null, "TOP_RAW", false, "raw", { measurement });
+            const chips = findNodes(list, statusChip);
+            expect(chips, "exactly one replay status chip per candidate").to.have.length(1);
+            const primary = findNodes(list, (node) => node.className === "finder-metrics")[0];
+            expect(findNodes(primary, statusChip), "status must stay in the primary metrics").to.have.length(1);
+            const panels = findNodes(list, (node) => node.className === "finder-measurement-details");
+            if (measurement === "ranking_consistency") {
+                expect(panels.length, "ranking renders a measurement disclosure").to.be.at.least(1);
+                for (const panel of panels) {
+                    expect(findNodes(panel, statusChip), "status must not move into the disclosure").to.deep.equal([]);
+                }
+            }
         }
     });
 

@@ -631,7 +631,11 @@ const verifyFinderWorkspace = async (page: Page): Promise<void> => {
         const result = { ...createEmptyBacktestResult(), netProfit: 123, profitFactor: 2, expectancy: 4, totalTrades: 50, sharpeRatio: 1 };
         const checker = { check(metric: string, readOnly = false) {
             const row = document.querySelector('.finder-comparison-table tbody tr')!;
-            if (!row || !row.textContent!.includes(metric)) throw new Error('Scope table lost metric: ' + metric);
+            // Only header-scoped comparison cells count: a value that lives
+            // solely inside Parameters & details must not satisfy this check.
+            const metricCell = Array.from(row.querySelectorAll('.finder-comparison-metric'))
+                .find((cell) => cell.textContent!.includes(metric));
+            if (!metricCell) throw new Error('Scope table lost comparison metric cell: ' + metric);
             if (Boolean(row.querySelector('.finder-apply')) === readOnly) throw new Error('Scope table Apply contract failed');
             if (!row.querySelector('details.finder-table-details')) throw new Error('Scope table lost details');
         } };
@@ -658,6 +662,34 @@ const verifyFinderWorkspace = async (page: Page): Promise<void> => {
             medianExpectancy: 4, averageProfitFactor: 2, profitFactor: 2, averageSharpe: 1, sharpeAvailableSymbols: 1,
             weightedWinRate: 50, worstMaxDrawdownPercent: 2 }]);
         checker.check('$123', true);
+        // Regression: ranking replay status must survive a closed measurement
+        // disclosure in Cards mode and stay visible as the keyed status line
+        // in Table mode.
+        const switchStatusCandidate: any = {
+            candidateId: 'e2e-switch-status', candidateOrdinal: 0, strategyKey: 'fixture', strategyName: 'Switch status fixture',
+            replayMode: 'asset_switch', params: {}, backtestSettings: {}, requestedEngineMode: 'typescript', actualEngineMode: 'typescript',
+            pairCoverage: { requestedPairs: 1, completedPairs: 1, failedPairs: 0, replayTargetLoadFailures: 0, noTradePairs: 0 },
+            assetSwitchMetrics: { TOP_RAW: { status: 'incomplete', enteredCount: 6, completedTrades: 5, realizedNetPnl: -30,
+                openPositionNetPnl: 8.5, totalNetPnl: -21.5, averageCompletedHoldingDurationSec: 0, partialRealizedNetPnl: 0,
+                completedHoldingDurationSec: 0, totalCosts: 1.25, diagnosticCounts: {}, openPosition: null, pendingOrder: null } },
+        };
+        const cardsStatusUi = new FinderUI();
+        cardsStatusUi.renderArmPerformanceResults([switchStatusCandidate], null, 'TOP_RAW', false, 'raw', { measurement: 'ranking_consistency' });
+        const statusPanels = Array.from(document.querySelectorAll('#finderList .finder-measurement-details')) as HTMLDetailsElement[];
+        if (statusPanels.length === 0) throw new Error('Ranking measurement details panel missing');
+        statusPanels.forEach((panel) => { panel.open = false; });
+        const statusChips = (Array.from(document.querySelectorAll('#finderList span')) as HTMLElement[])
+            .filter((chip) => chip.textContent === 'Status incomplete');
+        if (statusChips.length !== 1) throw new Error('Expected exactly one replay status chip, got ' + statusChips.length);
+        if (statusChips[0]!.closest('.finder-measurement-details')) throw new Error('Replay status moved into the Measurement details disclosure');
+        if (statusChips[0]!.getClientRects().length === 0) throw new Error('Replay status hidden while the measurement disclosure is closed');
+        const tableStatusUi = new FinderUI(); tableStatusUi.setResultsView('table');
+        tableStatusUi.renderArmPerformanceResults([switchStatusCandidate], null, 'TOP_RAW', false, 'raw', { measurement: 'ranking_consistency' });
+        const identityCell = document.querySelector('.finder-comparison-table tbody th[scope="row"]')!;
+        const statusLine = (Array.from(identityCell.querySelectorAll(':scope > .finder-sub')) as HTMLElement[])
+            .find((line) => line.textContent === 'Status incomplete');
+        if (!statusLine) throw new Error('Table lost the keyed replay status line');
+        if (statusLine.getClientRects().length === 0) throw new Error('Table replay status line not visible');
         document.getElementById('finderViewCards')!.click();
         if (document.querySelector('.finder-comparison-table')) throw new Error('Finder cards did not restore');
         document.querySelector<HTMLElement>('.panel-content')!.scrollTop = 0;

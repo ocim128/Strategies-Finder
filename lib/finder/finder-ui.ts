@@ -784,9 +784,12 @@ export class FinderUI {
 				appendSwitchPnlChip("Open", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedOpenPositionNetPnl ?? null
 					: switchMetric?.openPositionNetPnl ?? null, "open");
+				// Replay status stays in the primary metrics so it remains visible
+				// when the ranking Measurement details disclosure is closed; in
+				// ranking mode `technicalMetrics` lives inside that disclosure.
 				if (ranking && switchMetric && switchMetric.status !== "complete") {
 					const statusText = `Status ${switchMetric.status.replaceAll("_", " ")}`;
-					technicalMetrics.appendChild(this.createMetricChip(statusText, { key: "status", value: statusText }));
+					metrics.appendChild(this.createMetricChip(statusText, { key: "status", value: statusText }));
 				}
 				technicalMetrics.appendChild(this.createTableMetricChip("Completed trades", `${switchMetric?.completedTrades ?? "n/a"} · entries ${switchMetric?.enteredCount ?? "n/a"}`, "completedTrades"));
 				technicalMetrics.appendChild(this.createTableMetricChip("Costs", formatNullableCurrency(switchMetric?.totalCosts ?? null), "costs"));

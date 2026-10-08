@@ -241,9 +241,12 @@ private readArmPerformanceHorizon(): number {
 	)));
 }
 
-/** Asset Opportunity group: identical parsing at capture and execution boundaries. */
+/**
+ * Asset Opportunity settings group: identical parsing at capture and
+ * execution boundaries. Symbol input is intentionally absent — capture keeps
+ * the raw pair list text and only submission parses it into symbols.
+ */
 private readAssetOpportunityInputs(): {
-	symbols: string[];
 	candidatePoolSize: number;
 	minFreshSupport: number;
 	includeOpenPositions: boolean;
@@ -256,7 +259,6 @@ private readAssetOpportunityInputs(): {
 } {
 	const dom = this.deps.getDom();
 	return {
-		symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
 		candidatePoolSize: Math.max(1, Math.min(50, this.readRoundedInput(
 			dom.finderAssetCandidatePoolSize,
 			DEFAULT_FINDER_UI_STATE.assetOpportunityCandidatePoolSize,
@@ -1073,7 +1075,8 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 	} else if (scope === 'asset_opportunity') {
 		const assetOpportunity = this.readAssetOpportunityInputs();
 		options.assetOpportunity = {
-			symbols: assetOpportunity.symbols,
+			// Only run submission parses the pair list; capture keeps the text.
+			symbols: this.parseUniverseSymbols(dom.finderUniverseSymbols.value),
 			candidatePoolSize: assetOpportunity.candidatePoolSize,
 			minFreshSupport: assetOpportunity.minFreshSupport,
 			includeOpenPositions: assetOpportunity.includeOpenPositions,
