@@ -160,7 +160,7 @@ describe("validation plan routing", () => {
         assert.ok(plan.selectedSpecs.includes("tests/batch-backtest-server-loader-parity.spec.ts"));
     });
 
-    it("lets a full JS check supersede contained typechecks and focused specs", () => {
+    it("keeps full-js alone for a shared-core change instead of the focused trio", () => {
         const plan = planFor(["lib/persisted-json.ts"]);
         assert.deepEqual(ruleIds(plan), ["shared-backtest-core"]);
         assert.deepEqual(plan.checks, ["full-js"]);
@@ -184,6 +184,24 @@ describe("validation plan routing", () => {
         assert.ok(ruleIds(plan).includes("shared-backtest-core"));
         assert.ok(ruleIds(plan).includes("rust-engine"));
         assert.deepEqual(plan.checks, ["full-js", "rust"]);
+    });
+
+    it("replaces exactly the focused trio with full-js in a mixed change set", () => {
+        const plan = planFor(["package.json", "html-partials/tab-finder.html", "rust-engine/src/lib.rs"]);
+        assert.deepEqual(plan.checks, ["full-js", "e2e", "rust"]);
+        assert.deepEqual(plan.testFilters, ["feature-dom-contracts", "rust-"]);
+        assert.deepEqual(plan.selectedSpecs, []);
+    });
+
+    it("still validates rule filters when full-js replaces the focused run", () => {
+        assert.throws(
+            () => buildValidationPlan({
+                changedPaths: ["lib/finder/finder-engine.ts", "package.json"],
+                availableSpecs: [],
+            }),
+            (error: unknown) => error instanceof ValidationMapError
+                && error.issues.some(issue => issue.includes('Rule "finder"') && issue.includes('"finder-"')),
+        );
     });
 
     it("routes HTML partials to the DOM contract spec and E2E", () => {

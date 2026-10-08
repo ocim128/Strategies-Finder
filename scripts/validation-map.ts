@@ -35,8 +35,6 @@ export type ValidationCheckDefinition = {
     title: string;
     /** How the check executes; mirrored by the human report. */
     command: ValidationCheckCommand;
-    /** Contained checks that this check makes redundant when selected. */
-    supersedes: readonly ValidationCheckId[];
 };
 
 /** Canonical order also defines execution and display order. */
@@ -45,37 +43,31 @@ export const VALIDATION_CHECKS: readonly ValidationCheckDefinition[] = [
         id: "typecheck",
         title: "Application typecheck",
         command: { kind: "npm-script", script: "typecheck" },
-        supersedes: [],
     },
     {
         id: "typecheck:tests",
         title: "Test typecheck",
         command: { kind: "npm-script", script: "typecheck:tests" },
-        supersedes: [],
     },
     {
         id: "focused-tests",
         title: "Focused spec run",
         command: { kind: "focused-tests" },
-        supersedes: [],
     },
     {
         id: "full-js",
         title: "Full JS verification and build budget (npm run ci)",
         command: { kind: "npm-script", script: "ci" },
-        supersedes: ["typecheck", "typecheck:tests", "focused-tests"],
     },
     {
         id: "e2e",
         title: "Browser E2E smoke (npm run test:e2e)",
         command: { kind: "npm-script", script: "test:e2e" },
-        supersedes: [],
     },
     {
         id: "rust",
         title: "Rust format, tests, and clippy (rust-engine/)",
         command: { kind: "rust-cargo" },
-        supersedes: [],
     },
 ];
 
@@ -83,7 +75,11 @@ const CHECKS_BY_ID: Map<string, ValidationCheckDefinition> = new Map(
     VALIDATION_CHECKS.map(check => [check.id, check]),
 );
 
-/** Checks selected by a typical focused plan: both typechecks plus one filtered spec invocation. */
+/**
+ * Checks selected by a typical focused plan: both typechecks plus one filtered
+ * spec invocation. `full-js` runs `npm run ci`, which contains this trio, so
+ * the planner drops the trio's members whenever `full-js` is requested.
+ */
 const FOCUSED_JS_CHECKS: readonly ValidationCheckId[] = ["typecheck", "typecheck:tests", "focused-tests"];
 
 export type ValidationRule = {
@@ -446,7 +442,7 @@ export type ValidationPlan = {
     testFilters: string[];
     /** Specs the resolved filters select from the current inventory. */
     selectedSpecs: string[];
-    /** Canonical-ordered, deduplicated checks after superseding. */
+    /** Canonical-ordered, deduplicated checks; full-js replaces the focused trio. */
     checks: ValidationCheckId[];
     /** True when every change is documentation and no code check selects. */
     docsOnly: boolean;
@@ -609,17 +605,15 @@ export function buildValidationPlan(input: ValidationPlanInput): ValidationPlan 
         rawChecks.add("full-js");
     }
 
-    // A full JS check supersedes its contained typechecks/spec steps rather
-    // than rerunning them. E2E and Rust always stay explicit.
-    const superseded = new Set<ValidationCheckId>();
-    for (const checkId of rawChecks) {
-        for (const containedId of CHECKS_BY_ID.get(checkId)?.supersedes ?? []) {
-            superseded.add(containedId);
-        }
-    }
+    // `full-js` runs `npm run ci`, which contains both typechecks and the full
+    // spec suite, so requesting it drops the focused trio instead of rerunning
+    // it. E2E and Rust always stay explicit.
+    const requestedChecks = rawChecks.has("full-js")
+        ? [...rawChecks].filter(checkId => !FOCUSED_JS_CHECKS.includes(checkId))
+        : [...rawChecks];
     const checks = VALIDATION_CHECKS
         .map(check => check.id)
-        .filter(checkId => rawChecks.has(checkId) && !superseded.has(checkId));
+        .filter(checkId => requestedChecks.includes(checkId));
 
     const selectedFilters = [...new Set([...ruleFilters, ...selfFilters])].sort(compareStrings);
     // Empty filters mean "all specs" to selectTests(), so a resolved selection
@@ -686,19 +680,9 @@ export function inspectValidationMap(): MapIssue[] {
         if (rule.checks.length === 0 && rule.testFilters.length > 0) {
             issues.push({ ruleId: rule.id, issue: "Docs-only rule still selects test filters." });
         }
-        for (const checkId of rule.checks) {
-            for (const supersededId of CHECKS_BY_ID.get(checkId)?.supersedes ?? []) {
-                if (rule.checks.includes(supersededId)) {
-                    issues.push({ ruleId: rule.id, issue: `Rule selects "${checkId}" and its contained "${supersededId}".` });
-                }
-            }
-        }
-    }
-
-    for (const check of VALIDATION_CHECKS) {
-        for (const supersededId of check.supersedes) {
-            if (!CHECKS_BY_ID.has(supersededId)) {
-                issues.push({ ruleId: check.id, issue: `Superseded id "${supersededId}" is not a known check.` });
+        for (const focusedId of FOCUSED_JS_CHECKS) {
+            if (rule.checks.includes("full-js") && rule.checks.includes(focusedId)) {
+                issues.push({ ruleId: rule.id, issue: `Rule selects "full-js" and its contained "${focusedId}".` });
             }
         }
     }
