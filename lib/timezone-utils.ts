@@ -26,6 +26,55 @@ function parseTimeToDate(time: Time): Date | null {
     return null;
 }
 
+// Bounded formatter cache: constructing Intl.DateTimeFormat repeatedly is the
+// hot cost of chart tick marks, trades lists, and alert formatting. Cache
+// formatters (never dates or formatted results) keyed by locale plus the
+// effective option entries so callers may pass fresh option objects.
+const FORMATTER_CACHE_LIMIT = 32;
+const jakartaFormatterCache = new Map<string, Intl.DateTimeFormat>();
+
+function buildJakartaFormatterKey(
+    locale: string | undefined,
+    options: Intl.DateTimeFormatOptions
+): string {
+    const localeKey = locale === undefined
+        // Sentinel prefix cannot collide with the explicit-locale encoding
+        // below, so an omitted locale never matches an explicit one.
+        ? "\u0000default"
+        : `tag:${locale}`;
+    const optionEntries = Object.entries(options)
+        .filter(([, value]) => value !== undefined)
+        .sort(([leftKey], [rightKey]) => (leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0));
+    return `${localeKey}\u0001${JSON.stringify(optionEntries)}`;
+}
+
+function getJakartaFormatter(
+    locale: string | undefined,
+    options: Intl.DateTimeFormatOptions
+): Intl.DateTimeFormat {
+    const cacheKey = buildJakartaFormatterKey(locale, options);
+    const cached = jakartaFormatterCache.get(cacheKey);
+    if (cached) {
+        return cached;
+    }
+
+    const formatter = new Intl.DateTimeFormat(locale, {
+        ...options,
+        timeZone: JAKARTA_TIMEZONE,
+    });
+
+    // Insertion-ordered Map: the first key is the oldest entry. Construction
+    // failures throw before reaching this point, so failures are never cached.
+    if (jakartaFormatterCache.size >= FORMATTER_CACHE_LIMIT) {
+        const oldestKey = jakartaFormatterCache.keys().next().value;
+        if (oldestKey !== undefined) {
+            jakartaFormatterCache.delete(oldestKey);
+        }
+    }
+    jakartaFormatterCache.set(cacheKey, formatter);
+    return formatter;
+}
+
 export function formatJakartaTime(
     time: Time,
     options: Intl.DateTimeFormatOptions,
@@ -34,10 +83,7 @@ export function formatJakartaTime(
     const date = parseTimeToDate(time);
     if (!date) return String(time);
 
-    return new Intl.DateTimeFormat(locale, {
-        ...options,
-        timeZone: JAKARTA_TIMEZONE,
-    }).format(date);
+    return getJakartaFormatter(locale, options).format(date);
 }
 
 export function formatJakartaTickMark(

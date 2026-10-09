@@ -4,6 +4,8 @@ import type { Strategy, StrategyParams } from "../types/strategies";
 import { exitStrategyParamManager } from "../param-manager";
 import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
 import { parseInputNumber } from "../dom-input-readers";
+import { debugLogger } from "../debug-logger";
+import { uiManager } from "../ui-manager";
 
 /**
  * Wiring for the Exit Strategy Override settings sub-section.
@@ -69,25 +71,97 @@ export function setupExitStrategyOverride(dom: UiEventHandlersDom): void {
         return loaded ?? null;
     };
 
+    // Latest-wins render ownership: only the newest change request may assign
+    // currentStrategy, render the form, or write the hidden params input.
+    let renderGeneration = 0;
+    // The retained configuration snapshot: the dropdown key matching
+    // currentStrategy plus that configuration's effective parameters. The
+    // hidden input is mutable incoming configuration (settings restores,
+    // Finder Apply) — not a trustworthy rollback source: pending incoming
+    // settings for another key must not overwrite this snapshot, while
+    // legitimate edits to the active configuration and same-key incoming
+    // updates do.
+    let retainedKey = "";
+    let retainedParams: StrategyParams = {};
+
     const syncParamsFromHiddenInput = (): void => {
         if (!currentStrategy) return;
         const params = readParamsFromHidden(paramsHidden.value);
         exitStrategyParamManager.setValues(currentStrategy, params);
+        // An incoming hidden write for the retained key is a legitimate
+        // same-key configuration update; a write for another key is pending
+        // incoming configuration that must not move the snapshot.
+        if (keySelect.value === retainedKey) {
+            retainedParams = params;
+        }
     };
 
     const syncParamsInputFromForm = (): void => {
         if (!currentStrategy) return;
         const params = exitStrategyParamManager.getValues(currentStrategy);
         paramsHidden.value = JSON.stringify(params);
+        retainedParams = params;
     };
 
-    const renderStrategyParams = async (): Promise<void> => {
-        const key = keySelect.value;
-        currentStrategy = await resolveStrategy(key);
+    const restoreRetainedConfiguration = (): void => {
         if (!currentStrategy) {
             paramsContainer.replaceChildren();
             return;
         }
+        // A real select ignores a value without a matching option, so this is
+        // safe even if the dropdown was repopulated meanwhile.
+        keySelect.value = retainedKey;
+        exitStrategyParamManager.render(currentStrategy);
+        // Seed the form from the retained snapshot — not from the hidden
+        // input, which pending incoming configuration may have overwritten —
+        // and write the same snapshot back so the hidden JSON stays coherent.
+        exitStrategyParamManager.setValues(currentStrategy, retainedParams);
+        paramsHidden.value = JSON.stringify(retainedParams);
+    };
+
+    const renderStrategyParams = async (): Promise<void> => {
+        const generation = ++renderGeneration;
+        const key = keySelect.value;
+        let strategy: Strategy | null;
+        try {
+            strategy = await resolveStrategy(key);
+        } catch (error) {
+            if (generation !== renderGeneration) {
+                debugLogger.warn('settings.exit_strategy.render_superseded', {
+                    key,
+                    error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                });
+                return;
+            }
+            debugLogger.error('settings.exit_strategy.render_failed', {
+                key,
+                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            });
+            // Keep the last valid configuration fully coherent instead of
+            // clearing the form under a dropdown that no longer matches it.
+            restoreRetainedConfiguration();
+            uiManager.showToast(
+                'Loading exit strategy parameters failed. The previous exit configuration was kept.',
+                'error'
+            );
+            return;
+        }
+        if (generation !== renderGeneration) {
+            // A newer selection owns the form and the hidden input; a stale
+            // failure (or missing strategy) must not roll it back.
+            return;
+        }
+        if (!strategy) {
+            debugLogger.warn('settings.exit_strategy.unavailable', { key });
+            uiManager.showToast(
+                `Exit strategy "${key}" is not available. The previous exit configuration was kept.`,
+                'error'
+            );
+            restoreRetainedConfiguration();
+            return;
+        }
+        currentStrategy = strategy;
+        retainedKey = key;
         exitStrategyParamManager.render(currentStrategy);
         syncParamsFromHiddenInput();
         syncParamsInputFromForm();

@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import type { Writable } from "node:stream";
 import { finished } from "node:stream/promises";
-import { build as buildWithEsbuild } from "esbuild";
+import { build as buildWithEsbuild, type Plugin } from "esbuild";
 
 export type TestRunStatus = "PASS" | "FAIL" | "SKIP";
 
@@ -79,6 +79,26 @@ const EXCLUDED_TEST_FILES = new Set([
     "tests/e2e.spec.ts",
 ]);
 const DEFAULT_MAX_JOBS = 6;
+
+/**
+ * Vite-style `?raw` imports (e.g. html-partials pulled in by
+ * strategy-panel-tab-markup) have no esbuild loader by default. Resolve the
+ * suffix to the underlying file and inline its text so browser specs can
+ * bundle modules that lazily load runtime markup.
+ */
+const rawImportPlugin: Plugin = {
+    name: "raw-import-loader",
+    setup(build) {
+        build.onResolve({ filter: /\?raw$/ }, (args) => ({
+            path: path.resolve(args.resolveDir, args.path.replace(/\?raw$/, "")),
+            namespace: "raw-import",
+        }));
+        build.onLoad({ filter: /.*/, namespace: "raw-import" }, async (args) => ({
+            contents: await fs.promises.readFile(args.path, "utf8"),
+            loader: "text",
+        }));
+    },
+};
 
 /**
  * Bounded ring buffer of cleaned output lines for compact failure output.
@@ -410,7 +430,7 @@ async function runSingleTest(
                 target: "node22",
                 outfile: bundlePath,
                 logLevel: "silent",
-
+                plugins: [rawImportPlugin],
             });
             childArgs = [bundlePath];
         }

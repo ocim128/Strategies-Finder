@@ -476,3 +476,36 @@
         transition: none;
     }
 }
+
+/* Shared lazy-tab activation feedback, shown by lazy-feature-init while a
+ * lazy tab's markup/feature initializes (before feature styles load) and as
+ * the recovery surface when activation fails. One host per tab, addressed by
+ * class/data selectors; buttons reuse the shared .btn styles. */
+.lazy-tab-status {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-2);
+    margin: var(--space-4);
+    padding: var(--space-4);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-m);
+    background: hsl(var(--hsl-surface-2) / 0.35);
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-relaxed);
+}
+
+.lazy-tab-status-message {
+    margin: 0;
+}
+
+.lazy-tab-status[data-lazy-tab-status="failure"] .lazy-tab-status-message {
+    color: var(--text-primary);
+}
+
+.lazy-tab-status-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}

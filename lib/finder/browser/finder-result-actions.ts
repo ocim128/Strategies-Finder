@@ -107,6 +107,10 @@ export class FinderResultActions {
 				setCurrentInterval(interval);
 				await dataManager.loadData(state.currentSymbol, interval);
 			}
+			// Finder Apply is external configuration application: any dropdown
+			// selection still loading when Apply commits must not commit over
+			// the applied configuration afterwards (see cancelPendingStrategySelection).
+			uiManager.cancelPendingStrategySelection();
 			setCurrentStrategyKey(candidate.strategyKey);
 			uiManager.updateStrategyDropdown(candidate.strategyKey);
 			paramManager.render(strategy);
@@ -147,6 +151,9 @@ export class FinderResultActions {
 			debugLogger.warn('finder.apply_strategy_missing', { strategyKey: result.key });
 			return;
 		}
+		// External configuration application boundary: supersede any pending
+		// dropdown selection before committing the applied configuration.
+		uiManager.cancelPendingStrategySelection();
 		setCurrentStrategyKey(result.key);
 		uiManager.updateStrategyDropdown(result.key);
 		paramManager.render(strategy);
@@ -192,6 +199,8 @@ export class FinderResultActions {
 			debugLogger.warn('finder.apply_universe_strategy_missing', { strategyKey: candidate.strategyKey });
 			return;
 		}
+		// External configuration application boundary (see applyCurrentChartResult).
+		uiManager.cancelPendingStrategySelection();
 		setCurrentStrategyKey(candidate.strategyKey);
 		uiManager.updateStrategyDropdown(candidate.strategyKey);
 
@@ -245,6 +254,8 @@ export class FinderResultActions {
 			uiManager.showToast(`Failed to load ${result.symbol} for Apply.`, 'error');
 			return;
 		}
+		// External configuration application boundary (see applyCurrentChartResult).
+		uiManager.cancelPendingStrategySelection();
 		setCurrentStrategyKey(result.strategyKey);
 		uiManager.updateStrategyDropdown(result.strategyKey);
 		paramManager.render(strategy);

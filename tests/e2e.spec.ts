@@ -1,7 +1,11 @@
-import puppeteer, { Page, type Dialog } from 'puppeteer';
+import puppeteer, { Page, type Browser, type Dialog } from 'puppeteer';
 import { spawn, spawnSync, type ChildProcess } from 'child_process';
 import { createRequire } from 'node:module';
+import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
+import type { AddressInfo } from 'node:net';
+import { pathToFileURL } from 'node:url';
 import { withTimeout } from './helpers/with-timeout';
 
 const requireFromHere = createRequire(import.meta.url);
@@ -933,6 +937,577 @@ const verifyMonteCarlo = async (page: Page): Promise<void> => {
     console.log('Monte Carlo lazy initialization, combined next-open trades and all three scenarios passed.');
 };
 
+// Lazy-tab recovery intentionally triggers (and prunes) failure noise; these
+// substrings identify the simulated outages and their handled error logs.
+const LAZY_TAB_E2E_ERROR_PATTERNS = [
+    'tab-datamining.html',
+    'walk-forward-service',
+    'lazy_feature.init_failed',
+    '[LazyInit]',
+    'Failed to fetch dynamically imported module',
+];
+
+const pruneIntentionalLazyTabErrors = (errors: string[]): void => {
+    for (let index = errors.length - 1; index >= 0; index -= 1) {
+        if (LAZY_TAB_E2E_ERROR_PATTERNS.some((pattern) => errors[index].includes(pattern))) {
+            errors.splice(index, 1);
+        }
+    }
+};
+
+const clickMoreMenuTab = async (page: Page, tabId: string): Promise<void> => {
+    await page.click('#panelMoreTrigger');
+    await page.click(`#panelMoreMenu [data-tab="${tabId}"]`);
+};
+
+/**
+ * Real-browser coverage for lazy-tab feedback and recovery, using intercepted
+ * imports instead of live outages:
+ *  1. markup failure (tab partial 500): failure feedback with safe Retry +
+ *     Reload, keyboard-operable Retry recovers once the outage clears;
+ *  2. feature-callback failure (module 500): Reload only, tab round-trips do
+ *     not silently retry, and keyboard Reload recovers through a clean reload.
+ */
+const verifyLazyTabRecovery = async (page: Page, errors: string[]): Promise<void> => {
+    let failDataMiningPartial = true;
+    let failWalkForwardService = true;
+    let walkForwardServiceRequests = 0;
+
+    const intercept = (request: import('puppeteer').HTTPRequest) => {
+        const url = request.url();
+        if (url.includes('tab-datamining.html')) {
+            if (failDataMiningPartial) {
+                void request.respond({ status: 500, contentType: 'text/plain', body: 'e2e simulated partial outage' });
+            } else {
+                void request.continue();
+            }
+            return;
+        }
+        if (url.includes('walk-forward-service')) {
+            walkForwardServiceRequests += 1;
+            if (failWalkForwardService) {
+                void request.respond({ status: 500, contentType: 'text/plain', body: 'e2e simulated module outage' });
+                return;
+            }
+        }
+        void request.continue();
+    };
+
+    await page.setRequestInterception(true);
+    page.on('request', intercept);
+    try {
+        // --- Markup failure: safe Retry, keyboard operable (Data Mining) ---
+        await clickMoreMenuTab(page, 'datamining');
+        await page.waitForFunction(() => Boolean(
+            document.querySelector('#dataminingTab [data-lazy-tab-status="failure"]')
+        ), { timeout: 15000 });
+
+        const failureText = await page.$eval(
+            '#dataminingTab [data-lazy-tab-status] .lazy-tab-status-message',
+            (element) => (element.textContent ?? '').trim()
+        );
+        if (!failureText) throw new Error('Lazy-tab failure feedback is missing its message');
+        if (/https?:|500|\.html|\.ts|import|stack/i.test(failureText)) {
+            throw new Error(`Lazy-tab failure message leaks internals: ${failureText}`);
+        }
+        const busyAfterFailure = await page.$eval('#dataminingTab', (element) => element.getAttribute('aria-busy'));
+        if (busyAfterFailure === 'true') throw new Error('aria-busy stayed set after activation settled');
+        const retryCount = await page.$$eval('#dataminingTab [data-lazy-tab-retry]', (elements) => elements.length);
+        const reloadCount = await page.$$eval('#dataminingTab [data-lazy-tab-reload]', (elements) => elements.length);
+        if (retryCount !== 1 || reloadCount !== 1) {
+            throw new Error(`Markup failure must offer one Retry and one Reload (got ${retryCount}/${reloadCount})`);
+        }
+
+        // Keyboard: Enter on Retry while the outage persists re-arms the
+        // failure feedback instead of wedging the tab.
+        await page.focus('#dataminingTab [data-lazy-tab-retry]');
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => Boolean(
+            document.querySelector('#dataminingTab [data-lazy-tab-status="failure"]')
+        ), { timeout: 15000 });
+
+        // Outage resolved: keyboard Retry must recover the tab.
+        failDataMiningPartial = false;
+        await page.focus('#dataminingTab [data-lazy-tab-retry]');
+        await page.keyboard.press('Enter');
+        await page.waitForFunction(() => {
+            const panel = document.getElementById('dataminingTab');
+            return Boolean(panel && panel.querySelector('#dataMiningPair') && !panel.querySelector('[data-lazy-tab-status]'));
+        }, { timeout: 15000 });
+        const busyAfterRecovery = await page.$eval('#dataminingTab', (element) => element.getAttribute('aria-busy'));
+        if (busyAfterRecovery === 'true') throw new Error('aria-busy stayed set after lazy-tab recovery');
+
+        // --- Feature-callback failure: Reload only, suppressed retries ---
+        await clickMoreMenuTab(page, 'walkforward');
+        await page.waitForFunction(() => Boolean(
+            document.querySelector('#walkforwardTab [data-lazy-tab-status="failure"]')
+        ), { timeout: 15000 });
+        const wfRetryCount = await page.$$eval('#walkforwardTab [data-lazy-tab-retry]', (elements) => elements.length);
+        const wfReloadCount = await page.$$eval('#walkforwardTab [data-lazy-tab-reload]', (elements) => elements.length);
+        if (wfRetryCount !== 0 || wfReloadCount !== 1) {
+            throw new Error(`Unsafe lazy-tab failure must offer Reload only (retry=${wfRetryCount}, reload=${wfReloadCount})`);
+        }
+        const wfMarkupMounted = await page.$$eval('#walkforwardTab #wf-opt-window', (elements) => elements.length);
+        if (wfMarkupMounted !== 1) throw new Error('Init failure lost the mounted tab markup');
+
+        // Tab round-trips must not silently retry the unsafe failure.
+        await page.click('.panel-tab[data-tab="finder"]');
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        await clickMoreMenuTab(page, 'walkforward');
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const wfStillFailing = await page.$$eval('#walkforwardTab [data-lazy-tab-status="failure"]', (elements) => elements.length);
+        if (wfStillFailing !== 1) throw new Error('Walk-Forward failure feedback disappeared after a tab round-trip');
+        if (walkForwardServiceRequests !== 1) {
+            throw new Error(`Suppressed tab re-entry re-requested the failed feature (${walkForwardServiceRequests} requests)`);
+        }
+
+        // Keyboard Reload is the recovery path. Resolve the outage first; the
+        // reloaded app restores Walk-Forward as the active tab and bootstrap
+        // re-activates it cleanly.
+        failWalkForwardService = false;
+        await page.focus('#walkforwardTab [data-lazy-tab-reload]');
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+            page.keyboard.press('Enter'),
+        ]);
+        await page.waitForFunction(() => {
+            const panel = document.getElementById('walkforwardTab');
+            return Boolean(panel && panel.querySelector('#wf-opt-window') && !panel.querySelector('[data-lazy-tab-status]'));
+        }, { timeout: 20000 });
+
+        console.log('Lazy-tab loading feedback, safe Retry, Reload-only recovery and suppressed unsafe retries passed.');
+    } finally {
+        page.off('request', intercept);
+        await page.setRequestInterception(false);
+        pruneIntentionalLazyTabErrors(errors);
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Production lazy-tab recovery
+//
+// Production emits hashed tab chunks under assets/, so a failed chunk has no
+// source URL to re-fetch: the failure UI must offer Reload only, and a reload
+// after the outage clears must recover the tab. Exercised against a real
+// production build (project vite config), including a non-root base path.
+// ---------------------------------------------------------------------------
+
+const startProductionStaticServer = (distDir: string, base: string): Promise<http.Server> => {
+    const server = http.createServer((req, res) => {
+        const pathname = decodeURIComponent(new URL(req.url ?? '/', 'http://localhost').pathname);
+        if (pathname.startsWith('/api/') || pathname === '/api') {
+            // The static deployment has no server routes; the app's storage
+            // and data layers fall back to their client-side paths.
+            res.statusCode = 503;
+            res.setHeader('content-type', 'text/plain');
+            res.end('static e2e server has no api routes');
+            return;
+        }
+        let relative = pathname.startsWith(base) ? pathname.slice(base.length) : pathname;
+        if (relative.startsWith('/')) relative = relative.slice(1);
+        if (relative === '') relative = 'index.html';
+        const filePath = path.resolve(distDir, relative);
+        if (!filePath.startsWith(distDir) || !fs.existsSync(filePath) || !fs.statSync(filePath).isFile()) {
+            if (relative.includes('.')) {
+                res.statusCode = 404;
+                res.setHeader('content-type', 'text/plain');
+                res.end('not in the production build');
+                return;
+            }
+            relative = 'index.html';
+        }
+        const resolved = path.resolve(distDir, relative);
+        const ext = path.extname(resolved);
+        res.statusCode = 200;
+        res.setHeader('content-type', ext === '.js' ? 'text/javascript' : ext === '.css' ? 'text/css' : ext === '.html' ? 'text/html' : 'application/octet-stream');
+        res.end(fs.readFileSync(resolved));
+    });
+    return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
+};
+
+const runProductionLazyTabScenario = async (browser: Browser, base: string, label: string): Promise<void> => {
+    const outDir = path.join('artifacts', `e2e-production-dist-${label}`);
+    const vite = (await import(pathToFileURL(requireFromHere.resolve('vite')).href)) as typeof import('vite');
+    await vite.build({
+        root: process.cwd(),
+        base,
+        logLevel: 'error',
+        build: { outDir, emptyOutDir: true },
+    });
+
+    const distDir = path.resolve(outDir);
+    const server = await startProductionStaticServer(distDir, base);
+    const port = (server.address() as AddressInfo).port;
+    const entryUrl = `http://127.0.0.1:${port}${base === '/' ? '/' : base}`;
+    console.log(`Production build (${label}) served at ${entryUrl}`);
+
+    let page: Page | null = null;
+    try {
+        page = await browser.newPage();
+        let failChunk = true;
+        await page.setRequestInterception(true);
+        const intercept = (request: import('puppeteer').HTTPRequest) => {
+            const url = request.url();
+            if (failChunk && /\/assets\/tab-datamining-[^/?]+\.js(?:\?|$)/.test(url)) {
+                void request.respond({ status: 500, contentType: 'text/plain', body: `simulated chunk outage (${label})` });
+                return;
+            }
+            void request.continue();
+        };
+        page.on('request', intercept);
+
+        await page.evaluateOnNewDocument(() => {
+            localStorage.setItem('playground_app_settings', JSON.stringify({
+                schema: 'settings.app',
+                version: 1,
+                data: { currentSymbol: 'MOCK_STOCK', currentInterval: '1d' },
+            }));
+        });
+        await page.goto(entryUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForSelector('#panelMoreTrigger', { timeout: 30000 });
+
+        // Dispatched clicks: freshly booted headless layouts are not always
+        // hit-test clickable for puppeteer's coordinate clicks.
+        await page.evaluate(() => document.getElementById('panelMoreTrigger')
+            ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await page.evaluate(() => document.querySelector('#panelMoreMenu [data-tab="datamining"]')
+            ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+        await page.waitForFunction(() => Boolean(
+            document.querySelector('#dataminingTab [data-lazy-tab-status="failure"]')
+        ), { timeout: 20000 });
+
+        const retryButtons = await page.$$eval('#dataminingTab [data-lazy-tab-retry]', (elements) => elements.length);
+        const reloadButtons = await page.$$eval('#dataminingTab [data-lazy-tab-reload]', (elements) => elements.length);
+        if (retryButtons !== 0 || reloadButtons !== 1) {
+            throw new Error(`Production markup failure must offer Reload only (retry=${retryButtons}, reload=${reloadButtons})`);
+        }
+
+        // Outage resolved: the offered keyboard Reload must recover the tab.
+        failChunk = false;
+        await page.focus('#dataminingTab [data-lazy-tab-reload]');
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+            page.keyboard.press('Enter'),
+        ]);
+        await page.waitForFunction(() => {
+            const panel = document.getElementById('dataminingTab');
+            return Boolean(panel && panel.querySelector('#dataMiningPair') && !panel.querySelector('[data-lazy-tab-status]'));
+        }, { timeout: 30000 });
+
+        console.log(`Production lazy-tab recovery (${label}) passed: chunk outage offers Reload only and Reload recovers.`);
+    } finally {
+        if (page) await page.close();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+};
+
+const verifyProductionLazyTabRecovery = async (browser: Browser): Promise<void> => {
+    await runProductionLazyTabScenario(browser, '/', 'root-base');
+    await runProductionLazyTabScenario(browser, '/sub/', 'sub-base');
+};
+
+/** Expected jumpToTrade window: ±20 bars around the trade, clamped to data. */
+const expectedJumpRange = (dataIndex: number, dataLength: number) => ({
+    from: Math.max(0, dataIndex - 20),
+    to: Math.min(dataLength - 1, dataIndex + 20),
+});
+
+/**
+ * Real-browser coverage for the shared trades navigation, Quick View bounded
+ * preparation/ordering, and live-position detail-modal response ownership.
+ * The current backtest at this point is the Monte Carlo fixture; the lazy-tab
+ * reload test runs afterwards and resets in-memory state.
+ */
+const verifyTradesQuickViewAndModal = async (page: Page): Promise<void> => {
+    const tradesTotal = await page.evaluate(() => {
+        const state = (window as any).__state;
+        return state?.currentBacktestResult?.trades?.length ?? 0;
+    });
+    if (!(tradesTotal > 0)) throw new Error('E2E fixture has no backtest trades for navigation checks');
+
+    // --- Trade navigation surface 1: trades table row click ---
+    await page.click('.panel-tab[data-tab="trades"]');
+    await page.waitForFunction(() => document.querySelectorAll('#tradesList .trade-item').length > 0, { timeout: 15000 });
+    // The research panel hides the chart pane, so getVisibleLogicalRange is a
+    // degenerate full-range read here; observe the jump call on the timeScale
+    // instead of the rendered range.
+    await page.evaluate(() => {
+        const win = window as any;
+        win.__jumpCalls = [];
+        win.__state.chart.timeScale().setVisibleLogicalRange = new Function('win', `
+            return function (range) {
+                win.__jumpCalls.push({ from: Number(range.from), to: Number(range.to) });
+            };
+        `)(win);
+    });
+    const tableTarget = await page.evaluate(() => {
+        const state = (window as any).__state;
+        const items = document.querySelectorAll('#tradesList .trade-item');
+        // The table renders newest-first, so its last row is the oldest trade.
+        const target = items[items.length - 1] as HTMLElement;
+        const raw = target.dataset.entryTime;
+        if (!raw) throw new Error('Trades table row is missing its data-entry-time');
+        const entryTime = Number(JSON.parse(decodeURIComponent(raw)));
+        let dataIndex = -1;
+        state.ohlcvData.forEach((bar: { time: unknown }, index: number) => {
+            if (Number(bar.time) === entryTime) dataIndex = index;
+        });
+        if (dataIndex < 0) throw new Error(`Trades table entry time ${entryTime} is not in the loaded candles`);
+        return { dataIndex, dataLength: state.ohlcvData.length };
+    });
+    const tableExpected = expectedJumpRange(tableTarget.dataIndex, tableTarget.dataLength);
+    await page.evaluate(() => {
+        const items = document.querySelectorAll('#tradesList .trade-item');
+        (items[items.length - 1] as HTMLElement).dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const tableJump = await page.evaluate(() => (window as any).__jumpCalls.pop() ?? null);
+    if (!tableJump || tableJump.from !== tableExpected.from || tableJump.to !== tableExpected.to) {
+        throw new Error(`Trades table row click jumped ${JSON.stringify(tableJump)} instead of ${JSON.stringify(tableExpected)}`);
+    }
+
+    // --- Trade navigation surface 2 + Quick View ordering/counts ---
+    // Every backtest commit auto-shows Quick View, so the overlay is already
+    // open here; toggle it closed first so the button path is exercised.
+    await page.waitForFunction(() => Boolean(document.getElementById('quickViewOverlay')), { timeout: 15000 });
+    const qvInitiallyVisible = await page.evaluate(() =>
+        document.getElementById('quickViewOverlay')?.classList.contains('is-visible') ?? false);
+    if (qvInitiallyVisible) {
+        await page.click('#quickViewBtn');
+        await page.waitForFunction(() => !document.getElementById('quickViewOverlay')?.classList.contains('is-visible'), { timeout: 5000 });
+    }
+    await page.click('#quickViewBtn');
+    await page.waitForFunction(() => document.getElementById('quickViewOverlay')?.classList.contains('is-visible'), { timeout: 15000 });
+    const qvNewest = await page.evaluate(() => {
+        const state = (window as any).__state;
+        const trades = state.currentBacktestResult.trades;
+        const rows = Array.from(document.querySelectorAll('#qvTradesList .qv-trade-item')) as HTMLElement[];
+        const firstRaw = rows[0]?.dataset.entryTime;
+        // No named inner helpers here: evaluate callbacks are serialized and
+        // esbuild's __name keep-names helper does not exist in the page.
+        return {
+            total: trades.length,
+            countText: document.getElementById('qvTradesCount')?.textContent ?? '',
+            sortLabel: document.getElementById('qvSortLabel')?.textContent ?? '',
+            rowCount: rows.length,
+            firstRowTime: firstRaw ? Number(JSON.parse(decodeURIComponent(firstRaw))) : null,
+            newestTradeTime: Number(trades[trades.length - 1].entryTime),
+            oldestTradeTime: Number(trades[0].entryTime),
+        };
+    });
+    if (qvNewest.countText !== String(qvNewest.total)) throw new Error(`Quick View count shows "${qvNewest.countText}" instead of ${qvNewest.total}`);
+    if (qvNewest.sortLabel !== 'Newest first') throw new Error(`Quick View default sort label is "${qvNewest.sortLabel}"`);
+    if (qvNewest.rowCount !== Math.min(qvNewest.total, 100)) throw new Error(`Quick View renders ${qvNewest.rowCount} rows for ${qvNewest.total} trades`);
+    if (qvNewest.firstRowTime !== qvNewest.newestTradeTime) throw new Error('Quick View newest-first ordering does not start at the newest trade');
+
+    // Overlay-internal buttons are clicked through dispatched DOM events:
+    // puppeteer's hit-test clicks are sensitive to overlay stacking/layout.
+    await page.evaluate(() => document.getElementById('qvSortToggle')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await page.waitForFunction(() => document.getElementById('qvSortLabel')?.textContent === 'Oldest first', { timeout: 5000 });
+    const qvOldest = await page.evaluate(() => {
+        const state = (window as any).__state;
+        const trades = state.currentBacktestResult.trades;
+        const first = document.querySelector('#qvTradesList .qv-trade-item') as HTMLElement | null;
+        return {
+            firstRowTime: first ? Number(JSON.parse(decodeURIComponent(first.dataset.entryTime!))) : null,
+            oldestTradeTime: Number(trades[0].entryTime),
+        };
+    });
+    if (qvOldest.firstRowTime !== qvOldest.oldestTradeTime) throw new Error('Quick View oldest-first ordering does not start at the oldest trade');
+
+    // Quick View row click navigates through the same shared jumpToTrade and
+    // closes the overlay.
+    await page.evaluate(() => {
+        (window as any).__jumpCalls.length = 0;
+    });
+    await page.evaluate(() => document.querySelector('#qvTradesList .qv-trade-item')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await page.waitForFunction(() => !document.getElementById('quickViewOverlay')?.classList.contains('is-visible'), { timeout: 5000 });
+    const qvNav = await page.evaluate(() => {
+        const state = (window as any).__state;
+        const trades = state.currentBacktestResult.trades;
+        const oldestTime = Number(trades[0].entryTime);
+        let dataIndex = -1;
+        state.ohlcvData.forEach((bar: { time: unknown }, index: number) => {
+            if (Number(bar.time) === oldestTime) dataIndex = index;
+        });
+        return dataIndex;
+    });
+    if (qvNav < 0) throw new Error('Quick View oldest trade time is not in the loaded candles');
+    const qvExpected = expectedJumpRange(qvNav, (await page.evaluate(() => (window as any).__state.ohlcvData.length)) as number);
+    const qvJump = await page.evaluate(() => (window as any).__jumpCalls.pop() ?? null);
+    if (!qvJump || qvJump.from !== qvExpected.from || qvJump.to !== qvExpected.to) {
+        throw new Error(`Quick View row click jumped ${JSON.stringify(qvJump)} instead of ${JSON.stringify(qvExpected)}`);
+    }
+    // Restore the real timeScale method (the spy shadowed an own property).
+    await page.evaluate(() => {
+        delete (window as any).__state.chart.timeScale().setVisibleLogicalRange;
+    });
+
+    // --- Live-position detail modal: zero P&L + response ownership ---
+    await page.evaluate(async () => {
+        const { livePositionsService } = await import('/lib/live-positions-service.ts');
+        const win = window as any;
+        win.__lpSvc = livePositionsService;
+        win.__lpResolvers = [];
+        win.__lpCalls = 0;
+        livePositionsService.__setOpenPositionsForTests([{
+            streamId: 'e2e-modal-stream',
+            symbol: 'MOCK_CRYPTO',
+            interval: '4h',
+            strategyKey: 'ema_confirmation',
+            strategyParams: { fastPeriod: 12 },
+            backtestSettings: {},
+            configName: null,
+            direction: 'long',
+            entryPrice: 100,
+            entryTime: 1,
+            currentPrice: 100,
+            unrealizedPnl: 0,
+            unrealizedPnlPercent: 0,
+            stopLossPrice: null,
+            takeProfitPrice: null,
+            isOpen: true,
+            lastSignalFromWorker: null,
+            localBacktestTrade: null,
+            mismatch: false,
+            mismatchReason: null,
+            lastUpdated: 1,
+        }]);
+        livePositionsService.setViewMode('open');
+    });
+    await page.waitForFunction(() => Boolean(document.querySelector('.lp-position[data-position-id="e2e-modal-stream"]')), { timeout: 10000 });
+    const cardShowsZeroPnl = await page.evaluate(() => {
+        const card = document.querySelector('.lp-position[data-position-id="e2e-modal-stream"]');
+        if (!card) return false;
+        return Array.from(card.querySelectorAll('.lp-pos-value'))
+            .some((element) => element.textContent?.trim() === '+0.00 (+0.00%)');
+    });
+    if (!cardShowsZeroPnl) throw new Error('Live-position card renders a zero P&L as something other than +0.00 (+0.00%)');
+
+    await page.evaluate(() => {
+        const win = window as any;
+        win.__lpResolvers = [];
+        win.__lpCalls = 0;
+        // The stub is built from a string: every function expression esbuild
+        // can statically name (const arrows, object-literal values) gets a
+        // __name keep-names wrapper that does not exist inside serialized
+        // evaluate callbacks.
+        win.__lpSvc.getPositionDetails = new Function('win', `
+            return function () {
+                return new Promise(function (resolve) {
+                    win.__lpCalls += 1;
+                    win.__lpResolvers.push(resolve);
+                });
+            };
+        `)(win);
+    });
+    const dblclickModalCard = () => page.evaluate(() => {
+        document.querySelector('.lp-position[data-position-id="e2e-modal-stream"]')
+            ?.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+    });
+    const settleModalWrites = () => page.evaluate(() => new Promise((resolve) => {
+        setTimeout(resolve, 50);
+    }));
+
+    await dblclickModalCard();
+    await page.waitForFunction(() => document.getElementById('lpDetailModal')?.classList.contains('active'), { timeout: 10000 });
+    await dblclickModalCard(); // reopen while the first request is still in flight
+    await page.waitForFunction(() => (window as any).__lpCalls === 2, { timeout: 10000 });
+
+    // The stale (superseded) response must not write into the modal.
+    await page.evaluate(() => {
+        const win = window as any;
+        win.__lpResolvers.shift()({
+            position: {
+                isOpen: true, symbol: 'STALE-E2E', interval: '4h', direction: 'long', strategyKey: 'e2e',
+                strategyParams: {}, backtestSettings: {}, configName: null, entryPrice: 1, entryTime: 1,
+                currentPrice: 2, unrealizedPnl: 123.45, unrealizedPnlPercent: 12.3, stopLossPrice: null,
+                takeProfitPrice: null, lastSignalFromWorker: null, localBacktestTrade: null,
+                mismatch: false, mismatchReason: null, lastUpdated: 1,
+            },
+            localTrades: [],
+            workerSignals: [],
+        });
+    });
+    await settleModalWrites();
+    const staleRejected = await page.evaluate(() => {
+        const title = document.getElementById('lpDetailTitle')?.textContent ?? '';
+        const loadingVisible = document.getElementById('lpDetailLoading')?.style.display !== 'none';
+        return !title.includes('STALE-E2E') && loadingVisible;
+    });
+    if (!staleRejected) throw new Error('A superseded modal response overwrote the reopened modal');
+
+    // The current response owns the modal; zero P&L renders as a value.
+    await page.evaluate(() => {
+        const win = window as any;
+        win.__lpResolvers.shift()({
+            position: {
+                isOpen: true, symbol: 'FRESH-E2E', interval: '4h', direction: 'long', strategyKey: 'e2e',
+                strategyParams: {}, backtestSettings: {}, configName: null, entryPrice: 100, entryTime: 1,
+                currentPrice: 100, unrealizedPnl: 0, unrealizedPnlPercent: 0, stopLossPrice: null,
+                takeProfitPrice: null, lastSignalFromWorker: null, localBacktestTrade: null,
+                mismatch: false, mismatchReason: null, lastUpdated: 1,
+            },
+            localTrades: [],
+            workerSignals: [],
+        });
+    });
+    await page.waitForFunction(() => document.getElementById('lpDetailTitle')?.textContent?.includes('FRESH-E2E'), { timeout: 10000 });
+    const modalZeroPnl = await page.evaluate(() => {
+        const rows = document.querySelectorAll('#lpDetailContent .lp-detail-row');
+        for (const row of rows) {
+            if (row.querySelector('.label')?.textContent === 'Unrealized P&L') {
+                return row.querySelector('.value')?.textContent?.trim() ?? '';
+            }
+        }
+        return null;
+    });
+    if (modalZeroPnl !== '+0.00 (+0.00%)') throw new Error(`Detail modal renders zero P&L as "${modalZeroPnl}"`);
+
+    // A response arriving after an explicit close must be discarded too.
+    await page.evaluate(() => document.getElementById('lpDetailClose')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await page.waitForFunction(() => !document.getElementById('lpDetailModal')?.classList.contains('active'), { timeout: 10000 });
+    await dblclickModalCard();
+    await page.waitForFunction(() => document.getElementById('lpDetailModal')?.classList.contains('active'), { timeout: 10000 });
+    await page.evaluate(() => document.getElementById('lpDetailClose')
+        ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
+    await page.waitForFunction(() => !document.getElementById('lpDetailModal')?.classList.contains('active'), { timeout: 10000 });
+    await page.evaluate(() => {
+        const win = window as any;
+        win.__lpResolvers.shift()({
+            position: {
+                isOpen: true, symbol: 'AFTER-CLOSE-E2E', interval: '4h', direction: 'long', strategyKey: 'e2e',
+                strategyParams: {}, backtestSettings: {}, configName: null, entryPrice: 1, entryTime: 1,
+                currentPrice: 2, unrealizedPnl: 5, unrealizedPnlPercent: 0.5, stopLossPrice: null,
+                takeProfitPrice: null, lastSignalFromWorker: null, localBacktestTrade: null,
+                mismatch: false, mismatchReason: null, lastUpdated: 1,
+            },
+            localTrades: [],
+            workerSignals: [],
+        });
+    });
+    await settleModalWrites();
+    const closeRejected = await page.evaluate(() => {
+        const title = document.getElementById('lpDetailTitle')?.textContent ?? '';
+        const modal = document.getElementById('lpDetailModal');
+        return !title.includes('AFTER-CLOSE-E2E') && !modal?.classList.contains('active');
+    });
+    if (!closeRejected) throw new Error('A response arriving after modal close overwrote the hidden modal');
+
+    // Restore the service for any later checks: deleting the own property
+    // re-exposes the prototype method.
+    await page.evaluate(() => {
+        const win = window as any;
+        delete win.__lpSvc.getPositionDetails;
+        win.__lpSvc.__setOpenPositionsForTests([]);
+        win.__lpSvc.setViewMode('open');
+    });
+
+    console.log('Trades navigation surfaces, Quick View ordering/counts and modal close/reopen ownership passed.');
+};
+
 async function runTest() {
     try {
         console.log('Starting Vite server for E2E test...');
@@ -1213,7 +1788,19 @@ async function runTest() {
                 console.log('Layout verification passed.');
             }
 
+            console.log('Verifying trades navigation, Quick View and detail-modal ownership...');
+            await verifyTradesQuickViewAndModal(page);
+
+            console.log('Verifying lazy-tab feedback and recovery...');
+            await verifyLazyTabRecovery(page, errors);
+
             await assertNoDebugErrors(page, errors);
+
+            // Real-browser coverage against production-built output (root and
+            // non-root base): a failed tab chunk offers Reload only, and the
+            // offered recovery succeeds once the outage clears.
+            console.log('Verifying production lazy-tab recovery...');
+            await verifyProductionLazyTabRecovery(browser);
 
             // Verify no critical errors occurred
             if (errors.length > 0) {

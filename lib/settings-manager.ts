@@ -394,6 +394,11 @@ class SettingsManager {
     public async applyStrategyConfig(config: StrategyConfig): Promise<void> {
         this.beginAutoSaveSuppression();
         try {
+            // External application supersedes any pending strategy selection
+            // (including same-key restores) so a still-loading selection
+            // cannot commit over this configuration.
+            uiManager.cancelPendingStrategySelection();
+
             // Regenerate synthetic pair first if needed (loads chart data).
             // Dynamic import keeps data-mining-manager (the entire Data Mining
             // UI) out of the startup chunk — see lib/synthetic-pair-session.ts.
@@ -418,10 +423,14 @@ class SettingsManager {
             // Switch to the strategy if different
             if (targetStrategy && config.strategyKey !== state.currentStrategyKey) {
                 setCurrentStrategyKey(config.strategyKey);
-                this.getDom().strategySelect.value = config.strategyKey;
             }
 
             if (targetStrategy) {
+                // Same-key restores must also re-assert the dropdown option: a
+                // pending (now-cancelled) selection can have moved it onto
+                // another key, and a same-key commit does not fire the state
+                // subscription that resyncs different-key applications.
+                uiManager.updateStrategyDropdown(config.strategyKey);
                 await uiManager.updateStrategyParams(config.strategyKey);
                 paramManager.setValues(targetStrategy, config.strategyParams);
                 this.trackConfiguration(config);

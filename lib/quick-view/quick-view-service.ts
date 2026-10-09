@@ -187,28 +187,37 @@ class QuickViewManager {
 
     private renderTrades(trades: Trade[]) {
         this.currentTrades = trades;
+        // Capture the full-history total before slicing: the limit notice and
+        // count must keep describing the complete trade list.
+        const totalTrades = trades.length;
         const list = getQvTradesList();
         const count = getQvTradesCount();
         const sortLabel = getQvSortLabel();
         if (!list) return;
         this.tradeListRenderer.invalidate();
-        if (count) count.textContent = String(trades.length);
+        if (count) count.textContent = String(totalTrades);
         if (sortLabel) sortLabel.textContent = this.sortNewestFirst ? 'Newest first' : 'Oldest first';
 
-        if (trades.length === 0) {
+        if (totalTrades === 0) {
             list.innerHTML = renderEmptyTradesHtml();
             return;
         }
 
-        const sorted = this.sortNewestFirst ? [...trades].reverse() : trades;
+        // Prepare only the displayed window: newest-first is the reversed
+        // tail, oldest-first is the head. slice() copies, so the input array
+        // is never reordered, and preparation cost no longer grows with the
+        // total history size.
+        const bounded = this.sortNewestFirst
+            ? trades.slice(-QuickViewManager.MAX_RENDERED_TRADES).reverse()
+            : trades.slice(0, QuickViewManager.MAX_RENDERED_TRADES);
         this.tradeListRenderer.render({
             container: list,
-            items: sorted,
+            items: bounded,
             maxItems: QuickViewManager.MAX_RENDERED_TRADES,
             initialBatchSize: QuickViewManager.INITIAL_TRADE_BATCH_SIZE,
             deferredBatchSize: QuickViewManager.DEFERRED_TRADE_BATCH_SIZE,
             renderChunk: (items, startIndex, endIndex) => renderTradeChunkHtml(items, startIndex, endIndex),
-            renderLimitNotice: (totalTrades) => totalTrades > QuickViewManager.MAX_RENDERED_TRADES
+            renderLimitNotice: () => totalTrades > QuickViewManager.MAX_RENDERED_TRADES
                 ? renderTradesLimitNoticeHtml(totalTrades, QuickViewManager.MAX_RENDERED_TRADES)
                 : '',
         });

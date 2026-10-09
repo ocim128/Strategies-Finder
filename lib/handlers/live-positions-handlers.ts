@@ -445,25 +445,47 @@ function onServiceStateUpdate(state: ReturnType<typeof livePositionsService.getS
     }
 }
 
-// Detail modal handlers
+// Detail-modal response ownership: every open, explicit close, disposal, and
+// reinitialization increments this generation. A post-await write may only
+// happen while its request still owns the modal (generation unchanged and the
+// modal still open — the isOpen() check also covers Escape closes that bypass
+// closeDetailModal inside modal-accessibility).
+let detailModalGeneration = 0;
+
 async function openDetailModal(streamId: string): Promise<void> {
     if (!detailModal || !detailTitle || !detailLoading || !detailContent) return;
-    
-    detailModalController?.open();
-    detailLoading.style.display = '';
-    detailContent.style.display = 'none';
-    
+
+    const requestGeneration = ++detailModalGeneration;
+    const controller = detailModalController;
+    const title = detailTitle;
+    const loading = detailLoading;
+    const content = detailContent;
+
+    const ownsModal = (): boolean =>
+        requestGeneration === detailModalGeneration
+        && (controller?.isOpen() ?? false);
+
+    controller?.open();
+    loading.style.display = '';
+    content.style.display = 'none';
+
     try {
         const details = await livePositionsService.getPositionDetails(streamId);
-        
-        if (!details.position) {
-            detailContent.innerHTML = '<p class="lp-empty">Position not found</p>';
-            detailLoading.style.display = 'none';
-            detailContent.style.display = '';
+
+        if (!ownsModal()) {
+            // A newer request, an explicit close, or disposal owns the modal;
+            // ignore the stale result without touching any detail DOM.
             return;
         }
-        
-        detailTitle.textContent = `${details.position.symbol} ${details.position.interval} - Position Details`;
+
+        if (!details.position) {
+            content.innerHTML = '<p class="lp-empty">Position not found</p>';
+            loading.style.display = 'none';
+            content.style.display = '';
+            return;
+        }
+
+        title.textContent = `${details.position.symbol} ${details.position.interval} - Position Details`;
         
         const pos = details.position;
         const isClosed = !pos.isOpen;
@@ -479,8 +501,8 @@ async function openDetailModal(streamId: string): Promise<void> {
         const strategyText = escapeHtml(pos.strategyKey);
         const exitReasonText = escapeHtml(closedPos?.exitReason || 'unknown');
         const mismatchReasonText = escapeHtml(pos.mismatchReason || 'Mismatch detected between worker and local backtest');
-        
-        detailContent.innerHTML = `
+
+        content.innerHTML = `
             <div class="lp-detail-section">
                 <h4>Position Info</h4>
                 <div class="lp-detail-grid">
@@ -523,7 +545,7 @@ async function openDetailModal(streamId: string): Promise<void> {
                     <div class="lp-detail-grid">
                         <div class="lp-detail-row">
                             <span class="label">Price</span>
-                            <span class="value">${formatPrice(closedPos?.exitPrice || null)}</span>
+                            <span class="value">${formatPrice(closedPos?.exitPrice ?? null)}</span>
                         </div>
                         <div class="lp-detail-row">
                             <span class="label">Time</span>
@@ -541,7 +563,7 @@ async function openDetailModal(streamId: string): Promise<void> {
                     <div class="lp-detail-grid">
                         <div class="lp-detail-row">
                             <span class="label">P&L</span>
-                            <span class="value ${pnlClass}">${formatPnl(closedPos?.realizedPnl || null, closedPos?.realizedPnlPercent || null)}</span>
+                            <span class="value ${pnlClass}">${formatPnl(closedPos?.realizedPnl ?? null, closedPos?.realizedPnlPercent ?? null)}</span>
                         </div>
                     </div>
                 </div>
@@ -613,25 +635,32 @@ async function openDetailModal(streamId: string): Promise<void> {
             </div>
         `;
         
-        detailLoading.style.display = 'none';
-        detailContent.style.display = '';
+        loading.style.display = 'none';
+        content.style.display = '';
     } catch (err) {
-        detailContent.innerHTML = '';
+        if (!ownsModal()) {
+            return;
+        }
+        content.innerHTML = '';
         const errorMessage = document.createElement('p');
         errorMessage.className = 'lp-empty';
         errorMessage.textContent = `Error loading details: ${err instanceof Error ? err.message : String(err)}`;
-        detailContent.appendChild(errorMessage);
-        detailLoading.style.display = 'none';
-        detailContent.style.display = '';
+        content.appendChild(errorMessage);
+        loading.style.display = 'none';
+        content.style.display = '';
     }
 }
 
 function closeDetailModal(): void {
+    detailModalGeneration += 1;
     detailModalController?.close();
 }
 
 // Initialization
 export function initLivePositionsHandlers(): void {
+    // Reinitialization invalidates any request still in flight from a
+    // previous handler instance.
+    detailModalGeneration += 1;
     detailModalController = createAccessibleModal({
         overlayId: 'lpDetailModal',
         titleId: 'lpDetailTitle',
@@ -707,6 +736,9 @@ export function initLivePositionsHandlers(): void {
 
 // Cleanup function for HMR
 export function disposeLivePositionsHandlers(): void {
+    // Disposal invalidates in-flight detail requests so they cannot write
+    // into detached UI if the handlers are reinitialized.
+    detailModalGeneration += 1;
     if (unsubscribeService) {
         unsubscribeService();
         unsubscribeService = null;

@@ -143,6 +143,8 @@ flowchart LR
 4. Saved settings are restored and applied back into UI state and feature state.
 5. Initial market data is loaded, after which reactive state updates drive chart, backtest, and renderer refreshes.
 
+Lazy strategy-panel tabs (Finder, Alerts, Batch Backtest, Opportunity Explorer, Walk-Forward, Monte Carlo, Data Mining, IBKR/Crypto Data, Rank Pairs) go one step further: switching to the tab injects its partial and runs its feature initializer through `lib/lazy-feature-init.ts`. While activation runs, a shared status host (`lib/strategy-panel-tab-markup.ts`, `.lazy-tab-status` in `styles/research-tabs.css`) marks the panel `aria-busy` with a polite "loading" message; on failure the same host switches to a concise recovery message with keyboard-operable actions. A markup-import failure offers Retry plus Reload in development, where Retry re-fetches the dev server's source URL under the configured Vite base with a fresh query (a failed dynamic import stays rejected in the module map, so repeating the specifier could never succeed); production emits hashed chunks with no source URL to re-fetch, so markup failures offer Reload only there. A feature-initializer failure always offers Reload only, which also suppresses implicit tab-switch retries until a successful reload. Only successful activation removes the feedback. Real-browser coverage runs both the dev-server recovery flow and production builds (root and non-root base) where a failed chunk must degrade to Reload and Reload must recover the tab.
+
 ## UI Structure
 
 This app is heavily id-driven.

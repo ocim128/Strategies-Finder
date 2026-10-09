@@ -122,12 +122,62 @@ export function setupEventHandlers() {
         setDarkTheme(!state.isDarkTheme);
     });
 
-    // Strategy selector
+    // Strategy selector — latest-wins selection ownership. Each change starts
+    // a new request generation; only the generation that still owns the
+    // pending intent may commit the strategy, surface a failure, or restore
+    // the retained configuration. Registry notifications and external
+    // configuration application never commit through this path.
     const strategySelect = dom.strategySelect;
-    strategySelect.addEventListener('change', async () => {
-        const key = strategySelect.value;
-        await loadBuiltInStrategyByKey(key);
-        setCurrentStrategyKey(key);
+    let strategySelectionGeneration = 0;
+
+    const restoreRetainedSelection = () => {
+        strategySelect.value = state.currentStrategyKey;
+    };
+
+    const selectStrategy = async (key: string): Promise<void> => {
+        const generation = ++strategySelectionGeneration;
+        uiManager.beginStrategySelection(key, generation);
+        try {
+            const strategy = await loadBuiltInStrategyByKey(key);
+            if (!uiManager.ownsStrategySelection(generation)) {
+                debugLogger.event('ui.strategy.select_superseded', { key });
+                return;
+            }
+            if (!strategy) {
+                uiManager.settleStrategySelection(generation);
+                debugLogger.warn('ui.strategy.unavailable', { key });
+                uiManager.showToast(
+                    `Strategy "${key}" is not available. The previous selection was kept.`,
+                    'error'
+                );
+                restoreRetainedSelection();
+                return;
+            }
+            setCurrentStrategyKey(key);
+            uiManager.settleStrategySelection(generation);
+        } catch (error) {
+            if (!uiManager.ownsStrategySelection(generation)) {
+                debugLogger.warn('ui.strategy.select_failed_superseded', {
+                    key,
+                    error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                });
+                return;
+            }
+            uiManager.settleStrategySelection(generation);
+            debugLogger.error('ui.strategy.select_failed', {
+                key,
+                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+            });
+            uiManager.showToast(
+                'Loading the selected strategy failed. The previous selection was kept.',
+                'error'
+            );
+            restoreRetainedSelection();
+        }
+    };
+
+    strategySelect.addEventListener('change', () => {
+        selectStrategy(strategySelect.value).catch(() => {});
     });
 
     let runBacktestEndpointPreviewBusy = false;

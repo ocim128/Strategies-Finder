@@ -1,5 +1,6 @@
 import { state } from "../state";
 import { buildOhlcvTimeMap } from "../state-actions";
+import { getTimeIndex, getTimeIndexValue } from "../strategies/backtest/backtest-utils";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
 import { dataManager } from "../data-manager";
@@ -103,12 +104,16 @@ export function setupStateSubscriptions() {
         return Boolean(panel && !panel.hidden && panel.style.display !== 'none');
     };
     jumpToTrade = (time: Time) => {
-        const dataIndex = state.ohlcvData.findIndex(d => d.time === time);
-        if (dataIndex !== -1) {
-            const from = Math.max(0, dataIndex - 20);
-            const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
-            state.chart.timeScale().setVisibleLogicalRange({ from, to });
+        // Shared canonical time index (built for the crosshair hot path):
+        // equivalent timestamp shapes resolve, cold lookups build the cached
+        // index once per dataset instead of scanning on every click.
+        const dataIndex = getTimeIndexValue(getTimeIndex(state.ohlcvData), time);
+        if (dataIndex === undefined) {
+            return;
         }
+        const from = Math.max(0, dataIndex - 20);
+        const to = Math.min(state.ohlcvData.length - 1, dataIndex + 20);
+        state.chart.timeScale().setVisibleLogicalRange({ from, to });
     };
     const renderTradesForCurrentState = async () => {
         const result = state.currentBacktestResult;

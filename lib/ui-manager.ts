@@ -1,4 +1,4 @@
-﻿import type { Time } from "lightweight-charts";
+import type { Time } from "lightweight-charts";
 import type { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
@@ -14,9 +14,55 @@ import { createSettingsWorkspaceDom, createUiManagerDom, type UiManagerDom } fro
 export class UIManager {
     private dom: UiManagerDom | null = null;
     private strategyDropdownSignature: string | null = null;
+    /**
+     * In-flight strategy selection intent owned by the strategy selector.
+     * Registry notifications re-render the dropdown from the last committed
+     * state key; the intent keeps the option the user picked visible and
+     * blocks superseded renders/commits until the loading request settles.
+     */
+    private pendingStrategySelection: { key: string; generation: number } | null = null;
+    /** Monotonic render generation owning the strategy parameter form. */
+    private strategyParamRenderGeneration = 0;
 
     private getDom(): UiManagerDom {
         return this.dom ??= createUiManagerDom();
+    }
+
+    /**
+     * Record the selector's in-flight intent for `key` under the selector's
+     * request generation. The intended option stays selected while loading.
+     */
+    public beginStrategySelection(key: string, generation: number): void {
+        this.pendingStrategySelection = { key, generation };
+        const { strategySelect } = this.getDom();
+        if (strategySelect.value !== key) {
+            strategySelect.value = key;
+        }
+    }
+
+    /** True when this generation still owns the pending selection intent. */
+    public ownsStrategySelection(generation: number): boolean {
+        return this.pendingStrategySelection?.generation === generation;
+    }
+
+    /**
+     * Clear the intent only when the settling request still owns it. Requests
+     * superseded by a newer selection leave the newer intent untouched.
+     */
+    public settleStrategySelection(generation: number): void {
+        if (this.pendingStrategySelection?.generation === generation) {
+            this.pendingStrategySelection = null;
+        }
+    }
+
+    /**
+     * Boundary for external configuration application (settings restore,
+     * strategy-config apply, live-position navigation): a pending user
+     * selection must not commit over the externally applied setup, including
+     * same-key restores.
+     */
+    public cancelPendingStrategySelection(): void {
+        this.pendingStrategySelection = null;
     }
 
     public updateSymbolDataSource(
@@ -164,13 +210,36 @@ export class UIManager {
         panel.appendChild(badge);
     }
 
-    public async updateStrategyParams(currentStrategyKey: string) {
-        let strategy = strategyRegistry.get(currentStrategyKey);
+    public async updateStrategyParams(requestedKey: string) {
+        // Independent render ownership: every call starts a new render
+        // generation. A render whose lazy-load settled after a newer render
+        // started (newer commit, restore, or re-apply of the same key) is
+        // stale and must not touch the form. Unlike the selection intent this
+        // generation survives settlement and cancellation, because it only
+        // advances when a newer parameter render actually starts.
+        const renderGeneration = ++this.strategyParamRenderGeneration;
+        let strategy = strategyRegistry.get(requestedKey);
         if (!strategy) {
-            strategy = await loadBuiltInStrategyByKey(currentStrategyKey);
+            strategy = await loadBuiltInStrategyByKey(requestedKey);
+        }
+        if (renderGeneration !== this.strategyParamRenderGeneration) {
+            return;
+        }
+        // The requested strategy must still own the UI: a Finder Apply or
+        // external configuration application may have committed another key
+        // while this render awaited its lazy load.
+        if (state.currentStrategyKey !== requestedKey) {
+            return;
+        }
+        // A newer selection intent supersedes renders whose await finished
+        // late (e.g. a registry re-emission of the previously selected key,
+        // or an external configuration application that claimed the UI).
+        if (this.pendingStrategySelection !== null
+            && this.pendingStrategySelection.key !== requestedKey) {
+            return;
         }
         if (strategy) {
-            this.updateStrategyWorkspaceContext(currentStrategyKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length);
+            this.updateStrategyWorkspaceContext(requestedKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length);
             paramManager.render(strategy);
         }
     }
@@ -181,9 +250,12 @@ export class UIManager {
         const signature = strategies
             .map(({ key, name, description }) => `${key}\u0000${name}\u0000${description}`)
             .join('\u0001');
-        const currentValue = strategies.some(s => s.key === currentStrategyKey)
-            ? currentStrategyKey
-            : strategySelect.value;
+        const pending = this.pendingStrategySelection;
+        const currentValue = pending !== null && strategies.some(s => s.key === pending.key)
+            ? pending.key
+            : strategies.some(s => s.key === currentStrategyKey)
+                ? currentStrategyKey
+                : strategySelect.value;
 
         if (signature !== this.strategyDropdownSignature) {
             const fragment = document.createDocumentFragment();
@@ -201,6 +273,11 @@ export class UIManager {
         const found = strategies.some(s => s.key === currentValue);
         if (found) {
             strategySelect.value = currentValue;
+        } else if (pending !== null) {
+            // A selection is in flight and its key is not listed yet (e.g. a
+            // not-yet-registered custom strategy). Keep the user's intent;
+            // the pending branch must not commit a dropdown fallback key.
+            return;
         } else if (strategies.length > 0) {
             const fallbackKey = strategies[0].key;
             strategySelect.value = fallbackKey;

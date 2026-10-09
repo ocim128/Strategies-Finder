@@ -4,6 +4,167 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-09 — Ownership repair follow-up: same-key restore dropdown resync, exit rollback snapshot
+
+- **Evidence:** A follow-up audit reproduced two remaining defects. A same-key
+  `applyStrategyConfig` restore cancelled a pending dropdown selection but
+  left the dropdown option on the pending key (same-key commits do not fire
+  the `currentStrategyKey` subscription that resyncs different-key
+  applications), so state and parameters described the restored strategy
+  while the dropdown described another one until the obsolete request
+  settled. And exit-strategy rollback re-seeded the form from the hidden
+  input — which incoming configuration (settings restores, Finder Apply)
+  overwrites — so a failed incoming selection for another key rolled back to
+  the retained key but with the incoming parameters (`{period: 88}` instead
+  of the retained `{hold/period: 44}`).
+- **Change:** `applyStrategyConfig` now calls
+  `uiManager.updateStrategyDropdown(config.strategyKey)` on every successful
+  application (same-key restores included), keeping dropdown rendering in the
+  single owner; missing-strategy handling and pending-request cancellation
+  are unchanged. The exit-strategy handler retains an independent snapshot
+  (key + effective parameters) alongside the dropdown key: successful
+  renders and legitimate form edits refresh it, same-key incoming hidden
+  writes refresh it, incoming hidden writes for another key do not, and
+  rollback restores key, form, hidden JSON, and internal strategy from the
+  snapshot instead of the mutable hidden input. Successful incoming
+  configurations become the new snapshot; stale failures stay suppressed.
+- **Checks:** Two new regression tests were confirmed failing on the previous
+  implementation (`a same-key external restore immediately resyncs the
+  dropdown`, `exit rollback restores retained edits even when incoming
+  configuration overwrote the hidden input`) alongside retained cases for
+  matching/different parameter names, same-key hidden updates, successful
+  incoming configurations, and superseded failures — all through controlled
+  gates and registered custom strategies rather than test-order-dependent
+  rejected loader promises. Focused `strategy-selection.browser.spec.ts`,
+  `settings-compat.spec.ts`, `settings-handlers.browser.spec.ts`,
+  `settings-handlers-shared.spec.ts`, `settings-workspace.spec.ts`,
+  `feature-dom-contracts.spec.ts`, `lazy-feature-init.spec.ts`, and
+  `lazy-tab-feedback.browser.spec.ts` pass. `npm run ci` passed (268 specs,
+  both typechecks, build and bundle budget 610.4/650 KB); `npm run test:e2e`
+  passed, retaining the dev-server lazy-tab recovery coverage and the
+  production-build recovery scenarios at root and `/sub/` base. `npm run
+  validate:changes` routes the repair to full-js plus e2e; both ran green.
+  Commands ran through RTK.
+- **Docs:** `docs/settings.md` describes the same-key dropdown resync and the
+  rollback snapshot semantics.
+
+## 2026-10-09 — Repair pass: Finder Apply ownership, parameter render ownership, exit-strategy failure retention, production-valid lazy-tab recovery
+
+- **Evidence:** An external audit reproduced four confirmed defects in the
+  previous UI batch. A dropdown selection still loading when Finder Apply
+  committed later replaced the applied strategy (state, dropdown, metadata and
+  parameters all reverted). `updateStrategyParams` guarded renders only
+  against a non-null pending selection intent, so an awaited lazy load could
+  render one strategy's parameters into another's committed UI. A failed
+  exit-strategy load cleared the form, left the failed key selected, kept the
+  previous hidden parameters, and claimed the previous configuration was
+  kept; an unknown key behaved the same. Lazy-tab Retry re-fetched the dev
+  server's source URL, which is a guaranteed 404 against production's hashed
+  `assets/` chunks, so the offered recovery could never work outside dev.
+- **Change:** All four Finder Apply flows (Current Chart, Universe, Asset
+  Opportunity, Arm Performance) now cancel the pending selection intent right
+  before committing — after the load, so missing strategies still abort
+  without touching ownership. `updateStrategyParams` gained an independent
+  render generation plus a requested-key-still-owns-the-UI check: stale lazy
+  loads are dropped after newer commits, restores, cancellations, and
+  same-key re-applies, while loaded strategies keep rendering synchronously.
+  The exit-strategy handler retains one coherent last-valid configuration on
+  load failure or unknown key — dropdown key, rendered form, edited
+  parameters, hidden JSON and internal strategy — and stale failures roll
+  nothing back. Lazy-tab markup failures now offer Retry only where a retry
+  can fetch a fresh specifier (`supportsLazyMarkupRetry()`: Vite dev builds
+  and plain esbuild bundles), with the dev retry URL honoring
+  `import.meta.env.BASE_URL`; production markup failures degrade to Reload
+  only, and init failures keep Reload-only handling with tab-switch retry
+  suppression. No cache-busting source imports or production test globals.
+- **Checks:** New regression coverage was written first and confirmed failing
+  on the previous implementation (10 failures in
+  `strategy-selection.browser.spec.ts`): Finder Apply across all four scopes
+  plus the aborted-missing-strategy case, stale render/cancellation/external
+  restore/same-key cases, and exit-strategy failure/missing/stale cases using
+  a fresh controlled gate (the built-in catalog caches rejected load promises
+  per key, so fixtures use never-rejected keys and a registered custom
+  strategy instead of inheriting old rejections). Focused runs of
+  `strategy-selection.browser.spec.ts`, `lazy-feature-init.spec.ts`,
+  `lazy-tab-feedback.browser.spec.ts`, `settings-compat.spec.ts`, and
+  `feature-dom-contracts.spec.ts` pass. `npm run ci` passed (268 specs, both
+  typechecks, build and bundle budget 610.4/650 KB). `npm run test:e2e`
+  passed, now including production-built scenarios: a failed
+  `/assets/tab-datamining-*.js` chunk offers Reload only (no Retry) and
+  keyboard Reload recovers the tab, verified at root base and `/sub/` base
+  against real `vite build` output served statically. `npm run
+  validate:changes` routes the repair to full-js plus e2e; both ran green.
+  Commands ran through RTK.
+- **Follow-up:** The built-in catalog (`lib/strategies/built-in-catalog.ts`)
+  keeps a rejected load promise in `loadingPromises` until a later successful
+  load, so one transient failure poisons that built-in strategy until reload.
+  Discovered while building failure fixtures; left unchanged here because it
+  is outside the four confirmed issues.
+
+## 2026-10-09 — UI correctness batch: dates, trade navigation, selection ownership, Quick View bounds, zero-P&L display, modal ownership, lazy-tab recovery
+
+- **Evidence:** Seven UI behaviors were inconsistent or racy: Jakarta date
+  formatting was duplicated per caller; trades navigation re-derived indexes in
+  O(n) per key press; strategy-selection normalization was spread across
+  callers and let superseded requests commit; Quick View prepared its full
+  trade list (copy + reverse) for every open; zero-P&L live positions rendered
+  `0` as the missing-value sentinel `-`; a closed modal's late response could
+  still write into a reopened modal; and a failed lazy tab left a blank panel
+  with no feedback and silent tab-switch retries.
+- **Change:** One `Intl.DateTimeFormat`-based Jakarta formatter owns date
+  display (`lib/timezone-utils.ts`). Trades navigation reuses the
+  `getTimeIndex`/`getTimeIndexValue` cache. `lib/ui-manager.ts` centrally owns
+  generation-scoped strategy-selection intent
+  (`beginStrategySelection`/`ownsStrategySelection`/`settleStrategySelection`/
+  `cancelPendingStrategySelection`), keeping the user's pick visible, dropping
+  superseded renders/commits, and letting external configuration application
+  cancel pending intent. Quick View prepares a bounded windowed copy (100
+  trades, reversed tail newest, one place for counts/truncation). Live-position
+  card and detail modal use `??` so a real `0` renders, with `-` only for
+  missing values, and the detail modal is guarded by a generation token
+  (`ownsModal`) so close/dispose/re-open invalidates in-flight responses.
+  Lazy-tab activation now shares one status host per tab
+  (`lib/strategy-panel-tab-markup.ts`, `.lazy-tab-status` styles): `aria-busy`
+  plus a polite loading message while the partial import and feature
+  initializer run (the host survives the placeholder swap), and on failure a
+  concise message with keyboard-operable actions — Retry plus Reload for
+  markup failures (retry re-fetches a fresh, query-bumped specifier because a
+  failed dynamic import stays rejected in the module map for the document's
+  lifetime; the URL is built by hand because Vite rewrites
+  `new URL(x, import.meta.url)` into a glob and strips empty query values like
+  `raw=`) — and Reload only for feature-initializer failures, which also
+  suppress implicit tab-switch retries until a successful reload. Missing
+  markup roots throw instead of silently skipping the swap.
+  `scripts/run-tests.ts` gained an esbuild `?raw` plugin so browser specs can
+  bundle the tab-markup module.
+- **Checks:** `npm run typecheck`, `npm run typecheck:tests`, focused
+  `timezone-utils.spec.ts`, `trade-navigation.browser.spec.ts`,
+  `strategy-selection.browser.spec.ts`, `quick-view-service.browser.spec.ts`,
+  `live-positions-handlers.browser.spec.ts`, `lazy-feature-init.spec.ts`,
+  `lazy-tab-feedback.browser.spec.ts`, and `feature-dom-contracts.spec.ts`;
+  then `npm run ci` (268 specs, both typechecks, production build and bundle
+  budget 609.8/650 KB) and `npm run test:e2e`. The e2e suite gained two
+  blocks: trades-table and Quick View row navigation through the shared
+  `jumpToTrade` (asserted on the timeScale jump call, since the open research
+  panel hides the chart pane), Quick View auto-show toggle with newest/oldest
+  ordering, count and 100-trade row bound, and a live-position detail-modal
+  scenario — seeded through the service test seam — proving zero P&L renders
+  as `+0.00 (+0.00%)` in the card and modal while superseded and post-close
+  detail responses are discarded. Lazy-tab real-browser coverage intercepts a
+  partial outage (Retry re-arms failure feedback and recovers through the
+  keyboard once the outage clears) and a feature-module outage (Reload-only
+  recovery with suppressed tab round-trip retries). `npm run validate:changes`
+  routes the batch to full-js plus e2e; both ran green. Commands ran through
+  RTK.
+- **Docs:** Selection ownership recorded in `docs/settings.md`; lazy-tab
+  feedback recorded in the README boot/UI-structure sections. The workers
+  guide does not own the browser-side live-position display changes, so it was
+  left unchanged. The temporary implementation plan was folded in and removed.
+- **Follow-up:** The cache-busted retry import only executes after a markup
+  import failure (dev server outages; best-effort production chunk recovery) —
+  in a production bundle the partials are inlined, so Reload stays the
+  reliable recovery there.
+
 ## 2026-10-09 — Keep Monte Carlo results tied to their backtest
 
 - **Evidence:** `refreshMonteCarloFromState` retained completed results when a

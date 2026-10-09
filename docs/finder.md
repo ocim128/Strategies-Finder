@@ -95,6 +95,13 @@ incomplete replay status remain visible in the table.
 
 Apply uses the same candidate index and guards in both views; quality audits
 remain read only, and cached-preview Apply restrictions remain in place.
+Every Apply flow also participates in the app-wide selection-ownership
+boundary (see [settings](settings.md#strategy-selection-ownership)): the
+candidate's strategy loads before anything is committed — a missing strategy
+aborts Apply without touching ownership — and a pending dropdown selection is
+superseded at commit time, so a selection that was still loading when Apply
+ran can never replace the applied strategy, metadata, parameters, or applied
+backtest settings.
 Re-Sort continues to rank the retained inventory before Top Results limits
 the rendered rows. Table mode does not add a second sorting path or start a
 run. On narrow screens only the table's region scrolls horizontally. View

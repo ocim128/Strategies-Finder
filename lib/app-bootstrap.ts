@@ -51,6 +51,9 @@ async function restoreSavedSettings(context: AppBootstrapContext): Promise<void>
                 await loadBuiltInStrategyByKey(savedSettings.currentStrategyKey);
             }
             if (strategyRegistry.has(savedSettings.currentStrategyKey)) {
+                // Restored settings supersede any pending selection intent,
+                // including same-key restores.
+                uiManager.cancelPendingStrategySelection();
                 setCurrentStrategyKey(savedSettings.currentStrategyKey);
                 const strategySelect = getOptionalElement<HTMLSelectElement>("strategySelect");
                 if (strategySelect) {
