@@ -9,7 +9,7 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Core Guides
 
-- [testing.md](testing.md) - focused spec selection, parallel scheduling, machine-readable evidence, and deterministic test helpers for agent workflows.
+- [testing.md](testing.md) - focused specs, saved evidence, RTK, efficient context, task handoffs, and paired agent workflow benchmarks.
 - [settings.md](settings.md) - Settings layout, search, live summaries, autosave feedback, and named configuration restore.
 - [monte-carlo.md](monte-carlo.md) - chart backtest resampling, simulation controls, lazy tab layout, and regression checks.
 

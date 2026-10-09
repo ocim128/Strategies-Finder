@@ -165,6 +165,113 @@ If a filtered diagnostic is incomplete, rerun the underlying command through
 criteria still apply. Proxy commands may yield no token savings; preserving
 their evidence takes priority over filtering.
 
+## Efficient context and handoffs
+
+Use CodeGraph for structural navigation when available: a specific feature
+query through `codegraph_context`, a named symbol through `codegraph_search`,
+and callers, traces, or impact as needed. Keep initial results bounded and
+widen when incomplete. Use `rtk rg` for text/markup/configuration or an index
+miss. Graph relationships can be ambiguous or stale; verify relevant source,
+dynamic wiring, contracts, and tests before changing behavior.
+
+Source snippets already returned by tools count as reads. Reuse unchanged
+context instead of reading the same files through another tool. Load only
+the relevant guide sections and focused specs; revisit files after changes,
+missing compaction details, or contradictory evidence. Batch independent
+lookups, while keeping edits, dependent checks, and shared-log test runs
+sequential. Do not substitute reduced context for caller inspection.
+
+Use the validation router and saved test summaries instead of rebuilding
+selection or rerunning a passing check on unchanged work. Run all required
+checks and add semantic-impact coverage; this policy preserves full CI,
+E2E, and Rust requirements. Expand or repeat checks when changes, failures,
+or unresolved concerns justify it.
+
+For substantial work, create a task-specific handoff:
+
+```powershell
+rtk proxy npm.cmd run agent:bench -- handoff --task finder-cancellation
+```
+
+This copies [the handoff template](agent-handoff.template.md) to
+`artifacts/agent-handoffs/finder-cancellation.md` and refuses to overwrite an
+existing handoff. Update that copy at meaningful checkpoints and before
+compaction, interruption, or transfer. Record the objective, constraints,
+decisions, changed files, Git state, exact validation commands/results,
+evidence paths, risks, and next step. Avoid full logs and secrets. On resume,
+verify current instructions and Git state; stale notes are not authority.
+
+These choices follow [OpenAI's guidance on small, conditional instructions](https://developers.openai.com/blog/rethinking-skills-and-prompts-for-gpt-6-astra)
+and [progressive disclosure and deterministic scripts](https://developers.openai.com/blog/skills-agents-sdk).
+The goal is less redundant work while retaining evidence, not fewer checks.
+
+## Agent workflow benchmark
+
+[scripts/agent-benchmark.ts](../scripts/agent-benchmark.ts) compares externally
+measured runs; it does not launch models or estimate usage from text length.
+[The eight tasks](../scripts/agent-benchmark-tasks.json) cover four source
+navigation questions and four implementation/coverage tasks. An implementation
+task may correctly identify sufficient existing coverage instead of adding
+a duplicate spec. Each task has a prompt, independent review criteria,
+source paths, and minimum check names; repository policy may require more checks.
+
+```powershell
+rtk proxy npm.cmd run agent:bench -- tasks
+rtk proxy npm.cmd run agent:bench -- template --task validation-routing --variant baseline --trial 1
+rtk proxy npm.cmd run agent:bench -- record --input artifacts/agent-benchmark/input.json
+rtk proxy npm.cmd run agent:bench -- compare --baseline baseline --candidate efficient
+```
+
+Run each task in separate sessions/checkouts from the same fixed fixture
+commit. Compare an RTK-only baseline policy with the new efficiency policy;
+keep RTK, exact model, reasoning effort, task prompt, starting code/data,
+and required checks fixed. Apply policies separately from fixture code and
+keep their exact copies as evidence. Alternate policy order, use at least
+two trials per task (three or more preferred), and record all attempts,
+including failures. Document cache/environment differences rather than
+attributing them to the policy.
+
+Save the template as an input JSON file and replace placeholders with observed
+data. Sum provider input/output usage across the entire task, including
+retries and additional agents if any; record wall time, tool calls, and
+corrective follow-ups from the transcript. Cached input and reasoning counts
+are subsets, so do not add them to token totals again. Keep the same metric
+definition for both policies. If the client does not expose whole-task usage,
+do not invent it or substitute RTK output-token estimates; the comparison
+remains pending until usable measurements exist.
+
+A human or independent grader must evaluate the task's acceptance criteria,
+inspect the resulting files/answer, and record `review.passed`, reviewer,
+and notes. The implementing agent must not approve its own output. Passing
+checks alone do not prove the task is correct. Include the transcript,
+usage export, policy copy, review, and applicable check logs in `evidence`
+as existing repo-local file paths. For implementation passes, `checks`
+must include every minimum name with exit code zero; failed attempts can
+have incomplete checks but must be graded failed. Capture any additional
+checks required by the normal feature guide too.
+
+`record` validates the data, snapshots evidence into an exclusive run directory
+under `artifacts/agent-benchmark/<variant>/<task>-<trial>/`, and refuses
+overwrites. Archive external evidence under `artifacts/` before importing it.
+`compare` writes a JSON report under `artifacts/agent-benchmark/`; add
+`--json` for machine-readable stdout. It rejects duplicate runs and withholds
+aggregate savings when any task/trial is missing or configurations differ.
+Failure trials remain in totals. It reports per-task medians, total token and
+runtime measurements, reviewed outcomes, and corrective follow-ups. Any
+candidate failure or increased total corrective follow-ups prevents an
+improvement verdict even if fewer tokens were used.
+
+Exit codes: `0` for a complete lower-token comparison with all candidate
+outcomes passing and no increase in corrective follow-ups; `1` for invalid
+input, regression, or no token improvement; `2` for insufficient evidence.
+These are the comparator's native codes. RTK 0.51.0's `proxy` maps nonzero
+child codes to `1` on the tested Windows setup, so use the JSON `status` to
+distinguish missing evidence from regression when invoking it through RTK.
+Runtime is reported separately; inspect it before adopting a slower policy.
+This small benchmark cannot establish zero degradation on other tasks or
+compute billing savings. Extend the task set when relevant failures emerge;
+its hash prevents mixing incompatible task sets.
+
 ## Write small, reliable specs
 
 - Put each regression in its nearest owning spec and name the observable

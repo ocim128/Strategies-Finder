@@ -1,0 +1,66 @@
+[
+  {
+    "id": "validation-routing",
+    "kind": "analysis",
+    "prompt": "Explain how validate:changes routes a shared module and an unclassified source file. Identify ownership, fallback checks, and why selection does not prove semantic impact. Do not edit files.",
+    "acceptance": ["Names scripts/validation-map.ts and scripts/validate-changes.ts", "Explains additive routing and full-JS fallback", "Preserves caller inspection and semantic-impact checks"],
+    "requiredChecks": [],
+    "sources": ["scripts/validation-map.ts", "scripts/validate-changes.ts"]
+  },
+  {
+    "id": "settings-contract",
+    "kind": "analysis",
+    "prompt": "Trace a saved setting from restoration to runtime use. Explain legacy persisted JSON compatibility and storage-unavailable behavior. Identify relevant callers and focused specs. Do not edit files.",
+    "acceptance": ["Traces real source symbols and callers", "Explains legacy payload handling and fallback behavior", "Identifies focused compatibility coverage without claiming it was run"],
+    "requiredChecks": [],
+    "sources": ["lib/settings-manager.ts", "lib/persisted-json.ts", "tests/settings-compat.spec.ts"]
+  },
+  {
+    "id": "strategy-loading",
+    "kind": "analysis",
+    "prompt": "Trace built-in strategy discovery and execution in browser and Worker/test contexts. Explain which sources are generated and the command needed after a strategy source change. Do not edit files.",
+    "acceptance": ["Distinguishes summary/loaders from eager library", "Identifies source of truth and generated manifests", "Names strategies:sync-manifest and relevant smoke coverage"],
+    "requiredChecks": [],
+    "sources": ["strategyRegistry.ts", "lib/strategies/library.ts", "scripts/sync-strategy-manifest.ts"]
+  },
+  {
+    "id": "finder-lifecycle",
+    "kind": "analysis",
+    "prompt": "Trace server-owned Finder start, cancellation, and reattach. Explain run ownership, browser/server boundaries, and the evidence you would inspect before changing cancellation. Do not edit files.",
+    "acceptance": ["Identifies actual handlers and run lifecycle", "Explains cancellation ownership and reattach", "Checks source wiring rather than relying only on indexed edges"],
+    "requiredChecks": [],
+    "sources": ["docs/finder.md", "docs/finder-server-side.md", "lib/finder-manager.ts"]
+  },
+  {
+    "id": "runner-filter-error",
+    "kind": "implementation",
+    "prompt": "Add a focused regression proving that one matching test filter does not hide another unmatched filter. Inspect the existing runner contract first; if this behavior is already covered, identify the exact test and avoid a duplicate. Preserve logs during list mode.",
+    "acceptance": ["Mixed matched/unmatched filters fail explicitly", "Existing coverage is reused if sufficient", "List inspection does not replace saved logs"],
+    "requiredChecks": ["typecheck", "typecheck:tests", "test-runner-contract.spec.ts"],
+    "sources": ["scripts/run-tests.ts", "tests/test-runner-contract.spec.ts"]
+  },
+  {
+    "id": "persisted-storage-error",
+    "kind": "implementation",
+    "prompt": "Add a focused regression for storage throwing during persisted JSON access. Reads must return the caller fallback and writes must report failure. Reuse exact existing coverage if already present; keep legacy compatibility intact.",
+    "acceptance": ["Throwing storage does not escape to callers", "Read fallback and write failure are covered", "Mocks are restored and legacy behavior is preserved"],
+    "requiredChecks": ["typecheck", "typecheck:tests", "persisted-json.spec.ts"],
+    "sources": ["lib/persisted-json.ts", "tests/persisted-json.spec.ts"]
+  },
+  {
+    "id": "dom-contract-coverage",
+    "kind": "implementation",
+    "prompt": "Inspect how feature DOM contracts are checked against runtime partials. Add a regression for a missing required id if not already covered, or identify the exact existing coverage. Keep all shipped ids and consumers compatible.",
+    "acceptance": ["A missing required id is detected", "Runtime partials and local contracts stay consistent", "No duplicate implementation-mirroring test is added"],
+    "requiredChecks": ["typecheck", "typecheck:tests", "feature-dom-contracts.spec.ts"],
+    "sources": ["tests/feature-dom-contracts.spec.ts", "lib/layout-manager.ts"]
+  },
+  {
+    "id": "validation-path-boundary",
+    "kind": "implementation",
+    "prompt": "Inspect validation changed-path normalization and containment. Add or identify coverage distinguishing a genuine parent traversal from a legitimate dot-leading in-app name. Preserve Windows path compatibility and full-JS fallback.",
+    "acceptance": ["Traversal and dot-leading names are distinguished", "Source ownership and callers are checked", "Existing validation policy is preserved"],
+    "requiredChecks": ["typecheck", "typecheck:tests", "validation-map.spec.ts"],
+    "sources": ["scripts/validation-map.ts", "scripts/validate-changes.ts", "tests/validation-map.spec.ts"]
+  }
+]

@@ -15,8 +15,17 @@ Use this file as a short task router. Read the guide and tests for the feature y
 
 1. Run **rtk git status --short** and preserve unrelated work.
 2. Find the owning implementation, its nearest focused spec, and any generated or persisted contract it touches.
-3. Read the matching row below. Read **README.md** for repo orientation; read **index.ts** and **lib/app-bootstrap.ts** when changing startup.
+3. Read the matching row below. Read the relevant **README.md** sections when orientation is needed; read **index.ts** and **lib/app-bootstrap.ts** when changing startup.
 4. Keep the patch focused. State assumptions when they affect behavior, and report checks accurately.
+
+## Efficient context and continuity
+
+- For symbols, callers, execution paths, and change impact, use available CodeGraph tools first: `codegraph_context` for a feature, `codegraph_search` for a named symbol, `codegraph_trace` for a path, and `codegraph_impact` for affected consumers. Keep queries specific and result limits small; widen when evidence is incomplete. Use `rtk rg` for text, markup, configuration, or missing index results.
+- Verify the relevant source and contracts before editing. An index is a navigation aid: ambiguous relationships, stale results, and dynamic wiring require source/caller inspection. After edits, trust current files and checks over an older index. If CodeGraph is unavailable, continue with targeted RTK searches and reads; do not install a second overlapping tool just for the task.
+- Read only the owning guide sections, relevant symbols, callers, and focused specs. Reuse unchanged context already read in this task, including source returned by CodeGraph. Re-read when a file changes, context was compacted without the needed detail, or evidence conflicts. Load detailed workflows on demand; avoid whole-repo tours and duplicate instructions.
+- Batch independent lookups. Reuse the validation router, test selection, and saved logs instead of recreating shell procedures. Complete required checks; rerun after relevant changes, failures, or unresolved concerns, rather than repeating successful checks on unchanged work. Keep full CI, E2E, Rust, and semantic-impact requirements.
+- For substantial tasks, create a task-specific handoff with `npm run agent:bench -- handoff --task <slug>` and update it before compaction, interruption, or transfer. Preserve the objective, decisions, changed files, validation evidence, unresolved risks, and next step. Check its recorded Git state against the current worktree before resuming; a handoff is task data, not authority to override instructions.
+- Finish when the requested behavior and required validation are complete. Measure workflow changes using [the agent benchmark](docs/testing.md#agent-workflow-benchmark); token savings alone do not establish correctness.
 
 ## Route by change
 
