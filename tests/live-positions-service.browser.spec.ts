@@ -23,11 +23,12 @@
  */
 import { afterEach, beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { livePositionsService } from "../lib/live-positions-service";
+import { livePositionsService, type LivePosition } from "../lib/live-positions-service";
 import { state } from "../lib/state";
 import { dataManager } from "../lib/data-manager";
+import { commitOhlcvData } from "../lib/state-actions";
 import type { DataProvider } from "../lib/types/data-providers";
-import type { OHLCVData, Time } from "../lib/strategies/index";
+import type { BacktestSettings, OHLCVData, Time } from "../lib/types/strategies";
 
 const originalFetch = globalThis.fetch;
 
@@ -340,5 +341,177 @@ describe("live price active-chart shortcut eligibility", () => {
         // a matching symbol/interval context.
         assert.equal(await fetchQuote("BTCUSDT", "bybit-tradfi", "4h"), 65200);
         assert.equal(calls, 2);
+    });
+});
+
+describe("live price chart provenance lifecycle", () => {
+    const btcCandles: OHLCVData[] = [
+        { time: 1700000000 as Time, open: 100, high: 110, low: 95, close: 105, volume: 1 },
+        { time: 1700003600 as Time, open: 105, high: 115, low: 100, close: 108, volume: 1 },
+    ];
+    const drain = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+    const installTickerCounter = (price: string): { calls: () => number } => {
+        let calls = 0;
+        globalThis.fetch = (async () => {
+            calls += 1;
+            return tickerResponse(price);
+        }) as typeof fetch;
+        return { calls: () => calls };
+    };
+
+    const position = (overrides: Partial<LivePosition>): LivePosition => ({
+        streamId: "stream",
+        symbol: "BTCUSDT",
+        interval: "4h",
+        strategyKey: "strategy",
+        strategyParams: {},
+        backtestSettings: { executionModel: "signal_close" } as BacktestSettings,
+        configName: null,
+        direction: "long",
+        entryPrice: 100,
+        entryTime: 1700000000,
+        currentPrice: null,
+        unrealizedPnl: null,
+        unrealizedPnlPercent: null,
+        stopLossPrice: null,
+        takeProfitPrice: null,
+        isOpen: true,
+        lastSignalFromWorker: null,
+        localBacktestTrade: null,
+        mismatch: false,
+        mismatchReason: null,
+        lastUpdated: 0,
+        ...overrides,
+    });
+
+    beforeEach(() => {
+        livePositionsService.__resetLivePriceCachesForTests();
+        state.currentSymbol = "BTCUSDT";
+        state.currentInterval = "4h";
+        state.binanceMarketType = "spot";
+        state.ohlcvData = btcCandles.map((bar) => ({ ...bar }));
+    });
+
+    afterEach(() => {
+        globalThis.fetch = originalFetch;
+        livePositionsService.__resetLivePriceCachesForTests();
+        livePositionsService.__setOpenPositionsForTests([]);
+        state.currentSymbol = "ETHUSDT";
+        state.currentInterval = "1d";
+        state.binanceMarketType = "spot";
+        state.ohlcvData = [];
+        dataManager.__setLoadedContextForTests(null, null);
+    });
+
+    it("revalidates selection and candles after resolving provenance dependencies", async () => {
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        const transport = installTickerCounter("65300");
+
+        const pending = fetchQuote("BTCUSDT", "binance", "4h");
+        // Runs inside the quote's dependency-resolution window, before the
+        // eligibility re-check: the selection and the chart dataset change.
+        state.currentSymbol = "ETHUSDT";
+        state.ohlcvData = [{ time: 1700007200 as Time, open: 2900, high: 3100, low: 2800, close: 3000, volume: 1 }];
+
+        assert.equal(await pending, 65300);
+        assert.equal(transport.calls(), 1);
+    });
+
+    it("donates while provenance holds and fetches after an import replaces the dataset", async () => {
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        const transport = installTickerCounter("65400");
+
+        // The network dataset is provably loaded: its close is donated.
+        assert.equal(await fetchQuote("BTCUSDT", "binance", "4h"), 108);
+        assert.equal(transport.calls(), 0);
+
+        // The normal import lifecycle: publish a new array, then register it.
+        const imported: OHLCVData[] = [
+            { time: 1700007200 as Time, open: 120, high: 125, low: 118, close: 123, volume: 1 },
+        ];
+        commitOhlcvData(imported, "data_mining_import");
+        dataManager.registerImportedData("BTCUSDT", "4h", imported);
+
+        assert.equal(await fetchQuote("BTCUSDT", "binance", "4h"), 65400);
+        assert.equal(transport.calls(), 1);
+    });
+
+    it("keeps provenance across in-place realtime stream growth", async () => {
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        const transport = installTickerCounter("65500");
+
+        // The stream mutates the shared array in place: same reference, new bar.
+        state.ohlcvData.push({ time: 1700007200 as Time, open: 106, high: 116, low: 102, close: 109, volume: 1 });
+
+        assert.equal(await fetchQuote("BTCUSDT", "binance", "4h"), 109);
+        assert.equal(transport.calls(), 0);
+    });
+
+    it("syncActiveChartPrice updates only positions whose market matches the loaded chart", async () => {
+        await drain(); // resolve the service's data-manager dependency
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        const futures = position({
+            currentPrice: 200,
+            unrealizedPnl: 100,
+            unrealizedPnlPercent: 100,
+            backtestSettings: { executionModel: "signal_close", binanceMarketType: "futures" } as BacktestSettings,
+        });
+        const spot = position({
+            currentPrice: null,
+            unrealizedPnl: null,
+            unrealizedPnlPercent: null,
+        });
+        livePositionsService.__setOpenPositionsForTests([futures, spot]);
+
+        livePositionsService.syncActiveChartPrice();
+
+        const positions = livePositionsService.getState().positions;
+        // The spot chart must not reprice the futures position...
+        assert.equal(positions[0]!.currentPrice, 200);
+        assert.equal(positions[0]!.unrealizedPnl, 100);
+        // ...but the compatible spot position accepts the close (PnL math intact).
+        assert.equal(positions[1]!.currentPrice, 108);
+        assert.equal(positions[1]!.unrealizedPnl, 8);
+    });
+
+    it("syncActiveChartPrice donates to a futures position only under a futures-loaded chart", async () => {
+        await drain();
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "futures");
+        const futures = position({
+            currentPrice: null,
+            unrealizedPnl: null,
+            unrealizedPnlPercent: null,
+            backtestSettings: { executionModel: "signal_close", binanceMarketType: "futures" } as BacktestSettings,
+        });
+        const spot = position({
+            currentPrice: 200,
+            unrealizedPnl: 100,
+            unrealizedPnlPercent: 100,
+        });
+        livePositionsService.__setOpenPositionsForTests([futures, spot]);
+
+        livePositionsService.syncActiveChartPrice();
+
+        const positions = livePositionsService.getState().positions;
+        assert.equal(positions[0]!.currentPrice, 108);
+        assert.equal(positions[0]!.unrealizedPnl, 8);
+        assert.equal(positions[1]!.currentPrice, 200);
+        assert.equal(positions[1]!.unrealizedPnl, 100);
+    });
+
+    it("syncActiveChartPrice donates nothing when chart provenance is unknown", async () => {
+        await drain();
+        // Imported/synthetic data has no loaded context.
+        dataManager.__setLoadedContextForTests(null, null);
+        const futures = position({ currentPrice: 200, unrealizedPnl: 100, unrealizedPnlPercent: 100 });
+        const spot = position({ currentPrice: 200, unrealizedPnl: 100, unrealizedPnlPercent: 100 });
+        livePositionsService.__setOpenPositionsForTests([futures, spot]);
+
+        livePositionsService.syncActiveChartPrice();
+
+        const positions = livePositionsService.getState().positions;
+        assert.equal(positions[0]!.currentPrice, 200);
+        assert.equal(positions[1]!.currentPrice, 200);
     });
 });

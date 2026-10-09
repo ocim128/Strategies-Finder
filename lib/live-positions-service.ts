@@ -36,7 +36,7 @@ import {
     isAlertWorkerProviderCompatible,
 } from './alert-worker-compat';
 import { applySlippage, entrySideForDirection } from './strategies/backtest/backtest-utils';
-import { getBinanceMarketTypeForProvider, getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceMarketType } from './binance-market';
+import { getBinanceMarketTypeForProvider, getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceMarketType, type BinanceMarketType } from './binance-market';
 
 export interface LivePosition {
     streamId: string;
@@ -152,6 +152,18 @@ class LivePositionsService {
     private pollTimer: number | null = null;
     private listeners: Set<(state: LivePositionsState) => void> = new Set();
     private localBacktestCache: Map<string, LocalBacktestCacheEntry> = new Map();
+    // Resolved once asynchronously so the synchronous chart-price paths can
+    // read loaded-data provenance without an await between their checks.
+    private dataManagerModule: typeof import('./data-manager') | null = null;
+
+    constructor() {
+        void import('./data-manager')
+            .then((module) => { this.dataManagerModule = module; })
+            .catch(() => {
+                // Provenance stays unavailable; chart-price donation is skipped
+                // and quotes go through the provider-scoped transport.
+            });
+    }
 
     getState(): Readonly<LivePositionsState> {
         return { ...this.state };
@@ -163,18 +175,35 @@ class LivePositionsService {
     }
 
     syncActiveChartPrice(): void {
-        const symbol = state.currentSymbol.trim().toUpperCase();
-        const interval = state.currentInterval;
-        const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
-        if (!symbol || !interval || !Number.isFinite(lastClose)) {
+        const dataManager = this.dataManagerModule?.dataManager;
+        // Without resolved provenance the chart cannot prove what it holds, so
+        // it donates nothing; positions keep their quoted prices.
+        if (!dataManager) {
             return;
         }
+        const symbol = state.currentSymbol.trim().toUpperCase();
+        const interval = state.currentInterval;
+        const chartData = state.ohlcvData;
+        const lastClose = Number(chartData[chartData.length - 1]?.close);
+        if (!symbol || !interval || chartData.length === 0 || !Number.isFinite(lastClose)) {
+            return;
+        }
+        // Provenance follows the actual published dataset (getLoadedContextKey
+        // re-validates the dataset reference), so imported or replaced chart
+        // data never donates a price here.
+        const loadedContextKey = dataManager.getLoadedContextKey();
 
         let changed = false;
         const positions = this.state.positions.map((position) => {
             if (!position.isOpen) return position;
             if (position.symbol.trim().toUpperCase() !== symbol) return position;
             if (position.interval !== interval) return position;
+            // Market isolation: a position only accepts this chart's close when
+            // the chart provably holds data for the position's own requested
+            // market — a spot chart must not reprice a futures position.
+            const positionMarket = this.resolvePositionBinanceMarket(position, dataManager);
+            if (positionMarket === null) return position;
+            if (loadedContextKey !== `${symbol}|${interval}|${positionMarket}`) return position;
             if (position.currentPrice === lastClose) return position;
 
             let unrealizedPnl: number | null = null;
@@ -907,11 +936,35 @@ class LivePositionsService {
         PRICE_REQUESTS.clear();
     }
 
+    /** Test seam: install open positions so production sync paths are drivable. Not a public API. */
+    __setOpenPositionsForTests(positions: LivePosition[]): void {
+        this.state = { ...this.state, positions };
+    }
+
     private async getActiveChartPrice(symbol: string, interval: string, provider: DataProvider): Promise<number | null> {
-        // The chart shortcut may only donate a price when the loaded candles
-        // provably come from the same market the quote is for. DataManager
-        // tracks provenance only for Binance loads; other providers (and
-        // imported/synthetic data) have no established provenance, so skip.
+        // Resolve the asynchronous dependency FIRST: eligibility and the close
+        // read below must observe one consistent state snapshot, with no await
+        // between them. Checking selection before the await and reading candles
+        // after it donated a stale close when the selection changed mid-flight.
+        const { dataManager } = await import('./data-manager');
+        return this.resolveActiveChartPrice(symbol, interval, provider, dataManager);
+    }
+
+    /**
+     * Synchronous chart-shortcut eligibility. The chart may only donate a
+     * price when the loaded candles provably come from the same market the
+     * quote is for: the provider must be Binance and the DataManager loaded
+     * context (loaded symbol + interval + Binance market, which follows the
+     * actual published dataset) must match. state.binanceMarketType alone is
+     * not enough because it can change before replacement data loads, and
+     * imported/synthetic data has no established provenance.
+     */
+    private resolveActiveChartPrice(
+        symbol: string,
+        interval: string,
+        provider: DataProvider,
+        dataManager: import('./data-manager').DataManager,
+    ): number | null {
         if (!isBinanceDataProvider(provider)) {
             return null;
         }
@@ -924,10 +977,6 @@ class LivePositionsService {
         if (state.ohlcvData.length === 0) {
             return null;
         }
-        // state.binanceMarketType alone describes the selection and may change
-        // before replacement data loads, so require the DataManager loaded
-        // context (loaded symbol + interval + Binance market) to match.
-        const { dataManager } = await import('./data-manager');
         const loadedContextKey = dataManager.getLoadedContextKey();
         if (!loadedContextKey) {
             return null;
@@ -939,6 +988,27 @@ class LivePositionsService {
 
         const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
         return Number.isFinite(lastClose) ? lastClose : null;
+    }
+
+    /**
+     * The Binance market a position's quote is for, resolved the same way as
+     * subscription analysis: the provider router's provider for the symbol,
+     * with the market taken from the subscription's backtest settings. Null
+     * when the position is not Binance-backed and can never accept a chart
+     * donation.
+     */
+    private resolvePositionBinanceMarket(
+        position: LivePosition,
+        dataManager: import('./data-manager').DataManager,
+    ): BinanceMarketType | null {
+        const symbol = position.symbol.trim().toUpperCase();
+        if (!isBinanceDataProvider(dataManager.getProvider(symbol))) {
+            return null;
+        }
+        return resolveBinanceMarketType(
+            (position.backtestSettings as Record<string, unknown> | undefined)?.binanceMarketType,
+            'spot',
+        );
     }
 
     private async fetchSubscription(streamId: string): Promise<AlertSubscription | null> {
