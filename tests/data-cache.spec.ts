@@ -140,10 +140,100 @@ describe("DataCache retained-point budget", () => {
         assert.equal(cache.get("A"), undefined);
         assert.equal(cache.size, 0);
         assert.equal(cache.points, 0);
-        assert.equal(cache.evictions, 1);
+        // Rejected before admission: nothing was evicted to make room.
+        assert.equal(cache.evictions, 0);
         assert.equal(cache.syncAtByKey.has("A"), false);
         // The caller keeps its full dataset.
         assert.equal(oversized.length, 25);
+    });
+
+    it("keeps populated entries and their metadata when an oversized entry is rejected", () => {
+        const cache = new DataCache({ maxPoints: 10 });
+        cache.set("A", candles(1, 4), "test");
+        cache.syncAtByKey.set("A", 1);
+        cache.set("B", candles(5, 4), "test");
+        cache.syncAtByKey.set("B", 2);
+        // Touch A so B is the older entry; an eviction would have hit B.
+        cache.get("A");
+
+        const oversized = candles(100, 11);
+        cache.set("C", oversized, "test");
+
+        assert.equal(cache.get("C"), undefined);
+        assert.deepEqual([...cache.syncAtByKey.keys()].sort(), ["A", "B"]);
+        assert.equal(cache.points, 8);
+        assert.equal(cache.evictions, 0);
+        // Recency survived: the next overflowing admission evicts B, not A.
+        cache.set("D", candles(200, 4), "test");
+        assert.equal(cache.get("B"), undefined);
+        assert.equal(cache.get("A")?.candles.length, 4);
+        assert.equal(cache.syncAtByKey.has("A"), true);
+    });
+
+    it("admits an entry exactly at the remaining budget without eviction", () => {
+        const cache = new DataCache({ maxPoints: 10 });
+        cache.set("A", candles(1, 4), "test");
+        cache.set("B", candles(5, 4), "test");
+
+        cache.set("C", candles(9, 2), "test");
+
+        assert.equal(cache.size, 3);
+        assert.equal(cache.points, 10);
+        assert.equal(cache.evictions, 0);
+    });
+
+    it("discards an oversized replacement without flushing unrelated entries", () => {
+        const cache = new DataCache({ maxPoints: 10 });
+        cache.set("A", candles(1, 4), "test");
+        cache.syncAtByKey.set("A", 1);
+        cache.set("B", candles(5, 4), "test");
+        cache.syncAtByKey.set("B", 2);
+
+        cache.set("B", candles(100, 11), "test");
+
+        assert.equal(cache.get("B"), undefined);
+        assert.equal(cache.syncAtByKey.has("B"), false);
+        assert.equal(cache.get("A")?.candles.length, 4);
+        assert.equal(cache.syncAtByKey.has("A"), true);
+        assert.equal(cache.points, 4);
+        assert.equal(cache.evictions, 1);
+    });
+
+    it("discards an entry that an explicit update grows beyond the whole budget", () => {
+        const cache = new DataCache({ maxPoints: 10 });
+        cache.set("A", candles(1, 4), "test");
+        cache.syncAtByKey.set("A", 1);
+        cache.set("B", candles(5, 4), "test");
+        cache.syncAtByKey.set("B", 2);
+
+        cache.updateCandles("B", candles(100, 12), { sanitizedFor: "binance|1m" });
+
+        assert.equal(cache.get("B"), undefined);
+        assert.equal(cache.syncAtByKey.has("B"), false);
+        assert.equal(cache.get("A")?.candles.length, 4);
+        assert.equal(cache.points, 4);
+        assert.equal(cache.evictions, 1);
+    });
+
+    it("discards an entry whose notified in-place growth exceeds the whole budget", () => {
+        const cache = new DataCache({ maxPoints: 10 });
+        const shared: OHLCVData[] = candles(1, 4);
+        cache.set("A", shared, "test");
+        cache.syncAtByKey.set("A", 1);
+        cache.set("B", candles(5, 4), "test");
+        cache.syncAtByKey.set("B", 2);
+
+        // Stream push mutates the shared array in place beyond the budget.
+        for (let index = 0; index < 8; index += 1) shared.push(candle(100 + index));
+        cache.notifyCandleArrayMutation("A");
+
+        assert.equal(cache.get("A"), undefined);
+        assert.equal(cache.syncAtByKey.has("A"), false);
+        assert.equal(cache.get("B")?.candles.length, 4);
+        assert.equal(cache.points, 4);
+        assert.equal(cache.evictions, 1);
+        // The caller's array is untouched by the discard.
+        assert.equal(shared.length, 12);
     });
 
     it("clear resets points, accounting, and eviction statistics", () => {

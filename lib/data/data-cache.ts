@@ -80,7 +80,22 @@ export class DataCache {
         return entry;
     }
 
+    /** Retention check without bumping recency. */
+    has(key: string): boolean {
+        return this.lruCache.has(key);
+    }
+
     set(cacheKey: string, candles: OHLCVData[], source: string, metadata: CacheEntryMetadata = {}): void {
+        if (this.exceedsPointBudget(candles.length)) {
+            // An unretainable dataset must never flush unrelated entries: a new
+            // oversized key is not admitted at all, and an oversized
+            // replacement discards only that entry. The caller keeps its array.
+            if (this.lruCache.has(cacheKey)) {
+                this.removeEntry(cacheKey);
+                this.evictionCount += 1;
+            }
+            return;
+        }
         // Ensure insertion order puts this key last (most-recently-used).
         if (this.lruCache.has(cacheKey)) {
             this.lruCache.delete(cacheKey);
@@ -108,27 +123,44 @@ export class DataCache {
 
     updateCandles(cacheKey: string, candles: OHLCVData[], metadata: CacheEntryMetadata = {}): void {
         const entry = this.lruCache.get(cacheKey);
-        if (entry) {
-            entry.candles = candles;
-            entry.sanitizedFor = metadata.sanitizedFor;
-            entry.contiguous = metadata.contiguous;
-            entry.contiguousFor = metadata.contiguousFor;
-            entry.lastBarTime = metadata.lastBarTime;
-            this.reaccountPoints(cacheKey, candles.length);
-            this.enforceBudgets();
+        if (!entry) return;
+        if (this.exceedsPointBudget(candles.length)) {
+            // The replacement alone exceeds the whole budget: drop this entry
+            // instead of evicting unrelated entries to make room.
+            this.removeEntry(cacheKey);
+            this.evictionCount += 1;
+            return;
         }
+        entry.candles = candles;
+        entry.sanitizedFor = metadata.sanitizedFor;
+        entry.contiguous = metadata.contiguous;
+        entry.contiguousFor = metadata.contiguousFor;
+        entry.lastBarTime = metadata.lastBarTime;
+        this.reaccountPoints(cacheKey, candles.length);
+        this.enforceBudgets();
     }
 
     /**
      * Reaccount a key after an accepted in-place length change of its cached
      * array (stream push/splice mutate the shared reference without a full
      * commit). Reads the entry's current array length; metadata is untouched.
+     * Growth beyond the whole budget discards that entry without flushing
+     * unrelated entries.
      */
     notifyCandleArrayMutation(cacheKey: string): void {
         const entry = this.lruCache.get(cacheKey);
         if (!entry) return;
+        if (this.exceedsPointBudget(entry.candles.length)) {
+            this.removeEntry(cacheKey);
+            this.evictionCount += 1;
+            return;
+        }
         this.reaccountPoints(cacheKey, entry.candles.length);
         this.enforceBudgets();
+    }
+
+    private exceedsPointBudget(points: number): boolean {
+        return this.pointBudgetActive && points > this.maxPoints;
     }
 
     private reaccountPoints(cacheKey: string, nextLength: number): void {
