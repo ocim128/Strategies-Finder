@@ -12,11 +12,6 @@ jobs:
     name: Typecheck and test specs
     runs-on: windows-latest
     timeout-minutes: 20
-    env:
-      # Keep the Puppeteer browser in a fixed, cacheable directory instead of
-      # the per-run default. Both this job and e2e need the browser:
-      # monte-carlo-dom.spec.ts launches Puppeteer inside the unit suite.
-      PUPPETEER_CACHE_DIR: ${{ runner.temp }}/puppeteer-cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -24,6 +19,13 @@ jobs:
           node-version: 22.16.0
           cache: npm
           cache-dependency-path: package-lock.json
+      # `runner` is unavailable in job-level env, so the browser directory is
+      # exported through GITHUB_ENV in a step context. Every consumer below —
+      # the cache path, Puppeteer's browser install during `npm ci`, and the
+      # specs' browser launch — reads this exact variable, on Windows and Linux.
+      - name: Set Puppeteer cache directory
+        shell: bash
+        run: echo "PUPPETEER_CACHE_DIR=${RUNNER_TEMP}/puppeteer-cache" >> "$GITHUB_ENV"
       - name: Cache Puppeteer browsers
         uses: actions/cache@v4
         with:
@@ -31,7 +33,7 @@ jobs:
           key: puppeteer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
       - run: npm ci
       - name: Restore test timing history
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           # Only the scheduling history is restored; latest/ logs are never
           # treated as execution evidence.
@@ -40,7 +42,9 @@ jobs:
           # cache entries are immutable; the compatible restore prefix still
           # picks up the newest history so keys never freeze timing updates.
           # Keys separate runner OS, Node version, and the timing format
-          # version the runner writes (formatVersion: 1).
+          # version the runner writes (formatVersion: 1). The explicit
+          # actions/cache/save step below owns saving — actions/cache/restore
+          # has no post-job save, so this cannot double-save.
           key: test-timings-v1-${{ runner.os }}-node22.16.0-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             test-timings-v1-${{ runner.os }}-node22.16.0-
@@ -102,10 +106,6 @@ jobs:
     name: Browser smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      # Same fixed browser cache directory as the unit job, keyed separately
-      # by OS so the Linux browser download is not shared with Windows.
-      PUPPETEER_CACHE_DIR: ${{ runner.temp }}/puppeteer-cache
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -113,6 +113,11 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: package-lock.json
+      # Same exported browser directory as the unit job, keyed separately by
+      # OS so the Linux browser download is not shared with Windows.
+      - name: Set Puppeteer cache directory
+        shell: bash
+        run: echo "PUPPETEER_CACHE_DIR=${RUNNER_TEMP}/puppeteer-cache" >> "$GITHUB_ENV"
       - name: Cache Puppeteer browsers
         uses: actions/cache@v4
         with:
