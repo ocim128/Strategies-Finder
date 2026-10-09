@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, describe, it, type TestContext } from 'node:test';
 import { DataPersistence, selectStreamPersistenceDelta, type PersistenceContext } from '../lib/data/data-persistence';
+import { DataCache } from '../lib/data/data-cache';
 import { clearCachedCandlesDatabase, clearLocalDailyCsvCachesForSymbols, saveCachedCandles } from '../lib/candle-cache';
 import { resetLocalApiAvailability } from '../lib/local-api-transport';
 import type { OHLCVData, Time } from '../lib/types/strategies';
@@ -61,6 +62,119 @@ async function flush(t: TestContext, candles: OHLCVData[], elapsed = 1200) {
     t.mock.timers.tick(elapsed);
     await drain();
 }
+
+describe('sync metadata retention across async persistence', () => {
+    // A context wired to a real budgeted cache, exactly like
+    // DataFetcher.createPersistenceContext wires it in production.
+    function cacheContext(cache: DataCache): PersistenceContext {
+        return {
+            syncAtByKey: cache.syncAtByKey,
+            setCachedCandles: (key, value, source) => cache.set(key, value, source),
+            hasCachedCandles: (key) => cache.has(key),
+        };
+    }
+
+    const args = (ctx: PersistenceContext, overrides: Partial<Parameters<DataPersistence['persistLocalCandles']>[0]> = {}) => ({
+        symbol: 'BTCUSDT',
+        storageInterval: '1m',
+        providerLabel: 'Binance',
+        sourceTrait: 'stream',
+        cacheKey: 'BTCUSDT::1m',
+        updateSyncTime: true,
+        ctx,
+        ...overrides,
+    });
+
+    it('still refreshes sync time for a retained key after a deferred-snapshot flush', async () => {
+        const cache = new DataCache();
+        const ctxWithCache = cacheContext(cache);
+        cache.set('BTCUSDT::1m', [bar(1)], 'network');
+
+        await persistence.persistLocalCandles(args(ctxWithCache));
+
+        assert.equal(ctxWithCache.syncAtByKey.has('BTCUSDT::1m'), true);
+        assert.equal(cache.has('BTCUSDT::1m'), true);
+    });
+
+    it('does not recreate sync metadata for a key evicted before the flush', async () => {
+        const cache = new DataCache();
+        const ctxWithCache = cacheContext(cache);
+        cache.set('BTCUSDT::1m', [bar(1)], 'network');
+        cache.delete('BTCUSDT::1m');
+
+        // Stream flush whose snapshot is deferred: no cacheCandles, only the
+        // sync-time update.
+        await persistence.persistLocalCandles(args(ctxWithCache));
+
+        assert.equal(ctxWithCache.syncAtByKey.has('BTCUSDT::1m'), false);
+        assert.equal(cache.has('BTCUSDT::1m'), false);
+    });
+
+    it('ignores an eviction that happens while the write is pending', async () => {
+        const cache = new DataCache();
+        const ctxWithCache = cacheContext(cache);
+        cache.set('BTCUSDT::1m', [bar(1)], 'network');
+
+        let releaseWrite: (() => void) | undefined;
+        const gate = new Promise<void>((resolve) => { releaseWrite = resolve; });
+        const originalFetch = globalThis.fetch;
+        globalThis.fetch = async (input) => {
+            const url = String(input);
+            if (url.includes('/api/sqlite/status')) return json({ ok: true });
+            assert.ok(url.includes('/api/sqlite/store-ohlcv'), url);
+            await gate;
+            return json({ ok: true });
+        };
+        try {
+            // The SQLite delta flush is in flight while the snapshot is deferred.
+            const pending = persistence.persistLocalCandles(args(ctxWithCache, {
+                sqliteCandles: [bar(2)],
+            }));
+            await drain();
+            cache.delete('BTCUSDT::1m'); // budget eviction during the pending write
+            releaseWrite!();
+            await pending;
+        } finally {
+            globalThis.fetch = originalFetch;
+        }
+
+        assert.equal(ctxWithCache.syncAtByKey.has('BTCUSDT::1m'), false);
+        assert.equal(cache.has('BTCUSDT::1m'), false);
+    });
+
+    it('does not mark sync time when the cache rejects an oversized snapshot', async () => {
+        const cache = new DataCache({ maxPoints: 10 });
+        const ctxWithCache = cacheContext(cache);
+        cache.set('BTCUSDT::1m', [bar(1)], 'network');
+
+        const oversizedSnapshot = Array.from({ length: 25 }, (_, i) => bar(i + 2));
+        await persistence.persistLocalCandles(args(ctxWithCache, {
+            cacheCandles: oversizedSnapshot,
+        }));
+
+        // The oversized replacement was discarded, so no sync timestamp may
+        // claim it is retained.
+        assert.equal(cache.has('BTCUSDT::1m'), false);
+        assert.equal(ctxWithCache.syncAtByKey.has('BTCUSDT::1m'), false);
+    });
+
+    it('re-admits a retained-size snapshot after eviction and refreshes sync time', async () => {
+        const cache = new DataCache();
+        const ctxWithCache = cacheContext(cache);
+        cache.set('BTCUSDT::1m', [bar(1)], 'network');
+        cache.delete('BTCUSDT::1m');
+
+        const snapshot = [bar(2), bar(3)];
+        await persistence.persistLocalCandles(args(ctxWithCache, {
+            cacheCandles: snapshot,
+        }));
+
+        // A real snapshot write-back re-warms the cache with data, which is
+        // different from re-admitting merely to keep a timestamp.
+        assert.equal(cache.has('BTCUSDT::1m'), true);
+        assert.equal(ctxWithCache.syncAtByKey.has('BTCUSDT::1m'), true);
+    });
+});
 
 describe('stream candle persistence', () => {
     it('does not copy full history between scheduled successful snapshots', async t => {
