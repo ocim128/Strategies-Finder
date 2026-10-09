@@ -267,6 +267,10 @@ export class RustEngineClient {
     // Data caching for large datasets
     private readonly maxCachedDataEntries = 4;
     private readonly cachedDataIdsByHash = new Map<string, string>();
+    // Scratch view for Float64 bit extraction in mixHash. One reusable buffer
+    // per client: generateDataHash is fully synchronous, so reuse keeps the
+    // hash allocation-free per field.
+    private readonly hashScratch = new DataView(new ArrayBuffer(8));
 
     constructor(baseUrl: string = resolveDefaultRustEngineUrl(), fetchImpl: RustFetch = fetch) {
         this.baseUrl = baseUrl;
@@ -330,10 +334,35 @@ export class RustEngineClient {
         return 0;
     }
 
+    /**
+     * Mix one number into an accumulator over both halves of its Float64
+     * representation. The previous six-decimal rounding collapsed low-priced
+     * candles (1e-7 and 2e-7 both rounded to 0), so a changed close could
+     * wrongly reuse the previous Rust data ID.
+     *
+     * Identity matches what `cacheData` actually uploads via `packData` +
+     * `JSON.stringify`: -0 serializes as 0, and every non-finite value
+     * serializes as null, so -0 collapses onto 0 and all non-finite values
+     * share one canonical bit pattern (quiet NaN) that no finite value can
+     * have. This remains a noncryptographic cache key, not a collision
+     * guarantee.
+     */
     private mixHash(hash: number, value: number): number {
-        const normalized = Number.isFinite(value) ? Math.round(value * 1_000_000) : 0;
-        const mixed = hash ^ (normalized + 0x9e3779b9 + ((hash << 6) >>> 0) + (hash >>> 2));
-        return mixed >>> 0;
+        const view = this.hashScratch;
+        const normalized = value === 0 ? 0 : value; // collapse -0 onto +0
+        if (Number.isFinite(normalized)) {
+            view.setFloat64(0, normalized);
+        } else {
+            view.setUint32(0, 0x7ff80000);
+            view.setUint32(4, 0);
+        }
+        let next = (hash ^ view.getUint32(0)) >>> 0;
+        next = Math.imul(next, 0x85ebca6b) >>> 0;
+        next = ((next << 13) | (next >>> 19)) >>> 0;
+        next = (next ^ view.getUint32(4)) >>> 0;
+        next = Math.imul(next, 0xc2b2ae35) >>> 0;
+        next = (next ^ (next >>> 16)) >>> 0;
+        return next;
     }
 
     private getCachedDataId(dataHash: string): string | null {

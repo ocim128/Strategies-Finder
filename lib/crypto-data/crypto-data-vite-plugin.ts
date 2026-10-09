@@ -27,7 +27,7 @@ import type { Plugin } from "vite";
 import { debugLogger } from "../debug-logger";
 import { resolveBinanceApiBases } from "../binance-api-bases";
 import type { BinanceMarketType } from "../binance-market";
-import { fetchWithTimeoutAndRetry, isAbortError } from "../dataProviders/fetch-helpers";
+import { fetchAndConsumeWithTimeoutAndRetry, isAbortError, isTimeoutError } from "../dataProviders/fetch-helpers";
 import { fetchLocalApi } from "../local-api-transport";
 import { encodeBinaryOhlcvRows } from "../ohlcv-binary";
 import { beginNdjsonStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
@@ -214,8 +214,12 @@ function parseTimeToSeconds(value: string | undefined): number | null {
  * without the resample / marketdata transitive deps that would break the
  * `vite.config.ts` bundle. `interval` must be a Binance-native interval string
  * (e.g. "4h", "1h", "15m", "1d").
+ *
+ * Exported for tests: host failover and the timeout-vs-Stop policy are
+ * exercised against a mocked global `fetch`; a batch-only injected fetcher
+ * cannot verify failover. Not a public API.
  */
-async function fetchCryptoKlines(
+export async function fetchCryptoKlines(
     symbol: string,
     interval: string,
     limit: number,
@@ -240,16 +244,30 @@ async function fetchCryptoKlines(
             url.searchParams.set("startTime", String(startTime));
         }
         try {
-            const response = await fetchWithTimeoutAndRetry(url, { signal }, {
-                timeoutMs: BINANCE_FETCH_TIMEOUT_MS,
-                maxAttempts: BINANCE_FETCH_MAX_ATTEMPTS,
-                signal,
-            });
-            if (!response.ok) {
+            // Consume the JSON inside the deadline scope so a stalled body
+            // settles through the same per-attempt deadline as the headers,
+            // and cancel terminal error bodies inside the same scope so a
+            // failed attempt releases its connection immediately.
+            const { response, rows } = await fetchAndConsumeWithTimeoutAndRetry(
+                url,
+                { signal },
+                async (response) => {
+                    if (!response.ok) {
+                        await response.body?.cancel();
+                        return { response, rows: null as unknown[] | null };
+                    }
+                    return { response, rows: await response.json() as unknown[] };
+                },
+                {
+                    timeoutMs: BINANCE_FETCH_TIMEOUT_MS,
+                    maxAttempts: BINANCE_FETCH_MAX_ATTEMPTS,
+                    signal,
+                },
+            );
+            if (!response.ok || rows === null) {
                 lastError = new Error(`Binance ${response.status} for ${symbol}`);
                 continue;
             }
-            const rows = await response.json() as unknown[];
             const candles: CryptoCandle[] = [];
             for (const row of rows) {
                 if (!Array.isArray(row)) continue;
@@ -272,7 +290,12 @@ async function fetchCryptoKlines(
             return candles;
         } catch (error) {
             lastError = error;
-            if (isAbortError(error)) throw error;
+            // Same policy as `fetchKlinesBatch` in lib/dataProviders/binance.ts:
+            // only caller cancellation ends the request. A per-attempt deadline
+            // (TimeoutError) is a host failure and must fall through to the next
+            // base; the caller signal is checked first because caller
+            // cancellation may itself carry a TimeoutError reason.
+            if (signal?.aborted || (isAbortError(error) && !isTimeoutError(error))) throw error;
             // try next base. Capture the underlying cause so the eventual error
             // message names the real failure (e.g. ECONNRESET, ConnectTimeout)
             // instead of the unhelpful bare "fetch failed" undici surfaces.
@@ -690,7 +713,13 @@ export async function processCryptoSyncBatch(
                 }
                 writer({ type: "symbol", index, total: targets.length, ...result });
             } catch (error) {
-                if (isAbortError(error) || signal?.aborted) {
+                // Same policy as `fetchKlinesBatch` in lib/dataProviders/binance.ts:
+                // only caller cancellation ends the batch. A timeout that
+                // exhausted its retry/host budget is a per-symbol failure and
+                // must reach `symbol_failed` so the remaining symbols still run.
+                // The caller signal is checked first because caller cancellation
+                // may itself carry a TimeoutError reason.
+                if (signal?.aborted || (isAbortError(error) && !isTimeoutError(error))) {
                     cancelled = true;
                     if (syncRunState === runState) runState.cancelled = true;
                     break;

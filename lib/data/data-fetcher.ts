@@ -590,6 +590,7 @@ export class DataFetcher {
         return {
             syncAtByKey: this.cache.syncAtByKey,
             setCachedCandles: (key: string, candles: OHLCVData[], source: string) => this.cache.set(key, candles, source),
+            hasCachedCandles: (key: string) => this.cache.has(key),
         };
     }
 

@@ -65,6 +65,13 @@ export function selectBestNonBinanceLocalCandidate(
 export interface PersistenceContext {
     syncAtByKey: Map<string, number>;
     setCachedCandles: (cacheKey: string, candles: OHLCVData[], source: string) => void;
+    /**
+     * Whether the owning cache still retains this key. Sync-metadata updates
+     * are gated on it after the async write settles, so a key evicted while a
+     * write was pending (or an oversized snapshot the cache refused to admit)
+     * does not regain an orphan sync timestamp.
+     */
+    hasCachedCandles?: (cacheKey: string) => boolean;
 }
 
 /** Capture an independent delta; only normalized, sorted stream callers opt in. */
@@ -305,9 +312,16 @@ export class DataPersistence {
         }
 
         if (updateSyncTime && cacheKey) {
-            ctx.syncAtByKey.set(cacheKey, Date.now());
             if (cacheCandles) {
                 ctx.setCachedCandles(cacheKey, cacheCandles, sourceTrait);
+            }
+            // Sync metadata must respect retention at settlement time, not at
+            // call time: a key evicted while this write was pending gains no
+            // orphan sync timestamp, and an oversized snapshot the cache
+            // refused to admit does not either. The cache is never re-admitted
+            // merely to keep a timestamp.
+            if (ctx.hasCachedCandles?.(cacheKey) !== false) {
+                ctx.syncAtByKey.set(cacheKey, Date.now());
             }
         }
     }

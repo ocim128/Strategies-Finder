@@ -446,6 +446,93 @@ describe("Rust generic backtest output options", () => {
     });
 });
 
+/**
+ * Rust data-cache identity over Float64 values.
+ *
+ * `mixHash` mixes the raw Float64 bits instead of rounding to six decimals, so
+ * the local key describes exactly what `cacheData` uploads (`packData` +
+ * `JSON.stringify`): -0 and 0 serialize identically and share one key; every
+ * non-finite value serializes as null and shares one canonical key that no
+ * finite value can produce.
+ */
+describe("Rust data cache identity", () => {
+    const lowPriced: OHLCVData[] = [{
+        time: 1700000000 as Time,
+        open: 0.0001,
+        high: 0.0002,
+        low: 0.00005,
+        close: 0.0001,
+        volume: 1_000,
+    }];
+
+    function cacheClient(uploads: string[]): RustEngineClient {
+        const fetchImpl: typeof fetch = async (url) => {
+            if (String(url).endsWith("/api/health")) {
+                return new Response(JSON.stringify({
+                    status: "healthy",
+                    engine: "trading-engine-rust",
+                }), { status: 200 });
+            }
+            uploads.push(String(url));
+            return new Response(JSON.stringify({ cacheId: `id-${uploads.length}`, barCount: 1 }), { status: 200 });
+        };
+        return new RustEngineClient("http://127.0.0.1:3030", fetchImpl);
+    }
+
+    it("reuses one cached ID for identical copies without a second upload", async () => {
+        const uploads: string[] = [];
+        const client = cacheClient(uploads);
+
+        const first = await client.cacheData(lowPriced);
+        const second = await client.cacheData(lowPriced.map((bar) => ({ ...bar })));
+
+        expect(first).to.equal("id-1");
+        expect(second).to.equal("id-1");
+        expect(uploads).to.have.length(1);
+    });
+
+    it("requires different keys and two uploads for 1e-7 vs 2e-7 closes", async () => {
+        const uploads: string[] = [];
+        const client = cacheClient(uploads);
+        const finer: OHLCVData[] = [{ ...lowPriced[0]!, close: 0.0000001 }];
+        const coarser: OHLCVData[] = [{ ...lowPriced[0]!, close: 0.0000002 }];
+
+        expect(client.getDataCacheKey(finer)).to.not.equal(client.getDataCacheKey(coarser));
+
+        const finerId = await client.cacheData(finer);
+        const coarserId = await client.cacheData(coarser);
+
+        expect(finerId).to.equal("id-1");
+        expect(coarserId).to.equal("id-2");
+        expect(uploads).to.have.length(2);
+    });
+
+    it("detects a tiny mutation of every OHLCV field", () => {
+        const client = new RustEngineClient("http://127.0.0.1:3030", async () => new Response());
+        const baseline = client.getDataCacheKey(lowPriced);
+
+        for (const field of ["open", "high", "low", "close", "volume"] as const) {
+            const mutated = lowPriced.map((bar) => ({ ...bar, [field]: bar[field] + 1e-7 }));
+            expect(client.getDataCacheKey(mutated), field).to.not.equal(baseline);
+        }
+    });
+
+    it("keys -0 and 0 identically because they upload as the same JSON", () => {
+        const client = new RustEngineClient("http://127.0.0.1:3030", async () => new Response());
+        const negativeZero = lowPriced.map((bar) => ({ ...bar, volume: -0 }));
+        const positiveZero = lowPriced.map((bar) => ({ ...bar, volume: 0 }));
+
+        expect(client.getDataCacheKey(negativeZero)).to.equal(client.getDataCacheKey(positiveZero));
+    });
+
+    it("does not key a non-finite close as zero because they upload differently", () => {
+        const client = new RustEngineClient("http://127.0.0.1:3030", async () => new Response());
+        const notANumber = lowPriced.map((bar) => ({ ...bar, close: Number.NaN }));
+
+        expect(client.getDataCacheKey(notANumber)).to.not.equal(client.getDataCacheKey(lowPriced));
+    });
+});
+
 describe("Rust single-run transport budgets", () => {
     function healthyFetch(transport: (url: string, init?: RequestInit) => Promise<Response>): typeof fetch {
         return (async (url: RequestInfo | URL, init?: RequestInit) => {

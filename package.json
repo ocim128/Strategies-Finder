@@ -34,7 +34,8 @@
     "dev": "vite",
     "build": "vite build",
     "bench:backtest-fallback": "esno scripts/bench-backtest-fallback.ts",
-    "bench:indicator-cache": "esno scripts/bench-indicator-cache-capacity.ts"
+    "bench:indicator-cache": "esno scripts/bench-indicator-cache-capacity.ts",
+    "bench:data-cache-budget": "esno scripts/bench-data-cache-point-budget.ts"
   },
   "devDependencies": {
     "@types/chai": "^5.2.1",

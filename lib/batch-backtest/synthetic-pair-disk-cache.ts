@@ -73,7 +73,12 @@ import type { SyntheticPairDiskCacheArgs } from "./batch-dataset-loader-core";
 // v7 additionally moves the on-disk format from JSON to v8 serialization
 // (.bin), so it invalidates every prior JSON file (v1–v6) by extension as well.
 // v8 rebuilds ratios after excluding untraded IBKR daily carry-forward bars.
-export const SYNTHETIC_PAIR_CACHE_VERSION = 8;
+// v9 folds the per-series write revision (series_revisions) into Binance leg
+// segments: same-second historical repairs no longer advance a shared clock,
+// so the monotonic counter is what distinguishes them. v8 and older files are
+// invalidated by extension; the rebuild is one-time, including file-backed
+// pairs whose own mtime fingerprint did not change.
+export const SYNTHETIC_PAIR_CACHE_VERSION = 9;
 
 const CACHE_DIR_NAME = "synthetic-cache";
 const SERIES_META_TIMEOUT_MS = 2_000;
@@ -144,6 +149,11 @@ interface SeriesMetaResponse {
     // corrected (rewritten) without changing last_time or row count (audit
     // Finding 2). Null on cold caches / older endpoints → falls back to 0.
     updatedAt?: number | null;
+    // `series_revisions.revision` — the monotonic per-series write counter.
+    // Absent on older endpoints (explicit legacy segment, legacy freshness
+    // guarantees only); a supplied but malformed value bypasses disk caching
+    // instead of fabricating a number.
+    revision?: number | null;
 }
 
 /**
@@ -255,7 +265,19 @@ async function binanceBackedSegment(symbol: string, sourceInterval: string): Pro
     // breaking the cache for every lookup.
     const bars = meta.barsCount ?? 0;
     const updatedAt = typeof meta.updatedAt === "number" && Number.isFinite(meta.updatedAt) ? meta.updatedAt : 0;
-    return `binance:${symbol}:${sourceInterval}:${meta.lastTime}:${bars}:${updatedAt}`;
+    // The per-series write revision catches same-second repairs whose shared
+    // clock makes updatedAt and every other signal stand still. Endpoints from
+    // before the counter existed get an explicit legacy segment so their files
+    // keep only the old freshness guarantees; a supplied malformed revision
+    // must bypass disk caching rather than fabricate 0 (which would collide
+    // with never-written series).
+    if (meta.revision === undefined || meta.revision === null) {
+        return `binance-legacy:${symbol}:${sourceInterval}:${meta.lastTime}:${bars}:${updatedAt}`;
+    }
+    if (typeof meta.revision !== "number" || !Number.isInteger(meta.revision) || meta.revision < 0) {
+        return null;
+    }
+    return `binance:${symbol}:${sourceInterval}:${meta.lastTime}:${bars}:${updatedAt}:${meta.revision}`;
 }
 
 /**

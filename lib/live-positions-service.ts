@@ -18,7 +18,7 @@ import {
     getPersistedAlertSignalEntryTime,
 } from './alert-signal-utils';
 import { fetchBybitTradFiLatest } from './dataProviders/bybit';
-import { fetchWithTimeoutAndRetry } from './dataProviders/fetch-helpers';
+import { fetchAndConsumeWithTimeoutAndRetry } from './dataProviders/fetch-helpers';
 import { parseIntervalSeconds } from './interval-utils';
 import { parseTimeToUnixSeconds } from './time-normalization';
 import { state } from './state';
@@ -36,7 +36,7 @@ import {
     isAlertWorkerProviderCompatible,
 } from './alert-worker-compat';
 import { applySlippage, entrySideForDirection } from './strategies/backtest/backtest-utils';
-import { getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceMarketType } from './binance-market';
+import { getBinanceMarketTypeForProvider, getBinanceProviderForMarketType, isBinanceDataProvider, resolveBinanceMarketType, type BinanceMarketType } from './binance-market';
 
 export interface LivePosition {
     streamId: string;
@@ -119,6 +119,20 @@ const MAX_LOCAL_COMPARE_CANDLE_LIMIT = 100000;
 const PRICE_CACHE: Map<string, PriceCache> = new Map();
 const PRICE_REQUESTS: Map<string, Promise<number | null>> = new Map();
 
+/**
+ * Quote identity: spot and futures subscriptions for one symbol must not share
+ * a cached or in-flight quote, so keys carry the resolved provider. Binance and
+ * Bybit ticker prices are interval-independent; the Bybit TradFi fallback
+ * candle price depends on the requested interval, so its key includes the
+ * normalized fallback interval the fetch itself would use.
+ */
+function getPriceCacheKey(normalizedSymbol: string, interval: string, provider: DataProvider): string {
+    if (provider === 'bybit-tradfi') {
+        return `bybit-tradfi:${normalizedSymbol}:${(interval || '1d').trim().toLowerCase()}`;
+    }
+    return `${provider}:${normalizedSymbol}`;
+}
+
 interface LocalBacktestCacheEntry {
     signature: string;
     trades: Trade[];
@@ -138,6 +152,18 @@ class LivePositionsService {
     private pollTimer: number | null = null;
     private listeners: Set<(state: LivePositionsState) => void> = new Set();
     private localBacktestCache: Map<string, LocalBacktestCacheEntry> = new Map();
+    // Resolved once asynchronously so the synchronous chart-price paths can
+    // read loaded-data provenance without an await between their checks.
+    private dataManagerModule: typeof import('./data-manager') | null = null;
+
+    constructor() {
+        void import('./data-manager')
+            .then((module) => { this.dataManagerModule = module; })
+            .catch(() => {
+                // Provenance stays unavailable; chart-price donation is skipped
+                // and quotes go through the provider-scoped transport.
+            });
+    }
 
     getState(): Readonly<LivePositionsState> {
         return { ...this.state };
@@ -149,18 +175,35 @@ class LivePositionsService {
     }
 
     syncActiveChartPrice(): void {
-        const symbol = state.currentSymbol.trim().toUpperCase();
-        const interval = state.currentInterval;
-        const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
-        if (!symbol || !interval || !Number.isFinite(lastClose)) {
+        const dataManager = this.dataManagerModule?.dataManager;
+        // Without resolved provenance the chart cannot prove what it holds, so
+        // it donates nothing; positions keep their quoted prices.
+        if (!dataManager) {
             return;
         }
+        const symbol = state.currentSymbol.trim().toUpperCase();
+        const interval = state.currentInterval;
+        const chartData = state.ohlcvData;
+        const lastClose = Number(chartData[chartData.length - 1]?.close);
+        if (!symbol || !interval || chartData.length === 0 || !Number.isFinite(lastClose)) {
+            return;
+        }
+        // Provenance follows the actual published dataset (getLoadedContextKey
+        // re-validates the dataset reference), so imported or replaced chart
+        // data never donates a price here.
+        const loadedContextKey = dataManager.getLoadedContextKey();
 
         let changed = false;
         const positions = this.state.positions.map((position) => {
             if (!position.isOpen) return position;
             if (position.symbol.trim().toUpperCase() !== symbol) return position;
             if (position.interval !== interval) return position;
+            // Market isolation: a position only accepts this chart's close when
+            // the chart provably holds data for the position's own requested
+            // market — a spot chart must not reprice a futures position.
+            const positionMarket = this.resolvePositionBinanceMarket(position, dataManager);
+            if (positionMarket === null) return position;
+            if (loadedContextKey !== `${symbol}|${interval}|${positionMarket}`) return position;
             if (position.currentPrice === lastClose) return position;
 
             let unrealizedPnl: number | null = null;
@@ -758,31 +801,36 @@ class LivePositionsService {
 
     private async fetchCurrentPrice(symbol: string, interval: string, providerOverride?: DataProvider): Promise<number | null> {
         const normalizedSymbol = symbol.trim().toUpperCase();
-        const activeChartPrice = this.getActiveChartPrice(normalizedSymbol, interval);
+        // Resolve the provider before any shortcut so the quote cache, the
+        // in-flight dedup, and the chart-data reuse decision are all scoped to
+        // the provider the caller actually wants (spot vs futures for the same
+        // symbol never share work).
+        const provider = providerOverride ?? (await import('./data-manager')).dataManager.getProvider(normalizedSymbol);
+        const priceKey = getPriceCacheKey(normalizedSymbol, interval, provider);
+
+        const activeChartPrice = await this.getActiveChartPrice(normalizedSymbol, interval, provider);
         if (activeChartPrice !== null) {
             return activeChartPrice;
         }
 
-        const cached = PRICE_CACHE.get(normalizedSymbol);
+        const cached = PRICE_CACHE.get(priceKey);
         if (cached && Date.now() - cached.timestamp < PRICE_CACHE_TTL_MS) {
             return cached.price;
         }
 
-        const inFlight = PRICE_REQUESTS.get(normalizedSymbol);
+        const inFlight = PRICE_REQUESTS.get(priceKey);
         if (inFlight) {
             return inFlight;
         }
 
         const request = (async () => {
-            const provider = providerOverride ?? (await import('./data-manager')).dataManager.getProvider(normalizedSymbol);
-
             try {
                 if (provider === 'bybit-tradfi') {
                     const fast = await fetchBybitTradFiLatest(normalizedSymbol, '1m');
                     const slow = fast ?? await fetchBybitTradFiLatest(normalizedSymbol, interval || '1d');
                     const price = Number(slow?.close);
                     if (Number.isFinite(price)) {
-                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
+                        PRICE_CACHE.set(priceKey, { symbol: normalizedSymbol, price, timestamp: Date.now() });
                         return price;
                     }
                     return null;
@@ -794,9 +842,21 @@ class LivePositionsService {
                         : 'https://api.binance.com/api/v3/ticker/price';
                     // Cap the price-ticker fetch so a stalled Binance request can't
                     // retain PRICE_REQUESTS indefinitely and delay price refresh.
-                    const response = await fetchWithTimeoutAndRetry(
+                    // The JSON is consumed inside the deadline scope so a stalled
+                    // body settles through the same per-attempt deadline as the
+                    // headers; terminal error bodies are cancelled in the same
+                    // scope so a failed attempt releases its connection.
+                    const outcome = await fetchAndConsumeWithTimeoutAndRetry(
                         `${endpoint}?symbol=${normalizedSymbol}`,
                         {},
+                        async (response) => {
+                            if (!response.ok) {
+                                await response.body?.cancel();
+                                return { ok: false as const, price: null };
+                            }
+                            const data = await response.json() as { price: string };
+                            return { ok: true as const, price: parseFloat(data.price) };
+                        },
                         {
                             timeoutMs: 5_000,
                             maxAttempts: 2,
@@ -804,20 +864,26 @@ class LivePositionsService {
                             baseDelayMs: 250,
                         },
                     );
-                    if (!response.ok) throw new Error('Price fetch failed');
+                    if (!outcome.ok) throw new Error('Price fetch failed');
 
-                    const data = await response.json() as { price: string };
-                    const price = parseFloat(data.price);
-                    if (Number.isFinite(price)) {
-                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
-                        return price;
+                    if (Number.isFinite(outcome.price)) {
+                        PRICE_CACHE.set(priceKey, { symbol: normalizedSymbol, price: outcome.price, timestamp: Date.now() });
+                        return outcome.price;
                     }
                 }
             } catch (err) {
                 try {
-                    const response = await fetchWithTimeoutAndRetry(
+                    const outcome = await fetchAndConsumeWithTimeoutAndRetry(
                         `https://api.bybit.com/v5/market/tickers?category=linear&symbol=${normalizedSymbol}`,
                         {},
+                        async (response) => {
+                            if (!response.ok) {
+                                await response.body?.cancel();
+                                return { ok: false as const, price: null };
+                            }
+                            const data = await response.json() as { result?: { list?: Array<{ lastPrice: string }> } };
+                            return { ok: true as const, price: parseFloat(data.result?.list?.[0]?.lastPrice || '') };
+                        },
                         {
                             timeoutMs: 5_000,
                             maxAttempts: 2,
@@ -825,13 +891,11 @@ class LivePositionsService {
                             baseDelayMs: 250,
                         },
                     );
-                    if (!response.ok) throw new Error('Bybit price fetch failed');
+                    if (!outcome.ok) throw new Error('Bybit price fetch failed');
 
-                    const data = await response.json() as { result?: { list?: Array<{ lastPrice: string }> } };
-                    const price = parseFloat(data.result?.list?.[0]?.lastPrice || '');
-                    if (Number.isFinite(price)) {
-                        PRICE_CACHE.set(normalizedSymbol, { symbol: normalizedSymbol, price, timestamp: Date.now() });
-                        return price;
+                    if (Number.isFinite(outcome.price)) {
+                        PRICE_CACHE.set(priceKey, { symbol: normalizedSymbol, price: outcome.price, timestamp: Date.now() });
+                        return outcome.price;
                     }
                 } catch (bybitErr) {
                     // Log both the primary (Binance) and fallback (Bybit)
@@ -847,14 +911,63 @@ class LivePositionsService {
 
             return null;
         })().finally(() => {
-            PRICE_REQUESTS.delete(normalizedSymbol);
+            // Identity-safe: only clear the slot this request still owns, so a
+            // newer request for the same key is never dropped by an older one.
+            if (PRICE_REQUESTS.get(priceKey) === request) {
+                PRICE_REQUESTS.delete(priceKey);
+            }
         });
 
-        PRICE_REQUESTS.set(normalizedSymbol, request);
+        PRICE_REQUESTS.set(priceKey, request);
         return request;
     }
 
-    private getActiveChartPrice(symbol: string, interval: string): number | null {
+    /**
+     * Test seam: drive a single quote request without running the full
+     * subscription poll, and reset the module-level quote caches between
+     * specs. Not a public API.
+     */
+    __fetchCurrentPriceForTests(symbol: string, interval: string, provider: DataProvider): Promise<number | null> {
+        return this.fetchCurrentPrice(symbol, interval, provider);
+    }
+
+    __resetLivePriceCachesForTests(): void {
+        PRICE_CACHE.clear();
+        PRICE_REQUESTS.clear();
+    }
+
+    /** Test seam: install open positions so production sync paths are drivable. Not a public API. */
+    __setOpenPositionsForTests(positions: LivePosition[]): void {
+        this.state = { ...this.state, positions };
+    }
+
+    private async getActiveChartPrice(symbol: string, interval: string, provider: DataProvider): Promise<number | null> {
+        // Resolve the asynchronous dependency FIRST: eligibility and the close
+        // read below must observe one consistent state snapshot, with no await
+        // between them. Checking selection before the await and reading candles
+        // after it donated a stale close when the selection changed mid-flight.
+        const { dataManager } = await import('./data-manager');
+        return this.resolveActiveChartPrice(symbol, interval, provider, dataManager);
+    }
+
+    /**
+     * Synchronous chart-shortcut eligibility. The chart may only donate a
+     * price when the loaded candles provably come from the same market the
+     * quote is for: the provider must be Binance and the DataManager loaded
+     * context (loaded symbol + interval + Binance market, which follows the
+     * actual published dataset) must match. state.binanceMarketType alone is
+     * not enough because it can change before replacement data loads, and
+     * imported/synthetic data has no established provenance.
+     */
+    private resolveActiveChartPrice(
+        symbol: string,
+        interval: string,
+        provider: DataProvider,
+        dataManager: import('./data-manager').DataManager,
+    ): number | null {
+        if (!isBinanceDataProvider(provider)) {
+            return null;
+        }
         if (state.currentSymbol.trim().toUpperCase() !== symbol) {
             return null;
         }
@@ -864,9 +977,38 @@ class LivePositionsService {
         if (state.ohlcvData.length === 0) {
             return null;
         }
+        const loadedContextKey = dataManager.getLoadedContextKey();
+        if (!loadedContextKey) {
+            return null;
+        }
+        const expectedContextKey = `${symbol}|${interval}|${getBinanceMarketTypeForProvider(provider)}`;
+        if (loadedContextKey !== expectedContextKey) {
+            return null;
+        }
 
         const lastClose = Number(state.ohlcvData[state.ohlcvData.length - 1]?.close);
         return Number.isFinite(lastClose) ? lastClose : null;
+    }
+
+    /**
+     * The Binance market a position's quote is for, resolved the same way as
+     * subscription analysis: the provider router's provider for the symbol,
+     * with the market taken from the subscription's backtest settings. Null
+     * when the position is not Binance-backed and can never accept a chart
+     * donation.
+     */
+    private resolvePositionBinanceMarket(
+        position: LivePosition,
+        dataManager: import('./data-manager').DataManager,
+    ): BinanceMarketType | null {
+        const symbol = position.symbol.trim().toUpperCase();
+        if (!isBinanceDataProvider(dataManager.getProvider(symbol))) {
+            return null;
+        }
+        return resolveBinanceMarketType(
+            (position.backtestSettings as Record<string, unknown> | undefined)?.binanceMarketType,
+            'spot',
+        );
     }
 
     private async fetchSubscription(streamId: string): Promise<AlertSubscription | null> {

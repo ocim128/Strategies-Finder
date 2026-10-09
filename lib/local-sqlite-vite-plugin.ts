@@ -88,6 +88,19 @@ function getSqliteDb(): DatabaseSync {
         PRAGMA temp_store = MEMORY;
         PRAGMA cache_size = -65536;
         PRAGMA mmap_size = 268435456;
+    `);
+    initializeSqliteSchema(db);
+    sqliteDb = db;
+    return db;
+}
+
+/**
+ * Idempotent schema initialization, shared by server startup and tests so
+ * fresh and pre-existing databases both gain every table on open. Additive
+ * only: no candle data is ever rewritten or migrated.
+ */
+export function initializeSqliteSchema(db: DatabaseSync): void {
+    db.exec(`
         CREATE TABLE IF NOT EXISTS candles (
             symbol TEXT NOT NULL,
             interval TEXT NOT NULL,
@@ -112,9 +125,13 @@ function getSqliteDb(): DatabaseSync {
             updated_at INTEGER NOT NULL,
             PRIMARY KEY(symbol, interval)
         );
+        CREATE TABLE IF NOT EXISTS series_revisions (
+            symbol TEXT NOT NULL,
+            interval TEXT NOT NULL,
+            revision INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY(symbol, interval)
+        );
     `);
-    sqliteDb = db;
-    return db;
 }
 
 function closeSqliteDb(): void {
@@ -199,6 +216,15 @@ export function localSqlitePlugin(): Plugin {
                         return;
                     }
                     getSqliteDb();
+                    // The per-series write revision (series_revisions) changes
+                    // on every accepted /store-ohlcv request, including
+                    // same-second historical repairs whose series_meta rollup
+                    // would otherwise look unchanged. Series that never saw a
+                    // plugin write (or predate the counter) read as 0.
+                    const revisionRow = getPreparedStatement(
+                        'SELECT revision FROM series_revisions WHERE symbol = ? AND interval = ?'
+                    ).get(symbol, interval) as { revision?: number } | undefined;
+                    const revision = revisionRow?.revision != null ? Number(revisionRow.revision) : 0;
                     let row = getPreparedStatement(`
                         SELECT bars_count, first_time, last_time, updated_at
                         FROM series_meta
@@ -256,6 +282,7 @@ export function localSqlitePlugin(): Plugin {
                         firstTime: row?.first_time != null ? Number(row.first_time) : null,
                         lastTime: row?.last_time != null ? Number(row.last_time) : null,
                         updatedAt: row?.updated_at != null ? Number(row.updated_at) : null,
+                        revision,
                     });
                     return;
                 }
@@ -346,6 +373,16 @@ export function localSqlitePlugin(): Plugin {
                         // including ordinary stream writes without a summary.
                         // Rebuild lazily on the next metadata read (or below).
                         getPreparedStatement('DELETE FROM series_meta WHERE symbol = ? AND interval = ?').run(symbol, interval);
+                        // Advance the per-series write revision in the same
+                        // transaction: first writes land at revision 1 and each
+                        // further accepted request adds 1, so same-second
+                        // repairs with unchanged bar count and timestamps still
+                        // change the series identity. A rollback here undoes
+                        // candles, invalidation, and revision together.
+                        getPreparedStatement(`
+                            INSERT INTO series_revisions (symbol, interval, revision) VALUES (?, ?, 1)
+                            ON CONFLICT(symbol, interval) DO UPDATE SET revision = revision + 1
+                        `).run(symbol, interval);
                         db.exec('COMMIT');
                     } catch (error) {
                         db.exec('ROLLBACK');
