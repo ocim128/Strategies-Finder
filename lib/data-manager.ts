@@ -195,6 +195,17 @@ export class DataManager {
     }
 
     /**
+     * Test seam: swap the underlying data cache (e.g. for a small-budget
+     * instance exercising budget rejection) and return the previous one so the
+     * caller can restore it. Not a public API.
+     */
+    public __swapDataCacheForTests(cache: DataCache): DataCache {
+        const previous = this.cache;
+        this.cache = cache;
+        return previous;
+    }
+
+    /**
      * Test seam: install (or clear) the loaded-context marker as if a dataset
      * had finished loading for this exact symbol/interval/Binance market, so
      * quote-identity specs can drive getLoadedContextKey without running a
@@ -224,17 +235,22 @@ export class DataManager {
      * Re-point provenance at a stream-published dataset when it continues the
      * recorded context (same symbol/interval and, for Binance, the same
      * market). Used by realtime paths that republish a merged or first-candle
-     * array instead of mutating the shared reference in place.
+     * array instead of mutating the shared reference in place. With
+     * `requireCurrentlyLoaded`, the recorded context must also still be valid
+     * for the published dataset, so a republication cannot promote imported
+     * or replaced (untrusted) chart data into network provenance.
      */
     private reassociateLoadedContextWithStream(
         dataset: OHLCVData[],
         symbol: string,
         interval: string,
         provider: DataProvider | '',
+        options?: { requireCurrentlyLoaded?: boolean },
     ): void {
         if (!this.loadedSymbol || !this.loadedInterval) return;
         if (this.loadedSymbol !== symbol || this.loadedInterval !== interval) return;
         if (isBinanceDataProvider(provider) && getBinanceMarketTypeForProvider(provider) !== this.loadedBinanceMarketType) return;
+        if (options?.requireCurrentlyLoaded && this.loadedDatasetRef !== state.ohlcvData) return;
         this.loadedDatasetRef = dataset;
     }
 
@@ -748,10 +764,14 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
                 this.chartLookbackBars ?? DATA_CHART_TOTAL_LIMIT
             );
 
+            // Re-bind provenance BEFORE publishing (consistently with
+            // setSymbol): synchronous ohlcvData subscribers run during the
+            // commit and must observe valid context for the merged array. The
+            // guard only continues a dataset that is still trusted — stale
+            // context fields must not promote an imported or otherwise
+            // replaced dataset into network provenance.
+            this.reassociateLoadedContextWithStream(merged, symbol, interval, provider, { requireCurrentlyLoaded: true });
             commitOhlcvData(merged, 'realtime_gap_fill');
-            // The gap fill republishes a merged array; it continues the loaded
-            // network dataset, so provenance follows the new reference.
-            this.reassociateLoadedContextWithStream(merged, symbol, interval, provider);
             this.fetcher.queuePersistCandles(symbol, interval, merged, provider);
 
             debugLogger.event('data.stream.gap_filled', {
@@ -792,14 +812,17 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
         if (currentData.length === 0) {
             // The first streamed candle publishes a fresh array rather than
             // mutating one; keep provenance when the stream continues the
-            // recorded context so live updates stay shortcut-eligible.
+            // recorded context so live updates stay shortcut-eligible. One
+            // array serves both the provenance binding and the publication —
+            // separate allocations would permanently fail the reference check.
+            const published: OHLCVData[] = [updatedCandle];
             this.reassociateLoadedContextWithStream(
-                [updatedCandle],
+                published,
                 this.streamSymbol || state.currentSymbol,
                 this.streamInterval || state.currentInterval,
                 this.streamProvider,
             );
-            commitOhlcvData([updatedCandle], 'realtime_replace_empty');
+            commitOhlcvData(published, 'realtime_replace_empty');
             changed = true;
             cachedLengthChanged = true;
         } else {

@@ -80,6 +80,11 @@ Deferred persistence respects the budget: `persistLocalCandles` refreshes
 async write settles, so an eviction during a pending write — or an oversized
 snapshot the cache rejects — leaves no orphan sync timestamp behind. A
 retained-size snapshot is still written back into the cache with its data.
+Rejected oversized admissions are symmetric on the write side: `DataCache.set`
+cleans any pre-existing sync metadata and accounting for the rejected key
+whether or not it was previously retained, so callers that stamp sync time
+before admission (like `registerImportedData`) cannot leave orphans, and
+rejecting a never-admitted key is not counted as an eviction.
 
 ## Live quotes
 
@@ -97,10 +102,14 @@ provably matches the request, and provenance follows the actual published
 dataset: `DataManager.getLoadedContextKey()` returns non-null only while
 `state.ohlcvData` is still the array a completed network load published. Any
 replacement — JSON import, synthetic pair, endpoint commit — invalidates the
-context until the next network load, while in-place realtime mutations (and
-the stream's first-candle and gap-fill republications, which re-bind the
-context) keep it. `fetchCurrentPrice` resolves its dependency first and then
-checks selection, provenance, and candles in one synchronous block, so a
+context until the next network load, while in-place realtime mutations keep
+it. Realtime republications follow the setSymbol ordering: the stream binds
+provenance to the exact published array *before* `commitOhlcvData`, so
+synchronous `ohlcvData` subscribers never see new candles with stale
+provenance, and a gap fill only continues a dataset that is still trusted —
+stale context fields cannot promote imported or replaced chart data into
+network provenance. `fetchCurrentPrice` resolves its dependency first and
+then checks selection, provenance, and candles in one synchronous block, so a
 selection change during dependency resolution can no longer donate a stale
 close. `syncActiveChartPrice` applies the same rules per position: a position
 only accepts the chart close when its requested Binance market (provider

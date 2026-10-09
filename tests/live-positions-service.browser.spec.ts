@@ -27,6 +27,7 @@ import { livePositionsService, type LivePosition } from "../lib/live-positions-s
 import { state } from "../lib/state";
 import { dataManager } from "../lib/data-manager";
 import { commitOhlcvData } from "../lib/state-actions";
+import { uiManager } from "../lib/ui-manager";
 import type { DataProvider } from "../lib/types/data-providers";
 import type { BacktestSettings, OHLCVData, Time } from "../lib/types/strategies";
 
@@ -513,5 +514,259 @@ describe("live price chart provenance lifecycle", () => {
         const positions = livePositionsService.getState().positions;
         assert.equal(positions[0]!.currentPrice, 200);
         assert.equal(positions[1]!.currentPrice, 200);
+    });
+});
+
+describe("stream publication provenance", () => {
+    const drain = (): Promise<void> => new Promise<void>((resolve) => setImmediate(resolve));
+
+    const position = (overrides: Partial<LivePosition>): LivePosition => ({
+        streamId: "stream",
+        symbol: "BTCUSDT",
+        interval: "4h",
+        strategyKey: "strategy",
+        strategyParams: {},
+        backtestSettings: { executionModel: "signal_close" } as BacktestSettings,
+        configName: null,
+        direction: "long",
+        entryPrice: 100,
+        entryTime: 1700000000,
+        currentPrice: null,
+        unrealizedPnl: null,
+        unrealizedPnlPercent: null,
+        stopLossPrice: null,
+        takeProfitPrice: null,
+        isOpen: true,
+        lastSignalFromWorker: null,
+        localBacktestTrade: null,
+        mismatch: false,
+        mismatchReason: null,
+        lastUpdated: 0,
+        ...overrides,
+    });
+    const FIRST_CANDLE_TIME = 1700006400; // 4h-aligned
+    const CHART_TIMES = [1700006400, 1700020800]; // two consecutive 4h bars
+    const GAP_TIMES = [1700035200, 1700049600]; // the two bars the gap fill fetches
+    const INCOMING_TIME = 1700064000; // one skipped bar pair after the chart tail
+
+    const candle = (time: number, close: number): OHLCVData => ({
+        time: time as Time, open: close - 1, high: close + 1, low: close - 2, close, volume: 1,
+    });
+    const klineRow = (time: number, close: number): unknown[] =>
+        [time * 1000, String(close - 1), String(close + 1), String(close - 2), String(close), "1"];
+
+    type Internals = {
+        handleStreamUpdate: (candle: OHLCVData, sessionId?: number, symbol?: string, interval?: string, provider?: string) => void;
+        backfillRealtimeGap: (sessionId: number, symbol: string, interval: string, provider: string, latestTime: unknown) => Promise<void>;
+        fetcher: { queuePersistCandles: () => void };
+    };
+    const internals = (): Internals => dataManager as unknown as Internals;
+
+    let observations: Array<{ contextKey: string | null; spotPrice: number | null; futuresPrice: number | null }>;
+    let unsubscribe: (() => void) | null = null;
+
+    const installObserver = (): void => {
+        observations = [];
+        unsubscribe = state.subscribe("ohlcvData", () => {
+            // Runs synchronously inside commitOhlcvData: provenance and
+            // position repricing must already be valid for the new dataset.
+            const contextKey = dataManager.getLoadedContextKey();
+            livePositionsService.syncActiveChartPrice();
+            const positions = livePositionsService.getState().positions;
+            observations.push({
+                contextKey,
+                // installPositions stores futures first, spot second.
+                futuresPrice: positions[0]!.currentPrice,
+                spotPrice: positions[1]!.currentPrice,
+            });
+        });
+    };
+
+    const installFetch = (): { calls: () => number } => {
+        let calls = 0;
+        globalThis.fetch = (async (input: RequestInfo | URL) => {
+            const url = String(input);
+            if (url.includes("/api/v3/klines")) {
+                return new Response(JSON.stringify(GAP_TIMES.map((time, index) => klineRow(time, 109 + index))), {
+                    status: 200,
+                    headers: { "content-type": "application/json" },
+                });
+            }
+            calls += 1;
+            return tickerResponse("65600");
+        }) as typeof fetch;
+        return { calls: () => calls };
+    };
+
+    const installPositions = (): void => {
+        livePositionsService.__setOpenPositionsForTests([
+            position({
+                symbol: "BTCUSDT",
+                interval: "4h",
+                currentPrice: 200,
+                unrealizedPnl: 100,
+                unrealizedPnlPercent: 100,
+                backtestSettings: { executionModel: "signal_close", binanceMarketType: "futures" } as BacktestSettings,
+            }),
+            position({
+                symbol: "BTCUSDT",
+                interval: "4h",
+                currentPrice: 200,
+                unrealizedPnl: 100,
+                unrealizedPnlPercent: 100,
+            }),
+        ]);
+    };
+
+    const setStreamContext = (): void => {
+        // The singleton's stream fields are normally owned by startStreaming;
+        // the specs drive the update/gap-fill methods directly.
+        const internal = dataManager as unknown as {
+            streamSymbol: string; streamInterval: string; streamProvider: string;
+        };
+        internal.streamSymbol = "BTCUSDT";
+        internal.streamInterval = "4h";
+        internal.streamProvider = "binance";
+    };
+
+    const clearStreamContext = (): void => {
+        const internal = dataManager as unknown as {
+            streamSymbol: string; streamInterval: string; streamProvider: string;
+        };
+        internal.streamSymbol = "";
+        internal.streamInterval = "";
+        internal.streamProvider = "";
+    };
+
+    beforeEach(() => {
+        livePositionsService.__resetLivePriceCachesForTests();
+        state.currentSymbol = "BTCUSDT";
+        state.currentInterval = "4h";
+        state.binanceMarketType = "spot";
+        installPositions();
+    });
+
+    afterEach(() => {
+        unsubscribe?.();
+        unsubscribe = null;
+        clearStreamContext();
+        globalThis.fetch = originalFetch;
+        livePositionsService.__resetLivePriceCachesForTests();
+        livePositionsService.__setOpenPositionsForTests([]);
+        state.currentSymbol = "ETHUSDT";
+        state.currentInterval = "1d";
+        state.binanceMarketType = "spot";
+        state.ohlcvData = [];
+        dataManager.__setLoadedContextForTests(null, null);
+    });
+
+    it("binds provenance before the first streamed candle publishes", async t => {
+        await drain();
+        setStreamContext();
+        state.ohlcvData = [];
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        installObserver();
+        const transport = installFetch();
+        t.mock.method(internals().fetcher, "queuePersistCandles", () => {});
+        t.mock.method(uiManager, "updatePriceDisplay", () => {});
+
+        internals().handleStreamUpdate(
+            candle(FIRST_CANDLE_TIME, 101),
+            (dataManager as unknown as { streamSessionId: number }).streamSessionId,
+            "BTCUSDT", "4h", "binance",
+        );
+
+        // Inside the publication: provenance is valid and the compatible spot
+        // position already carries the streamed close; futures is isolated.
+        assert.equal(observations.length, 1);
+        assert.equal(observations[0]!.contextKey, "BTCUSDT|4h|spot");
+        assert.equal(observations[0]!.spotPrice, 101);
+        assert.equal(observations[0]!.futuresPrice, 200);
+        // After the method returns the dataset stays provenance-trusted.
+        assert.equal(dataManager.getLoadedContextKey(), "BTCUSDT|4h|spot");
+        assert.equal(await fetchQuote("BTCUSDT", "binance", "4h"), 101);
+        assert.equal(transport.calls(), 0);
+    });
+
+    it("binds provenance before a gap-fill republication publishes", async t => {
+        await drain();
+        setStreamContext();
+        state.ohlcvData = CHART_TIMES.map((time, index) => candle(time, 107 + index));
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        installObserver();
+        const transport = installFetch();
+        t.mock.method(internals().fetcher, "queuePersistCandles", () => {});
+        t.mock.method(uiManager, "updatePriceDisplay", () => {});
+
+        // The incoming bar skips a pair, so handleStreamUpdate triggers the
+        // real gap-fill path before this promise settles.
+        await internals().handleStreamUpdate(
+            candle(INCOMING_TIME, 111),
+            (dataManager as unknown as { streamSessionId: number }).streamSessionId,
+            "BTCUSDT", "4h", "binance",
+        );
+        await drain();
+
+        // Inside the merged republication: valid provenance for the merged
+        // array, and the compatible spot position reprices to the merged tail.
+        assert.equal(observations.length, 1);
+        assert.equal(observations[0]!.contextKey, "BTCUSDT|4h|spot");
+        assert.equal(observations[0]!.spotPrice, 111);
+        assert.equal(observations[0]!.futuresPrice, 200);
+        assert.equal(state.ohlcvData.length, 5);
+        assert.equal(dataManager.getLoadedContextKey(), "BTCUSDT|4h|spot");
+        assert.equal(await fetchQuote("BTCUSDT", "binance", "4h"), 111);
+        assert.equal(transport.calls(), 0);
+    });
+
+    it("does not let stale context fields promote imported data during a gap fill", async t => {
+        await drain();
+        setStreamContext();
+        state.ohlcvData = CHART_TIMES.map((time, index) => candle(time, 107 + index));
+        dataManager.__setLoadedContextForTests("BTCUSDT", "4h", "spot");
+        // The normal import lifecycle: publish a replacement array, register it.
+        const imported: OHLCVData[] = CHART_TIMES.map((time, index) => candle(time, 150 + index));
+        commitOhlcvData(imported, "data_mining_import");
+        dataManager.registerImportedData("BTCUSDT", "4h", imported);
+        assert.equal(dataManager.getLoadedContextKey(), null, "imported data has no provenance");
+        installObserver();
+        const transport = installFetch();
+        t.mock.method(internals().fetcher, "queuePersistCandles", () => {});
+        t.mock.method(uiManager, "updatePriceDisplay", () => {});
+
+        await internals().handleStreamUpdate(
+            candle(INCOMING_TIME, 111),
+            (dataManager as unknown as { streamSessionId: number }).streamSessionId,
+            "BTCUSDT", "4h", "binance",
+        );
+        await drain();
+
+        // The merged array contains imported bars; the stale BTCUSDT/4h/spot
+        // fields must not re-promote it, so no position accepts a chart price.
+        assert.equal(observations.length, 1);
+        assert.equal(observations[0]!.contextKey, null);
+        assert.equal(observations[0]!.spotPrice, 200);
+        assert.equal(observations[0]!.futuresPrice, 200);
+        assert.equal(dataManager.getLoadedContextKey(), null);
+        assert.equal(await fetchQuote("BTCUSDT", "binance", "4h"), 65600);
+        assert.equal(transport.calls(), 1);
+    });
+
+    it("leaves no sync metadata when an imported dataset exceeds the cache budget", async () => {
+        const budgeted = new (await import("../lib/data/data-cache")).DataCache({ maxPoints: 10 });
+        const previous = dataManager.__swapDataCacheForTests(budgeted);
+        try {
+            const oversized: OHLCVData[] = Array.from({ length: 25 }, (_, index) => candle(FIRST_CANDLE_TIME + index * 14400, 100));
+            dataManager.registerImportedData("BTCUSDT", "4h", oversized);
+
+            // registerImportedData stamped sync time before admission; the
+            // rejected oversized set must not leave the orphan behind.
+            assert.equal(budgeted.syncAtByKey.size, 0);
+            assert.equal(budgeted.size, 0);
+            assert.equal(budgeted.points, 0);
+            assert.equal(budgeted.evictions, 0);
+        } finally {
+            dataManager.__swapDataCacheForTests(previous);
+        }
     });
 });

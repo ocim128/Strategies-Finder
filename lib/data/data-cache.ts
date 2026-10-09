@@ -90,9 +90,15 @@ export class DataCache {
             // An unretainable dataset must never flush unrelated entries: a new
             // oversized key is not admitted at all, and an oversized
             // replacement discards only that entry. The caller keeps its array.
+            // Metadata is cleaned either way — callers that stamp sync time
+            // before admission (registerImportedData) must not leave an orphan
+            // timestamp for a key the cache never retained.
             if (this.lruCache.has(cacheKey)) {
                 this.removeEntry(cacheKey);
                 this.evictionCount += 1;
+            } else {
+                this.cacheSyncAtByKey.delete(cacheKey);
+                this.accountedPointsByKey.delete(cacheKey);
             }
             return;
         }

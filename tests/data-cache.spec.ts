@@ -182,6 +182,26 @@ describe("DataCache retained-point budget", () => {
         assert.equal(cache.evictions, 0);
     });
 
+    it("cleans prewritten metadata when a never-admitted oversized key is rejected", () => {
+        const cache = new DataCache({ maxPoints: 10 });
+        cache.set("A", candles(1, 4), "test");
+        cache.syncAtByKey.set("A", 1);
+        // registerImportedData stamps sync time BEFORE the admission attempt,
+        // so a rejected oversized key starts with metadata already present.
+        cache.syncAtByKey.set("C", 3);
+
+        cache.set("C", candles(100, 11), "test");
+
+        assert.equal(cache.syncAtByKey.has("C"), false, "no orphan sync metadata may survive rejection");
+        assert.equal(cache.get("C"), undefined);
+        // Rejecting a never-admitted key is not an eviction of a retained entry.
+        assert.equal(cache.evictions, 0);
+        // Unrelated entries, their recency, and their timestamps are untouched.
+        assert.equal(cache.get("A")?.candles.length, 4);
+        assert.equal(cache.syncAtByKey.get("A"), 1);
+        assert.equal(cache.points, 4);
+    });
+
     it("discards an oversized replacement without flushing unrelated entries", () => {
         const cache = new DataCache({ maxPoints: 10 });
         cache.set("A", candles(1, 4), "test");
