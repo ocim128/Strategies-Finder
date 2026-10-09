@@ -88,6 +88,41 @@ describe("test runner contracts", () => {
         }
     });
 
+    it("records browser compilation failures and finishes other specs and the summary", () => {
+        // Keep this copied runner isolated from the outer run's latest/ logs.
+        // It can still resolve dependencies through the app's parent directories.
+        const artifacts = path.join(root, "artifacts");
+        fs.mkdirSync(artifacts, { recursive: true });
+        const fixtureRoot = fs.mkdtempSync(path.join(artifacts, "runner-compilation-"));
+        try {
+            fs.mkdirSync(path.join(fixtureRoot, "scripts"));
+            fs.mkdirSync(path.join(fixtureRoot, "tests"));
+            const runner = path.join(fixtureRoot, "scripts/run-tests.ts");
+            fs.copyFileSync(path.join(root, "scripts/run-tests.ts"), runner);
+            fs.writeFileSync(path.join(fixtureRoot, "tests/broken.browser.spec.ts"), 'import "./missing-module";');
+            fs.writeFileSync(path.join(fixtureRoot, "tests/passing.spec.ts"), 'console.log("passing fixture executed");');
+            for (const jobs of [1, 2]) {
+                const result = spawnSync(process.execPath, [esnoCli, runner, `--jobs=${jobs}`, "--json"], {
+                    cwd: fixtureRoot, encoding: "utf8", timeout: 15_000,
+                });
+                assert.equal(result.status, 1, result.stderr);
+                const summary = JSON.parse(result.stdout);
+                assert.equal(summary.failedCount, 1);
+                assert.equal(summary.passedCount, 1);
+                assert.equal(summary.selectedCount, 2);
+                assert.deepEqual(summary, JSON.parse(fs.readFileSync(
+                    path.join(fixtureRoot, "artifacts/test-logs/latest/summary.json"), "utf8",
+                )));
+                const failed = summary.results.find((row: { status: string }) => row.status === "FAIL");
+                assert.equal(failed.file, "tests/broken.browser.spec.ts");
+                assert.match(fs.readFileSync(failed.logFile, "utf8"), /missing-module/);
+                assert.equal(failed.logError, undefined);
+            }
+        } finally {
+            fs.rmSync(fixtureRoot, { recursive: true, force: true });
+        }
+    });
+
     it("handles a log open error before the test finishes without hanging", async () => {
         const stream = new Writable({ write: (_chunk, _encoding, callback) => callback() });
         const log = createTestLogWriter(stream);

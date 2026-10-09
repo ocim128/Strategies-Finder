@@ -386,93 +386,101 @@ async function runSingleTest(
     let skipReason: string | undefined;
     let markerBuffer = "";
     let timedOut = false;
-    let spawnError: unknown = null;
+    let runError: unknown = null;
     const verbose = outputMode === "verbose";
-
-    let childArgs = [esnoCliPath, file];
-    if (file.endsWith(".browser.spec.ts")) {
-        const bundlePath = path.join(latestLogsDir, `${sanitizeLogName(file)}.cjs`);
-        await buildWithEsbuild({
-            entryPoints: [path.join(repoRoot, file)],
-            bundle: true,
-            platform: "node",
-            format: "cjs",
-            target: "node22",
-            outfile: bundlePath,
-            logLevel: "silent",
-        });
-        childArgs = [bundlePath];
-    }
-
-    const child = spawn(process.execPath, childArgs, {
-        cwd: repoRoot,
-        stdio: ["ignore", "pipe", "pipe"],
-    });
+    let exitCode: number | null = null;
+    let signal: NodeJS.Signals | null = null;
+    let logError: string | undefined;
 
     const writeRunnerMessage = (message: string): void => {
         log.write(message);
         tail.pushChunk(message);
-        if (verbose) {
-            process.stderr.write(message);
-        }
+        if (verbose) process.stderr.write(message);
     };
 
-    const handleChunk = (chunk: Buffer, stream: "stdout" | "stderr"): void => {
-        capturedBytes += chunk.byteLength;
-        if (capturedBytes > MAX_CAPTURE_BUFFER_BYTES) {
-            if (!outputTruncated) {
-                const message = `\n[runner-error]\nCaptured output exceeded ${MAX_CAPTURE_BUFFER_BYTES} bytes. Test process was terminated.\n`;
-                writeRunnerMessage(message);
-                outputTruncated = true;
-                child.kill();
-            }
-            return;
+    try {
+        let childArgs = [esnoCliPath, file];
+        if (file.endsWith(".browser.spec.ts")) {
+            const bundlePath = path.join(latestLogsDir, `${sanitizeLogName(file)}.cjs`);
+            await buildWithEsbuild({
+                entryPoints: [path.join(repoRoot, file)],
+                bundle: true,
+                platform: "node",
+                format: "cjs",
+                target: "node22",
+                outfile: bundlePath,
+                logLevel: "silent",
+
+            });
+            childArgs = [bundlePath];
         }
 
-        const text = chunk.toString("utf8");
-        markerBuffer = `${markerBuffer}${text}`.slice(-8192);
-        const skipMatch = markerBuffer.match(/(?:^|\r?\n)SKIP:\s*([^\r\n]+)/);
-        if (skipMatch && !skipReason) skipReason = skipMatch[1]!.trim();
-        log.write(text);
-        // ANSI is stripped from tail lines so the compact failure output stays
-        // readable; the log file retains the raw chunk verbatim.
-        tail.pushChunk(stripAnsi(text));
-        if (verbose) {
-            const target = stream === "stdout" ? process.stdout : process.stderr;
-            target.write(text);
-        }
-    };
-
-    child.stdout?.on("data", (chunk: Buffer) => handleChunk(chunk, "stdout"));
-    child.stderr?.on("data", (chunk: Buffer) => handleChunk(chunk, "stderr"));
-    child.on("error", (error) => {
-        spawnError = error;
-    });
-
-    const timeoutId = setTimeout(() => {
-        timedOut = true;
-        writeRunnerMessage(`\n[runner-error]\nTest exceeded ${timeoutMs}ms and was terminated.\n`);
-        child.kill();
-    }, timeoutMs);
-
-    const { exitCode, signal } = await new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-        child.on("close", (code, closeSignal) => {
-            clearTimeout(timeoutId);
-            resolve({ exitCode: code, signal: closeSignal });
+        const child = spawn(process.execPath, childArgs, {
+            cwd: repoRoot,
+            stdio: ["ignore", "pipe", "pipe"],
         });
-    });
 
-    if (spawnError) {
-        const runErrorText = `\n[runner-error]\n${spawnError instanceof Error ? String(spawnError.stack || spawnError.message) : String(spawnError)}\n`;
-        writeRunnerMessage(runErrorText);
+        const handleChunk = (chunk: Buffer, stream: "stdout" | "stderr"): void => {
+            capturedBytes += chunk.byteLength;
+            if (capturedBytes > MAX_CAPTURE_BUFFER_BYTES) {
+                if (!outputTruncated) {
+                    const message = `\n[runner-error]\nCaptured output exceeded ${MAX_CAPTURE_BUFFER_BYTES} bytes. Test process was terminated.\n`;
+                    writeRunnerMessage(message);
+                    outputTruncated = true;
+                    child.kill();
+                }
+                return;
+            }
+
+            const text = chunk.toString("utf8");
+            markerBuffer = `${markerBuffer}${text}`.slice(-8192);
+            const skipMatch = markerBuffer.match(/(?:^|\r?\n)SKIP:\s*([^\r\n]+)/);
+            if (skipMatch && !skipReason) skipReason = skipMatch[1]!.trim();
+            log.write(text);
+            // ANSI is stripped from tail lines so the compact failure output stays
+            // readable; the log file retains the raw chunk verbatim.
+            tail.pushChunk(stripAnsi(text));
+            if (verbose) {
+                const target = stream === "stdout" ? process.stdout : process.stderr;
+                target.write(text);
+            }
+        };
+
+        child.stdout?.on("data", (chunk: Buffer) => handleChunk(chunk, "stdout"));
+        child.stderr?.on("data", (chunk: Buffer) => handleChunk(chunk, "stderr"));
+        child.on("error", (error) => {
+            runError = error;
+        });
+
+        const timeoutId = setTimeout(() => {
+            timedOut = true;
+            writeRunnerMessage(`\n[runner-error]\nTest exceeded ${timeoutMs}ms and was terminated.\n`);
+            child.kill();
+        }, timeoutMs);
+
+        ({ exitCode, signal } = await new Promise<{ exitCode: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+            child.on("close", (code, closeSignal) => {
+                clearTimeout(timeoutId);
+                resolve({ exitCode: code, signal: closeSignal });
+            });
+        }));
+    } catch (error) {
+        // Preparation (including esbuild) belongs to this spec's result, so a
+        // broken import cannot abort the pool or prevent its summary being saved.
+        runError = error;
+    } finally {
+        if (runError) {
+            const runErrorText = `\n[runner-error]\n${runError instanceof Error ? String(runError.stack || runError.message) : String(runError)}\n`;
+            writeRunnerMessage(runErrorText);
+        }
+
+        // The completion promise already observes errors from open through flush.
+        // Logging failures are reported separately from the child's test outcome.
+        logError = await log.finish();
     }
 
-    // The completion promise already observes errors from open through flush.
-    // Logging failures are reported separately from the child's test outcome.
-    const logError = await log.finish();
-
     const durationMs = Date.now() - startedAt;
-    const status = classifyTestRunStatus(exitCode, Boolean(spawnError), outputTruncated, timedOut, skipReason);
+    const status = classifyTestRunStatus(exitCode, Boolean(runError), outputTruncated, timedOut, skipReason);
 
     return {
         file,

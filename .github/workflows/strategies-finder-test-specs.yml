@@ -7,6 +7,13 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PUPPETEER_CHROME_HEADLESS_SHELL_SKIP_DOWNLOAD: 'true'
+
 jobs:
   unit:
     name: Typecheck and test specs
@@ -23,14 +30,20 @@ jobs:
       # exported through GITHUB_ENV in a step context. Every consumer below —
       # the cache path, Puppeteer's browser install during `npm ci`, and the
       # specs' browser launch — reads this exact variable, on Windows and Linux.
-      - name: Set Puppeteer cache directory
+      - name: Set Puppeteer cache directory and version
+        id: puppeteer
         shell: bash
-        run: echo "PUPPETEER_CACHE_DIR=${RUNNER_TEMP}/puppeteer-cache" >> "$GITHUB_ENV"
+        run: |
+          echo "PUPPETEER_CACHE_DIR=${RUNNER_TEMP}/puppeteer-cache" >> "$GITHUB_ENV"
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const lock = require('./package-lock.json');
+          console.log(`version=${lock.packages['node_modules/puppeteer'].version}`);
+          NODE
       - name: Cache Puppeteer browsers
         uses: actions/cache@v4
         with:
           path: ${{ env.PUPPETEER_CACHE_DIR }}
-          key: puppeteer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          key: puppeteer-chrome-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.puppeteer.outputs.version }}-${{ hashFiles('.puppeteerrc.cjs') }}
       - run: npm ci
       - name: Restore test timing history
         uses: actions/cache/restore@v4
@@ -74,6 +87,17 @@ jobs:
           }
           NODE
 
+      - name: Upload failed spec evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-failures-${{ runner.os }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            artifacts/test-logs/latest/*.log
+            artifacts/test-logs/latest/summary.json
+          if-no-files-found: ignore
+          retention-days: 7
+
   rust:
     name: Rust engine format and tests
     runs-on: ubuntu-latest
@@ -115,13 +139,19 @@ jobs:
           cache-dependency-path: package-lock.json
       # Same exported browser directory as the unit job, keyed separately by
       # OS so the Linux browser download is not shared with Windows.
-      - name: Set Puppeteer cache directory
+      - name: Set Puppeteer cache directory and version
+        id: puppeteer
         shell: bash
-        run: echo "PUPPETEER_CACHE_DIR=${RUNNER_TEMP}/puppeteer-cache" >> "$GITHUB_ENV"
+        run: |
+          echo "PUPPETEER_CACHE_DIR=${RUNNER_TEMP}/puppeteer-cache" >> "$GITHUB_ENV"
+          node <<'NODE' >> "$GITHUB_OUTPUT"
+          const lock = require('./package-lock.json');
+          console.log(`version=${lock.packages['node_modules/puppeteer'].version}`);
+          NODE
       - name: Cache Puppeteer browsers
         uses: actions/cache@v4
         with:
           path: ${{ env.PUPPETEER_CACHE_DIR }}
-          key: puppeteer-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('package-lock.json') }}
+          key: puppeteer-chrome-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.puppeteer.outputs.version }}-${{ hashFiles('.puppeteerrc.cjs') }}
       - run: npm ci
       - run: npm run test:e2e

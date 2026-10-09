@@ -20,7 +20,9 @@ uses Node 22.16.0 or newer, matching the CI baseline.
     *   **Framework Preset**: Select `Vite`.
     *   **Build Command**: `npm run build` (This should auto-detect, but verify).
     *   **Output Directory**: `dist` (This should also auto-detect).
-    *   **Install Command**: `npm install` (Standard).
+    *   **Install Command**: The committed `vercel.json` uses `PUPPETEER_SKIP_DOWNLOAD=true npm ci`.
+        This enforces the standalone lockfile and avoids downloading browsers for the static build.
+        Browser testing jobs keep Chrome downloads enabled.
     *   **Environment Variables**:
         *   Add `SITE_PASSWORD` in the `Production` environment.
         *   Do not use a `VITE_*` variable for this. `VITE_*` values are exposed to the browser bundle.
@@ -52,7 +54,8 @@ How it works:
 You can simulate the build locally by running:
 
 ```bash
-npm install
+npm ci
+npm run deps:check
 npm run build
 npx vite preview
 ```

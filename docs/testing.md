@@ -6,6 +6,36 @@ globals, module caches, and mocks cannot leak between files. Browser specs
 (`*.browser.spec.ts`) are bundled with esbuild before execution. E2E is a
 separate command.
 
+## Dependency and compiler checks
+
+`npm run deps:check` resolves each direct dependency from this app, prints its
+version and metadata path, and checks its declared semver range. Missing or
+invalid dependencies fail the command; unrelated sibling workspace leftovers
+do not. `npm run verify` runs it before both typechecks and tests. This catches
+older tool versions inherited from a parent workspace. Standalone CI uses the
+app lockfile and `npm ci`. Workspace installs run from `debug/playground` with
+`npm install --workspace=strategies-finder-wt-batch-findings --package-lock=true`;
+the workspace `.npmrc` also enables lockfile maintenance. Keep the workspace and
+standalone lockfiles for their respective installation contexts.
+The direct esbuild version is pinned to 0.28.1 in both contexts; the dependency
+preflight reports its resolved path to catch stale nested copies. Regression
+coverage in `tests/dependencies-check.spec.ts` includes hidden package metadata,
+invalid/missing versions, and unrelated installed packages.
+
+Both typechecks use incremental compilation. Application and test graphs have
+separate disposable caches in `.cache/app.tsbuildinfo` and `.cache/tests.tsbuildinfo`.
+Deleting `.cache` restores a cold check. No application output is emitted and
+typechecks always execute; warm checks reuse TypeScript's compiler analysis.
+
+`npm run build:check` preserves the 650 KiB entry limit and additionally enforces
+an 850 KiB combined startup-JavaScript limit. It resolves the actual entry from
+`dist/index.html`, traverses static imports in `dist/.vite/manifest.json`, and
+counts each JS asset once. Lazy imports are excluded. Raw bytes are gated;
+per-asset and summed gzip sizes are also reported. The startup baseline was
+781.2 KiB (610.4 entry + 170.8 chart vendor), leaving about 9% headroom. Budget
+changes require a measured build and explanation. `tests/bundle-budget.spec.ts`
+covers static dependency sharing/cycles, lazy exclusion, and CLI failures.
+
 ## Select checks before running them
 
 Start with `npm run validate:changes` and inspect the feature's guide and
@@ -62,6 +92,11 @@ sorted by path regardless of completion order. `npm run --silent test:json`
 prints the summary as one JSON object. Use a failed spec's log to investigate
 before rerunning only that spec.
 
+Browser-spec compilation errors produce a failed result and a flushed spec log;
+other selected specs still execute and the summary is saved. The runner contract
+spec checks this in both serial and parallel fixture runs, isolated from the
+outer run's evidence directory.
+
 ## Hosted CI caches
 
 `.github/workflows/strategies-finder-test-specs.yml` reuses three artifact
@@ -71,7 +106,11 @@ families without inferring any test outcome from a cache:
   (under the runner temp directory) through `GITHUB_ENV` in an early step —
   `runner` is not available in job-level `env` — and that exact directory is
   cached ahead of `npm ci` in both the unit and e2e jobs (both launch
-  Puppeteer). Keys are `puppeteer-<os>-<arch>-<lockfile hash>`.
+  Puppeteer). Keys include OS, architecture, the locked Puppeteer version, and
+  the `.puppeteerrc.cjs` hash, so unrelated dependency updates keep browser caches
+  usable. Both jobs skip the unused `chrome-headless-shell` download; tests use
+  Chrome with `headless: true`. The app's Puppeteer config also skips that binary
+  in standalone installs. Vercel's static-build install skips all browsers.
 - Cargo: the rust job caches `~/.cargo/registry`, `~/.cargo/git`, and
   `rust-engine/target` after toolchain install. The exact key includes the
   dtolnay toolchain `cachekey` (compiler identity and platform) plus a
@@ -87,6 +126,11 @@ families without inferring any test outcome from a cache:
   with `<run id>-<run attempt>`; saves happen only after a green run under
   that unique key, so immutable cache entries cannot freeze scheduling
   history.
+
+Superseded PR runs are cancelled through a workflow/ref concurrency group;
+push runs are retained. On unit-job failures, `.log` files and `summary.json`
+are uploaded for seven days. Generated `.cjs` bundles are excluded; absent logs
+(for example, an install failure) do not fail the upload step.
 
 The workflow is validated with actionlint, not only YAML parsing. Remove the
 corresponding steps to restore cold-cache behavior. Net savings depend on

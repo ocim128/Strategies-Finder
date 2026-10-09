@@ -31,10 +31,21 @@ Trade timing quality scores are descriptive diagnostics. Exit Score is measured 
 - Windows PowerShell works well in this repo
 
 ### Install and Run
+For this app checked out on its own (including hosted CI), use its committed
+lockfile:
+
 ```bash
-npm install
+npm ci
+npm run deps:check
 npm run dev
 ```
+
+When this directory is inside the `debug/playground` npm workspace, install
+from that workspace root with `npm install --workspace=strategies-finder-wt-batch-findings --package-lock=true`,
+then return here to run the app. Keep the parent workspace lockfile when changing
+dependencies; this directory's lockfile serves standalone builds.
+`npm run deps:check` fails if the installed direct dependencies violate the app's ranges,
+including a TypeScript or Vite version inherited from the parent workspace.
 
 Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 
