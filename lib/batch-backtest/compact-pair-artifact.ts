@@ -1,9 +1,33 @@
 import type { Time } from "lightweight-charts";
 import type { ActiveCapTiltWeight } from "./cap-tilt-contract";
+import type { OHLCVData } from "../types/strategies";
+import { timeToNumber } from "../strategies/backtest/backtest-utils";
+
+export const DIRECTIONAL_VOTE_DELAY_BARS = 3;
+
+/** Actual pair candles, never elapsed intervals or synthetic bridge candles. */
+export function directionalVoteMaturityTime(candles: readonly OHLCVData[], entryTime: Time): number | null {
+    const entry = timeToNumber(entryTime);
+    if (entry === null) return null;
+    let lo = 0;
+    let hi = candles.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        const time = timeToNumber(candles[mid]!.time);
+        if (time === null) return null;
+        if (time < entry) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo >= candles.length || timeToNumber(candles[lo]!.time) !== entry) return null;
+    const mature = candles[lo + DIRECTIONAL_VOTE_DELAY_BARS];
+    return mature ? timeToNumber(mature.time) : null;
+}
 
 export type TopMeanReplayMode = "horizon" | "asset_switch";
 
 export interface CompactTrade {
+    /** Third subsequent actual pair candle; null = not enough candles, absent = legacy artifact. */
+    directionalMaturityTimeSec?: number | null;
     type: "long" | "short";
     entryTime: Time;
     exitTime: Time;

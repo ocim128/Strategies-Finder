@@ -1,6 +1,8 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { runAssetSwitchReplay, SwitchTargetLookup } from "../lib/batch-backtest/open-score-replay/asset-switch";
+import { pickRawDirectional, resolveRawDirectional } from "../lib/batch-backtest/open-score-replay/candidate-selection";
+import type { AssetSwitchArmField } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import type { AssetSwitchDecision, Candidate, EventView } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { AssetSwitchReplaySummary, ReplayArmField, RunOpenScoreUsdReplayOptions } from "../lib/batch-backtest/open-score-replay/types";
 import type { OHLCVData } from "../lib/types/strategies";
@@ -102,6 +104,7 @@ async function replay(args: {
 }): Promise<{ ok: true; result: AssetSwitchReplaySummary } | { ok: false }> {
     const endSec = args.endSec ?? ORIGIN + 80 * HOUR;
     const options: RunOpenScoreUsdReplayOptions = {
+        directionalTotalPairs: 40,
         mode: "asset_switch",
         interval: args.interval ?? "1h",
         horizons: args.horizons,
@@ -135,6 +138,135 @@ function okResult(result: Awaited<ReturnType<typeof replay>>): AssetSwitchReplay
 }
 
 describe("OPEN_SCORE asset-switch replay", () => {
+    const directionalView = (timeSec: number, scores: number[]): AssetSwitchDecision => ({
+        ...view(timeSec, { positives: [], profitPositives: [], profitNowPositives: [], profitNowConfidencePositives: [] }),
+        ...resolveRawDirectional(scores, 40),
+    });
+
+    it("selects one signed extreme at 25% of total pairs and skips equal-strength ties", () => {
+        expect(pickRawDirectional([9, -9, 0], 40)).to.equal(null);
+        expect(pickRawDirectional([10, -1], 40)).to.deep.equal({ assetIndex: 0, direction: "long" });
+        expect(pickRawDirectional([-10, 1], 40)).to.deep.equal({ assetIndex: 0, direction: "short" });
+        expect(pickRawDirectional([15, -20], 40)).to.deep.equal({ assetIndex: 1, direction: "short" });
+        expect(pickRawDirectional([20, -15], 40)).to.deep.equal({ assetIndex: 0, direction: "long" });
+        expect(pickRawDirectional([20, -20], 40)).to.equal(null);
+        expect(pickRawDirectional([-20, -20, 15], 40)).to.equal(null);
+        expect(pickRawDirectional([20, 20, -25], 40)).to.deep.equal({ assetIndex: 2, direction: "short" });
+        expect(pickRawDirectional([NaN, Infinity, -Infinity, -10], 40)).to.deep.equal({ assetIndex: 3, direction: "short" });
+        expect(pickRawDirectional([249, -249], 1_000)).to.equal(null);
+        expect(pickRawDirectional([250, -249], 1_000)).to.deep.equal({ assetIndex: 0, direction: "long" });
+        expect(pickRawDirectional([-250, 249], 1_000)).to.deep.equal({ assetIndex: 0, direction: "short" });
+        expect(pickRawDirectional([2, -1], 8)).to.deep.equal({ assetIndex: 0, direction: "long" });
+        expect(pickRawDirectional([2, -1], 9)).to.equal(null);
+        expect(pickRawDirectional([-2.25, 1], 9)).to.deep.equal({ assetIndex: 0, direction: "short" });
+        expect(pickRawDirectional([1], 0)).to.equal(null);
+        expect(pickRawDirectional([0], 1)).to.equal(null);
+    });
+
+    it("reverses the same asset long to short to long without overlapping positions", async () => {
+        const result = okResult(await replay({
+            views: [directionalView(ORIGIN, [10]), directionalView(ORIGIN + 2 * HOUR, [-20]), directionalView(ORIGIN + 4 * HOUR, [12])],
+            data: { A: candles([
+                [ORIGIN + HOUR, 100, 100], [ORIGIN + 3 * HOUR, 110, 110],
+                [ORIGIN + 5 * HOUR, 90, 90], [ORIGIN + 6 * HOUR, 90, 95],
+            ]) },
+            endSec: ORIGIN + 7 * HOUR,
+        }));
+        const arm = result.arms.topRawDirectional!;
+        expect(arm.enteredCount).to.equal(3);
+        expect(arm.completedTrades).to.equal(2);
+        expect(arm.realizedNetPnl).to.be.closeTo(100 + 1_000 * 20 / 110, 1e-9);
+        expect(arm.openPosition).to.include({ asset: "A", direction: "long", entryTimeSec: ORIGIN + 5 * HOUR });
+        const trades = result.trades!.filter((trade) => trade.arm === "topRawDirectional");
+        expect(trades.map((trade) => trade.direction)).to.deep.equal(["long", "short", "long"]);
+        for (let index = 1; index < trades.length; index += 1) expect(trades[index - 1]!.exitTimeSec).to.equal(trades[index]!.entryTimeSec);
+    });
+
+    it("charges adverse short entry and cover slippage, both commissions, and terminal short marks", async () => {
+        const short = directionalView(ORIGIN, [-10, 1]);
+        const data = { A: candles([[ORIGIN + HOUR, 100, 90], [ORIGIN + 3 * HOUR, 80, 80]]), B: candles([[ORIGIN + 3 * HOUR, 50, 50]]) };
+        const marked = okResult(await replay({ views: [short], data, endSec: ORIGIN + 2 * HOUR, slippageRate: 0.01, commissionRate: 0.001 }));
+        const quantity = 1_000 / 99;
+        expect(marked.arms.topRawDirectional?.openPosition?.direction).to.equal("short");
+        expect(marked.arms.topRawDirectional?.openPositionNetPnl).to.be.closeTo(quantity * (99 - 90) - 1, 1e-9);
+        const closed = okResult(await replay({
+            views: [short, directionalView(ORIGIN + 2 * HOUR, [1, 10])], data,
+            endSec: ORIGIN + 4 * HOUR, slippageRate: 0.01, commissionRate: 0.001,
+        }));
+        const trade = closed.trades!.find((row) => row.arm === "topRawDirectional" && row.asset === "A")!;
+        expect(trade).to.include({ direction: "short", entryPrice: 99, exitPrice: 80.8, status: "closed" });
+        expect(trade.netPnl).to.be.closeTo(quantity * (99 - 80.8) - 1 - quantity * 80.8 * 0.001, 1e-9);
+        expect(trade.entryCost).to.be.closeTo(quantity + 1, 1e-9);
+        expect(trade.exitCost).to.be.closeTo(quantity * (0.8 + 80.8 * 0.001), 1e-9);
+    });
+
+    it("holds through qualifying ties, cancels a reversal on a return to the held side, and preserves pending direction", async () => {
+        const data = { A: candles([[ORIGIN + HOUR, 100, 100], [ORIGIN + 5 * HOUR, 110, 110]]) };
+        const held = okResult(await replay({
+            views: [directionalView(ORIGIN, [12]), directionalView(ORIGIN + HOUR, [10]),
+                directionalView(ORIGIN + 2 * HOUR, [20, -20]), directionalView(ORIGIN + 3 * HOUR, [-15]),
+                directionalView(ORIGIN + 4 * HOUR, [10])], data, endSec: ORIGIN + 6 * HOUR,
+        }));
+        expect(held.arms.topRawDirectional).to.include({ enteredCount: 1, completedTrades: 0, pendingOrder: null });
+        expect(held.arms.topRawDirectional?.openPosition?.direction).to.equal("long");
+        const pending = okResult(await replay({
+            views: [directionalView(ORIGIN, [12]), directionalView(ORIGIN + 2 * HOUR, [-15])],
+            data, endSec: ORIGIN + 3 * HOUR,
+        }));
+        expect(pending.arms.topRawDirectional?.pendingOrder).to.include({ side: "sell", direction: "short", destinationAsset: "A" });
+        expect(pending.arms.topRawDirectional?.completedTrades).to.equal(0);
+    });
+
+    it("closes long and short positions below the minimum at the next open, with closing costs and no replacement", async () => {
+        for (const sign of [1, -1]) {
+            const result = okResult(await replay({
+                views: [directionalView(ORIGIN, [sign * 10]), directionalView(ORIGIN + 2 * HOUR, [sign * 9])],
+                data: { A: candles([[ORIGIN + HOUR, 100, 100], [ORIGIN + 3 * HOUR, 110, 110], [ORIGIN + 4 * HOUR, 200, 200]]) },
+                endSec: ORIGIN + 5 * HOUR, slippageRate: 0.01, commissionRate: 0.001,
+            }));
+            const arm = result.arms.topRawDirectional!;
+            expect(arm).to.include({ enteredCount: 1, completedTrades: 1, openPosition: null, pendingOrder: null, openPositionNetPnl: 0 });
+            const trade = result.trades!.find((row) => row.arm === "topRawDirectional")!;
+            const entry = sign === 1 ? 101 : 99;
+            const exit = sign === 1 ? 108.9 : 111.1;
+            const quantity = 1_000 / entry;
+            expect(trade).to.include({ direction: sign === 1 ? "long" : "short", exitTimeSec: ORIGIN + 3 * HOUR, status: "closed" });
+            expect(trade.exitPrice).to.be.closeTo(exit, 1e-9);
+            expect(arm.totalNetPnl).to.be.closeTo(sign * quantity * (exit - entry) - 1 - quantity * exit * 0.001, 1e-9);
+        }
+    });
+
+    it("retains the first scheduled close on repeated weak scores and shows a close-only pending order", async () => {
+        const data = { A: candles([[ORIGIN + HOUR, 100, 100], [ORIGIN + 5 * HOUR, 110, 110]]) };
+        const views = [directionalView(ORIGIN, [-10]), directionalView(ORIGIN + 2 * HOUR, [-9]), directionalView(ORIGIN + 3 * HOUR, [0])];
+        const pending = okResult(await replay({ views, data, endSec: ORIGIN + 4 * HOUR }));
+        expect(pending.arms.topRawDirectional?.pendingOrder).to.deep.equal({
+            side: "buy", destinationAsset: null, decisionTimeSec: ORIGIN + 2 * HOUR, scheduledTimeSec: null,
+        });
+        const closed = okResult(await replay({ views, data, endSec: ORIGIN + 6 * HOUR }));
+        expect(closed.arms.topRawDirectional).to.include({ enteredCount: 1, completedTrades: 1, openPosition: null, pendingOrder: null });
+        expect(closed.trades!.find((row) => row.arm === "topRawDirectional")?.exitTimeSec).to.equal(ORIGIN + 5 * HOUR);
+    });
+
+    it("cancels unfilled entries and pending replacements below the minimum and re-enters only after qualifying", async () => {
+        const cancelled = okResult(await replay({
+            views: [directionalView(ORIGIN, [10]), directionalView(ORIGIN + HOUR, [9])],
+            data: { A: candles([[ORIGIN + 2 * HOUR, 100, 100]]) }, endSec: ORIGIN + 3 * HOUR,
+        }));
+        expect(cancelled.arms.topRawDirectional).to.include({ enteredCount: 0, openPosition: null, pendingOrder: null });
+        const result = okResult(await replay({
+            views: [directionalView(ORIGIN, [10, 1]), directionalView(ORIGIN + 2 * HOUR, [1, 10]),
+                directionalView(ORIGIN + 3 * HOUR, [9, -9]), directionalView(ORIGIN + 4 * HOUR, [9, -9]),
+                directionalView(ORIGIN + 6 * HOUR, [-10, 1])],
+            data: { A: candles([[ORIGIN + HOUR, 100, 100], [ORIGIN + 5 * HOUR, 110, 110], [ORIGIN + 7 * HOUR, 90, 90]]), B: candles([[ORIGIN + 5 * HOUR, 50, 50]]) },
+            endSec: ORIGIN + 8 * HOUR,
+        }));
+        const trades = result.trades!.filter((row) => row.arm === "topRawDirectional");
+        expect(trades.map((row) => [row.asset, row.direction, row.entryTimeSec, row.exitTimeSec])).to.deep.equal([
+            ["A", "long", ORIGIN + HOUR, ORIGIN + 5 * HOUR], ["A", "short", ORIGIN + 7 * HOUR, null],
+        ]);
+    });
+
     it("emits all 15 independent long-only arm summaries, including singleton and profit-only picks", async () => {
         const singleton = candidate(0, 2, 2);
         const result = okResult(await replay({
@@ -147,7 +279,8 @@ describe("OPEN_SCORE asset-switch replay", () => {
             data: { A: candles([[ORIGIN + HOUR, 100, 110], [ORIGIN + 2 * HOUR, 110, 120]]) },
             endSec: ORIGIN + 2 * HOUR,
         }));
-        expect(Object.keys(result.arms)).to.have.length(15);
+        expect(Object.keys(result.arms)).to.have.length(16);
+        expect(result.arms.topRawDirectional?.status).to.equal("no_entry");
         for (const arm of ARM_FIELDS) {
             expect(result.arms[arm].status, arm).to.equal("complete");
             expect(result.arms[arm].enteredCount, arm).to.equal(1);
@@ -448,7 +581,7 @@ describe("OPEN_SCORE asset-switch replay", () => {
             positives: [B], profitPositives: [B],
             profitNowPositives: [B], profitNowConfidencePositives: [B],
         };
-        const sellGapArchive: Array<{ arm: ReplayArmField; asset: string; status: string }> = [];
+        const sellGapArchive: Array<{ arm: AssetSwitchArmField; asset: string; status: string }> = [];
         const sellGap = okResult(await replay({
             views: [view(ORIGIN, onlyA), view(ORIGIN + 39 * 86_400, onlyB)],
             data: {
@@ -472,7 +605,7 @@ describe("OPEN_SCORE asset-switch replay", () => {
             { arm: "topRaw", asset: "A", status: "open" },
         ]);
 
-        const buyGapArchive: Array<{ arm: ReplayArmField; asset: string; status: string }> = [];
+        const buyGapArchive: Array<{ arm: AssetSwitchArmField; asset: string; status: string }> = [];
         const buyGap = okResult(await replay({
             views: [view(ORIGIN, onlyA), view(ORIGIN + HOUR, onlyB)],
             data: {
@@ -553,7 +686,7 @@ describe("OPEN_SCORE asset-switch replay", () => {
             100,
             101,
         ] as [number, number, number]);
-        const streamedByArm = new Map<ReplayArmField, number>(ARM_FIELDS.map((arm) => [arm, 0]));
+        const streamedByArm = new Map<AssetSwitchArmField, number>(ARM_FIELDS.map((arm) => [arm, 0]));
         const result = okResult(await replay({
             views,
             data: { A: candles(rows), B: candles(rows) },

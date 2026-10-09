@@ -1056,6 +1056,49 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(readLatestTopMeanResult()).to.equal(null);
     });
 
+    it("restores the directional arm, shows short details, and copies holding and pending direction", async () => {
+        const assetSwitch = createEmptyAssetSwitchSummary({ evaluationCutoffSec: 1_700_001_000, directionalTotalPairs: 1_000 });
+        assetSwitch.arms.topRawDirectional!.openPosition = {
+            asset: "NVDA", direction: "short", entryDecisionTimeSec: 1_700_000_000,
+            entryTimeSec: 1_700_000_100, entryPrice: 100, markTimeSec: 1_700_000_200,
+            markPrice: 90, markAgeSec: 0, openNetPnl: 100, entryCost: 0, holdingDurationSec: 100,
+        };
+        assetSwitch.arms.topRawDirectional!.pendingOrder = { side: "buy", direction: "long", destinationAsset: "NVDA", decisionTimeSec: 1_700_000_200, scheduledTimeSec: null };
+        assetSwitch.trades = [{
+            arm: "topRawDirectional", asset: "NVDA", direction: "short", decisionTimeSec: 1_700_000_000,
+            entryTimeSec: 1_700_000_100, entryPrice: 100, exitTimeSec: null, exitPrice: null,
+            holdingDurationSec: 100, netPnl: 100, entryCost: 0, exitCost: 0, status: "open",
+        }];
+        assetSwitch.tradeCount = 1;
+        const result = { ...topMeanResultFixture(), replayMode: "asset_switch", horizons: [], annualReports: [], assetSwitch };
+        persistLatestTopMeanResult(result);
+        const restored = readLatestTopMeanResult()!;
+        expect(restored.assetSwitch?.arms.topRawDirectional).to.deep.equal(assetSwitch.arms.topRawDirectional);
+        expect(restored.assetSwitch?.trades?.[0]?.direction).to.equal("short");
+        expect(restored.assetSwitch?.directionalTotalPairs).to.equal(1_000);
+        expect(restored.assetSwitch?.directionalBelowMinimumPolicy).to.equal("exit_next_open");
+        expect(restored.assetSwitch?.directionalVoteDelayBars).to.equal(3);
+        const html = svc().topMean.renderTopMeanOpenScoreEventDetails(restored, "TOP_RAW_DIRECTIONAL");
+        expect(html).to.include("SHORT").and.include("NVDA").and.include("TOP_RAW_DIRECTIONAL");
+        expect(svc().topMean.renderTopMeanOpenScoreEventDetails(topMeanResultFixture(), "TOP_RAW_DIRECTIONAL")).to.include("requires Hold until switch");
+        const dom = setupForAnalysis();
+        svc().topMean.renderTopMeanResults(dom, restored);
+        svc().topMean.setLatestTopMeanResult(restored);
+        let copied = "";
+        const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+        Object.defineProperty(globalThis, "navigator", { configurable: true, value: { clipboard: { writeText: async (value: string) => { copied = value; } } } });
+        try {
+            await svc().topMean.copySp500TopMeanResults();
+            expect(copied).to.include("topRawDirectional").and.include("open=NVDA short").and.include("pending=buy NVDA (long)");
+            expect(copied).to.include("25% of 1000 total pairs = 250");
+            expect(copied).to.include("closes to flat at the next target open");
+            expect(copied).to.include("third subsequent actual pair candle");
+        } finally {
+            if (originalNavigator) Object.defineProperty(globalThis, "navigator", originalNavigator);
+            else delete (globalThis as any).navigator;
+        }
+    });
+
     it("keeps multi-year switch snapshots within a small storage budget", () => {
         const armNames = [
             "topRawProfitNow", "topMeanProfitNow", "topRawProfitNowConf", "topZ",

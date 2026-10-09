@@ -44,9 +44,10 @@ function spawnScanWorker(
     baseDir: string | undefined,
     shardIndexes: number[],
     enableCausalArms?: boolean,
+    enableDirectionalArm?: boolean,
 ): { worker: Worker; done: Promise<WorkerResult> } {
     const worker = new Worker(workerPath, {
-        workerData: { runId, baseDir, shardIndexes, enableCausalArms },
+        workerData: { runId, baseDir, shardIndexes, enableCausalArms, enableDirectionalArm },
     });
     const collected: TopMeanScanShardResult[] = [];
     let failed = false;
@@ -127,6 +128,7 @@ function ensureSegmentOrder(
 }
 
 export async function runParallelArtifactScan(args: {
+    enableDirectionalArm?: boolean;
     enableCausalArms?: boolean;
     runId: string;
     baseDir?: string;
@@ -165,7 +167,7 @@ export async function runParallelArtifactScan(args: {
     });
 
     const spawned = assignments.map((shardIndexes) =>
-        spawnScanWorker(workerPath, args.runId, args.baseDir, shardIndexes, args.enableCausalArms));
+        spawnScanWorker(workerPath, args.runId, args.baseDir, shardIndexes, args.enableCausalArms, args.enableDirectionalArm));
     const terminateAll = (): void => {
         for (const { worker } of spawned) void worker.terminate();
     };
@@ -211,6 +213,7 @@ export async function runParallelArtifactScan(args: {
         let pairCount = 0;
         let omittedPairs = 0;
         let tradelessPairs = 0;
+        let missingDirectionalMaturityTrades = 0;
 
         let done = 0;
         for (const shardIndex of completedShards) {
@@ -230,6 +233,7 @@ export async function runParallelArtifactScan(args: {
             const pnlShares = shard.pnlShares!;
             const confidenceWeights = shard.confidenceWeights!;
             const deltaFlags = shard.deltaFlags!;
+            missingDirectionalMaturityTrades += shard.missingDirectionalMaturityTrades ?? 0;
             if (args.enableCausalArms && (!shard.entrySecs || !shard.validDegree)) return { status: "fallback" };
             const lengths = shard.pairLengths!;
             const flags = shard.pairFlags!;
@@ -273,6 +277,7 @@ export async function runParallelArtifactScan(args: {
                 profitableStreams,
                 pnlKnownStreams,
                 pairCount,
+                ...(args.enableDirectionalArm ? { missingDirectionalMaturityTrades } : {}),
                 omittedPairs,
                 // The parallel path runs only when cap-tilt is inactive, so the
                 // coverage counters match the sequential scan's inactive shape.

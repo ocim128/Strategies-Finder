@@ -7,7 +7,7 @@ import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import { stripIbkrMarker } from "../local-daily-datasets";
 import { selectClosedCandleWindow } from "../alert-evaluation-window";
-import type { CompactPairArtifact, CompactTrade } from "./compact-pair-artifact";
+import { directionalVoteMaturityTime, type CompactPairArtifact, type CompactTrade } from "./compact-pair-artifact";
 import type { BacktestSettings, OHLCVData, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
 import { strategies } from "../strategies/library";
@@ -328,6 +328,7 @@ export async function processTopMeanShard(data: TopMeanWorkerTaskData): Promise<
 
             const artifactStartedAt = performance.now();
             const compactTrades: CompactTrade[] = (output.result?.trades || []).map((t) => ({
+                directionalMaturityTimeSec: directionalVoteMaturityTime(closedWindow?.candles ?? [], t.entryTime),
                 type: t.type,
                 entryTime: t.entryTime,
                 exitTime: t.exitTime,

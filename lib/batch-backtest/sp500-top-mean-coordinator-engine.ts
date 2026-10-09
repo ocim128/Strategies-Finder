@@ -906,7 +906,7 @@ export class TopMeanCoordinatorEngine {
             runtime: {
                 processId: process.pid, nodeVersion: process.version,
                 processStartedAt: new Date(Date.now() - process.uptime() * 1000).toISOString(),
-                replayImplementation: "temporal-support-only-v4",
+                replayImplementation: "raw-directional-mature-three-bars-v8",
             },
             startedAt: new Date().toISOString(),
             totalMs: 0,
@@ -1498,6 +1498,7 @@ export class TopMeanCoordinatorEngine {
                 // on the fast path too.
                 replayOnPhase("scan", "scanning pair artifacts (parallel)", 0, 0);
                 const outcome = await runParallelArtifactScan({
+                    enableDirectionalArm: !finderArmProfile && this._request.replayMode === "asset_switch",
                     enableCausalArms: true,
                     runId: this._request.runId,
                     baseDir: this.baseDir,
@@ -1553,6 +1554,8 @@ export class TopMeanCoordinatorEngine {
                         // from it and load no target datasets.
                         // Batch TOP_MEAN and Finder share the same causal arm set.
                         enableCausalArms: true,
+                        enableDirectionalArm: !finderArmProfile,
+                        directionalTotalPairs: enumRes.canonicalPairs.length,
                         loadTargetDataset,
                         prefetchTargetDatasets,
                         // finder_arm runs exactly ONE full-window pass, so a

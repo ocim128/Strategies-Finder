@@ -216,7 +216,7 @@
     <section class="batch-section batch-coordinator-section" aria-label="TOP_MEAN coordinator">
         <div class="batch-section-heading">
             <h3 class="batch-section-title">TOP_MEAN Coordinator</h3>
-            <p class="batch-section-note">Enter a Pairs list to evaluate direct or synthetic IBKR and crypto markets at the current timeframe.</p>
+            <p class="batch-section-note">Enter a Pairs list to evaluate direct or synthetic IBKR and crypto markets at the current timeframe. Hold until switch includes TOP_RAW_DIRECTIONAL: one long or short position from the strongest absolute raw score (minimum 25% of total pairs). Pair votes start on the third subsequent candle if the pair trade is still open.</p>
         </div>
         <div class="batch-coordinator-fields batch-form-grid">
             <div class="batch-field">
@@ -294,6 +294,7 @@
                 <select class="param-input batch-open-score-details-selector" id="batchBacktestSp500TopMeanDetailsSelector" aria-label="OPEN_SCORE detail selector" disabled>
                     <option value="TOP_MEAN" selected>TOP_MEAN</option>
                     <option value="TOP_RAW">TOP_RAW</option>
+                    <option value="TOP_RAW_DIRECTIONAL">TOP_RAW_DIRECTIONAL (Hold until switch)</option>
                     <option value="TOP_MEAN_RAW_UNIQUE">TOP_MEAN_RAW_UNIQUE</option>
                     <option value="TOP_RAW_PROFIT">TOP_RAW_PROFIT</option>
                     <option value="TOP_MEAN_PROFIT">TOP_MEAN_PROFIT</option>

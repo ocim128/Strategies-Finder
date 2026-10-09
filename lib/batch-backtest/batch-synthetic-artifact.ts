@@ -9,7 +9,7 @@
  * surviving analysis features.
  */
 
-import type { BacktestResult, OHLCVData, Signal } from "../types/strategies";
+import type { BacktestResult, OHLCVData, Signal, Trade } from "../types/strategies";
 
 /**
  * One synthetic pair's full per-run artifact: the OHLCV legs aggregated into
@@ -33,5 +33,5 @@ export interface BatchSyntheticPairArtifact {
     quoteSymbol?: string;
     data: OHLCVData[];
     signals: Signal[];
-    result: BacktestResult;
+    result: BacktestResult & { trades: Array<Trade & { directionalMaturityTimeSec?: number | null }> };
 }

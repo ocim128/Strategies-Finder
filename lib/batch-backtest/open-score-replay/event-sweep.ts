@@ -14,19 +14,21 @@ import { parseIntervalSeconds } from "../../interval-utils";
 import { TemporalSupport } from "./temporal-support";
 import { CAUSAL_ARM_FIELDS } from "./arm-contract";
 import { FINDER_SUPPORT_ARMS_V2 } from "./causal-arm-constants";
-import { createRankingDigestCache, insertRankingPick, RANKING_ARM_SPEC_BY_FIELD } from "./candidate-selection";
+import { createRankingDigestCache, insertRankingPick, RANKING_ARM_SPEC_BY_FIELD, resolveRawDirectional } from "./candidate-selection";
 import type { CausalScoreKeys, CausalCompactArms } from "./internal-types";
 import type { CausalArmDiagnostics } from "./types";
 
 const SWEEP_CHUNK_SIZE = 2_000;
 
 export interface EventSweepResult {
-    /** Decision events in ascending timeSec order (entry buckets only). */
+    /** Entry decisions plus compact directional exit-to-flat checks, in time order. */
     events: DecisionEvent[];
     causalArmDiagnostics?: CausalArmDiagnostics;
 }
 
 export async function sweepScoreEvents(args: {
+    enableDirectionalArm?: boolean;
+    directionalTotalPairs?: number;
     enableCausalArms?: boolean;
     interval?: string;
     mode?: "horizon" | "asset_switch";
@@ -158,6 +160,8 @@ export async function sweepScoreEvents(args: {
     timeIndex.clear();
 
     const rawScore = new Array<number>(assetCount).fill(0);
+    const directionalScore = new Float64Array(assetCount);
+    const directionalEnabled = args.mode === "asset_switch" && args.enableDirectionalArm !== false;
     const activePairCount = new Array<number>(assetCount).fill(0);
     // Profit-gated accumulators: identical bookkeeping, fed only by deltas from
     // profitable pairs. The TOP_RAW_PROFIT / TOP_MEAN_PROFIT arms read
@@ -213,16 +217,28 @@ export async function sweepScoreEvents(args: {
         if (shouldStop()) return cancelled();
         const t = bucketTimes[b]!;
         if (sampleTo !== undefined && t > sampleTo) break;
-        support?.advance(t);
-        let hasEntry = false;
-        // Apply ALL deltas at this timestamp before forming candidates.
         const bucketEnd = bucketStart[b + 1]!;
+        let hasOrdinaryChange = false;
+        for (let i = bucketStart[b]!; i < bucketEnd; i++) if (!(flatDeltas.flags[i]! & 4)) { hasOrdinaryChange = true; break; }
+        if (hasOrdinaryChange) support?.advance(t);
+        let hasEntry = false;
+        let hasDirectionalChange = false;
+        // Apply ALL deltas at this timestamp before forming candidates.
         for (let i = bucketStart[b]!; i < bucketEnd; i += 1) {
             if (shouldStop()) return cancelled();
             const assetIndex = flatDeltas.assetIndices[i]!;
             const delta = flatDeltas.deltas[i]!;
             const isEntry = flatDeltas.flags[i]! & 1;
             const streamIdx = flatStreamIdx[i]!;
+            if (flatDeltas.flags[i]! & 4) {
+                if (directionalEnabled) { directionalScore[assetIndex]! += delta; hasDirectionalChange = true; }
+                popped += 1;
+                if (popped % 2000 === 0) {
+                    onPhase("events", `merged ${popped}/${sweepDeltaTotal} deltas`, popped, sweepDeltaTotal);
+                    await yieldLoop();
+                }
+                continue;
+            }
             rawScore[assetIndex]! += delta;
             if (support) {
                 support.update(assetIndex, t, flatDeltas.entrySecs![i]!, delta, isEntry === 1, rawScore[assetIndex]!);
@@ -292,7 +308,17 @@ export async function sweepScoreEvents(args: {
                 profitNowConfidencePairCount[assetIndex] = nextConfidence > 0 ? nextConfidence : 0;
             }
         }
-        // Exit-only score changes do not create a decision event.
+        // Mature votes have their own clock and scalar selections. No full
+        // asset snapshots or legacy support/Z observations ride these events.
+        const inWindow = (sampleFrom === undefined || t >= sampleFrom) && (sampleTo === undefined || t <= sampleTo);
+        const directionalSelection = directionalEnabled && inWindow
+            ? resolveRawDirectional(directionalScore, args.directionalTotalPairs ?? pairCount) : undefined;
+        if (!hasEntry && hasDirectionalChange && directionalSelection) {
+            const empty = new Float64Array(0);
+            events.push({ timeSec: t, directionalOnly: true, directionalSelection, rawScore: empty, activePairCount: empty,
+                rawScoreProfit: empty, activePairCountProfit: empty, rawScoreProfitNow: empty,
+                activePairCountProfitNow: empty, rawScoreProfitNowConf: empty, activePairCountProfitNowConf: empty });
+        }
         if (hasEntry) {
             if ((sampleFrom === undefined || t >= sampleFrom) && (sampleTo === undefined || t <= sampleTo)) {
                 let causalScores: Map<number, CausalScoreKeys> | undefined;
@@ -330,6 +356,7 @@ export async function sweepScoreEvents(args: {
                     }
                 }
                 events.push({
+                    ...(directionalSelection ? { directionalSelection } : {}),
                     ...(causalScores ? { causalScores } : {}),
                     ...(causalArms ? { causalArms } : {}),
                     timeSec: t,

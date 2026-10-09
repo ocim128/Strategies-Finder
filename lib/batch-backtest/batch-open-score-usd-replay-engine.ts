@@ -125,7 +125,7 @@ import type { DecisionEvent, RankingEvent } from "./open-score-replay/internal-t
 import { buildReportLines } from "./open-score-replay/report";
 import { createEmptyAssetSwitchSummary, runAssetSwitchReplay } from "./open-score-replay/asset-switch";
 import { createEmptyRankingMeasurement } from "./open-score-replay/types";
-import { replayArmFields, isCausalArm } from "./open-score-replay/arm-contract";
+import { replayArmFields, assetSwitchArmFields, isCausalArm, RAW_DIRECTIONAL_MINIMUM_FRACTION } from "./open-score-replay/arm-contract";
 import { FINDER_SUPPORT_ARMS_V2 } from "./open-score-replay/causal-arm-constants";
 import { TOP_MEAN_HORIZONS_MAX_VALUE } from "./sp500-top-mean-request-limits";
 
@@ -181,7 +181,9 @@ export async function runOpenScoreUsdReplay(
         pairs: 0, assets: 0, complete: false, omittedPairs: 0, omittedAssets: 0,
         totalEvents: 0, candidateEvents: 0, eligibleEvents: 0, horizons: [],
         latestSelections: null, degree: degreeSummary([], null),
-        ...(replayMode === "asset_switch" ? { assetSwitch: createEmptyAssetSwitchSummary(options, slippageRate, commissionRate) } : {}),
+        ...(replayMode === "asset_switch" ? { assetSwitch: createEmptyAssetSwitchSummary({
+            ...options, directionalTotalPairs: options.directionalTotalPairs ?? partial.pairs ?? 0,
+        }, slippageRate, commissionRate) } : {}),
         warnings, reportLines: [], ...partial,
     });
     if (replayMode === "horizon" && horizons.length === 0) {
@@ -198,6 +200,7 @@ export async function runOpenScoreUsdReplay(
     // entirely when it returns a result; null falls back to the loader path.
     const overriddenScan = options.scanOverride ? await options.scanOverride() : null;
     const scanOutcome = overriddenScan ?? await scanArtifacts({
+        enableDirectionalArm: replayMode === "asset_switch" && options.enableDirectionalArm !== false,
         enableCausalArms: options.enableCausalArms,
         artifactLoader,
         shouldStop,
@@ -218,6 +221,7 @@ export async function runOpenScoreUsdReplay(
         });
     }
     const scan = scanOutcome.result;
+    if (scan.missingDirectionalMaturityTrades) warnings.push(`${scan.missingDirectionalMaturityTrades} pair trade(s) lack actual third-bar timestamps and cannot vote for TOP_RAW_DIRECTIONAL. Rerun pair backtests to refresh legacy artifacts.`);
     const { assetIndexByName, assetNames, streams, profitableStreams, pairCount, omittedPairs, capTiltCoverage, capTiltWindowCoverage, capTiltCarryInCoverage, capTiltUnknownAssets } = scan;
     /** @deprecated alias for {@link scan.retainedDegree}; use that name in new code. */
     const staticDegree = scan.retainedDegree;
@@ -245,6 +249,8 @@ export async function runOpenScoreUsdReplay(
     // sweep consumes and clears the per-pair streams; the flat bucketed arrays
     // it builds internally become the only delta indexing.
     const sweepOutcome = await sweepScoreEvents({
+        enableDirectionalArm: options.enableDirectionalArm,
+        directionalTotalPairs: options.directionalTotalPairs,
         enableCausalArms: options.enableCausalArms,
         interval: options.interval, mode: replayMode, assetNames, validDegree: scan.validDegree,
         streams,
@@ -285,6 +291,8 @@ export async function runOpenScoreUsdReplay(
     const rankingByTime = new Map<number, RankingEvent>();
     if (replayMode === "asset_switch") {
         const outcome = await buildAssetSwitchDecisions({
+            totalPairs: options.directionalTotalPairs ?? pairCount,
+            enableDirectionalArm: options.enableDirectionalArm,
             enableCausalArms: options.enableCausalArms,
             captureRanking: options.rankingHorizon !== undefined,
             events,
@@ -365,6 +373,9 @@ export async function runOpenScoreUsdReplay(
             });
         }
         const assetSwitch = switchOutcome.result;
+        if (scan.missingDirectionalMaturityTrades && assetSwitch.arms.topRawDirectional) {
+            Object.assign(assetSwitch.arms.topRawDirectional, { status: "incomplete", realizedNetPnl: null, totalNetPnl: null });
+        }
         let rankingMeasurement: OpenScoreUsdReplayResult["rankingMeasurement"];
         if (options.rankingHorizon !== undefined) {
             const records = switchStage.rankingEvents ?? [];
@@ -412,14 +423,17 @@ export async function runOpenScoreUsdReplay(
             `Window: ${assetSwitch.windowStartSec ?? "from first in-window decision"} to ${assetSwitch.windowEndSec}${assetSwitch.independentWindow ? " (independent window; starts flat)" : ""}`,
             `Sizing: $${assetSwitch.notionalPerEntry} fixed entry notional per arm; non-compounding; slippage ${(assetSwitch.slippageRate * 100).toFixed(4)}%; commission ${(assetSwitch.commissionRate * 100).toFixed(4)}%.`,
             `Decisions: ${totalEvents}; ordinary candidate events (pool >= 2): ${candidateComparisonEvents}; incomplete arms: ${incompleteArms}.`,
+            ...(assetSwitch.directionalTotalPairs === undefined ? [] : [`TOP_RAW_DIRECTIONAL minimum |score|: 25% of ${assetSwitch.directionalTotalPairs} total pairs = ${assetSwitch.directionalTotalPairs * RAW_DIRECTIONAL_MINIMUM_FRACTION}.`]),
+            ...(assetSwitch.directionalVoteDelayBars === undefined ? [] : [`TOP_RAW_DIRECTIONAL votes start at the third subsequent actual pair candle, only while the pair trade remains open (entry candle = 0).`]),
+            ...(assetSwitch.directionalBelowMinimumPolicy === "exit_next_open" ? ["TOP_RAW_DIRECTIONAL closes to flat at the next target open when no asset meets the minimum, including exit-only score changes."] : []),
             "Per-arm performance (USD):",
-            ...enabledArms.map((field) => {
+            ...assetSwitchArmFields(options.enableCausalArms, options.enableDirectionalArm).map((field) => {
                 const arm = assetSwitch.arms[field]!;
                 const holding = arm.openPosition
-                    ? ` | holding=${arm.openPosition.asset} mark=${formatSwitchUsd(arm.openPosition.openNetPnl)}`
+                    ? ` | holding=${arm.openPosition.asset}${arm.openPosition.direction ? ` ${arm.openPosition.direction}` : ""} mark=${formatSwitchUsd(arm.openPosition.openNetPnl)}`
                     : "";
                 const pending = arm.pendingOrder
-                    ? ` | pending=${arm.pendingOrder.side}${arm.pendingOrder.destinationAsset ? ` ${arm.pendingOrder.destinationAsset}` : ""}`
+                    ? ` | pending=${arm.pendingOrder.side}${arm.pendingOrder.destinationAsset ? ` ${arm.pendingOrder.destinationAsset}` : ""}${arm.pendingOrder.direction ? ` (${arm.pendingOrder.direction})` : ""}`
                     : "";
                 return `${field} | ${arm.status} | total=${formatSwitchUsd(arm.totalNetPnl)} | realized=${formatSwitchUsd(arm.realizedNetPnl)} | open=${formatSwitchUsd(arm.openPositionNetPnl)} | closed=${arm.completedTrades} | entries=${arm.enteredCount} | costs=$${arm.totalCosts.toFixed(2)}${holding}${pending}`;
             }),

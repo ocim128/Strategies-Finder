@@ -9,12 +9,11 @@ import type {
     OpenScoreUsdEventDetail,
     OpenScoreUsdEventDetailSelector,
     OpenScoreUsdOngoingEventDetail,
-    ReplayArmField,
 } from "../open-score-replay/types";
 import type { TopMeanResultSummary } from "../sp500-top-mean-coordinator-engine";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import { escapeHtml } from "../../html-escape";
-import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../open-score-replay/arm-contract";
+import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, type AssetSwitchArmField } from "../open-score-replay/arm-contract";
 import { formatCausalArmAvailabilityLines } from "./top-mean-results-view";
 
 export type OngoingTopMeanEventDetail = OpenScoreUsdOngoingEventDetail;
@@ -190,6 +189,7 @@ export function renderTopMeanOpenScoreEventDetails(
     if (summary.replayMode === "asset_switch") {
         return availability + renderAssetSwitchTradeDetails(summary, selector, year);
     }
+    if (selector === "TOP_RAW_DIRECTIONAL") return `<div class="batch-open-score-details-empty">TOP_RAW_DIRECTIONAL requires Hold until switch. Select that replay mode and rerun.</div>`;
     const annualReports = summary.annualReports ?? [];
     const ongoingRows = buildOngoingEventDetails(summary);
     // Year slice: a client-side filter on decision time (UTC). It narrows
@@ -301,8 +301,9 @@ export function renderTopMeanOpenScoreEventDetails(
     return availability + html;
 }
 
-function selectorArm(selector: OpenScoreUsdEventDetailSelector): ReplayArmField | null {
-    const mapping: Partial<Record<OpenScoreUsdEventDetailSelector, ReplayArmField>> = {
+function selectorArm(selector: OpenScoreUsdEventDetailSelector): AssetSwitchArmField | null {
+    const mapping: Partial<Record<OpenScoreUsdEventDetailSelector, AssetSwitchArmField>> = {
+        TOP_RAW_DIRECTIONAL: "topRawDirectional",
         ...Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [REPLAY_ARM_TO_FINDER_ARM[field], field])),
         TOP_RAW: "topRaw",
         TOP_MEAN: "topMean",
@@ -350,7 +351,10 @@ function renderAssetSwitchTradeDetails(
     const total = section?.tradeCount ?? section?.trades?.length ?? 0;
     const shipped = section?.trades?.length ?? 0;
     let html = `<div class="batch-open-score-details-heading">Asset-Switch Trade Details — ${escapeHtml(selector)}</div>`;
-    html += `<div class="batch-open-score-details-note">These are filled long-only position records from an independent path-dependent replay. Each entry uses fixed $1,000 notional; net P&amp;L includes entry and exit costs. An open row is marked at the last closed candle available at that replay window's end. No horizon or random-control comparison is implied.</div>`;
+    html += `<div class="batch-open-score-details-note">These are filled position records from an independent path-dependent replay. TOP_RAW_DIRECTIONAL supports long and short, with at most one position at a time. Each entry uses fixed $1,000 notional; net P&amp;L includes entry and exit costs. An open row is marked at the last closed candle available at that replay window's end. No horizon or random-control comparison is implied.</div>`;
+    if (selector === "TOP_RAW_DIRECTIONAL" && !section?.arms.topRawDirectional) {
+        return html + `<div class="batch-report-warning">Rerun required: TOP_RAW_DIRECTIONAL is available in new Hold until switch results.</div>`;
+    }
     if (usesFullWindowPreview && year !== null) {
         const explanation = annualPreviewMissing
             ? `The independent ${year} replay summary has ${annualTradeCount.toLocaleString()} trades but no retained annual preview.`
@@ -377,13 +381,13 @@ function renderAssetSwitchTradeDetails(
             ? `Filtered Full-Window Preview — Calendar Year ${year}`
             : `Independent Calendar Year ${year}`;
     html += `<details open class="batch-open-score-details-section"><summary>${sectionLabel} | ${rows.length.toLocaleString()} trade records</summary>`;
-    html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table"><thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Asset</th><th>Net P&amp;L</th><th>Costs</th><th>Holding</th><th>Status</th></tr></thead><tbody>`;
+    html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table"><thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Side</th><th>Asset</th><th>Net P&amp;L</th><th>Costs</th><th>Holding</th><th>Status</th></tr></thead><tbody>`;
     for (const trade of rows) {
         const cost = trade.entryCost + trade.exitCost;
         const holding = trade.holdingDurationSec === null
             ? "open"
             : `${(trade.holdingDurationSec / 86400).toFixed(1)} days`;
-        html += `<tr><td>${escapeHtml(time(trade.decisionTimeSec))}</td><td>${escapeHtml(time(trade.entryTimeSec))}</td><td>${escapeHtml(time(trade.exitTimeSec))}</td><td><strong>${escapeHtml(trade.asset)}</strong></td><td>${escapeHtml(money(trade.netPnl))}</td><td>$${cost.toFixed(2)}</td><td>${escapeHtml(holding)}</td><td>${escapeHtml(trade.status.toUpperCase())}</td></tr>`;
+        html += `<tr><td>${escapeHtml(time(trade.decisionTimeSec))}</td><td>${escapeHtml(time(trade.entryTimeSec))}</td><td>${escapeHtml(time(trade.exitTimeSec))}</td><td>${escapeHtml((trade.direction ?? "long").toUpperCase())}</td><td><strong>${escapeHtml(trade.asset)}</strong></td><td>${escapeHtml(money(trade.netPnl))}</td><td>$${cost.toFixed(2)}</td><td>${escapeHtml(holding)}</td><td>${escapeHtml(trade.status.toUpperCase())}</td></tr>`;
     }
     html += `</tbody></table></div></details>`;
     return html;

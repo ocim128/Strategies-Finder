@@ -9,7 +9,7 @@ export class ScoreDeltaBuffer {
     readonly deltas: Float64Array;
     readonly pnlShares: Float64Array;
     readonly confidenceWeights: Float64Array;
-    /** Bit 0: entry; bit 1: causal vote applies. */
+    /** Bit 0: entry; bit 1: causal vote applies; bit 2: directional-only matured vote. */
     readonly flags: Uint8Array;
 
     /**
@@ -45,7 +45,7 @@ export class ScoreDeltaBuffer {
             buffer.deltas[i] = row.delta;
             buffer.pnlShares[i] = row.pnlShare;
             buffer.confidenceWeights[i] = row.profitNowConfidenceWeight;
-            buffer.flags[i] = row.isEntry | (row.voteApplied ? 2 : 0);
+            buffer.flags[i] = row.isEntry | (row.voteApplied ? 2 : 0) | (row.directionalOnly ? 4 : 0);
         }
         return buffer;
     }

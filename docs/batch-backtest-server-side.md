@@ -478,9 +478,10 @@ The TOP_MEAN UI Coordinator runs a long-running batch evaluation over an explici
 
 ### Additional causal arms
 
-New Batch TOP_MEAN runs calculate seventeen replay arms: the original
+New Batch TOP_MEAN runs calculate seventeen shared replay arms: the original
 fifteen plus **TOP_STABLE_SUPPORT** and **TOP_FRESH_SUPPORT**, in both Fixed
-horizon and Hold until switch. They share the
+horizon and Hold until switch. Hold until switch also includes the
+**TOP_RAW_DIRECTIONAL** arm described below. The support arms share the
 [fixed causal score definitions](finder.md#additional-causal-score-definitions)
 with Finder. Existing cap-tilt vote weights carry through both support scores.
 Coverage, Price Strength and Graph Strength are retired, including their
@@ -535,8 +536,8 @@ distinct archive fingerprint while pair-backtest shards remain reusable.
 Cooldown changes require a new replay run and do not affect pair execution.
 
 **Replay mode** defaults to **Fixed horizon**. **Hold until switch** replaces
-the horizon comparisons with a separate position replay for all 15 selector
-arms. Each arm starts flat, holds one long target asset, and uses the existing
+the horizon comparisons with a separate position replay for each selector
+arm. The existing arms start flat, hold one long target asset, and use the existing
 pair-entry decision clock. The first unique pick enters at the next target
 open strictly after its decision. A unique pick of another asset schedules a
 sale at the held asset's next open, then buys the replacement at its first open
@@ -547,6 +548,85 @@ cancels the pending order; a tie or no pick holds the actual position, or
 keeps the arm flat. Singleton pools are eligible. BOT arms remain long and use
 their existing bottom-ranking rules. `TOP_RAW_PROFIT` and `TOP_MEAN_PROFIT`
 remain labeled **LOOK-AHEAD RESEARCH**.
+
+**TOP_RAW_DIRECTIONAL** is an additional **Hold until switch** arm. It uses
+signed pair votes only after each pair trade survives to the **third
+subsequent actual pair candle**, with the entry candle numbered zero. Fresh
+entries contribute nothing to this arm. Weekends and missing candles do not
+advance the bar count. A trade closed before or on that third candle never
+contributes; a surviving trade adds its original signed/cap-tilted vote then,
+and removes it at its eventual exit. Overlapping trades mature independently.
+
+The arm compares each asset's matured raw score whenever votes mature,
+eligible trades exit, or a pair entry decision occurs:
+the largest positive score can enter long at **+25% of total pairs or above**,
+and the most negative score can enter short at **−25% of total pairs or below**.
+The denominator is the full enumerated submitted pair list, including pairs
+with no trades or failed backtests, and stays fixed across decision events
+and annual passes. Both orientations count as separate pairs. For 1,000
+pairs, the inclusive thresholds are +250 and −250. Fractional thresholds
+are compared exactly (nine pairs require at least 2.25 votes; integer scores
+therefore require three). It chooses the single
+asset with the largest absolute score across both sides. A sole qualifying
+asset is eligible. Equal-strength qualifying ties (including opposite
+directions) make no new pick: pending orders are cancelled and the current
+position is held, or the arm remains flat. When no asset reaches the minimum,
+unfilled entries are cancelled and an existing long or short position closes
+at its next target open, with no replacement. Repeated weak decisions retain
+the original close schedule. A qualifying signal before the close can cancel
+or replace that pending destination using the usual switch rules.
+This arm preserves the original vote signs and entry-time cap-tilt weights.
+
+Maturation and exit-only pair-vote changes also run selection and check the
+minimum, even without a new pair entry. They emit compact scalar
+directional-only checks; the other arms keep their pair-entry
+decision clock, and causal support/Z histories and ranking measurements do
+not gain additional observations. A close without a target open before the
+window ends remains pending and the position stays open until it can fill.
+
+Asset and direction together identify its position. A direction change on
+the same asset closes the old side at the next target open before opening
+the new side; positions never overlap. Short entries sell with adverse
+slippage, covers buy with adverse slippage, and both sides pay commission.
+Terminal short marks use entry minus mark price and deduct entry commission.
+Borrow fees and margin constraints are not modeled. Annual passes start flat.
+
+For an NVDA-centered list (`NVDA+peer` and `peer+NVDA`), NVDA aggregates votes
+from every peer, while each peer appears in only two pairs. NVDA's net score
+can cross either 25% threshold. The arm ranks the supplied universe;
+it does not hardcode NVDA or force a trade when its score is weak. With
+distinct peers of degree two and at most one open vote per pair, their scores
+cannot reach the threshold once the total exceeds eight pairs when cap tilt
+is Off.
+
+The new arm appears in switch performance cards/tables and Copy OPEN_SCORE /
+Copy Result / Download Result, with LONG/SHORT in position and trade details.
+The details Arm menu labels it **TOP_RAW_DIRECTIONAL (Hold until switch)**.
+Its additive `topRawDirectional` summary and optional `direction` trade,
+position and pending-destination fields survive reattach and bounded browser
+snapshots; older results remain readable (absent direction means long).
+New switch summaries persist `directionalTotalPairs` and report the actual
+minimum score in cards and copied reports. Old directional results without
+this denominator show a rerun note instead of being relabeled as 25% results.
+`directionalVoteDelayBars: 3` records delayed-vote semantics. Older immediate-
+vote results remain readable and show a rerun note for third-bar votes.
+The additive `directionalBelowMinimumPolicy: "exit_next_open"` records the
+close-to-flat rule. Older results without it remain readable and show a rerun
+note for that rule; snapshots, reattach, downloads and copied reports retain it.
+Rerun Hold until switch to calculate the arm for an old result. Fixed-horizon
+replay and Finder's existing ranking-measurement arm set are unchanged.
+
+New pair-backtest shards store an optional `directionalMaturityTimeSec` per
+compact trade, calculated from actual closed pair candles rather than a
+nominal interval or a synthetic next-open bridge. Null means the available
+pair history has not reached that candle; absent means a legacy artifact.
+The shared sequential and packed-worker scans preserve maturation/exit rows
+in a directional-only delta flag, with no extra price arrays. Full artifacts
+with pair candles can reconstruct the timestamp. Legacy compact trades with
+no candle metadata cannot vote, produce a rerun warning and make this arm
+unavailable; rerun pair backtests to refresh those shards. Fresh third-bar
+votes preserve pre-window carry-in and use the same fixed 25% denominator in
+independent annual windows.
 
 The simulation uses a fixed $1,000 notional at each entry, without
 compounding. Arms are independent normalized research paths, not one shared

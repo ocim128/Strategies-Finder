@@ -131,7 +131,7 @@ describe("Finder temporal support arms", () => {
         const compactResult = await scan(pairs); assert.ok(compactResult.ok); const cs = compactResult.result;
         const compactSweep = await sweepScoreEvents({ ...cs, enableCausalArms: true, mode: "asset_switch", interval: "1m", sampleFromSec: 1500, sampleToSec: 1500, shouldStop: () => false, onPhase() {}, assetCount: cs.assetNames.length }); assert.ok(compactSweep.ok);
         assert.equal(compactSweep.result.events[0]!.causalScores, undefined);
-        const switches = await buildAssetSwitchDecisions({ events: compactSweep.result.events, totalEvents: 1, assetNames: cs.assetNames, assetCount: cs.assetNames.length, enableCausalArms: true, captureRanking: true, onPhase() {} }); assert.ok(switches.ok);
+        const switches = await buildAssetSwitchDecisions({ events: compactSweep.result.events, totalEvents: 1, totalPairs: cs.pairCount, assetNames: cs.assetNames, assetCount: cs.assetNames.length, enableCausalArms: true, captureRanking: true, onPhase() {} }); assert.ok(switches.ok);
         assert.equal(switches.result.decisions[0]!.eligiblePoolCounts!.topFreshSupport, 6);
         assert.ok(switches.result.rankingEvents![0]!.arms.topStableSupport.picks.length <= 5);
     });

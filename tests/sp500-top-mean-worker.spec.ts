@@ -55,7 +55,11 @@ async function runWorkerParityTest(): Promise<void> {
     if (artifacts.length > 0) {
         assert.equal(artifacts[0].schema, "compact_pair_artifact.v1");
         assert.equal(artifacts[0].symbol, "AAPL•+MSFT•");
-        assert.ok(Array.isArray(artifacts[0].trades), "Trades must be an array");
+            assert.ok(Array.isArray(artifacts[0].trades), "Trades must be an array");
+            for (const trade of artifacts[0].trades) {
+                assert.ok("directionalMaturityTimeSec" in trade, "worker persists actual pair candle eligibility for directional replay");
+                assert.ok(trade.directionalMaturityTimeSec === null || Number.isFinite(trade.directionalMaturityTimeSec));
+            }
         // Phase-1 current snapshot: the worker records the last CLOSED candle
         // time so the reducer can align artifacts to a common endpoint.
         assert.ok(

@@ -297,7 +297,7 @@ describe("top-five ranking consistency", () => {
             rawScoreProfitNow: Float64Array.from([6, 5, 4, 3, 2, 1]), activePairCountProfitNow: Float64Array.from([1, 1, 1, 1, 1, 1]),
             rawScoreProfitNowConf: Float64Array.from([6, 5, 4, 3, 2, 1]), activePairCountProfitNowConf: Float64Array.from([1, 1, 1, 1, 1, 1]),
         }));
-        const args = { events: snapshots, totalEvents: 2, assetCount: 6, assetNames: names, onPhase() {} };
+        const args = { events: snapshots, totalEvents: 2, totalPairs: 21, assetCount: 6, assetNames: names, onPhase() {} };
         const off = await buildAssetSwitchDecisions(args);
         const future = { ...snapshots[1]!, timeSec: 20, rawScore: Float64Array.from([1, 20, 2, 30, 3, 40]) };
         const extended = await buildAssetSwitchDecisions({ ...args, events: [...snapshots, future], totalEvents: 3, captureRanking: true });

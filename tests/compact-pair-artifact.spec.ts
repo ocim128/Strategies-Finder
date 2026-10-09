@@ -3,6 +3,8 @@ import { existsSync, rmSync, writeFileSync, mkdtempSync, utimesSync } from "node
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import type { CompactPairArtifact, TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
+import { directionalVoteMaturityTime } from "../lib/batch-backtest/compact-pair-artifact";
+import type { OHLCVData, Time } from "../lib/types/strategies";
 import {
     computeRunFingerprint,
     getRunDir,
@@ -32,6 +34,13 @@ function cleanup(): void {
 
 async function runTests(): Promise<void> {
     try {
+        const stamps = ["2024-01-05", "2024-01-08", "2024-01-09", "2024-01-10"].map((date) => Date.parse(date + "T00:00:00Z") / 1_000);
+        const candles = stamps.map((time) => ({ time: time as Time, open: 1, high: 1, low: 1, close: 1, volume: 1 })) as OHLCVData[];
+        assert.equal(directionalVoteMaturityTime(candles, stamps[0] as Time), stamps[3], "weekends do not advance pair candle count");
+        assert.equal(directionalVoteMaturityTime(candles.slice(0, 3), stamps[0] as Time), null, "fewer than three subsequent candles cannot mature");
+        assert.equal(directionalVoteMaturityTime(candles, (stamps[0]! + 1) as Time), null, "entry must match an actual candle");
+        const shaped = candles.map((candle, index) => ({ ...candle, time: index === 0 ? { year: 2024, month: 1, day: 5 } : index === 1 ? stamps[1]! * 1000 : new Date(stamps[index]! * 1000).toISOString() })) as unknown as OHLCVData[];
+        assert.equal(directionalVoteMaturityTime(shaped, "2024-01-05" as Time), stamps[3], "normalized time shapes share the same bar clock");
         // 1. Test Fingerprint
         const fp1 = computeRunFingerprint({
             strategyKey: "test_strategy",
@@ -106,6 +115,7 @@ async function runTests(): Promise<void> {
                 trades: [
                     {
                         type: "long",
+                        directionalMaturityTimeSec: 1_500,
                         entryTime: 1000 as any,
                         exitTime: 2000 as any,
                         exitReason: "take_profit",
@@ -134,6 +144,7 @@ async function runTests(): Promise<void> {
         assert.equal(yielded.length, 1);
         assert.equal(yielded[0].symbol, "AAPL•+MSFT•");
         assert.equal(yielded[0].result.trades.length, 1);
+        assert.equal(yielded[0].result.trades[0].directionalMaturityTimeSec, 1_500);
         // The adapter must carry netProfit through: the pnl-gated OPEN_SCORE
         // arms (TOP_RAW_PROFIT / TOP_MEAN_PROFIT) read it off result.
         assert.equal(yielded[0].result.netProfit, 123.45);

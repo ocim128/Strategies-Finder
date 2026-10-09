@@ -36,6 +36,8 @@ export interface ReplayEarlyExit {
 export type StageOutcome<T> = { ok: true; result: T } | { ok: false; earlyExit: ReplayEarlyExit };
 
 export interface ScoreDelta {
+    /** A matured directional vote change; excluded from all ordinary accumulators. */
+    directionalOnly?: boolean;
     entrySec?: number;
     timeSec: number;
     assetIndex: number;
@@ -65,6 +67,9 @@ export interface ScoreDelta {
 }
 
 export interface DecisionEvent {
+    directionalSelection?: Pick<AssetSwitchDecision, "directionalPick" | "directionalBelowMinimum">;
+    /** Compact exit-only check for directional flattening; legacy arms ignore it. */
+    directionalOnly?: boolean;
     causalScores?: Map<number, CausalScoreKeys>;
     causalArms?: CausalCompactArms;
     timeSec: number;
@@ -170,6 +175,11 @@ export interface RankingEvent {
 
 /** Minimal event input needed by the path-dependent asset-switch simulator. */
 export interface AssetSwitchDecision {
+    directionalOnly?: boolean;
+    /** No asset qualifies for the directional minimum; close to flat. A qualifying tie is false. */
+    directionalBelowMinimum?: boolean;
+    /** TOP_RAW_DIRECTIONAL picks a single signed extreme with |score| >= 25% of total pairs. */
+    directionalPick?: { assetIndex: number; direction: "long" | "short" } | null;
     eligiblePoolCounts?: Partial<Record<CausalArmField, number>>;
     timeSec: number;
     picks: Readonly<import("./arm-contract").ReplayArmResults<number | null>>;

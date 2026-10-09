@@ -84,6 +84,7 @@ describe("OPEN_SCORE replay selection cooldown", () => {
 
         let processedSwitchEvents = 0;
         const switchOutcome = await buildAssetSwitchDecisions({
+            totalPairs: 40,
             events,
             totalEvents: events.length,
             assetNames: ASSETS,
@@ -133,6 +134,7 @@ describe("OPEN_SCORE replay selection cooldown", () => {
             onPhase: () => undefined,
         }));
         const compact = stageResult(await buildAssetSwitchDecisions({
+            totalPairs: 40,
             events,
             totalEvents: events.length,
             assetNames,
@@ -140,7 +142,7 @@ describe("OPEN_SCORE replay selection cooldown", () => {
             onPhase: () => undefined,
         }));
 
-        expect(compact.decisions).to.deep.equal(fullViews.views.map((row) => ({
+        expect(compact.decisions.map(({ directionalPick: _directionalPick, directionalBelowMinimum: _directionalBelowMinimum, ...legacy }) => legacy)).to.deep.equal(fullViews.views.map((row) => ({
             timeSec: row.timeSec,
             picks: row.assetSwitchPicks,
         })));

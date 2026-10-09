@@ -46,7 +46,7 @@ import type {
     OpenScoreUsdLatestSelectorName,
 } from "../open-score-replay/types";
 import { isActiveCapTiltWeight } from "../cap-tilt-contract";
-import { hasAssetSwitchDecisionEvents } from "../open-score-replay/arm-contract";
+import { hasAssetSwitchDecisionEvents, RAW_DIRECTIONAL_MINIMUM_FRACTION } from "../open-score-replay/arm-contract";
 import { debounce } from "../../debounce";
 import { escapeHtml } from "../../html-escape";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
@@ -732,13 +732,16 @@ export class TopMeanController {
         if (res.replayMode === "asset_switch" && res.assetSwitch) {
             lines.push(
                 "--- PATH-DEPENDENT ASSET-SWITCH REPLAY ---",
-                `Semantics: ${res.assetSwitch.semanticsVersion} | fixed $${res.assetSwitch.notionalPerEntry} per entry | non-compounding | long-only | slippage=${res.assetSwitch.slippageRate} | commission=${res.assetSwitch.commissionRate}`,
+                `Semantics: ${res.assetSwitch.semanticsVersion} | fixed $${res.assetSwitch.notionalPerEntry} per entry | non-compounding | one position per arm; TOP_RAW_DIRECTIONAL long/short | slippage=${res.assetSwitch.slippageRate} | commission=${res.assetSwitch.commissionRate}`,
                 `Window: ${!hasAssetSwitchDecisionEvents(res.assetSwitch)
                     ? "no decision events"
                     : res.assetSwitch.windowStartSec === null
                         ? `full history through ${new Date(res.assetSwitch.windowEndSec * 1000).toISOString()}`
                         : `${new Date(res.assetSwitch.windowStartSec * 1000).toISOString()} .. ${new Date(res.assetSwitch.windowEndSec * 1000).toISOString()}`}`,
                 `Target data: ${res.assetSwitch.coverage.loadedAssets}/${res.assetSwitch.coverage.requestedAssets} loaded | trade rows ${res.assetSwitch.tradeCount ?? res.assetSwitch.trades?.length ?? 0}`,
+                ...(res.assetSwitch.directionalTotalPairs === undefined ? [] : [`TOP_RAW_DIRECTIONAL minimum |score|: 25% of ${res.assetSwitch.directionalTotalPairs} total pairs = ${res.assetSwitch.directionalTotalPairs * RAW_DIRECTIONAL_MINIMUM_FRACTION}.`]),
+                ...(res.assetSwitch.directionalVoteDelayBars === undefined ? [] : ["TOP_RAW_DIRECTIONAL votes start at the third subsequent actual pair candle, only while the pair trade remains open (entry candle = 0)."]),
+                ...(res.assetSwitch.directionalBelowMinimumPolicy === "exit_next_open" ? ["TOP_RAW_DIRECTIONAL closes to flat at the next target open when no asset meets the minimum, including exit-only score changes."] : []),
                 "Current snapshot is a separate raw-score snapshot and does not represent these replay positions.",
                 "",
             );
@@ -749,10 +752,10 @@ export class TopMeanController {
                         ? "n/a"
                         : `${value >= 0 ? "+" : "-"}$${Math.abs(value).toFixed(2)}`;
                     const open = metrics.openPosition
-                        ? ` | open=${metrics.openPosition.asset} mark=${formatMoney(metrics.openPosition.openNetPnl)}`
+                        ? ` | open=${metrics.openPosition.asset}${metrics.openPosition.direction ? ` ${metrics.openPosition.direction}` : ""} mark=${formatMoney(metrics.openPosition.openNetPnl)}`
                         : "";
                     const pending = metrics.pendingOrder
-                        ? ` | pending=${metrics.pendingOrder.side}${metrics.pendingOrder.destinationAsset ? ` ${metrics.pendingOrder.destinationAsset}` : ""}`
+                        ? ` | pending=${metrics.pendingOrder.side}${metrics.pendingOrder.destinationAsset ? ` ${metrics.pendingOrder.destinationAsset}` : ""}${metrics.pendingOrder.direction ? ` (${metrics.pendingOrder.direction})` : ""}`
                         : "";
                     lines.push(`  ${arm} | ${metrics.status} | total=${formatMoney(metrics.totalNetPnl)} | realized=${formatMoney(metrics.realizedNetPnl)} | open=${formatMoney(metrics.openPositionNetPnl)} | closed=${metrics.completedTrades} | entries=${metrics.enteredCount} | costs=$${metrics.totalCosts.toFixed(2)}${open}${pending}`);
                 }

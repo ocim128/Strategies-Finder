@@ -13,12 +13,12 @@ import type {
     AssetSwitchPendingOrder,
     AssetSwitchReplaySummary,
     AssetSwitchTradeRecord,
-    ReplayArmField,
     RunOpenScoreUsdReplayOptions,
 } from "./types";
 import type { AssetSwitchDecision, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { yieldLoop } from "./runtime";
-import { replayArmFields } from "./arm-contract";
+import { assetSwitchArmFields, type AssetSwitchArmField } from "./arm-contract";
+import { DIRECTIONAL_VOTE_DELAY_BARS } from "../compact-pair-artifact";
 
 const NOTIONAL_PER_ENTRY = 1_000;
 const MAX_DIAGNOSTIC_COUNT = 1_000_000_000;
@@ -64,6 +64,7 @@ interface PlannedCandle {
 }
 
 interface Position {
+    direction: "long" | "short";
     asset: string;
     decisionTimeSec: number;
     entryTimeSec: number;
@@ -83,6 +84,7 @@ interface ArmState {
     totalCosts: number;
     position: Position | null;
     desiredAsset: string | null;
+    desiredDirection: "long" | "short";
     pendingDecisionTimeSec: number | null;
     pendingSell: PlannedCandle | null;
     pendingBuy: PlannedCandle | null;
@@ -101,6 +103,7 @@ function newState(includeContributorSummary: boolean): ArmState {
         totalCosts: 0,
         position: null,
         desiredAsset: null,
+        desiredDirection: "long",
         pendingDecisionTimeSec: null,
         pendingSell: null,
         pendingBuy: null,
@@ -148,7 +151,7 @@ export function createEmptyAssetSwitchSummary(
         : Math.floor(Date.now() / 1000);
     const requestedEndSec = Number.isFinite(options.sampleToSec) ? options.sampleToSec! : cutoffSec;
     const arms = {} as AssetSwitchReplaySummary["arms"];
-    for (const field of replayArmFields(options.enableCausalArms)) {
+    for (const field of assetSwitchArmFields(options.enableCausalArms, options.enableDirectionalArm)) {
         arms[field] = {
             status: "no_entry",
             enteredCount: 0,
@@ -174,6 +177,7 @@ export function createEmptyAssetSwitchSummary(
     }
     return {
         semanticsVersion: "asset_switch.v1",
+        ...(options.enableDirectionalArm !== false ? { directionalTotalPairs: options.directionalTotalPairs ?? 0, directionalBelowMinimumPolicy: "exit_next_open" as const, directionalVoteDelayBars: DIRECTIONAL_VOTE_DELAY_BARS } : {}),
         decisionCount: 0,
         windowStartSec: Number.isFinite(options.sampleFromSec) ? options.sampleFromSec! : null,
         windowEndSec: Math.min(requestedEndSec, cutoffSec),
@@ -472,14 +476,14 @@ async function validatePendingBuyAtEnd(
 }
 
 interface ArmRuntime {
-    field: ReplayArmField;
+    field: AssetSwitchArmField;
     state: ArmState;
-    schedule(assetIndex: number | null, decisionTimeSec: number): void | Promise<void>;
+    schedule(assetIndex: number | null, decisionTimeSec: number, direction?: "long" | "short", flatten?: boolean): void | Promise<void>;
     processPendingThrough(throughSec: number): void | Promise<void>;
 }
 
 function createArmRuntime(args: {
-    field: ReplayArmField;
+    field: AssetSwitchArmField;
     lookup: SwitchTargetLookup;
     assetNames: readonly string[];
     slippageRate: number;
@@ -499,29 +503,44 @@ function createArmRuntime(args: {
         }
         return response.point ? { timeSec: response.point.timeSec, open: response.point.open } : null;
     };
-    const schedule = (assetIndex: number | null, decisionTimeSec: number): void | Promise<void> => {
+    const schedule = (assetIndex: number | null, decisionTimeSec: number, direction: "long" | "short" = "long", flatten = false): void | Promise<void> => {
         const targetAsset = assetIndex === null ? null : assetNames[assetIndex] ?? null;
+        if (!targetAsset && flatten && state.position) {
+            state.desiredAsset = null;
+            state.pendingBuy = null;
+            state.buyOrderFromSec = null;
+            state.pendingDecisionTimeSec ??= decisionTimeSec;
+            // Repeated weak decisions retain the original close time. A
+            // pending switch keeps its close but drops the replacement entry.
+            if (state.pendingSell) return;
+            return planNext(state.position.asset, state.pendingDecisionTimeSec, false).then((close) => {
+                state.pendingSell = close;
+            });
+        }
         if (!targetAsset) {
             state.pendingDecisionTimeSec = null;
             state.pendingSell = null;
             state.pendingBuy = null;
             state.buyOrderFromSec = null;
             state.desiredAsset = state.position?.asset ?? null;
+            state.desiredDirection = state.position?.direction ?? "long";
             return;
         }
-        if (targetAsset === state.position?.asset) {
+        if (targetAsset === state.position?.asset && direction === state.position.direction) {
             state.pendingDecisionTimeSec = null;
             state.pendingSell = null;
             state.pendingBuy = null;
             state.buyOrderFromSec = null;
             state.desiredAsset = targetAsset;
+            state.desiredDirection = direction;
             return;
         }
-        if (targetAsset === state.desiredAsset && state.pendingDecisionTimeSec !== null) {
+        if (targetAsset === state.desiredAsset && direction === state.desiredDirection && state.pendingDecisionTimeSec !== null) {
             // Repeating a pending pick must not move its original order.
             return;
         }
         state.desiredAsset = targetAsset;
+        state.desiredDirection = direction;
         state.pendingDecisionTimeSec = decisionTimeSec;
         if (state.position) {
             const heldAsset = state.position.asset;
@@ -554,15 +573,16 @@ function createArmRuntime(args: {
                     state.pendingSell = null;
                     break;
                 }
-                const exitPrice = applySlippage(sell.open, "sell", slippageRate);
+                const exitPrice = applySlippage(sell.open, old.direction === "short" ? "buy" : "sell", slippageRate);
                 if (!finitePositive(exitPrice)) {
                     addDiagnostic(state, "invalidPrice");
                     state.pendingSell = null;
                     break;
                 }
                 const exitFee = old.quantity * exitPrice * commissionRate;
-                const exitSlippage = old.quantity * (sell.open - exitPrice);
-                const netPnl = old.quantity * (exitPrice - old.entryPrice) - old.entryFee - exitFee;
+                const sign = old.direction === "short" ? -1 : 1;
+                const exitSlippage = sign * old.quantity * (sell.open - exitPrice);
+                const netPnl = sign * old.quantity * (exitPrice - old.entryPrice) - old.entryFee - exitFee;
                 const duration = Math.max(0, sell.timeSec - old.entryTimeSec);
                 state.realizedNetPnl += netPnl;
                 if (state.realizedNetPnlByAsset) {
@@ -582,7 +602,12 @@ function createArmRuntime(args: {
                 }
                 state.position = null;
                 state.pendingSell = null;
-                state.buyOrderFromSec = sell.timeSec;
+                if (state.desiredAsset === null) {
+                    state.pendingDecisionTimeSec = null;
+                    state.buyOrderFromSec = null;
+                } else {
+                    state.buyOrderFromSec = sell.timeSec;
+                }
                 changed = true;
             }
             if (!state.position && state.desiredAsset && state.pendingBuy && state.pendingBuy.timeSec <= throughSec) {
@@ -595,7 +620,8 @@ function createArmRuntime(args: {
                     state.pendingBuy = null;
                     break;
                 }
-                const entryPrice = applySlippage(buy.open, "buy", slippageRate);
+                const direction = state.desiredDirection;
+                const entryPrice = applySlippage(buy.open, direction === "short" ? "sell" : "buy", slippageRate);
                 if (!finitePositive(entryPrice)) {
                     addDiagnostic(state, "invalidPrice");
                     state.pendingBuy = null;
@@ -603,10 +629,11 @@ function createArmRuntime(args: {
                 }
                 const quantity = NOTIONAL_PER_ENTRY / entryPrice;
                 const entryFee = quantity * entryPrice * commissionRate;
-                const entrySlippage = quantity * (entryPrice - buy.open);
+                const entrySlippage = (direction === "short" ? -1 : 1) * quantity * (entryPrice - buy.open);
                 const decisionTimeSec = state.pendingDecisionTimeSec ?? buy.timeSec;
                 const tradeRecord: AssetSwitchTradeRecord | undefined = retainTradeRows ? {
                     arm: field,
+                    ...(field === "topRawDirectional" ? { direction } : {}),
                     asset: destination,
                     decisionTimeSec,
                     entryTimeSec: buy.timeSec,
@@ -620,6 +647,7 @@ function createArmRuntime(args: {
                     status: "open",
                 } : undefined;
                 state.position = {
+                    direction,
                     asset: destination,
                     decisionTimeSec,
                     entryTimeSec: buy.timeSec,
@@ -680,7 +708,11 @@ export async function runAssetSwitchReplay(args: {
     if (!selectedAssets) {
         const scannedAssets = new Set<string>();
         for (const view of views) {
-            for (const arm of replayArmFields(options.enableCausalArms)) {
+            for (const arm of assetSwitchArmFields(options.enableCausalArms, options.enableDirectionalArm)) {
+                if (arm === "topRawDirectional") {
+                    if (view.directionalPick) scannedAssets.add(assetNames[view.directionalPick.assetIndex] ?? "");
+                    continue;
+                }
                 const selectedIndex = view.picks[arm];
                 if (selectedIndex != null) scannedAssets.add(assetNames[selectedIndex] ?? "");
             }
@@ -692,7 +724,7 @@ export async function runAssetSwitchReplay(args: {
 
     const retainTradeRows = options.includeEventDetails === true || typeof options.onAssetSwitchTrade === "function";
     const detailsByArm = options.includeEventDetails
-        ? new Map(replayArmFields(options.enableCausalArms).map((field) => [field, new BoundedTradePreview(TRADE_DETAIL_LIMIT)] as const))
+        ? new Map(assetSwitchArmFields(options.enableCausalArms, options.enableDirectionalArm).map((field) => [field, new BoundedTradePreview(TRADE_DETAIL_LIMIT)] as const))
         : undefined;
     let tradeCount = 0;
     const onTradeOpened = (row: AssetSwitchTradeRecord): void => {
@@ -702,7 +734,7 @@ export async function runAssetSwitchReplay(args: {
     const onTradeFinalized = async (row: AssetSwitchTradeRecord): Promise<void> => {
         await options.onAssetSwitchTrade?.(row);
     };
-    const runtimes = replayArmFields(options.enableCausalArms).map((field) => createArmRuntime({
+    const runtimes = assetSwitchArmFields(options.enableCausalArms, options.enableDirectionalArm).map((field) => createArmRuntime({
         field,
         lookup,
         assetNames,
@@ -726,8 +758,10 @@ export async function runAssetSwitchReplay(args: {
         for (const runtime of runtimes) {
             const pendingWork = runtime.processPendingThrough(view.timeSec);
             if (pendingWork) await pendingWork;
-            if (!runtime.state.failed) {
-                const scheduleWork = runtime.schedule(view.picks[runtime.field] ?? null, view.timeSec);
+            if (!runtime.state.failed && (!view.directionalOnly || runtime.field === "topRawDirectional")) {
+                const scheduleWork = runtime.field === "topRawDirectional"
+                    ? runtime.schedule(view.directionalPick?.assetIndex ?? null, view.timeSec, view.directionalPick?.direction, view.directionalBelowMinimum === true)
+                    : runtime.schedule(view.picks[runtime.field] ?? null, view.timeSec);
                 if (scheduleWork) await scheduleWork;
             }
         }
@@ -763,6 +797,7 @@ export async function runAssetSwitchReplay(args: {
         if (state.position) {
             const position = state.position;
             openPosition = {
+                ...(field === "topRawDirectional" ? { direction: position.direction } : {}),
                 asset: position.asset,
                 entryDecisionTimeSec: position.decisionTimeSec,
                 entryTimeSec: position.entryTimeSec,
@@ -789,7 +824,7 @@ export async function runAssetSwitchReplay(args: {
                     const age = Math.max(0, windowEndSec - markTimeSec);
                     if (age > GAP_THRESHOLD_SEC) addDiagnostic(state, "staleMark");
                     if (await checkGap(state, lookup, position.asset, position.entryTimeSec, point.timeSec)) {
-                        openPnl = position.quantity * (point.close - position.entryPrice) - position.entryFee;
+                        openPnl = (position.direction === "short" ? -1 : 1) * position.quantity * (point.close - position.entryPrice) - position.entryFee;
                         openPosition = {
                             ...openPosition,
                             markTimeSec,
@@ -810,7 +845,8 @@ export async function runAssetSwitchReplay(args: {
         const pendingOrder: AssetSwitchPendingOrder | null = state.pendingDecisionTimeSec === null
             ? null
             : {
-                side: state.position ? "sell" : "buy",
+                side: state.position ? (state.position.direction === "short" ? "buy" : "sell") : (state.desiredDirection === "short" ? "sell" : "buy"),
+                ...(field === "topRawDirectional" && state.desiredAsset !== null ? { direction: state.desiredDirection } : {}),
                 destinationAsset: state.desiredAsset,
                 decisionTimeSec: state.pendingDecisionTimeSec,
                 scheduledTimeSec: state.position ? state.pendingSell?.timeSec ?? null : state.pendingBuy?.timeSec ?? null,
@@ -877,7 +913,7 @@ export async function runAssetSwitchReplay(args: {
         } };
     }
     const details = detailsByArm
-        ? replayArmFields(options.enableCausalArms).flatMap((field) => detailsByArm.get(field)!.values())
+        ? assetSwitchArmFields(options.enableCausalArms, options.enableDirectionalArm).flatMap((field) => detailsByArm.get(field)!.values())
         : undefined;
     onPhase("switch", "finished asset-switch replay", totalSteps, totalSteps);
     options.onAssetSwitchCacheStats?.(lookup.cacheStats);
@@ -885,6 +921,7 @@ export async function runAssetSwitchReplay(args: {
         ok: true,
         result: {
             semanticsVersion: "asset_switch.v1",
+            ...(options.enableDirectionalArm !== false ? { directionalTotalPairs: options.directionalTotalPairs ?? pairCount, directionalBelowMinimumPolicy: "exit_next_open" as const, directionalVoteDelayBars: DIRECTIONAL_VOTE_DELAY_BARS } : {}),
             decisionCount: views.length,
             windowStartSec,
             windowEndSec,

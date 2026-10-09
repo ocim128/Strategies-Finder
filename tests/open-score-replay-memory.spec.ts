@@ -30,6 +30,7 @@ async function main(): Promise<void> {
                             dataEndTime: 100000,
                             trades: Array.from({ length: 1000 }, (_, i) => ({
                                 type: "long", entryTime: i * 100 + 1,
+                                directionalMaturityTimeSec: i * 100 + 4,
                                 exitTime: i * 100 + 50, pnl: 1,
                                 exitReason: i === 999 ? "end_of_data" : "signal",
                             })),
@@ -42,6 +43,7 @@ async function main(): Promise<void> {
                     assert.equal(snapshot.snapshot.openPositions, 600);
                     assert.equal(snapshot.snapshot.winners[0].asset, "A");
                     const scanned = await scanArtifacts({
+                        enableDirectionalArm: true,
                         enableCausalArms: true,
                         artifactLoader: () => (async function* () {
                             for await (const artifact of raw()) yield toBatchSyntheticPairAdapter(artifact);
@@ -53,7 +55,7 @@ async function main(): Promise<void> {
                     assert.equal(scanned.ok, true);
                     const scan = scanned.result;
                     const deltas = scan.streams.reduce((sum, stream) => sum + stream.length, 0);
-                    assert.equal(deltas, 600 * 3998);
+                    assert.equal(deltas, 600 * 7996);
                     const swept = await sweepScoreEvents({
                         enableCausalArms: true, interval: "1m", mode: "asset_switch",
                         assetNames: scan.assetNames, validDegree: scan.validDegree,
@@ -63,8 +65,16 @@ async function main(): Promise<void> {
                         sampleFromSec: undefined, sampleToSec: undefined,
                     });
                     assert.equal(swept.ok, true);
-                    assert.equal(swept.result.events.length, 1000);
-                    const last = swept.result.events.at(-1);
+                    assert.equal(swept.result.events.length, 2999);
+                    assert.equal(swept.result.events.filter(event => !event.directionalOnly).length, 1000);
+                    const flatChecks = swept.result.events.filter(event => event.directionalOnly);
+                    assert.equal(flatChecks.length, 1999);
+                    for (const event of flatChecks) {
+                        assert.equal(event.rawScore.length, 0, "exit-only flat checks retain no asset snapshot");
+                        assert.equal(event.rawScoreProfitNow.length, 0);
+                        assert.equal(event.causalArms, undefined);
+                    }
+                    const last = swept.result.events.filter(event => !event.directionalOnly).at(-1);
                     assert.equal(last.causalScores, undefined);
                     assert.ok(last.causalArms.topStableSupport.picks.length <= 5);
                     assert.equal(last.rawScore[0], 600);
@@ -78,7 +88,7 @@ async function main(): Promise<void> {
                             activePairCountProfit: counts, rawScoreProfitNow: scores, activePairCountProfitNow: counts,
                             rawScoreProfitNowConf: scores, activePairCountProfitNowConf: counts };
                     });
-                    const selected = await buildAssetSwitchDecisions({ events: snapshots, totalEvents: snapshots.length,
+                    const selected = await buildAssetSwitchDecisions({ events: snapshots, totalEvents: snapshots.length, totalPairs: 600,
                         assetCount: names.length, assetNames: names, captureRanking: true, onPhase() {},
                         onEventProcessed(index) { snapshots[index] = null; } });
                     assert.equal(selected.ok, true);

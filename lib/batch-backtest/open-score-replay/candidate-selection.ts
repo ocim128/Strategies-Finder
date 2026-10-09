@@ -24,7 +24,7 @@
 import { createTieBreakDigest, tieBreakDigest } from "../max-active-research-contract";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
 import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback, StageOutcome } from "./internal-types";
-import { REPLAY_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, type CausalArmField } from "./arm-contract";
+import { REPLAY_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, RAW_DIRECTIONAL_MINIMUM_FRACTION, type CausalArmField } from "./arm-contract";
 import type { ReplayArmField } from "./arm-contract";
 import { yieldLoop } from "./runtime";
 import type { RankingEvent, RankingPick } from "./internal-types";
@@ -132,6 +132,34 @@ export interface AssetSwitchCandidateStageResult {
     decisions: AssetSwitchDecision[];
     candidateComparisonEvents: number;
     selectedAssets: Set<string>;
+}
+
+/** One signed raw-score extreme, inclusive 25% of total pairs; ties make no new pick. */
+export function pickRawDirectional(scores: ArrayLike<number>, totalPairs: number): AssetSwitchDecision["directionalPick"] {
+    return resolveRawDirectional(scores, totalPairs).directionalPick;
+}
+
+export function resolveRawDirectional(scores: ArrayLike<number>, totalPairs: number): Pick<AssetSwitchDecision, "directionalPick" | "directionalBelowMinimum"> {
+    if (!Number.isSafeInteger(totalPairs) || totalPairs <= 0) return { directionalPick: null, directionalBelowMinimum: true };
+    let bestMagnitude = totalPairs * RAW_DIRECTIONAL_MINIMUM_FRACTION;
+    let winner: number | null = null;
+    let tied = false;
+    for (let index = 0; index < scores.length; index += 1) {
+        const score = scores[index]!;
+        const magnitude = Math.abs(score);
+        if (!Number.isFinite(score) || magnitude < bestMagnitude) continue;
+        if (winner === null || magnitude > bestMagnitude) {
+            bestMagnitude = magnitude;
+            winner = index;
+            tied = false;
+        } else {
+            tied = true;
+        }
+    }
+    return {
+        directionalPick: winner === null || tied ? null : { assetIndex: winner, direction: scores[winner]! > 0 ? "long" : "short" },
+        directionalBelowMinimum: winner === null,
+    };
 }
 
 export async function buildCandidateViews(args: {
@@ -583,6 +611,9 @@ class SwitchMeanRawUnique {
  * score snapshot as soon as it has been consumed.
  */
 export async function buildAssetSwitchDecisions(args: {
+    /** Total submitted pairs, including pairs with no active votes. */
+    totalPairs: number;
+    enableDirectionalArm?: boolean;
     enableCausalArms?: boolean;
     events: readonly DecisionEvent[];
     totalEvents: number;
@@ -631,6 +662,15 @@ export async function buildAssetSwitchDecisions(args: {
             } };
         }
         const event = events[eventIndex]!;
+        if (event.directionalOnly) {
+            const directional = event.directionalSelection ?? { directionalPick: null, directionalBelowMinimum: true };
+            decisions.push({ timeSec: event.timeSec, directionalOnly: true, ...directional,
+                picks: Object.fromEntries(replayArmFields(args.enableCausalArms).map((field) => [field, null])) as AssetSwitchDecision["picks"] });
+            if (directional.directionalPick) selectedAssets.add(assetNames[directional.directionalPick.assetIndex]!);
+            onEventProcessed?.(eventIndex);
+            if (eventIndex % 1000 === 0) await yieldLoop();
+            continue;
+        }
         const ranking = rankingEvents ? captureRankingEvent(event.timeSec, {}, assetNames, args.enableCausalArms) : null;
         const considerRanking = (pool: typeof RANKING_ARM_SPECS[number]["pool"], raw: number, count: number, assetIndex: number, z?: number): void => {
             if (!ranking || raw <= 0) return;
@@ -738,7 +778,11 @@ export async function buildAssetSwitchDecisions(args: {
                 if (selectedAsset) selectedAssets.add(selectedAsset);
             }
         }
-        decisions.push({ timeSec: event.timeSec, picks, ...(event.causalArms ? { eligiblePoolCounts: Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [field, event.causalArms![field]!.eligibleCount])) } : {}) });
+        const directional = args.enableDirectionalArm === false ? { directionalPick: null }
+            : event.directionalSelection ?? resolveRawDirectional(event.rawScore, args.totalPairs);
+        const { directionalPick } = directional;
+        if (directionalPick) selectedAssets.add(assetNames[directionalPick.assetIndex]!);
+        decisions.push({ timeSec: event.timeSec, picks, ...directional, ...(event.causalArms ? { eligiblePoolCounts: Object.fromEntries(CAUSAL_ARM_FIELDS.map((field) => [field, event.causalArms![field]!.eligibleCount])) } : {}) });
         if (ranking) {
             for (const field of replayArmFields(args.enableCausalArms)) {
                 if (isCausalArm(field)) ranking.arms[field] = { picks: event.causalArms?.[field]?.picks ?? [] };

@@ -169,6 +169,7 @@ export interface OpenScoreUsdLatestSelections {
 }
 
 export type OpenScoreUsdEventDetailSelector =
+    | "TOP_RAW_DIRECTIONAL"
     | "TOP_RAW"
     | "TOP_MEAN"
     | "TOP_MEAN_RAW_UNIQUE"
@@ -684,6 +685,8 @@ export type ReplayMode = "horizon" | "asset_switch";
 export type AssetSwitchArmStatus = "complete" | "no_entry" | "incomplete";
 
 export interface AssetSwitchPendingOrder {
+    /** Side of the destination position; absent on legacy long-only results. */
+    direction?: "long" | "short";
     side: "buy" | "sell";
     destinationAsset: string | null;
     decisionTimeSec: number;
@@ -691,6 +694,7 @@ export interface AssetSwitchPendingOrder {
 }
 
 export interface AssetSwitchOpenPosition {
+    direction?: "long" | "short";
     asset: string;
     entryDecisionTimeSec: number;
     entryTimeSec: number;
@@ -704,7 +708,8 @@ export interface AssetSwitchOpenPosition {
 }
 
 export interface AssetSwitchTradeRecord {
-    arm: ReplayArmField;
+    arm: import("./arm-contract").AssetSwitchArmField;
+    direction?: "long" | "short";
     asset: string;
     decisionTimeSec: number;
     entryTimeSec: number;
@@ -754,6 +759,12 @@ export interface AssetSwitchArmSummary {
 
 /** Separate, path-dependent result; never represented as ReplayComparison. */
 export interface AssetSwitchReplaySummary {
+    /** Actual pair-candle delay; absent on saved immediate-vote results. */
+    directionalVoteDelayBars?: number;
+    /** Absent on saved results that held positions below the minimum. */
+    directionalBelowMinimumPolicy?: "exit_next_open";
+    /** Fixed denominator for the 25% directional threshold; absent on older results. */
+    directionalTotalPairs?: number;
     semanticsVersion: "asset_switch.v1";
     decisionCount: number;
     windowStartSec: number | null;
@@ -770,7 +781,7 @@ export interface AssetSwitchReplaySummary {
         missingAssets: number;
         invalidSeries: number;
     };
-    arms: import("./arm-contract").ReplayArmResults<AssetSwitchArmSummary>;
+    arms: import("./arm-contract").ReplayArmResults<AssetSwitchArmSummary> & { topRawDirectional?: AssetSwitchArmSummary };
     /** Optional, potentially large closed/open trade rows. */
     trades?: AssetSwitchTradeRecord[];
     tradeCount?: number;
@@ -780,6 +791,10 @@ export interface AssetSwitchReplaySummary {
 export type OpenScoreUsdCapTiltWeight = CapTiltWeight;
 
 export interface RunOpenScoreUsdReplayOptions {
+    /** Trusted coordinator's submitted pair count, before pair backtest failures; defaults to scanned artifacts. */
+    directionalTotalPairs?: number;
+    /** Internal opt-out for Finder's existing arm set; switch-only, enabled by default. */
+    enableDirectionalArm?: boolean;
     /** Trusted TOP_MEAN/Finder coordinator option; never a public request setting. */
     enableCausalArms?: boolean;
     /** Finder-only opt-in; independent of switch execution horizon. */

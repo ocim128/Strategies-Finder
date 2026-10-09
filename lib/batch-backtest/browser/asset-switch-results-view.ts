@@ -1,5 +1,5 @@
 import { escapeHtml } from "../../html-escape";
-import { hasAssetSwitchDecisionEvents, REPLAY_ARM_FIELDS, type ReplayArmField } from "../open-score-replay/arm-contract";
+import { hasAssetSwitchDecisionEvents, ASSET_SWITCH_ARM_FIELDS, RAW_DIRECTIONAL_MINIMUM_FRACTION, type AssetSwitchArmField } from "../open-score-replay/arm-contract";
 import type { AssetSwitchArmSummary, AssetSwitchReplaySummary } from "../open-score-replay/types";
 
 const METRICS = [
@@ -31,22 +31,22 @@ function positionNotes(result: AssetSwitchArmSummary): string {
     const position = result.openPosition;
     if (position) {
         const holding = position.holdingDurationSec == null ? "" : ` | held ${(position.holdingDurationSec / 86400).toFixed(1)} days`;
-        html += `<div class="batch-report-note">Open: ${escapeHtml(position.asset)} | mark ${money(position.openNetPnl)}${holding}</div>`;
+        html += `<div class="batch-report-note">Open: ${escapeHtml(position.asset)}${position.direction ? ` ${escapeHtml(position.direction.toUpperCase())}` : ""} | mark ${money(position.openNetPnl)}${holding}</div>`;
     }
     const pending = result.pendingOrder;
     if (pending) {
         const time = pending.scheduledTimeSec === null ? "waiting for target data"
             : `${new Date(pending.scheduledTimeSec * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC`;
-        html += `<div class="batch-report-note">Pending ${escapeHtml(pending.side)}${pending.destinationAsset ? ` ${escapeHtml(pending.destinationAsset)}` : ""} | ${time}</div>`;
+        html += `<div class="batch-report-note">Pending ${escapeHtml(pending.side)}${pending.destinationAsset ? ` ${escapeHtml(pending.destinationAsset)}` : ""}${pending.direction ? ` (${escapeHtml(pending.direction.toUpperCase())})` : ""} | ${time}</div>`;
     }
     return html;
 }
 
-function isLookAhead(arm: ReplayArmField): boolean {
+function isLookAhead(arm: AssetSwitchArmField): boolean {
     return arm === "topRawProfit" || arm === "topMeanProfit";
 }
 
-function renderGroup(summary: AssetSwitchReplaySummary, arms: readonly ReplayArmField[], research: boolean): string {
+function renderGroup(summary: AssetSwitchReplaySummary, arms: readonly AssetSwitchArmField[], research: boolean): string {
     const present = arms.filter((arm) => summary.arms[arm]);
     if (present.length === 0) return "";
     const label = research ? "Look-ahead research arms" : "Selector arms";
@@ -56,7 +56,18 @@ function renderGroup(summary: AssetSwitchReplaySummary, arms: readonly ReplayArm
     html += `<div class="batch-report-grid" data-batch-replay-panel="cards">`;
     for (const arm of present) {
         const result = summary.arms[arm]!;
-        html += `<article class="batch-report-card batch-replay-card"><div class="batch-replay-card-header"><div class="batch-report-title">${escapeHtml(arm)}</div><span class="batch-replay-status">${escapeHtml(result.status.replaceAll("_", " ").toUpperCase())}</span></div>`;
+        html += `<article class="batch-report-card batch-replay-card"><div class="batch-replay-card-header"><div class="batch-report-title">${escapeHtml(arm === "topRawDirectional" ? "TOP_RAW_DIRECTIONAL" : arm)}</div><span class="batch-replay-status">${escapeHtml(result.status.replaceAll("_", " ").toUpperCase())}</span></div>`;
+        if (arm === "topRawDirectional") {
+            const total = summary.directionalTotalPairs;
+            const threshold = total === undefined ? null : total * RAW_DIRECTIONAL_MINIMUM_FRACTION;
+            html += `<div class="batch-report-note">${threshold === null
+                ? "Threshold not recorded in this saved result. Rerun for the 25% threshold."
+                : `Largest absolute raw score: minimum 25% of ${escapeHtml(total)} total pairs (long ≥ +${escapeHtml(threshold)}, short ≤ −${escapeHtml(threshold)}).`} ${summary.directionalBelowMinimumPolicy === "exit_next_open"
+                    ? "Below minimum closes the position at the next target open."
+                    : "Rerun to apply the below-minimum exit rule."} ${summary.directionalVoteDelayBars === 3
+                    ? "Votes start on the third subsequent pair candle while the pair trade is still open (entry = 0)."
+                    : "Rerun to apply third-bar votes."} Equal-strength qualifying ties hold the current position.</div>`;
+        }
         if (research) html += `<div class="batch-replay-research-label">LOOK-AHEAD RESEARCH</div>`;
         html += `<div class="batch-replay-total"><span>Total P&L</span><strong>${money(result.totalNetPnl)}</strong></div>`;
         html += `<dl class="batch-replay-metrics">${METRICS.slice(1).map(([key, name]) => `<div><dt>${name}</dt><dd>${metric(result, key)}</dd></div>`).join("")}</dl>`;
@@ -68,7 +79,7 @@ function renderGroup(summary: AssetSwitchReplaySummary, arms: readonly ReplayArm
     html += `<th scope="col">Position / Pending</th></tr></thead><tbody>`;
     for (const arm of present) {
         const result = summary.arms[arm]!;
-        html += `<tr data-batch-replay-order="${REPLAY_ARM_FIELDS.indexOf(arm)}"><th scope="row"><strong>${escapeHtml(arm)}</strong>${research ? `<div class="batch-replay-research-label">LOOK-AHEAD RESEARCH</div>` : ""}</th><td><span class="batch-replay-status">${escapeHtml(result.status.replaceAll("_", " ").toUpperCase())}</span></td>`;
+        html += `<tr data-batch-replay-order="${ASSET_SWITCH_ARM_FIELDS.indexOf(arm)}"><th scope="row"><strong>${escapeHtml(arm === "topRawDirectional" ? "TOP_RAW_DIRECTIONAL" : arm)}</strong>${research ? `<div class="batch-replay-research-label">LOOK-AHEAD RESEARCH</div>` : ""}</th><td><span class="batch-replay-status">${escapeHtml(result.status.replaceAll("_", " ").toUpperCase())}</span></td>`;
         html += METRICS.map(([key]) => `<td data-batch-replay-metric="${key}" data-value="${result[key] !== null && Number.isFinite(result[key]) ? result[key] : ""}">${metric(result, key)}</td>`).join("");
         html += `<td>${positionNotes(result) || "—"}</td></tr>`;
     }
@@ -80,13 +91,13 @@ export function renderAssetSwitchReplay(summary: AssetSwitchReplaySummary, headi
     let html = `<section class="batch-replay-report" data-batch-replay-report aria-label="${escapeHtml(heading)}">`;
     html += `<div class="batch-replay-heading"><div class="batch-report-subheading batch-report-subheading--accent">${escapeHtml(heading)}</div>`;
     html += `<div class="batch-replay-view-controls" role="group" aria-label="${escapeHtml(heading)} view"><button type="button" class="btn btn-secondary btn-compact" data-batch-replay-view="cards" aria-pressed="true">Cards</button><button type="button" class="btn btn-secondary btn-compact" data-batch-replay-view="table" aria-pressed="false">Table</button></div></div>`;
-    html += `<div class="batch-report-note">${escapeHtml(summary.semanticsVersion)} | fixed $${summary.notionalPerEntry.toLocaleString()} per entry, non-compounding | costs include slippage and commission | entry and switch orders fill at the next target open. Each arm is a separate long-only position path; unavailable data is not ranked.</div>`;
+    html += `<div class="batch-report-note">${escapeHtml(summary.semanticsVersion)} | fixed $${summary.notionalPerEntry.toLocaleString()} per entry, non-compounding | costs include slippage and commission | entry and switch orders fill at the next target open. Each arm holds at most one position; TOP_RAW_DIRECTIONAL supports long and short. Unavailable data is not ranked.</div>`;
     const windowLabel = !hasAssetSwitchDecisionEvents(summary) ? "No decision events"
         : summary.windowStartSec === null ? `Full history through ${new Date(summary.windowEndSec * 1000).toISOString().slice(0, 10)}`
             : `${new Date(summary.windowStartSec * 1000).toISOString().slice(0, 10)}..${new Date(summary.windowEndSec * 1000).toISOString().slice(0, 10)}`;
     html += `<div class="batch-report-note">Window: ${windowLabel} | target data ${summary.coverage.loadedAssets}/${summary.coverage.requestedAssets} loaded${summary.tradeCount !== undefined ? ` | ${summary.tradeCount.toLocaleString()} trade records` : ""}</div>`;
-    html += renderGroup(summary, REPLAY_ARM_FIELDS.filter((arm) => !isLookAhead(arm)), false);
-    html += renderGroup(summary, REPLAY_ARM_FIELDS.filter(isLookAhead), true);
+    html += renderGroup(summary, ASSET_SWITCH_ARM_FIELDS.filter((arm) => !isLookAhead(arm)), false);
+    html += renderGroup(summary, ASSET_SWITCH_ARM_FIELDS.filter(isLookAhead), true);
     return html + `</section>`;
 }
 

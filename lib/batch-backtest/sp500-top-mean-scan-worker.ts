@@ -22,6 +22,7 @@ import { compareDeltas, scanPairArtifact, type PairArtifactScanContext } from ".
 import type { ScoreDelta } from "./open-score-replay/internal-types";
 
 export interface TopMeanScanWorkerData {
+    enableDirectionalArm?: boolean;
     enableCausalArms?: boolean;
     runId: string;
     baseDir?: string;
@@ -32,6 +33,7 @@ export interface TopMeanScanWorkerData {
 export const TOP_MEAN_SCAN_NO_QUOTE_LEG = 0xffffffff;
 
 export interface TopMeanScanShardResult {
+    missingDirectionalMaturityTrades?: number;
     validDegree?: Array<[string, number]>;
     entrySecs?: Float64Array;
     shardIndex: number;
@@ -71,10 +73,11 @@ interface ShardScanAccumulator {
     rowOffsets: number[];
 }
 
-function scanShard(shardIndex: number, artifacts: CompactPairArtifact[], causal = false): TopMeanScanShardResult {
+function scanShard(shardIndex: number, artifacts: CompactPairArtifact[], causal = false, directional = false): TopMeanScanShardResult {
     const names: string[] = [];
     const localIndexByName = new Map<string, number>();
     const ctx: PairArtifactScanContext = {
+        enableDirectionalArm: directional,
         enableCausalArms: causal,
         assetIndex: (name: string): number => {
             let idx = localIndexByName.get(name);
@@ -134,7 +137,7 @@ function scanShard(shardIndex: number, artifacts: CompactPairArtifact[], causal 
         acc.rowOffsets.push(acc.rows.length);
         for (const row of outcome.deltas) acc.rows.push(row);
     }
-    return packShard(acc);
+    return { ...packShard(acc), ...(directional ? { missingDirectionalMaturityTrades: ctx.missingDirectionalMaturityTrades ?? 0 } : {}) };
 }
 
 function packShard(acc: ShardScanAccumulator): TopMeanScanShardResult {
@@ -154,7 +157,7 @@ function packShard(acc: ShardScanAccumulator): TopMeanScanShardResult {
         deltas[i] = row.delta;
         pnlShares[i] = row.pnlShare;
         confidenceWeights[i] = row.profitNowConfidenceWeight;
-        deltaFlags[i] = row.isEntry | (row.voteApplied ? 2 : 0);
+        deltaFlags[i] = row.isEntry | (row.voteApplied ? 2 : 0) | (row.directionalOnly ? 4 : 0);
     }
     return {
         ...(acc.validDegree ? { validDegree: [...acc.validDegree], entrySecs } : {}),
@@ -183,7 +186,7 @@ async function main(): Promise<void> {
         try {
             const artifacts = await readShardArtifactsAsync(data.runId, shardIndex, data.baseDir);
             shards.push(artifacts
-                ? scanShard(shardIndex, artifacts, data.enableCausalArms)
+                ? scanShard(shardIndex, artifacts, data.enableCausalArms, data.enableDirectionalArm)
                 : { shardIndex, ok: false });
         } catch {
             shards.push({ shardIndex, ok: false });

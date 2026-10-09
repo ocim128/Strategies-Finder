@@ -16,6 +16,7 @@ import type {
 } from "./internal-types";
 import { yieldLoop } from "./runtime";
 import { ScoreDeltaBuffer } from "./score-delta-buffer";
+import { directionalVoteMaturityTime } from "../compact-pair-artifact";
 
 /** Comparator for ScoreDelta: (time, assetIndex, isEntry DESC). Entries before
  * exits at the same (time, asset) so the post-execution score reflects the new
@@ -28,6 +29,7 @@ export function compareDeltas(a: ScoreDelta, b: ScoreDelta): number {
 }
 
 export interface ArtifactScanResult {
+    missingDirectionalMaturityTrades?: number;
     validDegree?: Map<string, number>;
     assetIndexByName: Map<string, number>;
     assetNames: string[];
@@ -60,6 +62,8 @@ export interface ArtifactScanResult {
  * `assetIndex` and an inactive tilt.
  */
 export interface PairArtifactScanContext {
+    enableDirectionalArm?: boolean;
+    missingDirectionalMaturityTrades?: number;
     enableCausalArms?: boolean;
     assetIndex(name: string): number;
     capTiltWeight: ActiveCapTiltWeight | null;
@@ -220,6 +224,24 @@ export function scanPairArtifact(artifact: BatchSyntheticPairArtifact, ctx: Pair
         tradeIdx += 1;
         const voteApplied = tradeVoteApplied[tradeIdx]!;
         const profitNowConfidenceWeight = tradeProfitNowConfidenceWeight[tradeIdx]!;
+        if (ctx.enableDirectionalArm) {
+            const maturity = trade.directionalMaturityTimeSec !== undefined ? trade.directionalMaturityTimeSec
+                : artifact.data.length > 0 ? directionalVoteMaturityTime(artifact.data, trade.entryTime) : undefined;
+            if (maturity === undefined) ctx.missingDirectionalMaturityTrades = (ctx.missingDirectionalMaturityTrades ?? 0) + 1;
+            if (typeof maturity === "number" && Number.isFinite(maturity) && maturity > entrySec
+                && (trade.exitReason === "end_of_data" || exitSec === null || exitSec > maturity)) {
+                const appendMatureVote = (assetIndex: number, delta: number): void => {
+                    stream.push({ entrySec, timeSec: maturity, assetIndex, delta, isEntry: 1, directionalOnly: true,
+                        pnlShare: 0, voteApplied: false, profitNowConfidenceWeight: 0 });
+                    if (exitSec !== null && trade.exitReason !== "end_of_data") stream.push({
+                        entrySec, timeSec: exitSec, assetIndex, delta: -delta, isEntry: 0, directionalOnly: true,
+                        pnlShare: 0, voteApplied: false, profitNowConfidenceWeight: 0,
+                    });
+                };
+                appendMatureVote(bi, sign * baseWeight);
+                if (qi !== null) appendMatureVote(qi, -sign * quoteWeight);
+            }
+        }
         // Entry deltas (long: base+1/quote-1; short: base-1/quote+1).
         stream.push({
             ...(ctx.enableCausalArms ? { entrySec } : {}),
@@ -286,6 +308,7 @@ export function scanPairArtifact(artifact: BatchSyntheticPairArtifact, ctx: Pair
 }
 
 export async function scanArtifacts(args: {
+    enableDirectionalArm?: boolean;
     enableCausalArms?: boolean;
     artifactLoader: () => AsyncIterable<BatchSyntheticPairArtifact>;
     shouldStop: () => boolean;
@@ -346,6 +369,7 @@ export async function scanArtifacts(args: {
     };
     const validDegree = args.enableCausalArms ? new Map<string, number>() : undefined;
     const scanCtx: PairArtifactScanContext = {
+        enableDirectionalArm: args.enableDirectionalArm,
         enableCausalArms: args.enableCausalArms,
         assetIndex,
         capTiltWeight,
@@ -407,6 +431,7 @@ export async function scanArtifacts(args: {
             profitableStreams,
             pnlKnownStreams,
             pairCount,
+            ...(args.enableDirectionalArm ? { missingDirectionalMaturityTrades: scanCtx.missingDirectionalMaturityTrades ?? 0 } : {}),
             omittedPairs,
             capTiltCoverage,
             capTiltWindowCoverage,

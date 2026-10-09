@@ -16,6 +16,7 @@ const SHARD_COUNT = 8;
 
 function trade(type: "long" | "short", entrySec: number, exitSec: number | null, pnl: number): CompactTrade {
     return {
+        directionalMaturityTimeSec: entrySec + 20,
         type,
         entryTime: new Date(entrySec * 1000).toISOString(),
         exitTime: exitSec === null ? "" : new Date(exitSec * 1000).toISOString(),
@@ -104,6 +105,7 @@ function bufferView(buffer: ArtifactScanResult): unknown {
         retainedDegree: [...buffer.retainedDegree.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)),
         pairCount: buffer.pairCount,
         omittedPairs: buffer.omittedPairs,
+        missingDirectionalMaturityTrades: buffer.missingDirectionalMaturityTrades,
         profitableStreams: buffer.profitableStreams,
         pnlKnownStreams: buffer.pnlKnownStreams,
         capTiltCoverage: buffer.capTiltCoverage,
@@ -119,9 +121,10 @@ function bufferView(buffer: ArtifactScanResult): unknown {
     };
 }
 
-async function sequentialScan(runId: string, baseDir: string, enableCausalArms = false): Promise<ArtifactScanResult> {
+async function sequentialScan(runId: string, baseDir: string, enableCausalArms = false, enableDirectionalArm = false): Promise<ArtifactScanResult> {
     const outcome = await scanArtifacts({
         enableCausalArms,
+        enableDirectionalArm,
         // Same seam as the coordinator loader: the adapter's partial result
         // satisfies everything the scan consumes.
         artifactLoader: (() => iterateRunCompactArtifacts(runId, baseDir, { strict: true })) as unknown as () => AsyncIterable<BatchSyntheticPairArtifact>,
@@ -164,6 +167,12 @@ async function main(): Promise<void> {
         assert.deepEqual(bufferView(causal.result), bufferView(await sequentialScan("parallel_scan_spec_1", baseDir, true)));
         assert.equal(causal.result.validDegree!.get("TSLA"), undefined);
         assert.equal(causal.result.validDegree!.get("WMT"), 1);
+
+        const directional = await runParallelArtifactScan({ runId: "parallel_scan_spec_1", baseDir, shouldStop: () => false, workerCount: 2, enableCausalArms: true, enableDirectionalArm: true });
+        assert.equal(directional.status, "ok");
+        if (directional.status !== "ok") throw new Error("Expected directional parallel scan.");
+        assert.deepEqual(bufferView(directional.result), bufferView(await sequentialScan("parallel_scan_spec_1", baseDir, true, true)), "mature vote flags and timestamps survive packed worker transfer/remapping");
+        assert.ok(directional.result.streams.some((stream) => [...stream.flags].some((flag) => (flag & 4) !== 0)));
 
         // Single-worker path (same-process semantics) must match too.
         const single = await runParallelArtifactScan({

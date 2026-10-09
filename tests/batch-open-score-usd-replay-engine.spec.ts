@@ -142,8 +142,9 @@ function emptyResult(): BacktestResult {
 }
 
 let tradeId = 0;
-function makeTrade(type: "long" | "short", entrySec: number, exitSec: number | null, pnl = 0): Trade {
+function makeTrade(type: "long" | "short", entrySec: number, exitSec: number | null, pnl = 0): Trade & { directionalMaturityTimeSec?: number | null } {
     return {
+        directionalMaturityTimeSec: entrySec + 3_000,
         id: tradeId += 1,
         type,
         entryTime: entrySec as Time,
@@ -194,6 +195,133 @@ function makeTarget(asset: string, bars: number, priceAt: (i: number) => number)
 async function* fromArray<T>(items: T[]): AsyncIterable<T> {
     for (const item of items) yield item;
 }
+
+describe("TOP_RAW_DIRECTIONAL centered-pair experiment", () => {
+    it("waits for the third actual pair candle across weekends, and never counts trades closed before or on it", async () => {
+        const stamps = ["2024-01-05T10:00:00Z", "2024-01-05T11:00:00Z", "2024-01-08T10:00:00Z", "2024-01-09T10:00:00Z", "2024-01-10T10:00:00Z", "2024-01-11T10:00:00Z"].map((time) => Date.parse(time) / 1_000);
+        const data = stamps.map((time) => ({ time: time as Time, open: 100, high: 100, low: 100, close: 100, volume: 1 }));
+        for (const side of ["long", "short"] as const) for (const exitIndex of [2, 3, 4]) {
+            const pairs = ["P1", "P2"].map((peer) => {
+                const trade = makeTrade("long", stamps[0]!, stamps[exitIndex]!);
+                delete trade.directionalMaturityTimeSec;
+                return { ...makePair(side === "long" ? "NVDA" : peer, side === "long" ? peer : "NVDA", [trade]), data };
+            });
+            const result = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, {
+                mode: "asset_switch", interval: "1h", includeEventDetails: true,
+                sampleToSec: stamps[5]! + 3_600, evaluationCutoffSec: stamps[5]! + 3_600,
+                loadTargetDataset: async () => data,
+            });
+            const arm = result.assetSwitch!.arms.topRawDirectional!;
+            expect(arm.enteredCount, `${side}, pair exit index ${exitIndex}`).to.equal(exitIndex === 4 ? 1 : 0);
+            if (exitIndex === 4) {
+                expect(result.assetSwitch!.trades!.find((row) => row.arm === "topRawDirectional")).to.include({
+                    asset: "NVDA", direction: side, entryTimeSec: stamps[4], exitTimeSec: stamps[5], status: "closed",
+                });
+                expect(arm.openPosition).to.equal(null);
+            }
+            expect(result.assetSwitch!.arms.topRaw.enteredCount).to.be.greaterThan(0, "legacy arms keep fresh entry votes");
+        }
+    });
+
+    it("does not let a fresh overlapping trade or its early exit remove an older mature vote", async () => {
+        const data = makeTarget("NVDA", 10, () => 100).data;
+        const pairs = ["P1", "P2"].map((peer) => ({ ...makePair("NVDA", peer, [
+            makeTrade("long", T0, T0 + 7_000), makeTrade("long", T0 + 4_000, T0 + 5_000),
+        ]), data }));
+        const result = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, {
+            mode: "asset_switch", interval: "1m", includeEventDetails: true,
+            sampleToSec: T0 + 9_500, evaluationCutoffSec: T0 + 9_500, loadTargetDataset: async () => data,
+        });
+        const trades = result.assetSwitch!.trades!.filter((row) => row.arm === "topRawDirectional");
+        expect(trades).to.have.length(1);
+        expect(trades[0]).to.include({ asset: "NVDA", entryTimeSec: T0 + 4_000, exitTimeSec: T0 + 8_000 });
+    });
+
+    it("reports legacy trades without candle metadata as unavailable instead of counting them immediately", async () => {
+        const pairs = ["P1", "P2"].map((peer) => {
+            const trade = makeTrade("long", T0, null);
+            delete trade.directionalMaturityTimeSec;
+            return makePair("NVDA", peer, [trade]);
+        });
+        const result = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, {
+            mode: "asset_switch", interval: "1m", sampleToSec: T0 + 5_500, evaluationCutoffSec: T0 + 5_500,
+            loadTargetDataset: async (asset) => makeTarget(asset, 6, () => 100).data,
+        });
+        expect(result.assetSwitch!.arms.topRawDirectional!.status).to.equal("incomplete");
+        expect(result.assetSwitch!.arms.topRawDirectional!.totalNetPnl).to.equal(null);
+        expect(result.warnings.join("\n")).to.include("lack actual third-bar timestamps");
+        expect(result.complete).to.equal(false);
+    });
+    it("goes flat when exit-only vote changes drop below 25%, without changing legacy holdings", async () => {
+        for (const side of ["long", "short"] as const) {
+            const peers = Array.from({ length: 6 }, (_, index) => `PEER${index}`);
+            const pairs = peers.flatMap((peer, index) => {
+                const trades = [makeTrade("long", T0 + 1_000, index < 5 ? T0 + 7_000 : null)];
+                return [makePair("NVDA", peer, side === "long" ? trades : []), makePair(peer, "NVDA", side === "short" ? trades : [])];
+            });
+            const result = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, {
+                mode: "asset_switch", interval: "1m", sampleToSec: T0 + 9_500, evaluationCutoffSec: T0 + 9_500,
+                includeEventDetails: true, loadTargetDataset: async (asset) => makeTarget(asset, 10, (bar) => bar < 7 ? 100 : bar < 9 ? 110 : 200).data,
+            });
+            expect(result.assetSwitch!.arms.topRawDirectional).to.include({ completedTrades: 1, enteredCount: 1, openPosition: null, pendingOrder: null });
+            expect(result.assetSwitch!.arms.topRawDirectional!.totalNetPnl).to.equal(side === "long" ? 100 : -100);
+            const trade = result.assetSwitch!.trades!.find((row) => row.arm === "topRawDirectional")!;
+            expect(trade).to.include({ asset: "NVDA", direction: side, entryTimeSec: T0 + 5_000, exitTimeSec: T0 + 8_000 });
+            if (side === "long") expect(result.assetSwitch!.arms.topRaw.openPosition?.asset).to.equal("NVDA");
+        }
+    });
+    it("uses 25% of the full list, including inactive pairs, on both sides and honors the submitted count", async () => {
+        for (const side of ["long", "short"] as const) {
+            for (const [peerCount, activeCount, submittedTotal, shouldEnter] of [
+                [4, 2, undefined, true], [5, 2, undefined, false], [5, 3, undefined, true],
+                [12, 0, undefined, false], [12, 5, undefined, false], [12, 6, undefined, true], [12, 6, 100, false],
+            ] as const) {
+                const peers = Array.from({ length: peerCount }, (_, index) => `PEER${index}`);
+                const pairs = peers.flatMap((peer, index) => [
+                    makePair("NVDA", peer, side === "long" && index < activeCount ? [makeTrade("long", T0 + 1_000, null)] : []),
+                    makePair(peer, "NVDA", side === "short" && index < activeCount ? [makeTrade("long", T0 + 1_000, null)] : []),
+                ]);
+                const result = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, {
+                    mode: "asset_switch", interval: "1m", directionalTotalPairs: submittedTotal,
+                    sampleToSec: T0 + 6_500, evaluationCutoffSec: T0 + 6_500,
+                    loadTargetDataset: async (asset) => makeTarget(asset, 7, () => 100).data,
+                });
+                const context = `${side}: ${activeCount} votes / ${submittedTotal ?? pairs.length} pairs`;
+                expect(result.assetSwitch!.directionalTotalPairs, context).to.equal(submittedTotal ?? pairs.length);
+                expect(result.assetSwitch!.arms.topRawDirectional!.enteredCount, context).to.equal(shouldEnter ? 1 : 0);
+                if (shouldEnter) expect(result.assetSwitch!.arms.topRawDirectional!.openPosition, context).to.include({ asset: "NVDA", direction: side });
+            }
+        }
+    });
+    it("aggregates both pair orientations and reverses only NVDA when its signed votes reverse", async () => {
+        const peers = Array.from({ length: 12 }, (_, index) => `PEER${index}`);
+        const pairs = peers.flatMap((peer) => [
+            makePair("NVDA", peer, [makeTrade("long", T0 + 1_000, T0 + 7_000)]),
+            makePair(peer, "NVDA", [makeTrade("long", T0 + 7_000, null)]),
+        ]);
+        const targets = new Map(["NVDA", ...peers].map((asset) => [asset, makeTarget(asset, 14, (bar) => asset === "NVDA" ? bar < 7 ? 100 : bar < 12 ? 110 : 90 : 50).data]));
+        const result = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, {
+            mode: "asset_switch", interval: "1m", sampleToSec: T0 + 13_500, evaluationCutoffSec: T0 + 13_500,
+            includeEventDetails: true, loadTargetDataset: async (asset) => targets.get(asset) ?? null,
+        });
+        const arm = result.assetSwitch!.arms.topRawDirectional!;
+        expect(arm).to.include({ status: "complete", enteredCount: 2, completedTrades: 1 });
+        expect(arm.realizedNetPnl).to.equal(100);
+        expect(arm.openPosition).to.include({ asset: "NVDA", direction: "short", entryPrice: 110 });
+        expect(arm.openPositionNetPnl).to.be.closeTo(1_000 * 20 / 110, 1e-9);
+        expect(result.assetSwitch!.trades!.filter((trade) => trade.arm === "topRawDirectional").map((trade) => [trade.asset, trade.direction])).to.deep.equal([["NVDA", "long"], ["NVDA", "short"]]);
+        expect(result.reportLines.join("\n")).to.include("topRawDirectional | complete").and.include("holding=NVDA short");
+        const withoutDirectional = await runOpenScoreUsdReplay(() => fromArray(pairs), undefined, {
+            mode: "asset_switch", interval: "1m", sampleFromSec: T0 + 7_000,
+            sampleToSec: T0 + 13_500, evaluationCutoffSec: T0 + 13_500, enableDirectionalArm: false,
+            loadTargetDataset: async (asset) => {
+                expect(asset, "Finder's original arms must not request the new negative target").not.to.equal("NVDA");
+                return targets.get(asset) ?? null;
+            },
+        });
+        expect(withoutDirectional.assetSwitch!.arms).not.to.have.property("topRawDirectional");
+    });
+});
 
 describe("ranking consistency alongside replay", () => {
     const assets = ["AAA", "BBB", "CCC", "DDD", "EEE", "FFF"];

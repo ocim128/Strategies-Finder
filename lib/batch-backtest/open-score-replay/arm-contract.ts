@@ -34,13 +34,19 @@ export const LEGACY_REPLAY_ARM_FIELDS = REPLAY_ARM_FIELDS.filter((field): field 
 export const replayArmFields = (enabled?: boolean): readonly ReplayArmField[] => enabled ? REPLAY_ARM_FIELDS : LEGACY_REPLAY_ARM_FIELDS;
 export const isCausalArm = (field: ReplayArmField): field is CausalArmField => CAUSAL_ARM_FIELDS.includes(field as CausalArmField);
 
+/** Directional positions require the non-overlapping Hold until switch path. */
+export type AssetSwitchArmField = ReplayArmField | "topRawDirectional";
+export const RAW_DIRECTIONAL_MINIMUM_FRACTION = 0.25;
+export const ASSET_SWITCH_ARM_FIELDS: readonly AssetSwitchArmField[] = [...REPLAY_ARM_FIELDS, "topRawDirectional"];
+export const assetSwitchArmFields = (enabled?: boolean, directional = true): readonly AssetSwitchArmField[] => directional ? [...replayArmFields(enabled), "topRawDirectional"] : replayArmFields(enabled);
+
 /** Backward-compatible activity check for result summaries created before decisionCount was persisted. */
 export function hasAssetSwitchDecisionEvents(summary: {
     decisionCount?: unknown;
-    arms?: Partial<Record<ReplayArmField, { enteredCount?: unknown; completedTrades?: unknown }>>;
+    arms?: Partial<Record<AssetSwitchArmField, { enteredCount?: unknown; completedTrades?: unknown }>>;
 }): boolean {
     if (typeof summary.decisionCount === "number" && Number.isFinite(summary.decisionCount) && summary.decisionCount > 0) return true;
-    return REPLAY_ARM_FIELDS.some((arm) => {
+    return ASSET_SWITCH_ARM_FIELDS.some((arm) => {
         const metrics = summary.arms?.[arm];
         return (typeof metrics?.enteredCount === "number" && metrics.enteredCount > 0)
             || (typeof metrics?.completedTrades === "number" && metrics.completedTrades > 0);
