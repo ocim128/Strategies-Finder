@@ -1040,6 +1040,7 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
         replacement.bindEvents(dom);
         dom.batchBacktestSymbols.value = 'REMOUNTED';
         dom.batchBacktestSymbols.dispatchEvent(new Event('input', { bubbles: true }));
+        dom.batchBacktestSymbols.dispatchEvent(new Event('change', { bubbles: true }));
         if (dom.batchBacktestSummary.textContent !== '1 pair' || service.activeServerRunId !== 'owned-ui-run') throw new Error('Disposed Batch listeners still handle remounted input');
         replacement.dispose();
     });

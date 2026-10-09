@@ -21,6 +21,7 @@ import {
 } from "../lib/batch-backtest/sp500-top-mean-coordinator-engine";
 import {
     computeRunFingerprint,
+    getArtifactsRootDir,
     getRunDir,
     iterateRunRawCompactArtifacts,
     loadManifest,
@@ -1596,6 +1597,7 @@ async function testStatusSurfacesUnreadableResults(): Promise<void> {
 }
 
 async function main(): Promise<void> {
+    await testFullResultDownloadRoute();
     await testStatusSurfacesUnreadableResults();
     testAnnualReplayWindowsFollowSelectedRange();
     testReplayTargetOrderAvoidsLruThrash();
@@ -1619,6 +1621,62 @@ async function main(): Promise<void> {
     testWireSafetyCapsEventDetailsAndStripsDiagnostics();
     await testManifestBackedStatusCapsWireResult();
     console.log("PASS: sp500-top-mean-server-plugin.spec.ts");
+}
+
+async function testFullResultDownloadRoute(): Promise<void> {
+    const runId = `spec_download_${process.pid}_${Date.now().toString(36)}`;
+    const runDir = getRunDir(runId);
+    assert.equal(runDir, join(getArtifactsRootDir(), runId));
+    assert.equal(existsSync(runDir), false, "download fixture must not replace existing artifacts");
+    const resultPath = join(runDir, "result.json");
+    const full = {
+        eventDetails: Array.from({ length: TOP_MEAN_EVENT_DETAILS_WIRE_MAX_ROWS + 1 }, (_, i) => ({ i })),
+        annualReports: [{ eventDetails: [{ asset: "ANNUAL_DETAIL" }] }],
+        poolSnapshots: [{ archiveOnly: true }],
+    };
+    const routes = new Map<string, (req: any, res: any) => void | Promise<void>>();
+    registerSp500TopMeanRoutes({ use(path, handler) { routes.set(path, handler); } }, {
+        maxBodyBytes: 1024, rememberLocalApiOriginFromRequest: () => undefined,
+        ownerLocks: { isBusy: () => false, acquire: () => ({ runOwner: 1, analysisOwner: 1 }), releaseIfStillOwner: () => undefined },
+    });
+    const get = async (id: string, remoteAddress = "127.0.0.1") => {
+        const req: any = Readable.from([]);
+        req.method = "GET";
+        req.url = `/api/batch-backtest/sp500-top-mean/result?runId=${encodeURIComponent(id)}`;
+        req.headers = { host: "127.0.0.1:5173" };
+        req.socket = { remoteAddress };
+        const res: any = { statusCode: 0, body: "", headers: {} as Record<string, string>,
+            setHeader(name: string, value: string) { this.headers[name] = value; },
+            end(body: string) { this.body = body; },
+        };
+        await routes.get("/api/batch-backtest/sp500-top-mean/result")!(req, res);
+        return res;
+    };
+    try {
+        mkdirSync(runDir, { recursive: true });
+        writeFileSync(resultPath, JSON.stringify(full));
+        const response = await get(runId);
+        assert.equal(response.statusCode, 200);
+        assert.deepEqual(JSON.parse(response.body), full, "download must retain uncapped and archive-only rows");
+        assert.equal(response.headers["Content-Disposition"], `attachment; filename="sp500_top_mean_${runId}.json"`);
+        assert.equal(response.headers["Cache-Control"], "no-store");
+        for (const [id, remote, status] of [["../escape", "127.0.0.1", 400], [runId, "198.51.100.1", 401]] as const) {
+            const rejected = await get(id, remote);
+            assert.equal(rejected.statusCode, status);
+            assert.equal(rejected.headers["Content-Disposition"], undefined);
+        }
+        rmSync(resultPath);
+        const missing = await get(runId);
+        assert.equal(missing.statusCode, 404);
+        assert.equal(missing.headers["Content-Disposition"], undefined);
+        writeFileSync(resultPath, "{");
+        const invalid = await get(runId);
+        assert.equal(invalid.statusCode, 500);
+        assert.equal(invalid.headers["Content-Disposition"], undefined);
+    } finally {
+        assert.equal(runDir, join(getArtifactsRootDir(), runId));
+        rmSync(runDir, { recursive: true, force: true });
+    }
 }
 
 main().catch((err) => {

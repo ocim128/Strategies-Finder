@@ -83,6 +83,8 @@ export class BatchRunController {
     };
 
     private cancelled = false;
+    private disposed = false;
+    private lastProgressPercent = 0;
     private readonly controlAbort = new AbortController();
     private reattachAbort: AbortController | null = null;
     private lastResults: BatchBacktestSymbolResult[] = [];
@@ -277,6 +279,7 @@ export class BatchRunController {
     // ── Presentation wrappers over the results view ─────────────────────
 
     setProgress(dom: BatchBacktestDom, percent: number, text: string): void {
+        this.lastProgressPercent = percent;
         this.deps.resultsView.setProgress(dom, percent, text);
     }
 
@@ -344,6 +347,7 @@ export class BatchRunController {
     // ── Run lifecycle ───────────────────────────────────────────────────
 
     public async runBatch(): Promise<void> {
+        if (this.disposed) return;
         // Audit single-flight finding: this guard fires BEFORE any await and
         // before the Run button is disabled, so a rapid double-click on Run
         // cannot stack two invocations that both pass local preflight. The
@@ -364,7 +368,7 @@ export class BatchRunController {
             // runInFlight was still held, so the balanced-generator buttons
             // were rendered from a still-blocked lock and stayed disabled
             // after the run. Re-assert them now that the flags are down.
-            this.updateBalancedGeneratorButtons(this.deps.getDom());
+            if (!this.disposed) this.updateBalancedGeneratorButtons(this.deps.getDom());
         }
     }
 
@@ -382,6 +386,7 @@ export class BatchRunController {
         }
         const strategyKey = state.currentStrategyKey;
         await ensureBuiltInStrategyLoaded(strategyKey);
+        if (this.disposed) return;
         const strategy = strategyRegistry.get(strategyKey);
         if (!strategy) {
             dom.batchBacktestStatus.textContent = `Strategy not loaded: ${strategyKey}`;
@@ -432,6 +437,7 @@ export class BatchRunController {
         dom.batchBacktestCopyOpenPositionsBtn.disabled = true;
         dom.batchBacktestCopyBenchmarkBtn.disabled = true;
         this.setRunBusy(dom, true);
+        this.setProgress(dom, 0, "Starting");
         this.clearStaleRows(dom);
         setVisible(dom.batchBacktestEmpty, false);
         dom.batchBacktestResults.replaceChildren();
@@ -487,7 +493,9 @@ export class BatchRunController {
                 // (the browser never holds `row.data` in this mode).
                 this.updateArtifactActionButtons(dom);
                 this.updateSummary(dom);
-                this.setProgress(dom, 100, this.cancelled ? "Stopped" : "Done");
+                const completed = reachedTerminal && runOutcome === "done";
+                const progressLabel = completed ? "Done" : runOutcome === "cancelled" ? "Stopped" : "Failed";
+                this.setProgress(dom, completed ? 100 : this.lastProgressPercent, progressLabel);
                 this.setRunBusy(dom, false);
                 // Audit benchmark-rows finding: record the benchmark only after
                 // a known terminal outcome. A run that exited via HTTP/stream
@@ -536,6 +544,7 @@ export class BatchRunController {
         const response = await fetch("/api/batch-backtest/run", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            signal: this.controlAbort.signal,
             body: JSON.stringify({
                 symbols,
                 interval,
@@ -556,6 +565,10 @@ export class BatchRunController {
                     : {}),
             }),
         });
+        if (token !== this.runToken) {
+            await response.body?.cancel();
+            return;
+        }
         if (!response.ok || !response.body) {
             // Audit NDJSON-POST-helper finding: use the shared error extractor
             // so this non-2xx path matches the centralized transport shape.
@@ -784,7 +797,7 @@ export class BatchRunController {
                     runId?: string;
                 } | null;
             } | null;
-            if (!firstPayload) return null;
+            if (this.disposed || !firstPayload) return null;
             // Audit runId-scoping finding: the server confirmed the retained
             // run is no longer ours. Treat as not-adoptable so the caller
             // surfaces the original stream error instead of partial recovery.
@@ -843,6 +856,7 @@ export class BatchRunController {
                 },
             );
 
+            if (this.disposed) return null;
             setVisible(dom.batchBacktestEmpty, this.lastResults.length === 0);
             this.updateArtifactActionButtons(dom);
             this.saveLatestResultsSnapshot();
@@ -1063,6 +1077,7 @@ export class BatchRunController {
 
     /** Cancel the Batch run and any analysis holding the server analysis lock. */
     public async stopServerWork(): Promise<void> {
+        if (this.disposed) return;
         try {
             // Audit Finding 5: send the active run id so the server scopes
             // Stop to THIS run. A stale tab's mismatched id is rejected
@@ -1076,7 +1091,7 @@ export class BatchRunController {
                 ok: response.ok,
                 payload: await response.json().catch(() => null) as { ok?: boolean } | null,
             }), { signal: this.controlAbort.signal });
-            if (ok && payload?.ok && runId) this.clearActiveServerRun(runId);
+            if (!this.disposed && ok && payload?.ok && runId) this.clearActiveServerRun(runId);
         } catch (error) {
             debugLogger.warn("batch.server.stop_failed", {
                 error: error instanceof Error ? error.message : String(error),
@@ -1239,6 +1254,7 @@ export class BatchRunController {
      * ReattachBackoffController (2s → 5s → 10s → 15s, then a 60s cadence).
      */
     public async reattachToInProgressServerRun(): Promise<void> {
+        if (this.disposed) return;
         const POLL_INTERVAL_MS = 2000;
         const LONG_POLL_INTERVAL_MS = 5000;
         const FAST_POLL_COUNT = 150; // 5 minutes at 2s before stepping down to 5s.
@@ -1540,6 +1556,9 @@ export class BatchRunController {
     }
 
     public dispose(): void {
+        if (this.disposed) return;
+        this.disposed = true;
+        this.runToken += 1;
         this.controlAbort.abort();
         this.stopReattachPoll();
         this.cancelLiveRenderRaf();

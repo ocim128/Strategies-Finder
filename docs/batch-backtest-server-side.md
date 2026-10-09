@@ -127,6 +127,12 @@ The Pairs textarea stays selectable while read-only. Bound mutation handlers
 also reject changes while busy, preserving the submitted pair list, streamed
 rows, and run id used to scope Stop. Controls unlock when all owners release.
 
+Editing invalidates stale results and actions immediately. Pair-count parsing
+waits for a 200 ms pause in input so large TOP_MEAN lists are not split and
+deduplicated on every keystroke. Run, TOP_MEAN Run, Template, Use Current,
+Clear, Generate & Apply, and textarea change/blur refresh the count immediately.
+Disposal cancels the pending count update.
+
 Standalone OPEN_SCORE and TOP_MEAN share strict integer horizon parsing:
 nonblank invalid tokens and decimal horizons are errors, rather than silently
 dropped or rounded. Standalone replay still requires a nonblank horizon input;
@@ -144,7 +150,21 @@ The view uses a WeakMap so replaced results create fresh nodes and obsolete runs
 can be collected. Sorting semantics and stale run-token checks remain unchanged.
 Disposal removes DOM, replay-mode, and pagehide listeners, stops controller
 polling/debounces, and drops queued rows. Disposal is terminal for an instance;
-use `createBatchBacktestService()` to mount a replacement.
+use `createBatchBacktestService()` to mount a replacement. Sorted bursts render
+the authoritative list once per animation frame, using a dirty flag instead
+of buffering row references; unsorted appends retain the 50-row flush cap.
+Terminal paths synchronously drain both kinds of pending work.
+
+Disposal also aborts live Batch, TOP_MEAN, and standalone OPEN_SCORE browser
+streams and invalidates pending strategy preflight. Late responses cannot
+change the DOM, write snapshots, or start recovery. This detaches the browser;
+it does not send Stop or clear persisted active-run markers. A replacement
+service can reattach to server-owned work.
+
+Batch progress says Done at 100% only after successful completion. Failed or
+unrecovered streams say Failed at the last known percentage; cancellation says
+Stopped at the last known percentage. The status line retains the error or
+terminal summary.
 
 Focused regressions live in `batch-results-view.spec.ts` and
 `batch-backtest-service-lifecycle.browser.spec.ts`; the E2E Batch smoke checks
@@ -897,6 +917,14 @@ files without enumeration counts use the manifest pair count and zero for
 unavailable coverage counters. The full-result download route still returns
 the original disk payload.
 
+Download Result reads the full `/sp500-top-mean/result?runId=...` response as a
+Blob, without parsing or pretty-printing the uncapped result in the browser.
+The route supplies an attachment filename. Live and restored browser summaries
+therefore download the same full server result. A missing server file (404),
+or an older summary without a run id, falls back to a `_summary.json` export
+with an explicit notice that details may be omitted. Other server errors are
+shown as download failures, rather than silently exporting partial data.
+
 ### Durable TOP_MEAN Diagnostic Log
 
 The Copy Diagnostic log survives a page reload. Entries are persisted to
@@ -913,6 +941,10 @@ the ring, the copied diagnostic, and the persisted log all stay small. Full
 payloads remain available through Copy Result / Copy OPEN_SCORE / the details
 panel. The diagnostic-log contract lives in
 `lib/batch-backtest/sp500-top-mean-diagnostic-log.ts`.
+
+NDJSON diagnostics reuse their already measured JSON character length during
+compaction, avoiding a second serialization of the full event. Other diagnostic
+callers still calculate the size when no measurement is supplied.
 
 Worker entries (`resolveTopMeanWorkerPath`, `resolveTopMeanScanWorkerPath`,
 and the generic `resolveServerWorkerEntryPath`) resolve through the shared

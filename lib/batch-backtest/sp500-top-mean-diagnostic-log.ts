@@ -124,9 +124,12 @@ export interface TopMeanDiagnosticLogSnapshot {
 export function compactTopMeanDiagnosticData(
     data: unknown,
     maxBytes = TOP_MEAN_DIAGNOSTIC_ENTRY_DATA_MAX_BYTES,
+    knownSize?: number,
 ): unknown {
     if (data === undefined) return undefined;
-    const size = approxJsonByteLength(data);
+    const size = typeof knownSize === "number" && Number.isFinite(knownSize) && knownSize >= 0
+        ? knownSize
+        : approxJsonByteLength(data);
     if (size === undefined || size <= maxBytes) return data;
     return summarizeForPersist(data);
 }

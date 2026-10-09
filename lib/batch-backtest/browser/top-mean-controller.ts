@@ -18,7 +18,7 @@ import { strategyRegistry } from "../../../strategyRegistry";
 import { setVisible } from "../../dom-utils";
 import { debugLogger } from "../../debug-logger";
 import { copyToClipboard } from "../../browser-transfer";
-import { postBatchNdjson } from "../batch-ndjson-post";
+import { extractBatchServerError, postBatchNdjson } from "../batch-ndjson-post";
 import {
     TOP_MEAN_SELECTION_COOLDOWN_BARS_MAX,
     parseTopMeanMenuHorizons,
@@ -84,6 +84,8 @@ import {
 } from "./top-mean-event-details-view";
 
 export class TopMeanController {
+    private disposed = false;
+    private downloadInFlight = false;
     private readonly controlAbort = new AbortController();
     private readonly replayControlCleanup: Array<() => void> = [];
     private detailsDirty = true;
@@ -239,9 +241,10 @@ export class TopMeanController {
             strategy: NonNullable<ReturnType<typeof strategyRegistry.get>>;
         } | undefined>;
     }): Promise<void> {
+        if (this.disposed) return;
         const dom = this.getDom();
         const resolved = await args.resolveStrategy(dom);
-        if (!resolved) return;
+        if (this.disposed || !resolved) return;
         const { strategyKey, strategy } = resolved;
 
         // Audit (menu-numeric finding): strict input parsing. "0"/"12.5"/"abc"
@@ -376,7 +379,9 @@ export class TopMeanController {
             await postBatchNdjson<TopMeanStreamEvent>({
                 endpoint: "/api/batch-backtest/sp500-top-mean/run",
                 body: payload,
+                signal: this.controlAbort.signal,
                 onResponse: (response) => {
+                    this.controlAbort.signal.throwIfAborted();
                     this.recordTopMeanDiagnostic("http.response", {
                         status: response.status,
                         ok: response.ok,
@@ -385,6 +390,7 @@ export class TopMeanController {
                     });
                 },
                 onNonOkResponse: (status, errorPayload) => {
+                    this.controlAbort.signal.throwIfAborted();
                     // A client-error response rejects admission. There is no
                     // run to recover, and a status 404 would hide this error.
                     // Network/5xx failures and bodyless 2xx remain ambiguous.
@@ -398,6 +404,7 @@ export class TopMeanController {
                     });
                 },
                 onEvent: (event) => {
+                    this.controlAbort.signal.throwIfAborted();
                     this.recordTopMeanNdjsonEvent(event);
                 },
                 handlers: {
@@ -451,6 +458,7 @@ export class TopMeanController {
                 },
             });
         } catch (err) {
+            if (this.disposed) return;
             const message = err instanceof Error ? err.message : String(err);
             // The server may have accepted the run before the stream failed.
             // Keep the persisted run id and recover through the serialized
@@ -464,18 +472,20 @@ export class TopMeanController {
             });
             dom.batchBacktestSp500TopMeanProgressText.textContent = `Status: ${message}`;
         } finally {
-            if (reattachAfterError) {
-                void this.reattachToInProgressTopMeanRun();
-            } else {
-                setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-                setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+            if (!this.disposed) {
+                if (reattachAfterError) {
+                    void this.reattachToInProgressTopMeanRun();
+                } else {
+                    setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                    setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+                }
+                this.recordTopMeanDiagnostic("ui.finally", {
+                    runButtonDisplay: dom.batchBacktestSp500TopMeanRunBtn.style.display,
+                    stopButtonDisplay: dom.batchBacktestSp500TopMeanStopBtn.style.display,
+                    activeRunId: this.activeTopMeanRunId,
+                    progressText: dom.batchBacktestSp500TopMeanProgressText.textContent,
+                });
             }
-            this.recordTopMeanDiagnostic("ui.finally", {
-                runButtonDisplay: dom.batchBacktestSp500TopMeanRunBtn.style.display,
-                stopButtonDisplay: dom.batchBacktestSp500TopMeanStopBtn.style.display,
-                activeRunId: this.activeTopMeanRunId,
-                progressText: dom.batchBacktestSp500TopMeanProgressText.textContent,
-            });
         }
     }
 
@@ -820,17 +830,52 @@ export class TopMeanController {
         dom.batchBacktestSp500TopMeanProgressText.textContent = "Copied TOP_MEAN diagnostic to clipboard.";
     }
 
-    public downloadSp500TopMeanResults(): void {
-        if (!this.latestTopMeanResult) return;
-        const text = JSON.stringify(this.latestTopMeanResult, null, 2);
-        this.recordTopMeanDiagnostic("ui.download_result", { jsonChars: text.length });
-        const blob = new Blob([text], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = `sp500_top_mean_${this.latestTopMeanResult.runId || "result"}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+    public async downloadSp500TopMeanResults(): Promise<void> {
+        const result = this.latestTopMeanResult;
+        if (this.disposed || !result || this.downloadInFlight) return;
+        this.downloadInFlight = true;
+        const dom = this.getDom();
+        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
+        try {
+            // Consume the full server payload as a Blob; never parse or pretty-print
+            // the uncapped result on the browser's main thread.
+            const blob = result.runId
+                ? await requestBatchControl(
+                    `/api/batch-backtest/sp500-top-mean/result?runId=${encodeURIComponent(result.runId)}`,
+                    { cache: "no-store" },
+                    async (response) => {
+                        if (response.status === 404) return null;
+                        if (!response.ok) throw new Error((await extractBatchServerError(response)).message);
+                        return response.blob();
+                    },
+                    { signal: this.controlAbort.signal },
+                )
+                : null;
+            if (this.disposed || this.latestTopMeanResult !== result) return;
+            const summaryOnly = blob === null;
+            const download = blob ?? new Blob([JSON.stringify(result, null, 2)], { type: "application/json" });
+            this.recordTopMeanDiagnostic("ui.download_result", { bytes: download.size, summaryOnly });
+            const url = URL.createObjectURL(download);
+            try {
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `sp500_top_mean_${result.runId || "result"}${summaryOnly ? "_summary" : ""}.json`;
+                a.click();
+            } finally {
+                URL.revokeObjectURL(url);
+            }
+            dom.batchBacktestSp500TopMeanProgressText.textContent = summaryOnly
+                ? "Full result unavailable; downloaded browser summary (may omit details)."
+                : "Downloaded full TOP_MEAN result.";
+        } catch (error) {
+            if (!this.disposed && this.latestTopMeanResult === result) {
+                dom.batchBacktestSp500TopMeanProgressText.textContent =
+                    `Download failed: ${error instanceof Error ? error.message : String(error)}`;
+            }
+        } finally {
+            this.downloadInFlight = false;
+            if (!this.disposed) dom.batchBacktestSp500TopMeanDownloadBtn.disabled = !this.latestTopMeanResult;
+        }
     }
 
     // ── Diagnostic ring ─────────────────────────────────────────────────
@@ -876,6 +921,7 @@ export class TopMeanController {
     }
 
     public recordTopMeanDiagnostic(type: string, data?: unknown, bytes?: number): void {
+        if (this.disposed) return;
         // Compact AT RECORD TIME: the ring must never retain multi-MB payload
         // duplicates (a terminal reattach poll carries the whole wire-safe
         // result). The diagnostic evidence is the timeline, the byte size,
@@ -883,7 +929,7 @@ export class TopMeanController {
         const entry: TopMeanDiagnosticEntry = {
             at: new Date().toISOString(),
             type,
-            data: compactTopMeanDiagnosticData(data),
+            data: compactTopMeanDiagnosticData(data, undefined, bytes),
         };
         const heap = sampleTopMeanHeap();
         if (heap) entry.heap = heap;
@@ -952,6 +998,7 @@ export class TopMeanController {
     // ── Reattach ────────────────────────────────────────────────────────
 
     public async reattachToInProgressTopMeanRun(): Promise<void> {
+        if (this.disposed) return;
         const persisted = readTopMeanActiveRun();
         if (!persisted?.runId) return;
 
@@ -1128,6 +1175,8 @@ export class TopMeanController {
      * loop wakes, sees the cleared run id, and does not schedule another timer.
      */
     public dispose(): void {
+        if (this.disposed) return;
+        this.disposed = true;
         this.activeTopMeanRunId = null;
         for (const cleanup of this.replayControlCleanup.splice(0)) cleanup();
         this.controlAbort.abort();

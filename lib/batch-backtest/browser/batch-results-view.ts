@@ -24,13 +24,13 @@ import { coalesceAnimationFrame } from "../../render-scheduler";
  * Max rows buffered before a synchronous mid-stream flush (Finding 6). The
  * live stream queues DOM renders and flushes once per animation frame, but a
  * very fast cached run could queue hundreds of rows before the first frame;
- * this cap forces a flush so visible progress never lags too far behind the
- * streamed count. Terminal paths always flush regardless of queue size.
+ * this cap bounds unsorted appends. Sorted renders read the authoritative list
+ * once per frame and retain only a dirty flag. Terminal paths always flush.
  */
 const LIVE_RENDER_MAX_BATCH = 50;
 
 export interface BatchResultsView {
-    /** Queue a live-stream row; flushes synchronously at the batch cap. */
+    /** Queue an append (bounded at 50 rows) or a sorted render (once per frame). */
     queueLiveRender(
         dom: BatchBacktestDom,
         result: BatchBacktestSymbolResult,
@@ -76,6 +76,7 @@ export function createBatchResultsView(deps: {
     // and let obsolete runs be collected without a separate cache reset.
     const rowElements = new WeakMap<BatchBacktestSymbolResult, HTMLDivElement>();
     const liveRenderQueue: BatchBacktestSymbolResult[] = [];
+    let sortedDirty = false;
     let pendingLiveRender: { dom: BatchBacktestDom; token: number; sortedRender?: () => void } | null = null;
     const liveRenderFrame = coalesceAnimationFrame(() => {
         const pending = pendingLiveRender;
@@ -91,10 +92,14 @@ export function createBatchResultsView(deps: {
         token: number,
         sortedRender?: () => void,
     ): void {
-        liveRenderQueue.push(result);
-        if (liveRenderQueue.length >= LIVE_RENDER_MAX_BATCH) {
-            flushLiveRenderNow(dom, token, sortedRender);
-            return;
+        if (sortedRender) {
+            sortedDirty = true;
+        } else {
+            liveRenderQueue.push(result);
+            if (liveRenderQueue.length >= LIVE_RENDER_MAX_BATCH) {
+                flushLiveRenderNow(dom, token);
+                return;
+            }
         }
         pendingLiveRender = { dom, token, sortedRender };
         liveRenderFrame.schedule();
@@ -107,12 +112,12 @@ export function createBatchResultsView(deps: {
      */
     function flushLiveRenderNow(dom: BatchBacktestDom, token: number, sortedRender?: () => void): void {
         if (!deps.isRunTokenCurrent(token)) {
-            liveRenderQueue.length = 0;
+            dropQueuedRows();
             return;
         }
-        if (liveRenderQueue.length === 0) return;
+        if (liveRenderQueue.length === 0 && !sortedDirty) return;
         const batch = liveRenderQueue.slice();
-        liveRenderQueue.length = 0;
+        dropQueuedRows();
         if (sortedRender) {
             sortedRender();
         } else {
@@ -127,6 +132,7 @@ export function createBatchResultsView(deps: {
 
     function dropQueuedRows(): void {
         liveRenderQueue.length = 0;
+        sortedDirty = false;
     }
 
     /**

@@ -8,6 +8,76 @@ import { createFakeElement } from "./helpers/fake-element";
 import { createFakeBatchBacktestDom } from "./helpers/fake-batch-backtest-dom";
 
 describe("Batch scheduled result rendering", () => {
+    it("coalesces a 1000-row sorted burst and flushes the terminal tail without another frame", () => {
+        const savedWindow = globalThis.window;
+        let frame!: FrameRequestCallback;
+        let schedules = 0;
+        let renders = 0;
+        const rows: BatchBacktestSymbolResult[] = [];
+        globalThis.window = {
+            requestAnimationFrame: (callback: FrameRequestCallback) => { frame = callback; schedules++; return 1; },
+            cancelAnimationFrame: () => {},
+        } as unknown as Window & typeof globalThis;
+        const dom = createFakeBatchBacktestDom();
+        const view = createBatchResultsView({ isRunTokenCurrent: () => true });
+        const render = (): void => {
+            renders++;
+            dom.batchBacktestResults.textContent = sortBatchResults(rows, {
+                key: "netProfit", direction: "desc",
+            }).map((row) => row.symbol).join(",");
+        };
+        try {
+            for (let i = 0; i < 1_000; i++) {
+                const row: BatchBacktestSymbolResult = { symbol: String(i), status: "profitable", barCount: 200,
+                    result: { ...createEmptyBacktestResult(), netProfit: i } };
+                rows.push(row);
+                view.queueLiveRender(dom, row, 1, render);
+            }
+            assert.equal(renders, 0, "the 50-row cap must not trigger full sorted renders");
+            assert.equal(schedules, 1);
+            frame(0);
+            assert.equal(renders, 1);
+            assert.equal(dom.batchBacktestResults.textContent.split(",")[0], "999");
+            const tail = { ...rows[0]!, symbol: "TAIL", result: { ...rows[0]!.result!, netProfit: 2_000 } };
+            rows.push(tail);
+            view.queueLiveRender(dom, tail, 1, render);
+            view.cancelLiveRenderRaf();
+            view.flushLiveRenderNow(dom, 1, render);
+            assert.equal(renders, 2);
+            assert.equal(dom.batchBacktestResults.textContent.split(",")[0], "TAIL");
+            view.flushLiveRenderNow(dom, 1, render);
+            assert.equal(renders, 2, "a terminal flush must drain the dirty flag");
+        } finally {
+            view.cancelLiveRenderRaf();
+            if (savedWindow === undefined) Reflect.deleteProperty(globalThis, "window");
+            else globalThis.window = savedWindow;
+        }
+    });
+
+    it("still appends unsorted bursts at the 50-row cap", () => {
+        const savedDocument = globalThis.document;
+        const savedWindow = globalThis.window;
+        globalThis.document = {
+            createElement: createFakeElement, createDocumentFragment: createFakeElement,
+        } as unknown as Document;
+        globalThis.window = { requestAnimationFrame: () => 1, cancelAnimationFrame: () => {} } as unknown as Window & typeof globalThis;
+        const dom = createFakeBatchBacktestDom();
+        const view = createBatchResultsView({ isRunTokenCurrent: () => true });
+        try {
+            for (let i = 0; i < 49; i++) {
+                view.queueLiveRender(dom, { symbol: String(i), status: "skipped", barCount: 0 }, 1);
+            }
+            assert.equal((dom.batchBacktestResults as any).children.length, 0);
+            view.queueLiveRender(dom, { symbol: "49", status: "skipped", barCount: 0 }, 1);
+            assert.equal((dom.batchBacktestResults as any).children[0].children.length, 50);
+        } finally {
+            view.cancelLiveRenderRaf();
+            if (savedDocument === undefined) Reflect.deleteProperty(globalThis, "document");
+            else globalThis.document = savedDocument;
+            if (savedWindow === undefined) Reflect.deleteProperty(globalThis, "window");
+            else globalThis.window = savedWindow;
+        }
+    });
     it("keeps sorted rows ordered on a frame flush and rejects a stale frame", () => {
         const savedWindow = globalThis.window;
         let frame!: FrameRequestCallback;

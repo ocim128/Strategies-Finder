@@ -15,6 +15,7 @@ import { ensureBuiltInStrategyLoaded } from "../strategies/built-in-catalog";
 import { state } from "../state";
 import { strategyRegistry } from "../../strategyRegistry";
 import { setVisible } from "../dom-utils";
+import { debounce } from "../debounce";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
@@ -43,6 +44,10 @@ export class BatchBacktestService {
     private disposed = false;
     private readonly eventCleanup: Array<() => void> = [];
     private lockedPairListText: string | null = null;
+    private readonly updatePairCountDebounced = debounce((dom: BatchBacktestDom) => {
+        if (!this.disposed) this.batchRun.updateSummary(dom);
+    }, 200);
+
     private get lastOpenScoreUsdResult(): OpenScoreUsdReplayResult | null {
         return this.openScore.getResult();
     }
@@ -156,7 +161,7 @@ export class BatchBacktestService {
         getDom: () => this.getDom(),
         actionGuard: () => this.balancedGeneratorActionGuard(),
         clearStaleResults: (dom) => this.clearStaleResults(dom),
-        updateSummary: (dom) => this.batchRun.updateSummary(dom),
+        updateSummary: (dom) => this.refreshPairSummary(dom),
     });
 
     // Audit Finding 2: typed (was `any`) so a shape drift between the
@@ -180,6 +185,11 @@ export class BatchBacktestService {
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
+    }
+
+    private refreshPairSummary(dom: BatchBacktestDom): void {
+        this.updatePairCountDebounced.cancel();
+        if (!this.disposed) this.batchRun.updateSummary(dom);
     }
 
     public init(): void {
@@ -231,6 +241,7 @@ export class BatchBacktestService {
             }
         });
         this.listen(dom.batchBacktestRunBtn, "click", () => {
+            this.refreshPairSummary(dom);
             void this.batchRun.runBatch();
         });
         this.listen(dom.batchBacktestStopBtn, "click", () => {
@@ -257,6 +268,7 @@ export class BatchBacktestService {
             void this.openScore.copyResults();
         });
         this.listen(dom.batchBacktestSp500TopMeanRunBtn, "click", () => {
+            this.refreshPairSummary(dom);
             void this.runSp500TopMeanCoordinator();
         });
         this.topMean.initializeReplayModeControls(dom);
@@ -301,7 +313,7 @@ export class BatchBacktestService {
             dom.batchBacktestSymbols.value = template;
             dom.batchBacktestSymbolTemplate.value = "";
             this.clearStaleResults(dom);
-            this.batchRun.updateSummary(dom);
+            this.refreshPairSummary(dom);
         });
         this.listen(dom.batchBacktestUseCurrent, "click", () => {
             if (this.isBatchUiBusy()) return;
@@ -313,13 +325,13 @@ export class BatchBacktestService {
                     : current;
             }
             this.clearStaleResults(dom);
-            this.batchRun.updateSummary(dom);
+            this.refreshPairSummary(dom);
         });
         this.listen(dom.batchBacktestClear, "click", () => {
             if (this.isBatchUiBusy()) return;
             dom.batchBacktestSymbols.value = "";
             this.clearStaleResults(dom);
-            this.batchRun.updateSummary(dom);
+            this.refreshPairSummary(dom);
         });
         this.listen(dom.batchBacktestSymbols, "input", () => {
             if (this.isBatchUiBusy()) {
@@ -342,7 +354,10 @@ export class BatchBacktestService {
                 this.clearStaleResults(dom);
                 this.balanced.clearActiveProvenanceIfStale(dom);
             }
-            this.batchRun.updateSummary(dom);
+            this.updatePairCountDebounced(dom);
+        });
+        this.listen(dom.batchBacktestSymbols, "change", () => {
+            if (!this.isBatchUiBusy()) this.refreshPairSummary(dom);
         });
         this.listen(dom.batchBacktestBalancedGenerateBtn, "click", () => {
             void this.balanced.generateAndApply();
@@ -400,6 +415,7 @@ export class BatchBacktestService {
      * coalesced because the first may arrive before analysis ownership.
      */
     private requestServerStop(): Promise<void> {
+        if (this.disposed) return Promise.resolve();
         const request = this.batchRun.stopServerWork();
         const prior = this.pendingStopPromise;
         const pending = prior
@@ -411,7 +427,7 @@ export class BatchBacktestService {
                 this.pendingStopPromise = null;
                 // The last settled Stop may have been the only flag blocking
                 // the Balanced Generator buttons; re-assert their state.
-                this.batchRun.updateBalancedGeneratorButtons(this.getDom());
+                if (!this.disposed) this.batchRun.updateBalancedGeneratorButtons(this.getDom());
             }
         });
         return request;
@@ -420,7 +436,7 @@ export class BatchBacktestService {
     // Fetch resolves after the route owns the miner lock, so a second Stop sent
     // here closes the pre-ownership race.
     private async reissueStopIfNeeded(): Promise<void> {
-        if (!this.analysisCancelRequested) return;
+        if (this.disposed || !this.analysisCancelRequested) return;
         this.analysisCancelRequested = false;
         await this.requestServerStop();
     }
@@ -462,6 +478,7 @@ export class BatchBacktestService {
 
     // Keep operations disabled until unscoped /stop requests have settled.
     private async finishAnalysisBusy(dom: BatchBacktestDom): Promise<void> {
+        if (this.disposed) return;
         this.analysisCancelRequested = false;
         this.batchRun.setRunBusy(dom, false);
         setVisible(dom.batchBacktestStopBtn, false);
@@ -473,6 +490,7 @@ export class BatchBacktestService {
         if (pending) {
             try { await pending; } catch { /* stopServerWork swallows errors */ }
         }
+        if (this.disposed) return;
         this.analysisInFlight = false;
         // beginAnalysisBusy hard-disabled both Balanced Generator buttons;
         // restore them from the now-unblocked lock state.
@@ -494,6 +512,7 @@ export class BatchBacktestService {
     ): Promise<{ strategyKey: string; strategy: NonNullable<ReturnType<typeof strategyRegistry.get>> } | undefined> {
         const strategyKey = state.currentStrategyKey;
         await ensureBuiltInStrategyLoaded(strategyKey);
+        if (this.disposed) return undefined;
         const strategy = strategyRegistry.get(strategyKey);
         if (!strategyKey || !strategy) {
             dom.batchBacktestSp500TopMeanProgressText.textContent =
@@ -504,6 +523,7 @@ export class BatchBacktestService {
     }
 
     public async runSp500TopMeanCoordinator(): Promise<void> {
+        if (this.disposed) return;
         const dom = this.getDom();
         // Shared single-flight: must run before the first await so rapid clicks
         // cannot stack multiple coordinator POSTs or replace activeTopMeanRunId.
@@ -540,18 +560,20 @@ export class BatchBacktestService {
         await this.topMean.copySp500TopMeanDiagnostic();
     }
 
-    public downloadSp500TopMeanResults(): void {
-        this.topMean.downloadSp500TopMeanResults();
+    public async downloadSp500TopMeanResults(): Promise<void> {
+        await this.topMean.downloadSp500TopMeanResults();
     }
 
     public dispose(): void {
         this.disposed = true;
+        this.updatePairCountDebounced.cancel();
         for (const cleanup of this.eventCleanup.splice(0)) cleanup();
         // Detach this instance from server-owned work before resolving its
         // polling delays. The TOP_MEAN controller clears its run id first (so
         // its reattach loop wakes without rescheduling), then the Batch
         // reattach poll stops, then pending render work is cancelled.
         this.topMean.dispose();
+        this.openScore.dispose();
         this.batchRun.dispose();
     }
 }

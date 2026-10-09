@@ -29,6 +29,7 @@ import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backte
 import { FINDER_SUPPORT_ARMS_V2 } from "../lib/batch-backtest/open-score-replay/causal-arm-constants";
 import { createEmptyAssetSwitchSummary } from "../lib/batch-backtest/open-score-replay/asset-switch";
 import type { BatchRunController } from "../lib/batch-backtest/browser/batch-run-controller";
+import { withTimeout } from "./helpers/with-timeout";
 
 function fakeEl(): any {
     return createFakeBatchElement();
@@ -170,6 +171,7 @@ async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>)
         return {
             ok: r.ok,
             status: r.status,
+            headers: new Headers(),
             body: r.body ?? null,
             text: async () => r.text ?? "",
             json: async () => JSON.parse(r.text ?? "{}"),
@@ -182,11 +184,330 @@ async function withMockFetch(responder: FetchResponder, fn: () => Promise<void>)
     }
 }
 
+/** Keep real Run preflight/execution wiring while isolating unrelated settings DOM. */
+async function withRunSettings(fn: () => Promise<void>): Promise<void> {
+    const originalSettings = backtestService.getBacktestSettings;
+    const originalCapital = backtestService.getCapitalSettings;
+    const strategyKey = state.currentStrategyKey;
+    const previousStrategy = strategyRegistry.get(strategyKey);
+    const strategy = { name: "batch-lifecycle", defaultParams: {}, params: [], execute: () => [] } as any;
+    registerLoadedBuiltInStrategy(strategyKey, strategy);
+    strategyRegistry.register(strategyKey, strategy);
+    backtestService.getBacktestSettings = () => ({});
+    backtestService.getCapitalSettings = () => ({
+        initialCapital: 10_000, positionSize: 100, commission: 0,
+        sizingMode: "fixed", fixedTradeAmount: 1_000,
+    });
+    try {
+        await fn();
+    } finally {
+        backtestService.getBacktestSettings = originalSettings;
+        backtestService.getCapitalSettings = originalCapital;
+        unregisterLoadedBuiltInStrategy(strategyKey);
+        strategyRegistry.unregister(strategyKey);
+        if (previousStrategy) {
+            registerLoadedBuiltInStrategy(strategyKey, previousStrategy);
+            strategyRegistry.register(strategyKey, previousStrategy);
+        }
+    }
+}
+
+function eventStream(events: unknown[]): ReadableStream<Uint8Array> {
+    return new ReadableStream({ start(controller) {
+        controller.enqueue(new TextEncoder().encode(events.map((event) => JSON.stringify(event)).join("\n") + "\n"));
+        controller.close();
+    } });
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("BatchBacktestService analysis lifecycle", () => {
+    it("measures a large NDJSON diagnostic once before compacting it", () => {
+        setupForAnalysis();
+        let serializations = 0;
+        const event = { type: "done", payload: "x".repeat(20_000) };
+        const originalStringify = JSON.stringify;
+        JSON.stringify = ((value: unknown, ...args: any[]) => {
+            if (value === event) serializations++;
+            return (originalStringify as any)(value, ...args);
+        }) as typeof JSON.stringify;
+        try {
+            svc().topMean.recordTopMeanNdjsonEvent(event);
+            const entry = svc().topMean.getDiagnosticEntries().at(-1);
+            expect(entry.bytes).to.be.greaterThan(20_000);
+            expect(entry.data.diagnosticDataTruncated).to.equal(true);
+            expect(serializations).to.equal(1, "size measurement must be reused during compaction");
+        } finally {
+            JSON.stringify = originalStringify;
+        }
+    });
+
+    for (const source of ["live", "restored", "missing", "error"] as const) {
+        it(`downloads the full server result or a labeled summary for ${source} data`, async () => {
+            const dom = setupForAnalysis();
+            const result = topMeanResultFixture();
+            result.openScoreEventDetails = [{ asset: "BROWSER_ONLY" }];
+            if (source === "restored") {
+                persistLatestTopMeanResult(result);
+                svc().topMean.loadPersistedLatestTopMeanResult(dom);
+                expect(svc().latestTopMeanResult.openScoreEventDetails).to.equal(undefined);
+            } else {
+                svc().latestTopMeanResult = result;
+            }
+            const raw = JSON.stringify({ runId: result.runId,
+                eventDetails: Array.from({ length: 20_001 }, (_, i) => ({ i })),
+                annualReports: [{ eventDetails: [{ asset: "ANNUAL_DETAIL" }] }],
+                archiveOnly: "FULL_SERVER_RESULT",
+            });
+            const prevFetch = globalThis.fetch;
+            const prevCreate = document.createElement;
+            const prevCreateUrl = URL.createObjectURL;
+            const prevRevokeUrl = URL.revokeObjectURL;
+            let captured: Blob | undefined;
+            let revoked = false;
+            let clicks = 0;
+            const anchor = { href: "", download: "", click: () => { clicks++; } };
+            globalThis.fetch = async (url, init) => {
+                expect(String(url)).to.equal(`/api/batch-backtest/sp500-top-mean/result?runId=${result.runId}`);
+                expect(init?.signal).to.be.instanceOf(AbortSignal);
+                return new Response(source === "error" ? '{"error":"disk denied"}' : raw, {
+                    status: source === "missing" ? 404 : source === "error" ? 500 : 200,
+                });
+            };
+            document.createElement = (() => anchor) as unknown as typeof document.createElement;
+            URL.createObjectURL = ((blob: Blob) => { captured = blob; return "blob:test-result"; }) as typeof URL.createObjectURL;
+            URL.revokeObjectURL = () => { revoked = true; };
+            try {
+                await currentService.downloadSp500TopMeanResults();
+                if (source === "error") {
+                    expect(clicks).to.equal(0);
+                    expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("disk denied");
+                } else {
+                    expect(clicks).to.equal(1);
+                    expect(revoked).to.equal(true);
+                    const exported = await captured!.text();
+                    if (source === "missing") {
+                        expect(anchor.download).to.equal(`sp500_top_mean_${result.runId}_summary.json`);
+                        expect(JSON.parse(exported).openScoreEventDetails).to.deep.equal(result.openScoreEventDetails);
+                        expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("may omit details");
+                    } else {
+                        expect(anchor.download).to.equal(`sp500_top_mean_${result.runId}.json`);
+                        expect(exported).to.equal(raw, "download must retain the full raw server contract");
+                        expect(JSON.parse(exported).eventDetails).to.have.length(20_001);
+                    }
+                }
+                expect(dom.batchBacktestSp500TopMeanDownloadBtn.disabled).to.equal(false);
+            } finally {
+                globalThis.fetch = prevFetch;
+                document.createElement = prevCreate;
+                URL.createObjectURL = prevCreateUrl;
+                URL.revokeObjectURL = prevRevokeUrl;
+            }
+        });
+    }
+
+    for (const scenario of ["http", "fatal", "eof", "done", "cancelled"] as const) {
+        it(`keeps the progress outcome accurate after ${scenario}`, async () => {
+            const dom = setupForAnalysis();
+            dom.batchBacktestSymbols.value = "BTCUSDT";
+            const events: unknown[] = [{ type: "progress", percent: 40, text: "Loading", status: "Loading" }];
+            if (scenario === "fatal") events.push({ type: "fatal", error: "server exploded" });
+            if (scenario === "done" || scenario === "cancelled") events.push({
+                type: "done", summary: scenario, cancelled: scenario === "cancelled", totals: { failedSymbols: 0 },
+            });
+            await withRunSettings(async () => withMockFetch((url) => String(url).endsWith("/status")
+                ? { ok: true, status: 200, text: JSON.stringify({ running: false, lastRun: null }) }
+                : scenario === "http"
+                    ? { ok: false, status: 500, text: "server exploded" }
+                    : { ok: true, status: 200, body: eventStream(events) }, async () => {
+                await svc().batchRun.runBatch();
+            }));
+            expect(dom.batchBacktestProgressText.textContent).to.equal(
+                scenario === "done" ? "Done" : scenario === "cancelled" ? "Stopped" : "Failed",
+            );
+            expect(dom.batchBacktestProgressFill.style.width).to.equal(
+                scenario === "done" ? "100%" : scenario === "http" ? "0%" : "40%",
+            );
+            if (scenario === "http" || scenario === "fatal" || scenario === "eof") {
+                expect(dom.batchBacktestStatus.textContent).to.include("Error:");
+            }
+        });
+    }
+
+    for (const workflow of ["batch", "topMean", "openScore"] as const) {
+        it(`detaches a ${workflow} stream without clearing ownership or updating a replacement`, async () => {
+            const dom = setupForAnalysis();
+            const service = svc();
+            dom.batchBacktestSymbols.value = "BTCUSDT";
+            let signal: AbortSignal | undefined;
+            let respond!: () => void;
+            let submitted!: () => void;
+            const submittedPromise = new Promise<void>((resolve) => { submitted = resolve; });
+            const responseGate = new Promise<void>((resolve) => { respond = resolve; });
+            const urls: string[] = [];
+            await withRunSettings(async () => withMockFetch(async (url, init) => {
+                urls.push(String(url));
+                signal = init?.signal;
+                submitted();
+                await responseGate; // Deliberately emulate a late response that ignored abort.
+                return { ok: true, status: 200, body: eventStream([{ type: "fatal", error: "late failure" }]) };
+            }, async () => {
+                const operation = workflow === "batch" ? service.batchRun.runBatch()
+                    : workflow === "topMean" ? service.runSp500TopMeanCoordinator() : service.openScore.run();
+                await withTimeout(submittedPromise, 1000, "Run was not submitted");
+                const marker = workflow === "batch" ? service.batchRun.loadPersistedActiveServerRun() : readTopMeanActiveRun();
+                service.dispose();
+                expect(signal?.aborted).to.equal(true);
+                const replacement: any = createBatchBacktestService();
+                replacement.dom = dom;
+                replacement.bindEvents(dom);
+                dom.batchBacktestStatus.textContent = "replacement";
+                dom.batchBacktestProgressText.textContent = "replacement";
+                dom.batchBacktestSp500TopMeanProgressText.textContent = "replacement";
+                dom.batchBacktestOpenScoreUsdSummary.textContent = "replacement";
+                const stored = [...(globalThis as any).localStorage._store.entries()];
+                try {
+                    respond();
+                    await withTimeout(operation, 1000, "Disposed Run did not settle");
+                    expect(urls).to.have.length(1, "disposal must not send Stop or start recovery");
+                    expect(dom.batchBacktestStatus.textContent).to.equal("replacement");
+                    expect(dom.batchBacktestProgressText.textContent).to.equal("replacement");
+                    expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.equal("replacement");
+                    expect(dom.batchBacktestOpenScoreUsdSummary.textContent).to.equal("replacement");
+                    expect([...(globalThis as any).localStorage._store.entries()]).to.deep.equal(stored);
+                    if (workflow === "batch") expect(service.batchRun.loadPersistedActiveServerRun()).to.deep.equal(marker);
+                    if (workflow === "topMean") expect(readTopMeanActiveRun()).to.deep.equal(marker);
+                } finally {
+                    respond();
+                    replacement.dispose();
+                }
+            }));
+        });
+    }
+
+    it("does not submit TOP_MEAN after disposal during strategy loading", async () => {
+        const dom = setupForAnalysis();
+        const service = svc();
+        let resolve!: (value: any) => void;
+        service.resolveTopMeanBuiltInStrategy = () => new Promise((done) => { resolve = done; });
+        const urls: string[] = [];
+        await withMockFetch((url) => { urls.push(String(url)); return { ok: false, status: 500 }; }, async () => {
+            const operation = service.runSp500TopMeanCoordinator();
+            service.dispose();
+            dom.batchBacktestSp500TopMeanProgressText.textContent = "replacement";
+            resolve({ strategyKey: "test", strategy: { defaultParams: {} } });
+            await operation;
+            expect(urls).to.deep.equal([]);
+            expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.equal("replacement");
+            expect(readTopMeanActiveRun()).to.equal(null);
+        });
+    });
+
+    for (const workflow of ["batch", "topMean", "openScore"] as const) {
+        it(`aborts a pending ${workflow} stream read on disposal`, async () => {
+            const dom = setupForAnalysis();
+            const service = svc();
+            dom.batchBacktestSymbols.value = "BTCUSDT";
+            let reading!: () => void;
+            const pendingRead = new Promise<void>((resolve) => { reading = resolve; });
+            let signal: AbortSignal | undefined;
+            let abort!: () => void;
+            const urls: string[] = [];
+            await withRunSettings(async () => withMockFetch((url, init) => {
+                urls.push(String(url));
+                signal = init?.signal;
+                return { ok: true, status: 200, body: new ReadableStream<Uint8Array>({
+                    start(controller) {
+                        abort = () => controller.error(signal!.reason);
+                        signal?.addEventListener("abort", abort, { once: true });
+                    },
+                    pull() { reading(); },
+                }) };
+            }, async () => {
+                const operation = workflow === "batch" ? service.batchRun.runBatch()
+                    : workflow === "topMean" ? service.runSp500TopMeanCoordinator() : service.openScore.run();
+                try {
+                    await withTimeout(pendingRead, 1000, "Stream was not opened");
+                    const stored = [...(globalThis as any).localStorage._store.entries()];
+                    service.dispose();
+                    dom.batchBacktestStatus.textContent = "replacement";
+                    dom.batchBacktestSp500TopMeanProgressText.textContent = "replacement";
+                    dom.batchBacktestOpenScoreUsdSummary.textContent = "replacement";
+                    dom.batchBacktestRunBtn.disabled = false;
+                    await withTimeout(operation, 1000, "Disposed stream read did not settle");
+                    expect(signal?.aborted).to.equal(true);
+                    expect(urls).to.have.length(1);
+                    expect([...(globalThis as any).localStorage._store.entries()]).to.deep.equal(stored);
+                    expect(dom.batchBacktestStatus.textContent).to.equal("replacement");
+                    expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.equal("replacement");
+                    expect(dom.batchBacktestOpenScoreUsdSummary.textContent).to.equal("replacement");
+                    expect(dom.batchBacktestRunBtn.disabled).to.equal(false);
+                } finally {
+                    service.dispose();
+                    signal?.removeEventListener("abort", abort);
+                }
+            }));
+        });
+    }
+
+    it("does not restore old buttons when a pending Stop settles after disposal", async () => {
+        const dom = setupForAnalysis();
+        const service = svc();
+        let finish!: () => void;
+        service.batchRun.stopServerWork = () => new Promise<void>((resolve) => { finish = resolve; });
+        const stopping = service.requestServerStop();
+        service.dispose();
+        dom.batchBacktestBalancedGenerateBtn.disabled = true;
+        finish();
+        await stopping;
+        expect(dom.batchBacktestBalancedGenerateBtn.disabled).to.equal(true);
+    });
+
+    it("debounces pair counting while invalidating results immediately and flushes explicit actions", (t) => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const dom = setupForAnalysis();
+        const service = svc();
+        let summaries = 0;
+        const originalSummary = service.batchRun.updateSummary.bind(service.batchRun);
+        service.batchRun.updateSummary = (dom: BatchBacktestDom) => { summaries++; originalSummary(dom); };
+        service.lastResults = [{ symbol: "OLD", status: "skipped", barCount: 0 }];
+        try {
+            for (let i = 0; i < 10; i++) {
+                dom.batchBacktestSymbols.value = `AAA BBB AAA C${i}`;
+                dom.batchBacktestSymbols.dispatchEvent(new Event("input"));
+            }
+            expect(service.lastResults).to.deep.equal([]);
+            expect(service.lastRunFingerprint).to.equal(null);
+            expect(dom.batchBacktestCopyBtn.disabled).to.equal(true);
+            expect(summaries).to.equal(0);
+            t.mock.timers.tick(199);
+            expect(summaries).to.equal(0);
+            t.mock.timers.tick(1);
+            expect(summaries).to.equal(1);
+            expect(dom.batchBacktestSummary.textContent).to.equal("3 pairs");
+            dom.batchBacktestSymbols.dispatchEvent(new Event("input"));
+            dom.batchBacktestClear.click();
+            expect(dom.batchBacktestSummary.textContent).to.equal("0 pairs");
+            expect(summaries).to.equal(2);
+            t.mock.timers.tick(500);
+            expect(summaries).to.equal(2, "Clear cancelled the pending parse");
+            dom.batchBacktestSymbols.value = "PENDING";
+            dom.batchBacktestSymbols.dispatchEvent(new Event("input"));
+            service.batchRun.runBatch = async () => {};
+            dom.batchBacktestRunBtn.click();
+            expect(dom.batchBacktestSummary.textContent).to.equal("1 pair");
+            expect(summaries).to.equal(3);
+            dom.batchBacktestSymbols.dispatchEvent(new Event("input"));
+            service.dispose();
+            t.mock.timers.tick(500);
+            expect(summaries).to.equal(3, "disposal cancelled the pending parse");
+        } finally {
+            service.dispose();
+            t.mock.timers.reset();
+        }
+    });
     for (const mode of ["horizon", "asset_switch"] as const) {
         it(`retains new Batch ${mode} arm summaries and score provenance in browser storage`, () => {
             setupForAnalysis();

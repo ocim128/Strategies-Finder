@@ -161,6 +161,7 @@ export function registerSp500TopMeanRoutes(
                 return;
             }
             const result = await handleSp500TopMeanResultRequest(runIdParam.trim());
+            res.setHeader("Content-Disposition", `attachment; filename="sp500_top_mean_${runIdParam.trim()}.json"`);
             sendJson(res, 200, result);
         },
     });

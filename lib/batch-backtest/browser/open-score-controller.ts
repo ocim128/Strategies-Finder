@@ -18,6 +18,8 @@ import type { OpenScoreUsdReplayStreamEvent } from "../batch-open-score-usd-repl
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 
 export class OpenScoreController {
+    private disposed = false;
+    private readonly lifecycleAbort = new AbortController();
     private readonly deps: {
         getDom: () => BatchBacktestDom;
         /** Facade shared pending-Stop sequencing (never coalesced there). */
@@ -98,7 +100,7 @@ export class OpenScoreController {
     }
 
     public async run(): Promise<void> {
-        if (this.analysisInFlight) return;
+        if (this.disposed || this.analysisInFlight) return;
         this.analysisInFlight = true;
         this.analysisCancelRequested = false;
         const dom = this.deps.getDom();
@@ -142,6 +144,7 @@ export class OpenScoreController {
             dom.batchBacktestOpenScoreUsdSummary.textContent = "Replaying OPEN_SCORE events on server...";
             await postBatchNdjson<OpenScoreUsdReplayStreamEvent>({
                 endpoint: "/api/batch-backtest/open-score-usd",
+                signal: this.lifecycleAbort.signal,
                 body: {
                     fingerprint: this.deps.lastRunFingerprint()!,
                     interval: this.deps.lastRunInterval(),
@@ -150,7 +153,11 @@ export class OpenScoreController {
                     ...(sampleTo ? { sampleTo } : {}),
                     ...(isActiveCapTiltWeight(capTiltWeight) ? { capTiltWeight } : {}),
                 },
-                onResponse: () => this.deps.reissueStopIfNeeded(),
+                onResponse: () => {
+                    this.lifecycleAbort.signal.throwIfAborted();
+                    return this.deps.reissueStopIfNeeded();
+                },
+                onEvent: () => this.lifecycleAbort.signal.throwIfAborted(),
                 handlers: {
                     onStart: (event: Extract<OpenScoreUsdReplayStreamEvent, { type: "start" }>) => {
                         dom.batchBacktestOpenScoreUsdSummary.textContent =
@@ -187,14 +194,20 @@ export class OpenScoreController {
                 },
             });
         } catch (error) {
+            if (this.disposed) return;
             const message = error instanceof Error ? error.message : String(error);
             this.lastResult = null;
             dom.batchBacktestOpenScoreUsdSummary.textContent = `OPEN_SCORE USD error: ${message}`;
             dom.batchBacktestCopyOpenScoreUsdBtn.disabled = true;
             debugLogger.error("batch_open_score_usd.server_failed", { error: message });
         } finally {
-            await this.deps.finishAnalysisBusy(dom);
+            if (!this.disposed) await this.deps.finishAnalysisBusy(dom);
         }
+    }
+
+    public dispose(): void {
+        this.disposed = true;
+        this.lifecycleAbort.abort();
     }
 
     public async copyResults(): Promise<void> {
