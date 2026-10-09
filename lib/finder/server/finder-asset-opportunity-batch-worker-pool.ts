@@ -36,7 +36,7 @@
 import { availableParallelism, totalmem } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Worker } from "node:worker_threads";
+import { createFinderTaskWorker } from "./finder-task-worker";
 import { debugLogger } from "../../debug-logger";
 import { resolveWorkerEntryPath, type WorkerBundleMemoRecord } from "../../server-worker-entry";
 import {
@@ -50,7 +50,6 @@ import { ASSET_OPPORTUNITY_SIGNAL_CACHE_MAX_ESTIMATED_BYTES } from "../finder-as
 export { resolveAssetOpportunityDatasetCacheCapacity } from "./finder-asset-opportunity-capacity";
 import type { AssetOpportunityIterationResult } from "./asset-opportunity-iteration";
 import type {
-    AssetOpportunityBatchWorkerCommand,
     AssetOpportunityBatchWorkerEvent,
     AssetOpportunityBatchWorkerTask,
 } from "./finder-asset-opportunity-batch-worker";
@@ -247,108 +246,50 @@ export async function createRealWorkerAssetOpportunityBatchRunner(
     events: AssetOpportunityBatchRunnerEvents,
 ): Promise<AssetOpportunityBatchTaskRunner> {
     const workerPath = await resolveAssetOpportunityBatchWorkerPath();
-    const worker = new Worker(workerPath, {});
-    let currentTask: AssetOpportunityBatchWorkerTask | null = null;
-    let disposed = false;
-    let stopping = false;
-    let termination: Promise<number> | null = null;
-    const terminateWorker = (): Promise<number> => {
-        termination ??= worker.terminate();
-        return termination;
-    };
-    const takeCurrentTask = (): AssetOpportunityBatchWorkerTask | null => {
-        const task = currentTask;
-        currentTask = null;
-        return task;
-    };
-
-    worker.on("message", (message: AssetOpportunityBatchWorkerEvent) => {
-        if (message.type === "progress") {
-            if (currentTask && currentTask.taskIndex === message.taskIndex) {
-                events.onProgress(currentTask, {
-                    percent: message.percent,
-                    status: message.status,
-                    phase: message.phase,
-                    assetIndex: message.assetIndex,
-                    loadedSymbols: message.loadedSymbols,
-                    failedSymbols: message.failedSymbols,
-                    strategyIndex: message.strategyIndex,
-                });
-            }
-            return;
-        }
-        if (message.type === "run_log") {
-            events.onRunLog(message.event, message.payload);
-            return;
-        }
-        if (message.type === "iteration_complete") {
-            const task = takeCurrentTask();
-            if (task && task.taskIndex === message.taskIndex) {
-                events.onComplete(task, {
-                    results: message.results,
-                    cancelled: message.cancelled,
-                    assetDiagnostics: message.assetDiagnostics,
-                    totals: message.totals,
-                    summary: "",
-                });
-            }
-            return;
-        }
-        if (message.type === "iteration_fatal") {
-            const task = takeCurrentTask();
-            if (task && task.taskIndex === message.taskIndex) {
-                events.onFatal(task, message.error);
-            }
-        }
-    });
-    worker.on("error", (error: Error) => {
-        const task = takeCurrentTask();
-        if (task) {
-            events.onFatal(task, `batch worker crashed: ${error.message}`);
-        }
-    });
-    worker.on("exit", (code) => {
-        const task = takeCurrentTask();
-        // ANY exit with a task still current is fatal for that task — a
-        // clean-exit disappearance mid-task would otherwise leave the sweep
-        // waiting forever for a terminal callback.
-        if (task) {
-            events.onFatal(
-                task,
-                code !== 0
-                    ? `batch worker exited with code ${code}`
-                    : "batch worker exited unexpectedly mid-task",
-            );
-        }
-    });
-
-    return {
-        runTask: (task) => {
-            if (disposed || stopping) {
-                events.onFatal(task, "batch worker was stopped before task start");
+    return createFinderTaskWorker<AssetOpportunityBatchWorkerTask, AssetOpportunityBatchWorkerEvent>(
+        workerPath,
+        "batch worker",
+        (message, currentTask, takeCurrentTask) => {
+            if (message.type === "progress") {
+                if (currentTask && currentTask.taskIndex === message.taskIndex) {
+                    events.onProgress(currentTask, {
+                        percent: message.percent,
+                        status: message.status,
+                        phase: message.phase,
+                        assetIndex: message.assetIndex,
+                        loadedSymbols: message.loadedSymbols,
+                        failedSymbols: message.failedSymbols,
+                        strategyIndex: message.strategyIndex,
+                    });
+                }
                 return;
             }
-            currentTask = task;
-            const command: AssetOpportunityBatchWorkerCommand = { type: "run_task", task };
-            worker.postMessage(command);
+            if (message.type === "run_log") {
+                events.onRunLog(message.event, message.payload);
+                return;
+            }
+            if (message.type === "iteration_complete") {
+                const task = takeCurrentTask();
+                if (task && task.taskIndex === message.taskIndex) {
+                    events.onComplete(task, {
+                        results: message.results,
+                        cancelled: message.cancelled,
+                        assetDiagnostics: message.assetDiagnostics,
+                        totals: message.totals,
+                        summary: "",
+                    });
+                }
+                return;
+            }
+            if (message.type === "iteration_fatal") {
+                const task = takeCurrentTask();
+                if (task && task.taskIndex === message.taskIndex) {
+                    events.onFatal(task, message.error);
+                }
+            }
         },
-        stop: () => {
-            if (disposed || stopping) return;
-            stopping = true;
-            // A worker may be inside a long synchronous simulation and unable
-            // to service parentPort until it yields. Terminate immediately so
-            // Stop cannot leave CPU/RAM-heavy orphan work behind. The exit
-            // handler reports the in-flight task as terminal; the sweep treats
-            // that callback as cancellation when its flag is set.
-            void terminateWorker();
-        },
-        dispose: async () => {
-            if (disposed) return;
-            disposed = true;
-            stopping = true;
-            await terminateWorker();
-        },
-    };
+        (task, error) => events.onFatal(task, error),
+    );
 }
 
 // ---------------------------------------------------------------------------

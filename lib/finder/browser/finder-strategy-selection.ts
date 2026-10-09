@@ -8,7 +8,7 @@
  * the checkbox DOM stays in step. Scope resolution, persistence, and the
  * editable settings object are injected by the manager.
  */
-import { strategyRegistry, getStrategyList, getStrategyKind, getStrategyKindTitle } from "../../../strategyRegistry";
+import { strategyRegistry, getStrategyList } from "../../../strategyRegistry";
 import type { FinderManagerDom } from "../finder-manager-dom";
 import type { FinderPersistedUiState } from "./finder-settings";
 
@@ -113,13 +113,10 @@ export class FinderStrategySelection {
 		for (const { key, name } of allStrategies) {
 			const strategy = strategies[key];
 			const displayName = strategy?.name ?? name;
-			const kind = getStrategyKind(key, strategy);
 			const item = document.createElement('div');
 			item.className = 'strategy-list-item';
 			item.dataset.strategyKey = key;
 			item.dataset.strategyName = displayName.toLowerCase();
-			item.dataset.strategyKind = kind;
-			item.title = getStrategyKindTitle(kind);
 
 			const checkbox = document.createElement('input');
 			checkbox.type = 'checkbox';

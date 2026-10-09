@@ -24,6 +24,10 @@ distributions, confidence intervals, equity paths and ruin frequency.
 - `lib/monte-carlo-dom.ts` owns the required DOM contract.
 - `html-partials/tab-monte-carlo.html` owns the lazily loaded markup.
 
+The engine owns sequence/bootstrap sampling and path metrics. The older
+standalone simulation helpers and unused parameter-perturbation API have been
+removed; current Monte Carlo operates on the chart's observed trades.
+
 Every control, result section and the empty state must remain inside
 `#montecarloTab`: the lazy loader copies only that root's children. All result
 sections belong inside `#mc-results`, while `#mc-empty-state` is its sibling.

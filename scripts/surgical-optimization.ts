@@ -44,10 +44,8 @@ type StrategySurgicalResult = {
   alphaGenome: Record<string, number>;
 };
 
-const DEFAULT_STRATEGIES = ["meta_harvest_v2", "bear_hunter_v5"];
-
 function usage(): void {
-  console.log(["Usage: npm run alpha:surgical", "Defaults: XRPUSDT 15m, pop=200, gens=150, runs=5"].join("\n"));
+  console.log(["Usage: npm run alpha:surgical -- --strategies <key1,key2,...>", "Strategy keys are required. Defaults: XRPUSDT 15m, pop=200, gens=150, runs=5"].join("\n"));
 }
 
 function num(v: string | undefined, d: number): number { const x = Number(v); return Number.isFinite(x) ? x : d; }
@@ -61,7 +59,7 @@ function bool(v: string | undefined, d: boolean): boolean {
 
 function parse(argv: string[]): Cli & { help?: boolean } {
   let symbol = "XRPUSDT", interval = "15m", bars = 10000, freshnessHours = 4;
-  let strategiesCsv = DEFAULT_STRATEGIES.join(","), runs = 5, population = 200, generations = 150, eliteCount = 10;
+  let strategiesCsv = "", runs = 5, population = 200, generations = 150, eliteCount = 10;
   let mutationRate = 0.12, mutationSigma = 0.12, rangePercent = 35, minTrades = 20, seed = 2026;
   let adaptiveStagnation = 12, adaptiveIncrease = 1.35, adaptiveDecay = 0.92, adaptiveMinRate = 0.08, adaptiveMaxRate = 0.45;
   let initialCapital = Number(CAPITAL_DEFAULTS.initialCapital), positionSize = Number(CAPITAL_DEFAULTS.positionSize), commission = Number(CAPITAL_DEFAULTS.commission);
@@ -126,7 +124,7 @@ function parse(argv: string[]): Cli & { help?: boolean } {
   const verifyMinSafe = Math.min(Math.max(1, verifyMinPass), verifySeedsSafe);
 
   return {
-    symbol, interval, bars, freshnessHours, strategies: strategies.length > 0 ? strategies : [...DEFAULT_STRATEGIES], runs,
+    symbol, interval, bars, freshnessHours, strategies, runs,
     population, generations, eliteCount: Math.max(1, Math.min(eliteCount, population)),
     mutationRate: Math.max(0, Math.min(1, mutationRate)), mutationSigma: Math.max(0.0001, mutationSigma), rangePercent: Math.max(0, rangePercent), minTrades: Math.max(0, minTrades), seed: Math.max(1, seed),
     adaptiveStagnation: Math.max(1, adaptiveStagnation), adaptiveIncrease: Math.max(1.01, adaptiveIncrease), adaptiveDecay: Math.max(0.5, Math.min(1, adaptiveDecay)), adaptiveMinRate: minRate, adaptiveMaxRate: maxRate,
@@ -253,7 +251,7 @@ async function main(): Promise<void> {
   if (cfg.help) { usage(); return; }
 
   const selected = cfg.strategies.map((k) => ({ key: k, strategy: (strategies as Record<string, Strategy>)[k] })).filter((s) => Boolean(s.strategy));
-  if (selected.length === 0) throw new Error("[Surgical] No valid strategies");
+  if (selected.length === 0) throw new Error("[Surgical] Provide --strategies <key1,key2,...> using current built-in strategy keys.");
   const skipped = cfg.strategies.filter((k) => !(k in strategies));
   if (skipped.length > 0) console.warn(`[Surgical] Skipping unknown strategies: ${skipped.join(", ")}`);
 

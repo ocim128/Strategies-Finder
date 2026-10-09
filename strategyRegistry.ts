@@ -48,7 +48,6 @@ export interface StrategyRegistryEvent {
 }
 
 export type StrategyRegistryListener = (event: StrategyRegistryEvent) => void;
-export type StrategyKind = "standard";
 
 export interface StrategyRegistry {
     /** Register a new strategy */
@@ -346,16 +345,6 @@ export function isBuiltInStrategyKey(key: string): boolean {
 
 export function getBuiltInMeta(key: string): BuiltInStrategyMeta | undefined {
     return getBuiltInStrategyMeta(key);
-}
-
-export function getStrategyKind(_key: string, _strategy?: Strategy): StrategyKind {
-
-
-    return "standard";
-}
-
-export function getStrategyKindTitle(_kind: StrategyKind): string {
-    return "Standard strategy";
 }
 
 // Export for debugging in browser console

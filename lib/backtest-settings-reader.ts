@@ -53,11 +53,6 @@ export function getCapitalSettings(): CapitalSettings {
     return resolveCapitalSettingsFromRaw(raw);
 }
 
-export function getAlternativeSizingEnabled(): boolean {
-    const fixedTradeToggle = getOptionalElement<HTMLInputElement>('fixedTradeToggle');
-    return fixedTradeToggle?.checked === true;
-}
-
 export function getBacktestSettings(): BacktestSettings {
     const raw: Record<string, unknown> = {};
     for (const id of BACKTEST_DOM_SETTING_IDS) {

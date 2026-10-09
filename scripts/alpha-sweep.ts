@@ -67,12 +67,10 @@ type AlphaSymbolReport = {
     winner: AlphaHuntResult | null;
 };
 
-const DEFAULT_STRATEGIES = ["bear_hunter_v5", "meta_harvest_v2"];
-
 function printUsage(): void {
     console.log([
         "Usage:",
-        "  npm run alpha:sweep",
+        "  npm run alpha:sweep -- --strategies <key1,key2,...>",
         "",
         "Optional flags:",
         "  --top <n>                   default 50",
@@ -86,7 +84,7 @@ function printUsage(): void {
         "  --mutation-sigma <ratio>    default 0.12",
         "  --range <percent>           default 35",
         "  --min-trades <n>            default 20",
-        "  --strategies <k1,k2,...>    default bear_hunter_v5,meta_harvest_v2",
+        "  --strategies <k1,k2,...>    required: current built-in strategy keys",
         "  --out <file>                default alpha_report.json",
     ].join("\n"));
 }
@@ -103,7 +101,7 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     let mutationSigma = 0.12;
     let rangePercent = 35;
     let minTrades = 20;
-    let strategyKeys = [...DEFAULT_STRATEGIES];
+    let strategyKeys: string[] = [];
     let outFile = path.resolve("alpha_report.json");
     let seed = 1337;
     let initialCapital = Number(CAPITAL_DEFAULTS.initialCapital);
@@ -208,7 +206,7 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         mutationSigma: Math.max(0.0001, mutationSigma),
         rangePercent: Math.max(0, rangePercent),
         minTrades: Math.max(0, minTrades),
-        strategies: strategyKeys.length > 0 ? strategyKeys : [...DEFAULT_STRATEGIES],
+        strategies: strategyKeys,
         outFile,
         seed: Math.max(1, Math.floor(seed)),
         initialCapital: Math.max(1, initialCapital),
@@ -265,7 +263,7 @@ async function runAlphaSweep(options: CliOptions): Promise<void> {
         .filter((item) => Boolean(item.strategy));
 
     if (selectedStrategies.length === 0) {
-        throw new Error("[AlphaSweep] No valid strategies provided.");
+        throw new Error("[AlphaSweep] Provide --strategies <key1,key2,...> using current built-in strategy keys.");
     }
 
     const invalid = options.strategies.filter((key) => !(key in strategies));

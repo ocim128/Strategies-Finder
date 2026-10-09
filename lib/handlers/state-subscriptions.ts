@@ -88,7 +88,7 @@ export function setupStateSubscriptions() {
                     return;
                 }
 
-                const { quickViewManager } = await import("../quick-view");
+                const { quickViewManager } = await import("../quick-view/quick-view-service");
                 quickViewManager.setJumpToTrade(jumpToTrade);
                 return quickViewManager.onBacktestComplete(result);
             })

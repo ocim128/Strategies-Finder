@@ -259,16 +259,6 @@ export function recordFinderStrategySkipped(
     stats.skippedRuns += Math.max(1, Math.round(count));
 }
 
-export function isFinderFatalStrategyFailure(error: unknown): boolean {
-    const reason = normalizeFailureReason(error).toLowerCase();
-    return reason.includes("check dependency list")
-        || reason.includes("cannot resolve module")
-        || reason.includes("cannot find module")
-        || reason.includes("module not found")
-        || reason.includes("failed to fetch dynamically imported module")
-        || reason.includes("synchronous require");
-}
-
 export function recordFinderBacktestDiagnostics(
     target: FinderBacktestDiagnosticsStats,
     diagnostics: BacktestDiagnostics | undefined

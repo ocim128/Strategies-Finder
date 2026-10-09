@@ -63,9 +63,7 @@ export interface BacktestDomSettingContract {
     domId: string;
     settingKey: BacktestDomSettingKey;
     parser: BacktestDomSettingParser;
-    legacyAliases: readonly string[];
     rustSupport: SettingSupportLevel;
-    workerSupport: SettingSupportLevel;
     fallbackValue?: unknown;
     readFromSettings?: (settings: BacktestSettingsData) => unknown;
 }
@@ -78,9 +76,7 @@ function createField(domId: string, options: BacktestDomSettingOptions = {}): Ba
         domId,
         settingKey,
         parser: options.parser ?? inferParser(settingKey),
-        legacyAliases: options.legacyAliases ?? [],
         rustSupport: options.rustSupport ?? inferRustSupport(settingKey),
-        workerSupport: options.workerSupport ?? "supported",
         fallbackValue: options.fallbackValue,
         readFromSettings: options.readFromSettings,
     };
@@ -159,53 +155,45 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("tradeSizingMode", {
         settingKey: "sizingMode",
         parser: "tradeSizingMode",
-        legacyAliases: ["sizingMode"],
         readFromSettings: (settings) => resolveTradeSizingModeValue(settings.sizingMode, DEFAULT_BACKTEST_SETTINGS),
     }),
     createField("fixedTradeAmount"),
     createField("kellyFraction", {
         parser: "kellyFraction",
         rustSupport: "unsupported",
-        workerSupport: "ui_only",
     }),
-    createField("kellyWinRateCap", { rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("kellyProfitFactorCap", { rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("volTargetAnnual", { rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("volLookbackBars", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("kellyWinRateCap", { rustSupport: "unsupported" }),
+    createField("kellyProfitFactorCap", { rustSupport: "unsupported" }),
+    createField("volTargetAnnual", { rustSupport: "unsupported" }),
+    createField("volLookbackBars", { rustSupport: "unsupported" }),
     createField("volScalingMethod", {
         parser: "volScalingMethod",
         rustSupport: "unsupported",
-        workerSupport: "ui_only",
     }),
-    createField("riskParityLookback", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("riskParityLookback", { rustSupport: "unsupported" }),
     createField("riskParityMethod", {
         parser: "riskParityMethod",
         rustSupport: "unsupported",
-        workerSupport: "ui_only",
     }),
-    createField("martingaleMultiplier", { rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("martingaleMaxSequence", { rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("martingaleResetOnWin", { parser: "boolean", rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("martingaleResetOnLoss", { parser: "boolean", rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("martingaleMultiplier", { rustSupport: "unsupported" }),
+    createField("martingaleMaxSequence", { rustSupport: "unsupported" }),
+    createField("martingaleResetOnWin", { parser: "boolean", rustSupport: "unsupported" }),
+    createField("martingaleResetOnLoss", { parser: "boolean", rustSupport: "unsupported" }),
     createField("martingaleBaseSize", {
         parser: "martingaleBaseSize",
         rustSupport: "unsupported",
-        workerSupport: "ui_only",
     }),
-    createField("optimalFLookback", { rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("optimalFBootstrapSamples", { rustSupport: "unsupported", workerSupport: "ui_only" }),
-    createField("secureFConfidence", { rustSupport: "unsupported", workerSupport: "ui_only" }),
+    createField("optimalFLookback", { rustSupport: "unsupported" }),
+    createField("optimalFBootstrapSamples", { rustSupport: "unsupported" }),
+    createField("secureFConfidence", { rustSupport: "unsupported" }),
     createField("secureFMethod", {
         parser: "secureFMethod",
         rustSupport: "unsupported",
-        workerSupport: "ui_only",
     }),
     createField("useRustEngineToggle", {
         settingKey: "useRustEngine",
         parser: "boolean",
-        legacyAliases: ["useRustEngine"],
         rustSupport: "ui_only",
-        workerSupport: "ui_only",
     }),
 
     createField("riskSettingsToggle"),
@@ -235,38 +223,32 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("stopLossToggle", {
         settingKey: "stopLossEnabled",
         parser: "boolean",
-        legacyAliases: ["stopLossEnabled"],
     }),
     createField("takeProfitToggle", {
         settingKey: "takeProfitEnabled",
         parser: "boolean",
-        legacyAliases: ["takeProfitEnabled"],
     }),
     createField("riskMinHoldBars", { rustSupport: "unsupported" }),
     createField("riskMinHoldToggle", {
         settingKey: "riskMinHoldEnabled",
         parser: "boolean",
-        legacyAliases: ["riskMinHoldEnabled"],
         rustSupport: "unsupported",
     }),
     createField("riskMaxHoldBars", { rustSupport: "conditional" }),
     createField("riskMaxHoldToggle", {
         settingKey: "riskMaxHoldEnabled",
         parser: "boolean",
-        legacyAliases: ["riskMaxHoldEnabled"],
         rustSupport: "conditional",
     }),
     createField("riskCooldownBars", { rustSupport: "conditional" }),
     createField("riskCooldownToggle", {
         settingKey: "riskCooldownEnabled",
         parser: "boolean",
-        legacyAliases: ["riskCooldownEnabled"],
         rustSupport: "conditional",
     }),
     createField("riskEntryConfirmationToggle", {
         settingKey: "riskEntryConfirmationEnabled",
         parser: "boolean",
-        legacyAliases: ["riskEntryConfirmationEnabled"],
         rustSupport: "unsupported",
     }),
     createField("riskEntryConfirmationPercent", { rustSupport: "unsupported" }),
@@ -275,7 +257,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("riskEntryTimeFilterToggle", {
         settingKey: "entryTimeFilterEnabled",
         parser: "boolean",
-        legacyAliases: ["entryTimeFilterEnabled"],
         rustSupport: "unsupported",
     }),
     createField("riskEntryTimeFilter", {
@@ -295,13 +276,11 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("invertSignalsToggle", {
         settingKey: "invertSignals",
         parser: "boolean",
-        legacyAliases: ["invertSignals"],
         rustSupport: "unsupported",
     }),
     createField("confirmationStrategiesToggle", {
         parser: "boolean",
         rustSupport: "unsupported",
-        workerSupport: "ui_only",
     }),
     createField("confirmationSignalExitsToggle", {
         settingKey: "confirmationSignalExitsEnabled",
@@ -332,7 +311,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("strategyTimeframeToggle", {
         settingKey: "strategyTimeframeEnabled",
         parser: "boolean",
-        legacyAliases: ["strategyTimeframeEnabled"],
         rustSupport: "unsupported",
     }),
     createField("strategyTimeframeMinutes", { rustSupport: "unsupported" }),

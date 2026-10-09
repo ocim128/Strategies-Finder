@@ -73,6 +73,12 @@ deliberately uncoalesced — and `clearStaleResults` across owners), composes
 disposal, and exposes typed accessors rather than letting children see its
 internals. Do not pass the whole service into a child module.
 
+Event wiring calls each controller directly for single-owner actions. The
+facade keeps cross-workflow coordination and public entry points; it does not
+mirror controllers through private forwarding methods for tests. Lifecycle
+fixtures seed and exercise the owning controller while retaining observable
+Run/Stop, reattach, persistence, and disposal assertions.
+
 | Module | Owns | Focused specs |
 | --- | --- | --- |
 | `batch-results-view.ts` | Result rows, sort header, coalesced live-render queue (run-token check injected), summary/progress presentation | `batch-backtest-service-lifecycle.browser.spec.ts`, `feature-dom-contracts.spec.ts` |

@@ -35,6 +35,8 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Records and Audits
 
+- [complexity-maintainability-audit.md](complexity-maintainability-audit.md) - repository-wide audit at `7ac14088`, with implemented cleanup, measured reductions, and evidence gates for remaining recommendations.
+
 
 - [Finder causal arm definitions](finder.md#additional-causal-score-definitions) - coverage, stable support, fresh support, price strength and graph strength; execution and recovery are in [the server guide](finder-server-side.md#additional-causal-arms-execution-and-recovery).
 

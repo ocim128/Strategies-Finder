@@ -46,7 +46,7 @@ Mine's filter removed 64% of trades and the remaining 36% performed worse than
 the removed ones. Mine is actively harmful as a trade filter.
 
 ### 4. Do ADF / half-life / Hurst predict which pairs are profitable OOS? — FAIL
-Walk-forward validation (`scripts/validate-spread-quality.ts`) splits each
+The historical walk-forward validation split each
 pair's ratio history into 6-month train / 3-month test folds. No metric
 consistently predicts OOS P&L across configurations. ADF stationarity bugs
 were found in the audit (level y used instead of Δy, post-hoc consistency
@@ -171,10 +171,12 @@ the winner beforehand.
 - **OPEN_SCORE USD Replay** — a descriptive event-level comparison of selector
   arms against the uniform-random control. It must not be treated as a
   validated selector or allocation rule.
-- **Spread-quality compute/CLI** — `scripts/validate-spread-quality.ts` and
-  `lib/spread-quality/spread-quality-engine.ts` remain available for explicitly
-  rerunning the descriptive walk-forward study. The engine is not wired to a
-  current server route.
+
+The spread-quality compute module and rerun CLI have been removed. The CLI
+required full candle arrays that current compact Batch artifacts intentionally
+omit, and the compute module had no current application caller. The findings
+above remain the historical record; a new study needs a reviewed design and
+the current data-loading contract.
 
 ---
 
@@ -211,14 +213,13 @@ against the same history.
 | Tool | Location | What it measures |
 |---|---|---|
 | OPEN_SCORE USD | Batch tab button | Event-level comparison of the current selector arms against the uniform-positive (or negative reversion) random control |
-| Spread-quality CLI | `scripts/validate-spread-quality.ts` (`npm run validate:spread-quality`) | Walk-forward: do ADF / half-life predict OOS P&L? |
 | Balanced pair-list generator | Batch UI | Deterministic, degree-balanced, capped-at-2,000 synthetic pair list from single-asset input. Reproducibility only, not a selector |
 
 Removed after their negative conclusions were recorded:
 Mine Prediction / Mine A/B HTTP endpoints, Portfolio Fit, Mine Timing,
 Stability Mine, and signal-event replay were removed after the negative
-results. The pure compute module `lib/spread-quality/spread-quality-engine.ts`
-is retained but is not currently wired to a server route.
+results. The disconnected spread-quality compute module and incompatible
+rerun CLI were subsequently removed as well.
 
 ---
 

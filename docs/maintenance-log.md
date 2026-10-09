@@ -4,6 +4,36 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-09 — Verified complexity-audit cleanup
+
+- **Evidence:** Rechecked the caller graph and focused specs against `7ac14088`,
+  excluding archive folders. Five orphaned application modules, the old Monte
+  Carlo library, and the spread-quality engine/CLI had no current application
+  consumers. The latter CLI also required candles absent from compact Batch
+  artifacts. Current result/renderer types still have consumers and were kept.
+- **Change:** Deleted twenty obsolete files, uncalled internal helpers,
+  single-valued strategy-kind metadata/styles, unread DOM-contract metadata,
+  and the unused declaration build. Removed twenty private Batch forwarding
+  methods and updated lifecycle fixtures to call their existing owners.
+  Finder Universe/AO runners share a 57-line task-worker transport while
+  retaining their scheduling, payloads, error text, Stop and disposal behavior.
+  Three hunt commands require explicit current strategy keys. Updated guides,
+  local Node requirements, static-deployment limits, and validation routing.
+- **Reduction:** 2,902 net code/config/style lines and 677 net test lines,
+  **3,579 total**, including the shared worker helper; documentation excluded.
+- **Checks:** `npm run validate:changes -- --run` passed full CI (both
+  typechecks, all 260 spec files, production build and bundle budget), browser
+  E2E, and Rust format/test/clippy. CLI help and missing-strategy checks passed
+  for alpha sweep, massive hunt, and surgical optimization; `git diff --check`
+  passed. Full validation first found an obsolete route entry for the deleted
+  backtest barrel; that entry was removed and validation rerun successfully.
+- **Follow-up:** Rust and active-feature retirements still require the audit's
+  performance/usage evidence. Broader facade/test and replay-arm redesigns are
+  not part of this cleanup. Public strategy-authoring indicators, saved
+  settings/result compatibility, loader fallback contracts, and Worker
+  deployment configuration remain. See
+  [the audit's implementation status](complexity-maintainability-audit.md#implementation-status).
+
 ## 2026-10-05 — Next simplifications (shared settings parsers, candle columns, Finder exit planning)
 
 - **Evidence:** The temporary plan (`docs/next-simplifications-plan.md`,

@@ -133,32 +133,6 @@ export function attachTradeTimingQuality(
     result.tradeTimingQuality = computeTradeTimingQuality(result, ohlcvData, preparedFloors);
 }
 
-export function averageTradeTimingQuality(
-    entries: readonly BacktestResult[]
-): TradeTimingQuality | undefined {
-    const qualities = entries
-        .map((result) => result.tradeTimingQuality)
-        .filter((quality): quality is TradeTimingQuality => Boolean(quality));
-
-    if (qualities.length === 0) {
-        return undefined;
-    }
-
-    return {
-        entryScore: averageNullable(qualities.map((quality) => quality.entryScore)),
-        exitScore: averageNullable(qualities.map((quality) => quality.exitScore)),
-        entry: {
-            horizons: HORIZONS.map((horizon) => averageEntryHorizon(qualities, horizon)),
-        },
-        exit: {
-            horizons: HORIZONS.map((horizon) => averageExitHorizon(qualities, horizon)),
-            captureScore: averageNullable(qualities.map((quality) => quality.exit.captureScore)),
-            averageGivebackPct: averageNullable(qualities.map((quality) => quality.exit.averageGivebackPct)),
-            captureSampleSize: qualities.reduce((sum, quality) => sum + quality.exit.captureSampleSize, 0),
-        },
-    };
-}
-
 function computeEntryHorizon(
     trades: Trade[],
     ohlcvData: OHLCVData[],
@@ -374,40 +348,6 @@ function computeMovementFloorPct(ohlcvData: OHLCVData[], horizon: number): numbe
     return medianOrNull(moves) ?? 0;
 }
 
-function averageEntryHorizon(qualities: readonly TradeTimingQuality[], horizon: number): TradeTimingEntryHorizon {
-    const horizons = qualities
-        .map((quality) => quality.entry.horizons.find((item) => item.bars === horizon))
-        .filter((item): item is TradeTimingEntryHorizon => Boolean(item));
-
-    return {
-        bars: horizon,
-        score: averageNullable(horizons.map((item) => item.score)),
-        avgMfePct: averageNullable(horizons.map((item) => item.avgMfePct)),
-        avgMaePct: averageNullable(horizons.map((item) => item.avgMaePct)),
-        positiveForwardRatePct: averageNullable(horizons.map((item) => item.positiveForwardRatePct)),
-        movementFloorPct: averageNullable(horizons.map((item) => item.movementFloorPct)),
-        movementConfidencePct: averageNullable(horizons.map((item) => item.movementConfidencePct)),
-        sampleSize: horizons.reduce((sum, item) => sum + item.sampleSize, 0),
-    };
-}
-
-function averageExitHorizon(qualities: readonly TradeTimingQuality[], horizon: number): TradeTimingExitHorizon {
-    const horizons = qualities
-        .map((quality) => quality.exit.horizons.find((item) => item.bars === horizon))
-        .filter((item): item is TradeTimingExitHorizon => Boolean(item));
-
-    return {
-        bars: horizon,
-        score: averageNullable(horizons.map((item) => item.score)),
-        avgAvoidedAdversePct: averageNullable(horizons.map((item) => item.avgAvoidedAdversePct)),
-        avgMissedContinuationPct: averageNullable(horizons.map((item) => item.avgMissedContinuationPct)),
-        adverseAfterExitRatePct: averageNullable(horizons.map((item) => item.adverseAfterExitRatePct)),
-        movementFloorPct: averageNullable(horizons.map((item) => item.movementFloorPct)),
-        movementConfidencePct: averageNullable(horizons.map((item) => item.movementConfidencePct)),
-        sampleSize: horizons.reduce((sum, item) => sum + item.sampleSize, 0),
-    };
-}
-
 function weightedAverageScore(horizons: readonly { bars: number; score: number | null }[]): number | null {
     let weightedSum = 0;
     let totalWeight = 0;
@@ -421,12 +361,6 @@ function weightedAverageScore(horizons: readonly { bars: number; score: number |
     }
 
     return totalWeight > 0 ? round2(weightedSum / totalWeight) : null;
-}
-
-function averageNullable(values: readonly (number | null)[]): number | null {
-    const finiteValues = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-    if (finiteValues.length === 0) return null;
-    return round4(finiteValues.reduce((sum, value) => sum + value, 0) / finiteValues.length);
 }
 
 function ratioScore(favorable: number, adverse: number): number {

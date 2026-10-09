@@ -1,10 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
 import { calculateMaxDrawdown } from '../lib/strategies/backtest/position-stats';
-import {
-    calculateMaxDrawdown as calculatePathAnalyzerMaxDrawdown,
-} from '../lib/strategies/monte-carlo/path-dependency-analyzer';
-import type { EquityCurvePoint } from '../lib/strategies/monte-carlo/types';
 import type { Time } from '../lib/types/strategies';
 
 function curve(values: number[]): { time: Time; value: number }[] {
@@ -46,21 +42,5 @@ describe('maximum percentage drawdown is independent of the worst dollar drawdow
         const result = calculateMaxDrawdown([], 10000);
         expect(result.maxDrawdown).to.equal(0);
         expect(result.maxDrawdownPercent).to.equal(0);
-    });
-});
-
-describe('path analyzer drawdown helper', () => {
-    it('reports the worst relative loss while anchoring start/end to the dollar maximum', () => {
-        const points: EquityCurvePoint[] = [10000, 5000, 100000, 90000].map((equity, bar) => ({
-            bar,
-            equity,
-            cumulativeReturn: 0,
-        }));
-        const result = calculatePathAnalyzerMaxDrawdown(points, 10000);
-        expect(result.maxDrawdown).to.equal(10000);
-        expect(result.maxDrawdownPercent).to.equal(50);
-        // Dollar-drawdown start/end semantics stay tied to the worst dollar loss.
-        expect(result.drawdownStart).to.equal(2);
-        expect(result.drawdownEnd).to.equal(3);
     });
 });

@@ -239,7 +239,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                 runId, status: "completed", phase: "completed", progressText: "Completed",
                 resultError: "Stored result is missing.",
             }),
-        }), async () => { await svc().reattachToInProgressTopMeanRun(); });
+        }), async () => { await svc().topMean.reattachToInProgressTopMeanRun(); });
         expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.include("Completed, but results could not be loaded");
         expect(dom.batchBacktestSp500TopMeanCopyBtn.disabled).to.equal(true);
         expect(dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled).to.equal(true);
@@ -270,13 +270,13 @@ describe("BatchBacktestService analysis lifecycle", () => {
             };
             try {
                 const polling = workflow === "batch"
-                    ? svc().reattachToInProgressServerRun()
-                    : svc().reattachToInProgressTopMeanRun();
+                    ? svc().batchRun.reattachToInProgressServerRun()
+                    : svc().topMean.reattachToInProgressTopMeanRun();
                 await started;
                 currentService.dispose();
                 await polling;
                 expect(signal?.aborted).to.equal(true);
-                expect(workflow === "batch" ? svc().loadPersistedActiveServerRun()?.runId : readTopMeanActiveRun()?.runId)
+                expect(workflow === "batch" ? svc().batchRun.loadPersistedActiveServerRun()?.runId : readTopMeanActiveRun()?.runId)
                     .to.equal(workflow === "batch" ? "batch-dispose" : "top-mean-dispose");
             } finally {
                 globalThis.fetch = prevFetch;
@@ -297,7 +297,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             });
             expect(svc().pendingStopPromise).to.equal(null);
             expect(svc().activeServerRunId).to.equal("batch-stop-timeout");
-            expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-stop-timeout");
+            expect(svc().batchRun.loadPersistedActiveServerRun()?.runId).to.equal("batch-stop-timeout");
         } finally {
             globalThis.setTimeout = prevTimeout;
         }
@@ -336,7 +336,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             await withMockFetch((url) => {
                 if (url.includes("&limit=")) return new Promise<FetchResponse>(() => {});
                 polls += 1;
-                expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-page-timeout");
+                expect(svc().batchRun.loadPersistedActiveServerRun()?.runId).to.equal("batch-page-timeout");
                 return {
                     ok: true, status: 200,
                     text: JSON.stringify(polls === 1 ? {
@@ -352,7 +352,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                         },
                     }),
                 };
-            }, async () => { await svc().reattachToInProgressServerRun(); });
+            }, async () => { await svc().batchRun.reattachToInProgressServerRun(); });
             expect(polls).to.equal(2);
             expect(svc().lastResults.map((row: { symbol: string }) => row.symbol)).to.deep.equal(["FIRST", "SECOND"]);
             expect(dom.batchBacktestStatus.textContent).to.equal("Done");
@@ -434,7 +434,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(dom.batchBacktestSp500TopMeanDetailsSelector.disabled).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanDetailsBtn.disabled).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanDetails.hidden).to.equal(true);
-        svc().toggleSp500TopMeanOpenScoreDetails();
+        svc().topMean.toggleSp500TopMeanOpenScoreDetails();
         expect(dom.batchBacktestSp500TopMeanDetails.hidden).to.equal(false);
         expect(dom.batchBacktestSp500TopMeanDetailsBtn.textContent).to.equal("Hide OPEN_SCORE Details");
         expect(dom.batchBacktestSp500TopMeanDetails.innerHTML).to.include("TOP_MEAN");
@@ -493,7 +493,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         svc().renderTopMeanResults(dom, result);
 
         // Default (blank year select) keeps the current full-window behaviour.
-        svc().toggleSp500TopMeanOpenScoreDetails();
+        svc().topMean.toggleSp500TopMeanOpenScoreDetails();
         let html = dom.batchBacktestSp500TopMeanDetails.innerHTML;
         expect(html).to.include("Selected Window");
         expect(html).to.include("ASSET_2022");
@@ -585,7 +585,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             dom.batchBacktestSymbolTemplate.dispatchEvent(new Event("change"));
             dom.batchBacktestSymbols.value = "UNSUBMITTED";
             dom.batchBacktestSymbols.dispatchEvent(new Event("input"));
-            await svc().generateAndApplyBalancedPairList();
+            await svc().balanced.generateAndApply();
             expect(dom.batchBacktestSymbols.value).to.equal("ORIGINAL");
             expect(svc().activeServerRunId).to.equal("owned-run");
             expect(svc().lastResults.length).to.equal(1);
@@ -603,7 +603,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             dom.batchBacktestOpenScoreUsdHorizons.value = input;
             let requests = 0;
             await withMockFetch(() => { requests++; return { ok: false, status: 400 }; }, async () => {
-                await svc().runOpenScoreUsdReplay();
+                await svc().openScore.run();
             });
             expect(requests).to.equal(0);
             expect(dom.batchBacktestOpenScoreUsdSummary.textContent).to.match(/positive|Invalid horizon/);
@@ -618,7 +618,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         await withMockFetch((_url, init) => {
             horizons = JSON.parse(init.body).horizons;
             return { ok: false, status: 400, text: "probe ends after request capture" };
-        }, async () => { await svc().runOpenScoreUsdReplay(); });
+        }, async () => { await svc().openScore.run(); });
         expect(horizons).to.deep.equal([12, 24, 48]);
     });
 
@@ -629,7 +629,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         const pageEvents = fakeEl();
         globalThis.window = pageEvents as Window & typeof globalThis;
         let flushes = 0;
-        s.writeTopMeanDiagnosticLogNow = () => { flushes++; };
+        s.topMean.writeTopMeanDiagnosticLogNow = () => { flushes++; };
         try {
             s.bindPageLifecycle();
             pageEvents.dispatchEvent({ type: "pagehide" });
@@ -692,14 +692,14 @@ describe("BatchBacktestService analysis lifecycle", () => {
         dying.topMean.recordTopMeanDiagnostic("run.start", { workerCount: 4 });
         dying.topMean.recordTopMeanNdjsonEvent({ type: "preflight", counts: { pairCount: 20000 } });
         dying.topMean.recordTopMeanNdjsonEvent({ type: "done", result: { runId: "sp500_top_mean_crashed" } });
-        dying.writeTopMeanDiagnosticLogNow();
+        dying.topMean.writeTopMeanDiagnosticLogNow();
 
         // Simulate the reload: fresh service instance, empty in-memory state.
         currentService.dispose();
         currentService = createBatchBacktestService();
         const fresh = svc();
         fresh.dom = dom;
-        fresh.restorePersistedTopMeanDiagnostics();
+        fresh.topMean.restorePersistedTopMeanDiagnostics();
 
         expect(fresh.topMean.getDiagnosticRunId()).to.equal("sp500_top_mean_crashed");
         expect(dom.batchBacktestSp500TopMeanCopyDiagnosticBtn.disabled).to.equal(false);
@@ -893,7 +893,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             requestBody = JSON.parse(String(init?.body ?? "{}"));
             return { ok: false, status: 400, text: "test stop before server run" };
         }, async () => {
-            await svc().runOpenScoreUsdReplay();
+            await svc().openScore.run();
         });
         expect(requestBody.capTiltWeight).to.equal("similarCap2x");
         // The replay's prerequisites come from the seeded run-owner state
@@ -968,7 +968,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         svc().batchRun.persistActiveServerRun("batch-owned");
         svc().activeServerRunId = null;
 
-        expect(svc().loadPersistedActiveServerRun()?.runId).to.equal("batch-owned");
+        expect(svc().batchRun.loadPersistedActiveServerRun()?.runId).to.equal("batch-owned");
     });
 
     it("persists replay mode and disables switch-irrelevant controls without changing their values", () => {
@@ -1308,7 +1308,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
         dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
 
-        svc().loadPersistedLatestTopMeanResult(dom);
+        svc().topMean.loadPersistedLatestTopMeanResult(dom);
 
         expect(svc().latestTopMeanResult).to.deep.equal({ ...result, replayMode: "horizon" });
         expect(dom.batchBacktestSp500TopMeanResults.innerHTML).to.include("RESTORE_MARKER_ANNUAL_REPORT");
@@ -1330,7 +1330,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             status: 404,
             text: JSON.stringify({ ok: false, error: "Run not found" }),
         }), async () => {
-            await svc().reattachToInProgressTopMeanRun();
+            await svc().topMean.reattachToInProgressTopMeanRun();
         });
 
         expect(svc().topMean.getActiveTopMeanRunId()).to.equal(null);
@@ -1804,7 +1804,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
         svc().latestTopMeanResult = result;
         svc().renderTopMeanResults(dom, result);
-        svc().toggleSp500TopMeanOpenScoreDetails();
+        svc().topMean.toggleSp500TopMeanOpenScoreDetails();
 
         const details = dom.batchBacktestSp500TopMeanDetails.innerHTML;
         expect(details).to.include("Calendar Year 2026 | 2 selector rows");
@@ -1834,7 +1834,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
 
         svc().latestTopMeanResult = result;
         svc().renderTopMeanResults(dom, result);
-        svc().toggleSp500TopMeanOpenScoreDetails();
+        svc().topMean.toggleSp500TopMeanOpenScoreDetails();
 
         const details = dom.batchBacktestSp500TopMeanDetails.innerHTML;
         expect(details).to.include("Selected Window | 4 selector rows");
@@ -1858,10 +1858,10 @@ describe("BatchBacktestService analysis lifecycle", () => {
             bodies.push(JSON.parse(String(init?.body ?? "{}")));
             return { ok: true, status: 200, text: JSON.stringify({ ok: accepted, stopped: accepted }) };
         }, async () => {
-            await svc().stopServerWork();
+            await svc().batchRun.stopServerWork();
             expect(svc().activeServerRunId).to.equal("batch-owned");
             accepted = true;
-            await svc().stopServerWork();
+            await svc().batchRun.stopServerWork();
         });
 
         expect(bodies).to.deep.equal([{ runId: "batch-owned" }, { runId: "batch-owned" }]);
@@ -1890,19 +1890,19 @@ describe("BatchBacktestService analysis lifecycle", () => {
                 },
             }),
         }), async () => {
-            await svc().reattachToInProgressServerRun();
+            await svc().batchRun.reattachToInProgressServerRun();
         });
 
         expect(dom.batchBacktestStatus.textContent).to.include("worker exploded");
         expect(svc().activeServerRunId).to.equal("batch-fatal");
-        expect(svc().loadPersistedActiveServerRun()).to.equal(null);
+        expect(svc().batchRun.loadPersistedActiveServerRun()).to.equal(null);
     });
 
     it("disables OPEN_SCORE USD after clearStaleResults (audit artifact-action-gating finding)", () => {
         const dom = setupForAnalysis();
         svc().batchRun.setServerHasArtifacts(true);
         svc().lastRunFingerprint = "fp-test";
-        svc().updateArtifactActionButtons(dom);
+        svc().batchRun.updateArtifactActionButtons(dom);
         expect(dom.batchBacktestOpenScoreUsdBtn.disabled, "OPEN_SCORE USD enabled before clear").to.equal(false);
         svc().clearStaleResults(dom);
         expect(dom.batchBacktestOpenScoreUsdBtn.disabled, "OPEN_SCORE USD disabled after clear").to.equal(true);
@@ -1916,7 +1916,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             dom.batchBacktestResults.appendChild(fakeEl());
             dom.batchBacktestCopyBtn.disabled = false;
             dom.batchBacktestCopyOpenPositionsBtn.disabled = false;
-            svc().updateArtifactActionButtons(dom);
+            svc().batchRun.updateArtifactActionButtons(dom);
             expect(dom.batchBacktestOpenScoreUsdBtn.disabled).to.equal(false);
             const originalDescriptor = Object.getOwnPropertyDescriptor(globalThis, "localStorage")!;
             const storage = globalThis.localStorage;
@@ -1958,7 +1958,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             fetchCalled = true;
             return { ok: true, status: 200, text: "{}" };
         }, async () => {
-            await svc().runBatch();
+            await svc().batchRun.runBatch();
         });
         expect(fetchCalled, "second runBatch must short-circuit before fetch").to.equal(false);
         expect(dom.batchBacktestStatus.textContent).to.include("already running");
@@ -2072,7 +2072,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
                 },
             }),
         }), async () => {
-            await svc().reattachToInProgressServerRun();
+            await svc().batchRun.reattachToInProgressServerRun();
         });
 
         expect(svc().lastResults.length, "terminal reattach drains lastRun.rows").to.equal(2);
@@ -2221,7 +2221,7 @@ describe("BatchBacktestService Balanced Generator lifecycle", () => {
             status: 500,
             text: JSON.stringify({ error: "server exploded" }),
         }), async () => {
-            await svc().runBatch();
+            await svc().batchRun.runBatch();
         });
         // Prove the run actually reached the server call and unwound through
         // the run's finally-block (not a preflight short-circuit).
@@ -2264,4 +2264,3 @@ describe("BatchBacktestService Balanced Generator lifecycle", () => {
         expect(dom.batchBacktestSymbols.readOnly).to.equal(false);
     });
 });
-

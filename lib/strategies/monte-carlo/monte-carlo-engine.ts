@@ -8,7 +8,7 @@ import type {
     MonteCarloSimulation,
     RuinProbabilityMetrics,
 } from "./types";
-import { createSeededRandom } from "./utils";
+import { createSeededRandom } from "../../param-math-utils";
 import { calculateSharpeRatioFromEquitySamples } from "../performance-metrics";
 import { medianOrNull, prepareSortedStats } from "../../statistics-utils";
 import { timeKey } from "../backtest/backtest-utils";

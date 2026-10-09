@@ -70,13 +70,6 @@ type CompactSignal = {
 
 export type CandidateResult = Omit<FinderResult, "selectionResult" | "endpointAdjusted" | "endpointRemovedTrades">;
 
-export type RustFinderCandidatePayload = {
-    key: string;
-    name: string;
-    params: StrategyParams;
-    result: BacktestResult;
-};
-
 export type QuickFunnelCandidate = {
     job: {
         id: number;
@@ -523,85 +516,6 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
     return merged;
 }
 
-function isFiniteNumber(value: unknown): value is number {
-    return typeof value === "number" && Number.isFinite(value);
-}
-
-function coerceFiniteNumber(value: unknown, fallback = 0): number {
-    if (isFiniteNumber(value)) return value;
-    const asNumber = Number(value);
-    return Number.isFinite(asNumber) ? asNumber : fallback;
-}
-
-function normalizeRustBacktestResult(raw: unknown): BacktestResult | null {
-    if (!raw || typeof raw !== "object") return null;
-    const source = raw as Record<string, unknown>;
-    const totalTrades = Math.max(0, Math.round(coerceFiniteNumber(source.totalTrades, 0)));
-    const winningTrades = Math.max(0, Math.round(coerceFiniteNumber(source.winningTrades, 0)));
-    const losingTrades = Math.max(0, Math.round(coerceFiniteNumber(source.losingTrades, 0)));
-    if (!Number.isFinite(totalTrades) || !Number.isFinite(winningTrades) || !Number.isFinite(losingTrades)) {
-        return null;
-    }
-
-    return {
-        trades: (Array.isArray(source.trades) ? source.trades : []) as BacktestResult["trades"],
-        netProfit: coerceFiniteNumber(source.netProfit, 0),
-        netProfitPercent: coerceFiniteNumber(source.netProfitPercent, 0),
-        winRate: coerceFiniteNumber(source.winRate, 0),
-        expectancy: coerceFiniteNumber(source.expectancy, 0),
-        avgTrade: coerceFiniteNumber(source.avgTrade, 0),
-        profitFactor: coerceFiniteNumber(source.profitFactor, 0),
-        maxDrawdown: coerceFiniteNumber(source.maxDrawdown, 0),
-        maxDrawdownPercent: coerceFiniteNumber(source.maxDrawdownPercent, 0),
-        totalTrades,
-        winningTrades,
-        losingTrades,
-        avgWin: coerceFiniteNumber(source.avgWin, 0),
-        avgLoss: coerceFiniteNumber(source.avgLoss, 0),
-        sharpeRatio: coerceFiniteNumber(source.sharpeRatio, 0),
-        equityCurve: (Array.isArray(source.equityCurve) ? source.equityCurve : []) as BacktestResult["equityCurve"],
-    };
-}
-
-export function extractRustFinderCandidates(
-    raw: unknown,
-    strategyKey: string,
-    strategyName: string,
-    fallbackParams: StrategyParams
-): RustFinderCandidatePayload[] {
-    if (!Array.isArray(raw)) return [];
-    const candidates: RustFinderCandidatePayload[] = [];
-
-    for (const entry of raw) {
-        if (!entry || typeof entry !== "object") continue;
-        const source = entry as Record<string, unknown>;
-        const rawParams = (source.params ?? source.parameters ?? source.bestParams) as Record<string, unknown> | undefined;
-        const normalizedParams: StrategyParams = {};
-        if (rawParams && typeof rawParams === "object") {
-            for (const [paramKey, value] of Object.entries(rawParams)) {
-                const numeric = Number(value);
-                if (Number.isFinite(numeric)) {
-                    normalizedParams[paramKey] = numeric;
-                }
-            }
-        }
-        const params = Object.keys(normalizedParams).length > 0 ? normalizedParams : { ...fallbackParams };
-
-        const rawResult = source.result ?? source.backtestResult ?? source.metrics ?? source;
-        const normalizedResult = normalizeRustBacktestResult(rawResult);
-        if (!normalizedResult) continue;
-
-        candidates.push({
-            key: strategyKey,
-            name: strategyName,
-            params,
-            result: normalizedResult,
-        });
-    }
-
-    return candidates;
-}
-
 export function selectPrescreenDataSlice(data: OHLCVData[]): OHLCVData[] {
     if (data.length <= 900) return data;
     const targetByRatio = Math.floor(data.length * 0.15);
@@ -658,16 +572,6 @@ export function computeFinderCompositeEdgeRatio(result: BacktestResult, data: OH
     } catch {
         return 0;
     }
-}
-
-export function computeAverageCompositeEdgeRatio(entries: Array<{ result: BacktestResult; data: OHLCVData[] }>): number {
-    const values = entries
-        .map(({ result, data }) => computeFinderCompositeEdgeRatio(result, data))
-        .filter((value) => Number.isFinite(value) && value > 0);
-
-    if (values.length === 0) return 0;
-    const average = values.reduce((sum, value) => sum + value, 0) / values.length;
-    return Math.round(average * 10000) / 10000;
 }
 
 export function getPreparedFinderData(

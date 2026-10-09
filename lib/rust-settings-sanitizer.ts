@@ -14,13 +14,6 @@ export function hasRustCapability(capabilities: RustCapabilities | undefined, ca
             : false;
 }
 
-export function hasRequiredRustCapabilities(
-    capabilities: RustCapabilities | undefined,
-    settings: BacktestSettings,
-): boolean {
-    return getRequiredRustCapabilities(settings).every((capability) => hasRustCapability(capabilities, capability));
-}
-
 export function getRequiredRustCapabilities(settings: BacktestSettings): string[] {
     const required = new Set<string>();
     if (settings.executionModel === "next_open") {

@@ -2,7 +2,7 @@
  * Shared synthetic-pair artifact types.
  *
  * Extracted from `batch-synthetic-state-miner.ts` so the data contract used by
- * OPEN_SCORE USD Replay, S&P 500 TOP_MEAN, and spread-quality can be imported
+ * OPEN_SCORE USD Replay and S&P 500 TOP_MEAN can be imported
  * without pulling in a separate analysis engine. The OPEN_SCORE USD analysis
  * uses these artifacts; the artifacts themselves are still produced
  * by the Batch server plugin's per-symbol artifact store and consumed by the

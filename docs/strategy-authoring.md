@@ -20,6 +20,11 @@ If a strategy silently clamps, rounds, or flips a parameter inside `execute(...)
 
 ## Build Order
 
+The alpha sweep, massive hunt, and surgical CLI commands require explicit
+`--strategies <key1,key2,...>` from the current generated manifest. They do not
+default to removed strategies. For example:
+`npm run alpha:sweep -- --strategies entropy_ratio_regime_alignment`.
+
 1. Pick a stable key and keep the file name and exported const aligned with that key.
 2. Start from a nearby example:
    - `lib/strategies/lib/ema_confirmation.ts` for a small direct `execute(...)` pattern

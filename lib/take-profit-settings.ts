@@ -1,6 +1,5 @@
-import { TAKE_PROFIT_FIELD_IDS } from "./take-profit-dom";
-import { readNumber, toFiniteNumber } from "./settings-parse-utils";
-import type { BacktestSettings, PercentageTakeProfitMode } from "./types/strategies";
+import { toFiniteNumber } from "./settings-parse-utils";
+import type { PercentageTakeProfitMode } from "./types/strategies";
 
 export const ADAPTIVE_TAKE_PROFIT_DEFAULTS = Object.freeze({
     takeProfitAdaptiveLookbackTrades: 40,
@@ -26,77 +25,6 @@ export function resolveTakeProfitMode(value: unknown): PercentageTakeProfitMode 
         default:
             return "fixed";
     }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-export function resolveAdaptiveTakeProfitSettings(
-    raw?: Record<string, unknown> | null
-): Pick<BacktestSettings,
-    | "takeProfitAdaptiveLookbackTrades"
-    | "takeProfitAdaptiveRecentWindow"
-    | "takeProfitAdaptiveMinMultiplier"
-    | "takeProfitAdaptiveMaxMultiplier"
-    | "takeProfitAdaptiveGridSteps"
-    | "takeProfitAdaptiveRegimeBlend"
-    | "takeProfitAdaptiveIcScale"
-> {
-    const source = isRecord(raw?.adaptiveTakeProfit) ? raw.adaptiveTakeProfit : raw;
-
-    return {
-        takeProfitAdaptiveLookbackTrades: Math.max(
-            5,
-            Math.round(readNumber(source?.takeProfitAdaptiveLookbackTrades, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveLookbackTrades))
-        ),
-        takeProfitAdaptiveRecentWindow: Math.max(
-            3,
-            Math.round(readNumber(source?.takeProfitAdaptiveRecentWindow, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRecentWindow))
-        ),
-        takeProfitAdaptiveMinMultiplier: Math.max(
-            0.1,
-            readNumber(source?.takeProfitAdaptiveMinMultiplier, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMinMultiplier)
-        ),
-        takeProfitAdaptiveMaxMultiplier: Math.max(
-            0.2,
-            readNumber(source?.takeProfitAdaptiveMaxMultiplier, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMaxMultiplier)
-        ),
-        takeProfitAdaptiveGridSteps: Math.max(
-            3,
-            Math.round(readNumber(source?.takeProfitAdaptiveGridSteps, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveGridSteps))
-        ),
-        takeProfitAdaptiveRegimeBlend: Math.max(
-            0,
-            Math.min(1, readNumber(source?.takeProfitAdaptiveRegimeBlend, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRegimeBlend))
-        ),
-        takeProfitAdaptiveIcScale: Math.max(
-            0,
-            Math.min(2, readNumber(source?.takeProfitAdaptiveIcScale, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveIcScale))
-        ),
-    };
-}
-
-export function extractAdaptiveTakeProfitRaw(raw: Record<string, unknown>): Record<string, unknown> {
-    const extracted: Record<string, unknown> = {};
-
-    for (const key of TAKE_PROFIT_FIELD_IDS) {
-        const value = raw[key];
-        if (value !== undefined) {
-            extracted[key] = value;
-        }
-    }
-
-    if (isRecord(raw.adaptiveTakeProfit)) {
-        for (const key of TAKE_PROFIT_FIELD_IDS) {
-            const value = raw.adaptiveTakeProfit[key];
-            if (value !== undefined && extracted[key] === undefined) {
-                extracted[key] = value;
-            }
-        }
-    }
-
-    return extracted;
 }
 
 export function coerceAdaptiveTakeProfitFieldValue(

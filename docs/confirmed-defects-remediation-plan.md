@@ -51,11 +51,8 @@ Read [the agent guide](../AGENTS.md), [testing](testing.md),
   single-position fast-path tracking and final liquidation, the shared
   fallback loop, and `combineCompactResults` for combined books.
 - Update `simulateChartTradePath` in
-  [monte-carlo-engine.ts](../lib/strategies/monte-carlo/monte-carlo-engine.ts),
-  the exported drawdown helper in
-  [path-dependency-analyzer.ts](../lib/strategies/monte-carlo/path-dependency-analyzer.ts),
+  [monte-carlo-engine.ts](../lib/strategies/monte-carlo/monte-carlo-engine.ts)
   and [finder-pair-neutral.ts](../lib/finder/finder-pair-neutral.ts).
-  Preserve the analyzer's dollar-drawdown start/end semantics.
 - Update Rust's streaming drawdown closure and `calculate_max_drawdown` in
   [engine.rs](../rust-engine/src/backtest/engine.rs). Preserve the existing
   nonpositive-peak guard and intentional `skipDrawdown` behavior.

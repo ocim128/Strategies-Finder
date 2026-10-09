@@ -2,6 +2,13 @@
 
 This Vite app can be deployed to Vercel from the repository root that contains this `package.json`.
 
+This deploys the static chart/backtest UI. Local SQLite, market-data sync,
+server-owned Finder scopes, Batch Backtest, TOP_MEAN, and OPEN_SCORE replay
+require the Vite Node server and are not supplied by serving `dist`. Use
+`npm run dev` or `npm run build` followed by `npx vite preview` for those local
+features. The scheduled alert Worker is a separate deployment. Local execution
+uses Node 22.16.0 or newer, matching the CI baseline.
+
 ## Deployment Steps
 
 1.  **Push to GitHub/GitLab/Bitbucket**: Ensure your code is pushed to a repository connected to your Vercel account.

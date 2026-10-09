@@ -23,7 +23,3 @@ export function getIntervalSecondsOrDefault(interval: string, fallbackSeconds = 
     if (parsed === null) return fallbackSeconds;
     return parsed;
 }
-
-export function isTwoHourInterval(interval: string): boolean {
-    return parseIntervalSeconds(interval) === 7200;
-}

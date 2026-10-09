@@ -29,8 +29,3 @@ export function readNumberInputValue(id: string, fallback: number, min?: number)
     if (value === null) return fallback;
     return min === undefined ? value : Math.max(min, value);
 }
-
-export function readToggleValue(id: string, fallback: boolean): boolean {
-    const toggle = getOptionalElement<HTMLInputElement>(id);
-    return toggle ? toggle.checked : fallback;
-}

@@ -7,6 +7,12 @@ authoritative terminal candidate slice. The browser is the control and
 rendering layer and can reattach to an in-flight or completed job after a tab
 reload. Current-chart Finder remains browser-side.
 
+Universe and Asset Opportunity holdout runners share the single-task worker
+transport in `lib/finder/server/finder-task-worker.ts`: current-task ownership,
+crash/exit reporting, immediate Stop termination, and awaited disposal.
+Each runner retains its own message conversion, resource limits, and scheduling;
+TOP_MEAN and ledger pools keep their separate lifecycle contracts.
+
 Historical crypto CSV loads pass their requested bar limit to the shared
 columnar loader, materializing only the newest requested bars on cache hits.
 Detached loads retain the full series. See the

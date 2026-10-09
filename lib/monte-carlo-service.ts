@@ -188,8 +188,6 @@ function readSettingsFromDom(): MonteCarloSettings {
         seed: parseInt(dom.seedInput.value, 10) || 1337,
         enableSequenceRandomization: dom.sequenceToggle.checked,
         enableBootstrap: dom.bootstrapToggle.checked,
-        enableParameterPerturbation: false,
-        parameterPerturbationStdDev: 5,
         ruinThresholdPercent: parseFloat(dom.ruinThresholdInput.value) || 50,
         initialCapital: parseFloat(dom.initialCapitalInput.value) || 10000,
     };

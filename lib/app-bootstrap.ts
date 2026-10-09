@@ -287,7 +287,7 @@ export async function bootstrapApp(): Promise<void> {
 
 function registerLazyFeatures(): void {
     registerLazyFeature("debug-panel", async () => (await import("./debug-panel")).initDebugPanel());
-    registerLazyFeature("quick-view", async () => (await import("./quick-view")).quickViewManager.init());
+    registerLazyFeature("quick-view", async () => (await import("./quick-view/quick-view-service")).quickViewManager.init());
     registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
     registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());

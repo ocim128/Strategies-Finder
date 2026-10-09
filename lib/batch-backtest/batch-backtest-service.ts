@@ -23,7 +23,6 @@ import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-symbol-templates";
 import { isBatchResultSortKey } from "./batch-results-sort";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
-import { type BatchPersistedActiveServerRun } from "./browser/batch-browser-store";
 import { TopMeanController } from "./browser/top-mean-controller";
 import { BatchRunController } from "./browser/batch-run-controller";
 import { OpenScoreController } from "./browser/open-score-controller";
@@ -146,7 +145,7 @@ export class BatchBacktestService {
         requestServerStop: () => this.requestServerStop(),
         beginAnalysisBusy: (dom) => this.beginAnalysisBusy(dom),
         finishAnalysisBusy: (dom) => this.finishAnalysisBusy(dom),
-        updateArtifactActionButtons: (dom) => this.updateArtifactActionButtons(dom),
+        updateArtifactActionButtons: (dom) => this.batchRun.updateArtifactActionButtons(dom),
         serverHasArtifacts: () => this.batchRun.getServerHasArtifacts(),
         lastRunFingerprint: () => this.batchRun.getLastRunFingerprint(),
         lastRunInterval: () => this.batchRun.getLastRunInterval(),
@@ -157,9 +156,8 @@ export class BatchBacktestService {
         getDom: () => this.getDom(),
         actionGuard: () => this.balancedGeneratorActionGuard(),
         clearStaleResults: (dom) => this.clearStaleResults(dom),
-        updateSummary: (dom) => this.updateSummary(dom),
+        updateSummary: (dom) => this.batchRun.updateSummary(dom),
     });
-
 
     // Audit Finding 2: typed (was `any`) so a shape drift between the
     // coordinator engine emissions and the UI renderers is a compile failure.
@@ -180,10 +178,6 @@ export class BatchBacktestService {
         onBusyStateChange: () => this.syncPairListControls(),
     });
 
-    private writeTopMeanDiagnosticLogNow(): void {
-        this.topMean.writeTopMeanDiagnosticLogNow();
-    }
-
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
     }
@@ -197,26 +191,26 @@ export class BatchBacktestService {
         const dom = this.getDom();
         this.bindEvents(dom);
         this.batchRun.refreshSortHeader(dom);
-        this.resetProgress(dom);
-        this.loadPersistedLatestResults(dom);
-        this.loadPersistedLatestTopMeanResult(dom);
-        this.restorePersistedTopMeanDiagnostics();
+        this.batchRun.resetProgress(dom);
+        this.batchRun.loadPersistedLatestResults(dom);
+        this.topMean.loadPersistedLatestTopMeanResult(dom);
+        this.topMean.restorePersistedTopMeanDiagnostics();
         // Flush the durable diagnostic log when the page goes away (reload,
         // navigation, tab close) — the trailing debounce would otherwise lose
         // the last window of entries.
         this.bindPageLifecycle();
-        this.activeServerRunId = this.loadPersistedActiveServerRun()?.runId ?? null;
+        this.activeServerRunId = this.batchRun.loadPersistedActiveServerRun()?.runId ?? null;
         this.batchRun.setServerRunActive(this.activeServerRunId !== null);
-        this.updateSummary(dom);
+        this.batchRun.updateSummary(dom);
         this.initialized = true;
         // Reattach to a server-side run that started before page load.
-        void this.reattachToInProgressServerRun();
-        void this.reattachToInProgressTopMeanRun();
+        void this.batchRun.reattachToInProgressServerRun();
+        void this.topMean.reattachToInProgressTopMeanRun();
     }
 
     private bindPageLifecycle(): void {
         if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-            this.listen(window, "pagehide", () => this.writeTopMeanDiagnosticLogNow());
+            this.listen(window, "pagehide", () => this.topMean.writeTopMeanDiagnosticLogNow());
         }
     }
 
@@ -238,7 +232,7 @@ export class BatchBacktestService {
             }
         });
         this.listen(dom.batchBacktestRunBtn, "click", () => {
-            void this.runBatch();
+            void this.batchRun.runBatch();
         });
         this.listen(dom.batchBacktestStopBtn, "click", () => {
             // The same button also stops normal Batch runs and analysis.
@@ -252,16 +246,16 @@ export class BatchBacktestService {
             void this.copyResults();
         });
         this.listen(dom.batchBacktestCopyOpenPositionsBtn, "click", () => {
-            void this.copyOpenPositionPairs();
+            void this.batchRun.copyOpenPositionPairs();
         });
         this.listen(dom.batchBacktestCopyBenchmarkBtn, "click", () => {
-            void this.copyBenchmarkPerformance();
+            void this.batchRun.copyBenchmarkPerformance();
         });
         this.listen(dom.batchBacktestOpenScoreUsdBtn, "click", () => {
-            void this.runOpenScoreUsdReplay();
+            void this.openScore.run();
         });
         this.listen(dom.batchBacktestCopyOpenScoreUsdBtn, "click", () => {
-            void this.copyOpenScoreUsdResults();
+            void this.openScore.copyResults();
         });
         this.listen(dom.batchBacktestSp500TopMeanRunBtn, "click", () => {
             void this.runSp500TopMeanCoordinator();
@@ -277,7 +271,7 @@ export class BatchBacktestService {
             void this.copySp500TopMeanOpenScoreResults();
         });
         this.listen(dom.batchBacktestSp500TopMeanDetailsBtn, "click", () => {
-            this.toggleSp500TopMeanOpenScoreDetails();
+            this.topMean.toggleSp500TopMeanOpenScoreDetails();
         });
         this.listen(dom.batchBacktestSp500TopMeanDetailsSelector, "change", () => this.topMean.refreshTopMeanDetails());
         this.listen(dom.batchBacktestSp500TopMeanDetailsYear, "change", () => this.topMean.refreshTopMeanDetails());
@@ -308,7 +302,7 @@ export class BatchBacktestService {
             dom.batchBacktestSymbols.value = template;
             dom.batchBacktestSymbolTemplate.value = "";
             this.clearStaleResults(dom);
-            this.updateSummary(dom);
+            this.batchRun.updateSummary(dom);
         });
         this.listen(dom.batchBacktestUseCurrent, "click", () => {
             if (this.isBatchUiBusy()) return;
@@ -320,13 +314,13 @@ export class BatchBacktestService {
                     : current;
             }
             this.clearStaleResults(dom);
-            this.updateSummary(dom);
+            this.batchRun.updateSummary(dom);
         });
         this.listen(dom.batchBacktestClear, "click", () => {
             if (this.isBatchUiBusy()) return;
             dom.batchBacktestSymbols.value = "";
             this.clearStaleResults(dom);
-            this.updateSummary(dom);
+            this.batchRun.updateSummary(dom);
         });
         this.listen(dom.batchBacktestSymbols, "input", () => {
             if (this.isBatchUiBusy()) {
@@ -349,13 +343,13 @@ export class BatchBacktestService {
                 this.clearStaleResults(dom);
                 this.balanced.clearActiveProvenanceIfStale(dom);
             }
-            this.updateSummary(dom);
+            this.batchRun.updateSummary(dom);
         });
         this.listen(dom.batchBacktestBalancedGenerateBtn, "click", () => {
-            void this.generateAndApplyBalancedPairList();
+            void this.balanced.generateAndApply();
         });
         this.listen(dom.batchBacktestBalancedCopyBtn, "click", () => {
-            void this.copyBalancedPairList();
+            void this.balanced.copyGenerated();
         });
     }
 
@@ -397,23 +391,8 @@ export class BatchBacktestService {
         };
     }
 
-    private async runBatch(): Promise<void> {
-        await this.batchRun.runBatch();
-    }
-
-
-
-
-    private async copyBenchmarkPerformance(): Promise<void> {
-        await this.batchRun.copyBenchmarkPerformance();
-    }
-
     private async copyResults(): Promise<void> {
         await this.batchRun.copyResults(this.lastOpenScoreUsdResult?.reportLines ?? []);
-    }
-
-    private async copyOpenPositionPairs(): Promise<void> {
-        await this.batchRun.copyOpenPositionPairs();
     }
 
     /**
@@ -422,7 +401,7 @@ export class BatchBacktestService {
      * coalesced because the first may arrive before analysis ownership.
      */
     private requestServerStop(): Promise<void> {
-        const request = this.stopServerWork();
+        const request = this.batchRun.stopServerWork();
         const prior = this.pendingStopPromise;
         const pending = prior
             ? Promise.all([prior, request]).then(() => undefined)
@@ -439,28 +418,12 @@ export class BatchBacktestService {
         return request;
     }
 
-    private async stopServerWork(): Promise<void> {
-        await this.batchRun.stopServerWork();
-    }
-
     // Fetch resolves after the route owns the miner lock, so a second Stop sent
     // here closes the pre-ownership race.
     private async reissueStopIfNeeded(): Promise<void> {
         if (!this.analysisCancelRequested) return;
         this.analysisCancelRequested = false;
         await this.requestServerStop();
-    }
-
-    private async reattachToInProgressServerRun(): Promise<void> {
-        await this.batchRun.reattachToInProgressServerRun();
-    }
-
-    private async runOpenScoreUsdReplay(): Promise<void> {
-        await this.openScore.run();
-    }
-
-    private async copyOpenScoreUsdResults(): Promise<void> {
-        await this.openScore.copyResults();
     }
 
     /**
@@ -475,36 +438,10 @@ export class BatchBacktestService {
         return this.isBatchUiBusy();
     }
 
-    private async generateAndApplyBalancedPairList(): Promise<void> {
-        await this.balanced.generateAndApply();
-    }
-
-    private async copyBalancedPairList(): Promise<void> {
-        await this.balanced.copyGenerated();
-    }
-
-
     /** Server-side access to the active provenance (Phase 3 Batch run submission). */
     getActivePairListProvenance(): PairListProvenanceV1 | null {
         return this.balanced.getActiveProvenance();
     }
-
-    private loadPersistedLatestResults(dom: BatchBacktestDom): void {
-        this.batchRun.loadPersistedLatestResults(dom);
-    }
-
-
-
-
-    private loadPersistedActiveServerRun(): BatchPersistedActiveServerRun | null {
-        return this.batchRun.loadPersistedActiveServerRun();
-    }
-
-
-    private updateArtifactActionButtons(dom: BatchBacktestDom): void {
-        this.batchRun.updateArtifactActionButtons(dom);
-    }
-
 
     private clearStaleResults(dom: BatchBacktestDom): void {
         // Cross-owner coordination: the OPEN_SCORE result belongs to the
@@ -515,13 +452,8 @@ export class BatchBacktestService {
         this.batchRun.clearStaleRows(dom);
     }
 
-
-    private setRunBusy(dom: BatchBacktestDom, busy: boolean): void {
-        this.batchRun.setRunBusy(dom, busy);
-    }
-
     private beginAnalysisBusy(dom: BatchBacktestDom): void {
-        this.setRunBusy(dom, true);
+        this.batchRun.setRunBusy(dom, true);
         setVisible(dom.batchBacktestStopBtn, true);
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdBtn.disabled = true;
@@ -532,7 +464,7 @@ export class BatchBacktestService {
     // Keep operations disabled until unscoped /stop requests have settled.
     private async finishAnalysisBusy(dom: BatchBacktestDom): Promise<void> {
         this.analysisCancelRequested = false;
-        this.setRunBusy(dom, false);
+        this.batchRun.setRunBusy(dom, false);
         setVisible(dom.batchBacktestStopBtn, false);
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdBtn.disabled = true;
@@ -550,23 +482,8 @@ export class BatchBacktestService {
         // Audit artifact-action-gating finding: route the post-analysis restore
         // through the shared helper so Mine, Stability, and OPEN_SCORE USD
         // all flip back together based on the same gate.
-        this.updateArtifactActionButtons(dom);
+        this.batchRun.updateArtifactActionButtons(dom);
     }
-
-    private resetProgress(dom: BatchBacktestDom): void {
-        this.batchRun.resetProgress(dom);
-    }
-
-    private updateSummary(dom: BatchBacktestDom): void {
-        this.batchRun.updateSummary(dom);
-    }
-
-    /**
-     * Render the completed-run summary as a compact metric grid (point 7 of the
-     * Batch UI refactor): stable cells instead of a long pipe-delimited strip.
-     * The full pipe summary stays the clipboard / Copy Results surface.
-     */
-
 
     /**
      * Audit Finding 6: the coordinator preflight strategy gate. Kept on the
@@ -608,27 +525,9 @@ export class BatchBacktestService {
         await this.topMean.stop();
     }
 
-
     public renderTopMeanResults(dom: BatchBacktestDom, summary: TopMeanResultSummary): void {
         this.topMean.renderTopMeanResults(dom, summary);
     }
-
-
-
-    private loadPersistedLatestTopMeanResult(dom: BatchBacktestDom): void {
-        this.topMean.loadPersistedLatestTopMeanResult(dom);
-    }
-
-
-    private toggleSp500TopMeanOpenScoreDetails(): void {
-        this.topMean.toggleSp500TopMeanOpenScoreDetails();
-    }
-
-    /**
-     * Phase-1 current snapshot lines for the Copy Results output. Mirrors the
-     * banner content in plain text so the clipboard surface matches the UI.
-     */
-
 
     public async copySp500TopMeanResults(): Promise<void> {
         await this.topMean.copySp500TopMeanResults();
@@ -638,24 +537,12 @@ export class BatchBacktestService {
         await this.topMean.copySp500TopMeanOpenScoreResults();
     }
 
-
     public async copySp500TopMeanDiagnostic(): Promise<void> {
         await this.topMean.copySp500TopMeanDiagnostic();
     }
 
-
-
-
-    private restorePersistedTopMeanDiagnostics(): void {
-        this.topMean.restorePersistedTopMeanDiagnostics();
-    }
-
     public downloadSp500TopMeanResults(): void {
         this.topMean.downloadSp500TopMeanResults();
-    }
-
-    private async reattachToInProgressTopMeanRun(): Promise<void> {
-        await this.topMean.reattachToInProgressTopMeanRun();
     }
 
     public dispose(): void {
@@ -669,20 +556,6 @@ export class BatchBacktestService {
         this.batchRun.dispose();
     }
 }
-
-
-/**
- * Compact one-line summary of a Balanced Generator result for the UI status
- * area. Surfaces the effective seed/maxPairs, asset/relationship counts,
- * degree range, orientation imbalance, omitted count, and asset-list hash.
- */
-
-/**
- * Multi-line report for Copy Generated. Mirrors the summary plus any warnings
- * and the provenance fields needed to verify the list server-side. Pair text
- * is appended separately by the caller so the report and the list stay
- * separable.
- */
 
 export function createBatchBacktestService(): BatchBacktestService {
     return new BatchBacktestService();

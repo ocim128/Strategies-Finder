@@ -14,8 +14,6 @@ function createMonteCarloSettings(overrides: Partial<MonteCarloSettings> = {}): 
         seed: 1337,
         enableSequenceRandomization: false,
         enableBootstrap: false,
-        enableParameterPerturbation: false,
-        parameterPerturbationStdDev: 5,
         ruinThresholdPercent: 50,
         initialCapital: 10000,
         ...overrides,

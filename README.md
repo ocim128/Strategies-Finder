@@ -26,7 +26,7 @@ Trade timing quality scores are descriptive diagnostics. Exit Score is measured 
 ## Quick Start
 
 ### Requirements
-- Node.js 20+ recommended
+- Node.js 22.16.0 or newer (22.16.0 is the CI baseline; local SQLite uses `node:sqlite`)
 - npm
 - Windows PowerShell works well in this repo
 
@@ -80,7 +80,6 @@ Open the Vite URL shown in the terminal, usually `http://localhost:5173`.
 - Chart controller: `lib/chart-manager.ts`
 - Results renderer: `lib/renderers/resultsRenderer.ts`
 - Trades renderer: `lib/renderers/tradesRenderer.ts`
-- Backtest analysis helpers: `lib/backtest-result-analysis.ts`
 
 ### Research tools
 - Finder: `lib/finder-manager.ts`, `lib/finder/*` (server-side Symbol Universe in `lib/finder/server/*`; see [docs/finder-server-side.md](docs/finder-server-side.md))

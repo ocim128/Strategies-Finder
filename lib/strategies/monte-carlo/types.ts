@@ -14,10 +14,6 @@ export interface MonteCarloSettings {
     enableSequenceRandomization: boolean;
     /** Enable bootstrap resampling */
     enableBootstrap: boolean;
-    /** Enable parameter perturbation */
-    enableParameterPerturbation: boolean;
-    /** Parameter perturbation std dev as % of param value */
-    parameterPerturbationStdDev: number;
     /** Ruin threshold as % of initial capital */
     ruinThresholdPercent: number;
     /** Initial capital for simulation */
@@ -31,14 +27,6 @@ export interface MonteCarloSizingConfig {
     commissionPercent: number;
     advancedSizing?: AdvancedSizingSettings;
     ohlcvData?: OHLCVData[];
-}
-
-export interface ParameterPerturbationConfig {
-    paramKey: string;
-    baseValue: number;
-    perturbationStdDev: number;
-    minConstraint?: number;
-    maxConstraint?: number;
 }
 
 // ============================================================================
@@ -137,20 +125,6 @@ export interface ConfidenceIntervals {
     };
 }
 
-export interface ParameterSensitivityReport {
-    paramKey: string;
-    baseValue: number;
-    perturbations: {
-        perturbedValue: number;
-        netProfit: number;
-        sharpeRatio: number;
-        maxDrawdown: number;
-        sensitivity: number; // d(Metric)/d(Param)
-    }[];
-    overallSensitivity: number;
-    stabilityScore: number; // 0-100, higher = more stable
-}
-
 export interface MonteCarloResult {
     status: "success" | "error" | "insufficient_sample";
     errorMessage?: string;
@@ -186,26 +160,7 @@ inputSource?: "chart";
         max: number;
     };
     
-    // Parameter sensitivity (if enabled)
-    parameterSensitivity?: ParameterSensitivityReport[];
-    
     // Diagnostic info
     executionTimeMs: number;
     seed: number;
 }
-
-// ============================================================================
-// Internal Types
-// ============================================================================
-
-export type TradeReturn = {
-    pnlPercent: number;
-    pnl: number;
-    originalIndex: number;
-};
-
-export type EquityCurvePoint = {
-    bar: number;
-    equity: number;
-    cumulativeReturn: number;
-};

@@ -43,7 +43,6 @@ import type {
     FinderUniverseCandidate,
     FinderUniverseSymbolMetrics,
 } from "../types/finder";
-import type { FinderDateRange } from "./finder-manager-logic";
 import {
     computeUniverseOosAggregate,
     computeUniverseSymbolOosVerdict,
@@ -55,7 +54,7 @@ import { resolveFinderRiskOverrides } from "./finder-runner-core";
 import { withExitStrategyBaseParams, splitExitStrategyParams } from "./exit-strategy-param-prefix";
 import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
-import { resolveOosDataSlice, sliceFinderDataWindow } from "./finder-manager-logic";
+import { resolveOosDataSlice } from "./finder-manager-logic";
 import {
     buildFinderPairNeutralMetrics,
     FINDER_PAIR_NEUTRAL_METRIC_BASIS,
@@ -396,14 +395,3 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
 export function resolveUniverseOosSlice(dataSlice: FinderDataSlice | undefined): FinderOosDataSlice | null {
     return resolveOosDataSlice(dataSlice ?? "all");
 }
-
-/** Apply the OOS data slice to a raw dataset. */
-export function applyUniverseOosSlice(
-    data: OHLCVData[],
-    oosSlice: FinderOosDataSlice,
-    dateRange?: FinderDateRange,
-): OHLCVData[] {
-    return sliceFinderDataWindow(data, oosSlice, dateRange);
-}
-
-// Re-export the verdict type for callers that need to read OOS outcomes.

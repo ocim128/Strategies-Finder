@@ -1,8 +1,8 @@
 ﻿import type { Time } from "lightweight-charts";
-import type { OHLCVData, BacktestResult, Trade, Strategy } from "./strategies/index";
+import type { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
-import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey, getStrategyKind, getStrategyKindTitle } from "../strategyRegistry";
+import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
 import { getOptionalElement, getRequiredElement } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
@@ -170,7 +170,7 @@ export class UIManager {
             strategy = await loadBuiltInStrategyByKey(currentStrategyKey);
         }
         if (strategy) {
-            this.updateStrategyWorkspaceContext(currentStrategyKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length, strategy);
+            this.updateStrategyWorkspaceContext(currentStrategyKey, strategy.name, strategy.description, Object.keys(strategy.defaultParams).length);
             paramManager.render(strategy);
         }
     }
@@ -178,13 +178,8 @@ export class UIManager {
     public updateStrategyDropdown(currentStrategyKey: string) {
         const { strategySelect } = this.getDom();
         const strategies = getStrategyList();
-        const strategyRows = strategies.map(({ key, name, description }) => {
-            const strategy = strategyRegistry.get(key);
-            const kind = getStrategyKind(key, strategy);
-            return { key, name, description, kind };
-        });
-        const signature = strategyRows
-            .map(({ key, name, description, kind }) => `${key}\u0000${name}\u0000${description}\u0000${kind}`)
+        const signature = strategies
+            .map(({ key, name, description }) => `${key}\u0000${name}\u0000${description}`)
             .join('\u0001');
         const currentValue = strategies.some(s => s.key === currentStrategyKey)
             ? currentStrategyKey
@@ -192,30 +187,28 @@ export class UIManager {
 
         if (signature !== this.strategyDropdownSignature) {
             const fragment = document.createDocumentFragment();
-            strategyRows.forEach(({ key, name, description, kind }) => {
+            strategies.forEach(({ key, name, description }) => {
                 const option = document.createElement('option');
                 option.value = key;
                 option.textContent = name;
-                option.title = kind === "standard" ? description : `${description} (${getStrategyKindTitle(kind)})`;
-                option.dataset.strategyKind = kind;
-                option.className = `strategy-option--${kind}`;
+                option.title = description;
                 fragment.appendChild(option);
             });
             strategySelect.replaceChildren(fragment);
             this.strategyDropdownSignature = signature;
         }
 
-        const found = strategyRows.some(s => s.key === currentValue);
+        const found = strategies.some(s => s.key === currentValue);
         if (found) {
             strategySelect.value = currentValue;
-        } else if (strategyRows.length > 0) {
-            const fallbackKey = strategyRows[0].key;
+        } else if (strategies.length > 0) {
+            const fallbackKey = strategies[0].key;
             strategySelect.value = fallbackKey;
             setCurrentStrategyKey(fallbackKey);
         }
     }
 
-    private updateStrategyWorkspaceContext(strategyKey: string, name: string, description: string, paramCount: number, strategy: Strategy): void {
+    private updateStrategyWorkspaceContext(strategyKey: string, name: string, description: string, paramCount: number): void {
         const workspaceExists = getOptionalElement('strategyMetaName')
             && getOptionalElement('strategyMetaDescription')
             && getOptionalElement('strategyMetaKey')
@@ -226,21 +219,13 @@ export class UIManager {
         }
 
         const workspace = createSettingsWorkspaceDom();
-        const kind = getStrategyKind(strategyKey, strategy);
         workspace.strategyMetaName.textContent = name;
         workspace.strategyMetaDescription.textContent = description;
         workspace.strategyParamCount.textContent = `${paramCount} param${paramCount === 1 ? '' : 's'}`;
-        workspace.strategyMetaName.dataset.strategyKind = kind;
         workspace.strategyMetaName.title = strategyKey;
-        // The technical key pill is hidden by default. Show it only for
-        // special-state kinds; for
-        // standard strategies the key is exposed via the title tooltip.
-        const isSpecialKind = kind !== 'standard';
+        // The strategy key is available through the name tooltip.
         workspace.strategyMetaKey.textContent = strategyKey.replace(/_/g, ' ');
-        workspace.strategyMetaKey.dataset.strategyKind = kind;
-        workspace.strategyMetaKey.title = getStrategyKindTitle(kind);
-        workspace.strategyMetaKey.hidden = !isSpecialKind;
-        this.getDom().strategySelect.dataset.strategyKind = kind;
+        workspace.strategyMetaKey.hidden = true;
     }
 
     public updateTimeframeUI(interval: string) {

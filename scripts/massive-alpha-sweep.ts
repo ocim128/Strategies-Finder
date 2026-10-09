@@ -99,8 +99,6 @@ type SymbolReport = {
     winner: HuntResult | null;
 };
 
-const DEFAULT_STRATEGIES = ["bear_hunter_v5", "meta_harvest_v2"];
-
 function printUsage(): void {
     console.log([
         "Usage:",
@@ -118,7 +116,7 @@ function printUsage(): void {
         "  --mutation-sigma <ratio>     default 0.12",
         "  --range <percent>            default 35",
         "  --min-trades <n>             default 20",
-        "  --strategies <k1,k2,...>     default bear_hunter_v5,meta_harvest_v2",
+        "  --strategies <k1,k2,...>     required: current built-in strategy keys",
         "  --seeds <n>                  default 5",
         "  --seed <n>                   default 2026",
         "  --out <file>                 default alpha_report.json",
@@ -143,7 +141,7 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     let mutationSigma = 0.12;
     let rangePercent = 35;
     let minTrades = 20;
-    let strategyKeys = [...DEFAULT_STRATEGIES];
+    let strategyKeys: string[] = [];
     let seedsPerPair = 5;
     let baseSeed = 2026;
     let outFile = path.resolve("alpha_report.json");
@@ -260,7 +258,7 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
         mutationSigma: Math.max(0.0001, mutationSigma),
         rangePercent: Math.max(0, rangePercent),
         minTrades: Math.max(0, minTrades),
-        strategies: strategyKeys.length > 0 ? strategyKeys : [...DEFAULT_STRATEGIES],
+        strategies: strategyKeys,
         seedsPerPair: Math.max(1, seedsPerPair),
         baseSeed: Math.max(1, Math.floor(baseSeed)),
         outFile,
@@ -443,7 +441,7 @@ async function runMassiveSweep(options: CliOptions): Promise<void> {
         .filter((item) => Boolean(item.strategy));
 
     if (selectedStrategies.length === 0) {
-        throw new Error("[MassiveSweep] No valid strategy keys were provided.");
+        throw new Error("[MassiveSweep] Provide --strategies <key1,key2,...> using current built-in strategy keys.");
     }
 
     const invalid = options.strategies.filter((key) => !(key in strategies));
