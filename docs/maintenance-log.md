@@ -4,6 +4,16 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-10 — UI complexity reduction
+
+Implemented all thirteen UI audit recommendations. Removed Quick View, shared-link auto-run polling, retired screen styles/animation utilities, hidden settings scaffolding, the global DOM cache, generic single-use rendering helpers, and manual stylesheet injection. The toolbar opens Results; shared-link recipients click Run.
+
+Settings now use native disclosures in static HTML order. Shared take-profit fields render once with existing persisted IDs. Navigation delegates container events and uses one AbortController for listener cleanup, including resize teardown. Settings restore reuses bootstrap telemetry. The obsolete bootstrap graph spec was deleted, and TAP suite failures can no longer receive PASS solely from a zero exit code.
+
+See [the implementation record](ui-complexity-audit.md) for compatibility, measured reduction, and regression coverage. Earlier log entries mentioning Quick View describe historical behavior superseded by this change. Current owners/checks are [Settings](settings.md), [Testing](testing.md), and README UI/startup sections.
+
+Validation: `npm run ci` passed all 268 specs, dependency checks, both typechecks, production build and budgets (594.4 KiB entry; 765.2 KiB startup). `npm run test:e2e` passed the settings/navigation/shared-link checks and dev/production lazy-tab recovery at both URL bases. Net reduction: 2,562 application lines and 459 test lines, offset by 13 runner lines; eight application modules and two obsolete specs removed.
+
 ## 2026-10-09 — Ownership repair follow-up: same-key restore dropdown resync, exit rollback snapshot
 
 - **Evidence:** A follow-up audit reproduced two remaining defects. A same-key

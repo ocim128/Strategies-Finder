@@ -16,8 +16,9 @@ export function classifyTestRunStatus(
     outputTruncated: boolean,
     timedOut: boolean,
     skipReason?: string,
+    hasTapFailure = false,
 ): TestRunStatus {
-    if (exitCode !== 0 || hasSpawnError || outputTruncated || timedOut) return "FAIL";
+    if (exitCode !== 0 || hasSpawnError || outputTruncated || timedOut || hasTapFailure) return "FAIL";
     return skipReason ? "SKIP" : "PASS";
 }
 
@@ -405,6 +406,8 @@ async function runSingleTest(
     let outputTruncated = false;
     let skipReason: string | undefined;
     let markerBuffer = "";
+    let tapBuffer = "";
+    let hasTapFailure = false;
     let timedOut = false;
     let runError: unknown = null;
     const verbose = outputMode === "verbose";
@@ -431,6 +434,8 @@ async function runSingleTest(
                 outfile: bundlePath,
                 logLevel: "silent",
                 plugins: [rawImportPlugin],
+                // CSS is loaded by Vite in the app; fake-DOM specs exercise JS only.
+                loader: { ".css": "empty" },
             });
             childArgs = [bundlePath];
         }
@@ -453,6 +458,14 @@ async function runSingleTest(
             }
 
             const text = chunk.toString("utf8");
+            if (stream === "stdout") {
+                // Node can exit zero when a suite fails during construction.
+                // Inspect TAP as it streams, preserving split lines across chunks.
+                const lines = (tapBuffer + text).split("\n");
+                tapBuffer = lines.pop()!.slice(-256);
+                hasTapFailure ||= lines.some(line => /^[ \t]*not ok \d+ - /.test(line)
+                    && !/\s#\s+(?:TODO|SKIP)\b/.test(line));
+            }
             markerBuffer = `${markerBuffer}${text}`.slice(-8192);
             const skipMatch = markerBuffer.match(/(?:^|\r?\n)SKIP:\s*([^\r\n]+)/);
             if (skipMatch && !skipReason) skipReason = skipMatch[1]!.trim();
@@ -500,7 +513,7 @@ async function runSingleTest(
     }
 
     const durationMs = Date.now() - startedAt;
-    const status = classifyTestRunStatus(exitCode, Boolean(runError), outputTruncated, timedOut, skipReason);
+    const status = classifyTestRunStatus(exitCode, Boolean(runError), outputTruncated, timedOut, skipReason, hasTapFailure);
 
     return {
         file,

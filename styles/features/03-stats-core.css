@@ -1,106 +1,5 @@
 /* Stats - Enhanced */
 
-.parity-compare-panel {
-
-    margin-bottom: var(--space-4);
-
-}
-
-
-
-.parity-compare-grid {
-
-    display: grid;
-
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-
-    gap: var(--space-2);
-
-}
-
-
-
-.parity-compare-card {
-
-    background: hsl(var(--hsl-surface-3) / 0.6);
-
-    border: 1px solid var(--glass-border);
-
-    border-radius: var(--radius-m);
-
-    padding: var(--space-3);
-
-}
-
-
-
-.parity-compare-card.positive {
-
-    border-color: hsl(var(--hsl-success) / 0.25);
-
-}
-
-
-
-.parity-compare-card.negative {
-
-    border-color: hsl(var(--hsl-danger) / 0.25);
-
-}
-
-
-
-.parity-compare-card-title {
-
-    font-size: var(--font-size-xs);
-
-    color: var(--text-secondary);
-
-    text-transform: uppercase;
-
-    letter-spacing: var(--tracking-wide);
-
-    margin-bottom: var(--space-2);
-
-}
-
-
-
-.parity-compare-row {
-
-    display: flex;
-
-    justify-content: space-between;
-
-    align-items: center;
-
-    gap: var(--space-2);
-
-    font-size: var(--font-size-xs);
-
-    margin-top: 4px;
-
-}
-
-
-
-.parity-compare-row:first-of-type {
-
-    margin-top: 0;
-
-}
-
-
-
-.parity-compare-row-value {
-
-    font-family: var(--font-family-mono);
-
-    font-weight: var(--font-weight-semibold);
-
-}
-
-
 
 .stats-grid {
     display: grid;
@@ -135,7 +34,6 @@
     border-right: none;
 
 }
-
 
 
 .stat-card:last-child {
@@ -194,7 +92,6 @@
 }
 
 
-
 .stat-value.positive {
     color: var(--green);
 }
@@ -213,7 +110,6 @@
 }
 
 
-
 .post-entry-path {
 
     display: flex;
@@ -227,7 +123,6 @@
 }
 
 
-
 .post-entry-side {
 
     border: 1px solid var(--glass-border);
@@ -239,7 +134,6 @@
     background: hsl(var(--hsl-surface-2) / 0.5);
 
 }
-
 
 
 .post-entry-side-header {
@@ -261,7 +155,6 @@
 }
 
 
-
 .post-entry-side-title {
 
     font-size: var(--font-size-sm);
@@ -271,7 +164,6 @@
     color: var(--text-primary);
 
 }
-
 
 
 .post-entry-side-time {
@@ -285,13 +177,11 @@
 }
 
 
-
 .post-entry-grid-shell {
 
     overflow-x: auto;
 
 }
-
 
 
 .post-entry-grid {
@@ -303,7 +193,6 @@
     min-width: 620px;
 
 }
-
 
 
 .post-entry-cell {
@@ -323,7 +212,6 @@
 }
 
 
-
 .post-entry-cell:last-child,
 
 .post-entry-grid .post-entry-cell:nth-child(6n) {
@@ -331,7 +219,6 @@
     border-right: none;
 
 }
-
 
 
 .post-entry-cell.header {
@@ -345,13 +232,11 @@
 }
 
 
-
 .post-entry-cell.metric {
 
     font-weight: var(--font-weight-medium);
 
 }
-
 
 
 .post-entry-cell.value {
@@ -361,6 +246,5 @@
     text-align: right;
 
 }
-
 
 

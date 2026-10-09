@@ -1,4 +1,4 @@
-import { ensureLazyStylesheet } from "../lazy-styles";
+import "../../styles/asset-opportunity-explorer.css";
 import { coalesceAnimationFrame } from "../render-scheduler";
 import { createAssetOpportunityExplorerDom, type AssetOpportunityExplorerDom } from "./dom";
 import {
@@ -60,7 +60,6 @@ export class AssetOpportunityExplorerService {
     }
 
     public init(): void {
-        ensureLazyStylesheet("asset-opportunity-explorer-styles", new URL("../../styles/asset-opportunity-explorer.css", import.meta.url).href);
         if (this.initialized) return;
         this.initialized = true;
         const dom = this.getDom();

@@ -18,6 +18,7 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     runBacktestEndpointPreview: "runBacktestEndpointPreview",
     copyBacktestEndpoint: "copyBacktestEndpoint",
     runBacktest: "runBacktest",
+    viewResultsBtn: "viewResultsBtn",
     clearTradesBtn: "clearTradesBtn",
     togglePanel: "togglePanel",
     strategyPanel: "strategyPanel",
@@ -83,13 +84,6 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     secureFConfidence: ADVANCED_SIZING_DOM_IDS.secureFConfidence,
     secureFMethod: ADVANCED_SIZING_DOM_IDS.secureFMethod,
     panelResizeHandle: "panelResizeHandle",
-    takeProfitEdgeWeightedSettings: TAKE_PROFIT_DOM_IDS.edgeWeightedSettings,
-    takeProfitExpectancyOptimalSettings: TAKE_PROFIT_DOM_IDS.expectancyOptimalSettings,
-    takeProfitRegimeCalibratedSettings: TAKE_PROFIT_DOM_IDS.regimeCalibratedSettings,
-    takeProfitInformationCoefficientSettings: TAKE_PROFIT_DOM_IDS.informationCoefficientSettings,
-    takeProfitPathEfficiencySettings: TAKE_PROFIT_DOM_IDS.pathEfficiencySettings,
-    takeProfitSerialDependencySettings: TAKE_PROFIT_DOM_IDS.serialDependencySettings,
-    takeProfitMinimumSurprisalSettings: TAKE_PROFIT_DOM_IDS.minimumSurprisalSettings,
 } as const;
 
 export const UI_EVENT_HANDLER_REQUIRED_IDS = getRequiredDomIds(UI_EVENT_HANDLER_DOM_IDS);

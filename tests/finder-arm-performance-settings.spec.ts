@@ -1,7 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { BACKTEST_SETTINGS_DOM_CONTRACTS } from "../lib/backtest-settings-dom-contract";
-import { clearDomElementCache } from "../lib/dom-utils";
 import { buildFinderArmPerformanceApplySettings } from "../lib/finder/finder-arm-performance-settings";
 import { DEFAULT_BACKTEST_SETTINGS } from "../lib/settings-model";
 import { settingsManager } from "../lib/settings-manager";
@@ -45,7 +44,6 @@ describe("Finder Arm Performance Apply settings round-trip", () => {
         (globalThis as any).HTMLInputElement = FakeInputElement;
         (globalThis as any).HTMLSelectElement = FakeSelectElement;
         (globalThis as any).HTMLTextAreaElement = FakeTextAreaElement;
-        clearDomElementCache();
 
         try {
             const context = {
@@ -90,7 +88,6 @@ describe("Finder Arm Performance Apply settings round-trip", () => {
             expect(writtenAndRead.useRustEngine).to.equal(true);
             expect(writtenAndRead.executionModel).to.equal("next_open");
         } finally {
-            clearDomElementCache();
             if (previousDocument === undefined) delete (globalThis as any).document;
             else (globalThis as any).document = previousDocument;
             if (previousInput === undefined) delete (globalThis as any).HTMLInputElement;

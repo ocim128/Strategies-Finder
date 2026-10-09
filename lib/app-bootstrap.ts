@@ -129,7 +129,8 @@ function roundedDurationMs(startedAt: number): number {
 async function runBootstrapStep(
     id: string,
     stage: "pre_restore" | "post_restore",
-    step: () => void | Promise<void>
+    step: () => void | Promise<void>,
+    handler: "init" | "restore" = "init"
 ): Promise<void> {
     const startedAt = nowMs();
     try {
@@ -138,7 +139,7 @@ async function runBootstrapStep(
             debugLogger.event("app.bootstrap.feature_complete", {
                 id,
                 stage,
-                handler: "init",
+                handler,
                 durationMs: roundedDurationMs(startedAt),
             });
         } catch {
@@ -149,7 +150,7 @@ async function runBootstrapStep(
             debugLogger.error("app.bootstrap.feature_failed", {
                 id,
                 stage,
-                handler: "init",
+                handler,
                 durationMs: roundedDurationMs(startedAt),
                 error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
             });
@@ -229,38 +230,7 @@ export async function bootstrapApp(): Promise<void> {
         uiManager.updateStrategyParams(state.currentStrategyKey);
     });
 
-    // pre_restore restore hook: saved-settings load happens after initial UI
-    // sync and strategy library so the dropdown/params are populated before
-    // the saved strategy/symbol/interval are applied.
-    {
-        const startedAt = nowMs();
-        try {
-            await restoreSavedSettings(context);
-            try {
-                debugLogger.event("app.bootstrap.feature_complete", {
-                    id: "settings-state",
-                    stage: "pre_restore",
-                    handler: "restore",
-                    durationMs: roundedDurationMs(startedAt),
-                });
-            } catch {
-                // Bootstrap telemetry must never change bootstrap control flow.
-            }
-        } catch (error) {
-            try {
-                debugLogger.error("app.bootstrap.feature_failed", {
-                    id: "settings-state",
-                    stage: "pre_restore",
-                    handler: "restore",
-                    durationMs: roundedDurationMs(startedAt),
-                    error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
-                });
-            } catch {
-                // Bootstrap telemetry must never change bootstrap control flow.
-            }
-            throw error;
-        }
-    }
+    await runBootstrapStep("settings-state", "pre_restore", () => restoreSavedSettings(context), "restore");
 
     // --- post_restore: settings handlers, autosave, initial data load ---
     await runBootstrapStep("settings-handlers", "post_restore", () => setupSettingsHandlers());
@@ -290,7 +260,6 @@ export async function bootstrapApp(): Promise<void> {
 
 function registerLazyFeatures(): void {
     registerLazyFeature("debug-panel", async () => (await import("./debug-panel")).initDebugPanel());
-    registerLazyFeature("quick-view", async () => (await import("./quick-view/quick-view-service")).quickViewManager.init());
     registerLazyFeature("finder", async () => (await import("./finder-manager")).finderManager.init());
     registerLazyFeature("alerts", async () => (await import("./handlers/alert-handlers")).initAlertHandlers());
     registerLazyFeature("batch-backtest", async () => (await import("./batch-backtest/batch-backtest-service")).batchBacktestService.init());
@@ -334,24 +303,6 @@ function bindDirectLazyFeatureTriggers(): void {
                 event.preventDefault();
                 debugToggle.click();
             },
-        });
-    }
-
-    const quickViewButton = getOptionalElement<HTMLButtonElement>("quickViewBtn");
-    if (quickViewButton) {
-        attachLazyFeatureTrigger<PointerEvent>({
-            featureId: "quick-view",
-            target: quickViewButton,
-            eventName: "pointerdown",
-            shouldActivate: () => !isLazyFeatureInitialized("quick-view"),
-        });
-        attachLazyFeatureTrigger<KeyboardEvent>({
-            featureId: "quick-view",
-            target: quickViewButton,
-            eventName: "keydown",
-            shouldActivate: (event) =>
-                !isLazyFeatureInitialized("quick-view")
-                && (event.key === "Enter" || event.key === " "),
         });
     }
 

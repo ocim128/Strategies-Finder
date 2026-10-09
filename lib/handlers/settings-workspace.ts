@@ -33,7 +33,7 @@ export function initSettingsWorkspace(dom: SettingsWorkspaceDom): void {
         // existing display preset without changing any execution settings.
         if (section.hidden) dom.settingsTab.querySelector<HTMLButtonElement>('[data-preset="standard"]')!.click();
         const header = section.querySelector<HTMLElement>(".section-header.collapsible")!;
-        if (header.classList.contains("collapsed")) header.click();
+        (section as HTMLDetailsElement).open = true;
         dom.settingsTab.querySelectorAll(".settings-search-match").forEach(element => element.classList.remove("settings-search-match"));
         // A field can remain unavailable because its feature/mode is off.
         // Focus the section header in that case; never enable a feature as a

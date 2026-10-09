@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { clearDomElementCache } from "../lib/dom-utils";
 import { setupSettingsHandlers, updateConfigDropdown } from "../lib/handlers/settings-handlers";
 import { DEFAULT_BACKTEST_SETTINGS, settingsManager, type StrategyConfig } from "../lib/settings-manager";
 import { uiManager } from "../lib/ui-manager";
@@ -72,7 +71,6 @@ function withDeleteHarness(run: (harness: {
         Object.defineProperty(globalThis, key, { configurable: true, value: replacements[key] });
     }
     uiManager.showToast = (message, type = "info") => { toasts.push({ message, type }); };
-    clearDomElementCache();
     try {
         const config: StrategyConfig = {
             name: "Saved setup", strategyKey: "test", strategyParams: {},
@@ -97,7 +95,6 @@ function withDeleteHarness(run: (harness: {
             if (descriptor) Object.defineProperty(globalThis, key, descriptor);
             else Reflect.deleteProperty(globalThis, key);
         });
-        clearDomElementCache();
     }
 }
 

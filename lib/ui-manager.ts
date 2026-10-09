@@ -288,7 +288,6 @@ export class UIManager {
     private updateStrategyWorkspaceContext(strategyKey: string, name: string, description: string, paramCount: number): void {
         const workspaceExists = getOptionalElement('strategyMetaName')
             && getOptionalElement('strategyMetaDescription')
-            && getOptionalElement('strategyMetaKey')
             && getOptionalElement('strategyParamCount');
 
         if (!workspaceExists) {
@@ -300,9 +299,6 @@ export class UIManager {
         workspace.strategyMetaDescription.textContent = description;
         workspace.strategyParamCount.textContent = `${paramCount} param${paramCount === 1 ? '' : 's'}`;
         workspace.strategyMetaName.title = strategyKey;
-        // The strategy key is available through the name tooltip.
-        workspace.strategyMetaKey.textContent = strategyKey.replace(/_/g, ' ');
-        workspace.strategyMetaKey.hidden = true;
     }
 
     public updateTimeframeUI(interval: string) {

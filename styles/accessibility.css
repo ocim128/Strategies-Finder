@@ -134,7 +134,6 @@ body.finder-running .ohlc-panel,
 body.finder-running .live-positions-panel,
 body.finder-running .progress-container,
 body.finder-running .dropdown-menu.active,
-body.finder-running .quick-view-overlay,
 body.finder-running .scanner-panel {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;

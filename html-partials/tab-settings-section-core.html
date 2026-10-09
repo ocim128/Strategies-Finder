@@ -1,13 +1,13 @@
-    <div class="settings-section" data-complexity="simple" data-section="direction">
-        <div class="section-header collapsible" data-target="directionBody">
+    <details class="settings-section" data-complexity="simple" data-section="direction" open>
+        <summary class="section-header collapsible" data-target="directionBody" aria-controls="directionBody">
             <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
                     </svg></span>
                 <div class="section-title">Trade Direction</div>
             </div>
-        </div>
-        <div class="section-body accordion-body" id="directionBody">
+        </summary>
+        <div class="section-body" id="directionBody">
             <div class="param-row">
                 <div class="param-group">
                     <label class="param-label">Direction Mode</label>
@@ -35,109 +35,10 @@
                 </div>
             </div>
         </div>
-    </div>
+    </details>
 
-    <div class="settings-section" data-complexity="standard" data-section="confirmation">
-        <div class="section-header collapsible collapsed" data-target="confirmationSectionBody">
-            <div class="section-heading-group">
-                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M7 10l5 5 5-5z" />
-                    </svg></span>
-                <div class="section-title">Entry Confirmation</div>
-            </div>
-            <label class="section-toggle" aria-label="Toggle entry confirmation">
-                <input type="checkbox" id="confirmationStrategiesToggle">
-                <span class="section-toggle-track"></span>
-            </label>
-        </div>
-        <div class="section-body accordion-body collapsed" id="confirmationSectionBody">
-            <div class="section-feature-body" id="confirmationStrategiesSettings">
-                <input type="hidden" id="confirmationStrategies" value="">
-                <input type="hidden" id="confirmationStrategyParams" value="">
-                <div class="param-row">
-                    <div class="param-group">
-                        <label class="param-label">Mode</label>
-                        <select class="param-input" id="confirmationMode">
-                            <option value="agree" selected>Agree</option>
-                            <option value="disagree">Disagree</option>
-                            <option value="veto_opposite">Veto Opposite</option>
-                            <option value="confirm_within_window">Confirm Within Window</option>
-                            <option value="veto_within_window">Veto Within Window</option>
-                        </select>
-                        <div class="param-hint">`agree` requires matching same-bar direction. `disagree` requires the opposite same-bar direction. `veto_opposite` blocks only same-bar opposite signals. Window modes use the chart-bar radius below.</div>
-                    </div>
-                    <div class="param-group">
-                        <label class="param-label">Window Bars</label>
-                        <input type="number" class="param-input" id="confirmationWindowBars" value="0" min="0" step="1">
-                        <div class="param-hint">Symmetric bar radius for `confirm_within_window` and `veto_within_window`. 0 keeps same-bar behavior.</div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">Require Confirmation for Signal-Based Exits</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle confirmation for signal-based exits">
-                                <input type="checkbox" id="confirmationSignalExitsToggle" checked>
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">When enabled, signal-based exits must satisfy the selected confirmation strategies. Stop-loss and take-profit exits are unaffected.</div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">Entropy Ratio Regime Alignment</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle entropy ratio regime alignment confirmation">
-                                <input type="checkbox" id="confirmationEntropyRatioRegimeAlignment">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
-                        <div class="param-group">
-                            <label class="param-label">Slow Window</label>
-                            <input type="number" class="param-input" id="confirmationEntropySlowWindow" value="30" min="2" step="1">
-                        </div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">Body Direction Placement Coherence</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle body direction placement coherence confirmation">
-                                <input type="checkbox" id="confirmationBodyDirectionPlacementCoherence">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
-                        <div class="param-group">
-                            <label class="param-label">Coherence Threshold</label>
-                            <input type="number" class="param-input" id="confirmationBodyDirectionPlacementCoherenceThreshold" value="0.7" min="0.3" max="0.95" step="0.01">
-                        </div>
-                    </div>
-                </div>
-                <div class="param-row">
-                    <div class="param-group">
-                        <div class="param-row-header">
-                            <label class="param-label">EMA Trend</label>
-                            <label class="section-toggle section-toggle--sm" aria-label="Toggle EMA trend confirmation">
-                                <input type="checkbox" id="confirmationEmaTrend">
-                                <span class="section-toggle-track"></span>
-                            </label>
-                        </div>
-                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar. On a synthetic pair, agreeing long means the base leg is above its EMA vs the side leg.</div>
-                        <div class="param-group">
-                            <label class="param-label">EMA Period</label>
-                            <input type="number" class="param-input" id="confirmationEmaPeriod" value="50" min="2" step="1">
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-
-    <div class="settings-section" data-complexity="simple" data-section="risk">
-        <div class="section-header collapsible" data-target="riskSectionBody">
+    <details class="settings-section" data-complexity="simple" data-section="risk" open>
+        <summary class="section-header collapsible" data-target="riskSectionBody" aria-controls="riskSectionBody">
             <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
@@ -148,8 +49,8 @@
                 <input type="checkbox" id="riskSettingsToggle">
                 <span class="section-toggle-track"></span>
             </label>
-        </div>
-        <div class="section-body accordion-body" id="riskSectionBody">
+        </summary>
+        <div class="section-body" id="riskSectionBody">
             <div class="section-feature-body" id="riskSettings">
                 <div class="param-row">
                     <div class="param-group">
@@ -353,7 +254,7 @@
                             <div class="param-hint">`fixed` uses this directly. `mfe_bootstrap` uses it as the fallback when the dataset cannot produce a percentile target.</div>
                         </div>
                     </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="mfe_bootstrap">
+                    <div class="param-row is-hidden" data-tp-modes="mfe_bootstrap">
                         <div class="param-group">
                             <label class="param-label">MFE Percentile</label>
                             <input type="number" class="param-input" id="takeProfitMfeBootstrapPercentile" value="60" min="1"
@@ -361,130 +262,50 @@
                             <div class="param-hint">Uses percentile of the full dataset's MFE distribution as TP%. Higher = more aggressive. NON-CAUSAL: uses future data for target estimation.</div>
                         </div>
                     </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="edge_weighted" id="takeProfitEdgeWeightedSettings">
-                        <div class="param-group">
-                            <label class="param-label">Min TP Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveMinMultiplier" value="0.75" min="0.1" max="5" step="0.05">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Max TP Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveMaxMultiplier" value="1.5" min="0.1" max="5" step="0.05">
-                            <div class="param-hint">Scales the base TP by current entry quality, signal strength, and regime alignment on the signal bar.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="expectancy_optimal" id="takeProfitExpectancyOptimalSettings">
-                        <div class="param-group">
-                            <label class="param-label">Lookback Trades</label>
+                    <div class="param-row">
+                        <div class="param-group is-hidden" data-tp-modes="expectancy_optimal regime_calibrated information_coefficient path_efficiency serial_dependency minimum_surprisal">
+                            <label class="param-label" for="takeProfitAdaptiveLookbackTrades">Lookback Trades</label>
                             <input type="number" class="param-input" id="takeProfitAdaptiveLookbackTrades" value="40" min="5" step="1">
                         </div>
-                        <div class="param-group">
-                            <label class="param-label">Grid Steps</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveGridSteps" value="7" min="3" max="25" step="1">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Min TP Multiplier</label>
-                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Max TP Multiplier</label>
-                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
-                            <div class="param-hint">Searches a TP grid around the base target and selects the candidate with the best geometric growth on rolling closed trades.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="regime_calibrated" id="takeProfitRegimeCalibratedSettings">
-                        <div class="param-group">
-                            <label class="param-label">Lookback Trades</label>
-                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Grid Steps</label>
-                            <input type="number" class="param-input" value="7" min="3" max="25" step="1" data-shared-tp-field="takeProfitAdaptiveGridSteps">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Regime Blend</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveRegimeBlend" value="0.6" min="0" max="1" step="0.05">
-                            <div class="param-hint">Blends the global TP optimum with the current regime's historical TP optimum. Higher = more regime-specific.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="information_coefficient" id="takeProfitInformationCoefficientSettings">
-                        <div class="param-group">
-                            <label class="param-label">Lookback Trades</label>
-                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">IC Scale</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveIcScale" value="0.5" min="0" max="2" step="0.05">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Min TP Multiplier</label>
-                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Max TP Multiplier</label>
-                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
-                            <div class="param-hint">Uses correlation between entry quality and realized MFE to widen or tighten the target.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="path_efficiency" id="takeProfitPathEfficiencySettings">
-                        <div class="param-group">
-                            <label class="param-label">Lookback Trades</label>
-                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Min TP Multiplier</label>
-                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Max TP Multiplier</label>
-                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
-                            <div class="param-hint">Measures how cleanly winners reach profit. Cleaner paths earn wider TP, messy winners tighten it.</div>
-                        </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="serial_dependency" id="takeProfitSerialDependencySettings">
-                        <div class="param-group">
-                            <label class="param-label">Lookback Trades</label>
-                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Recent Window</label>
+                        <div class="param-group is-hidden" data-tp-modes="serial_dependency">
+                            <label class="param-label" for="takeProfitAdaptiveRecentWindow">Recent Window</label>
                             <input type="number" class="param-input" id="takeProfitAdaptiveRecentWindow" value="12" min="3" step="1">
                         </div>
-                        <div class="param-group">
-                            <label class="param-label">Min TP Multiplier</label>
-                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
+                        <div class="param-group is-hidden" data-tp-modes="edge_weighted expectancy_optimal information_coefficient path_efficiency serial_dependency minimum_surprisal">
+                            <label class="param-label" for="takeProfitAdaptiveMinMultiplier">Min TP Multiplier</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveMinMultiplier" value="0.75" min="0.1" max="5" step="0.05">
                         </div>
-                        <div class="param-group">
-                            <label class="param-label">Max TP Multiplier</label>
-                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
-                            <div class="param-hint">Compares recent vs. rolling hit-rate behavior. Hot streaks widen TP, cold streaks tighten it.</div>
+                        <div class="param-group is-hidden" data-tp-modes="edge_weighted expectancy_optimal information_coefficient path_efficiency serial_dependency minimum_surprisal">
+                            <label class="param-label" for="takeProfitAdaptiveMaxMultiplier">Max TP Multiplier</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveMaxMultiplier" value="1.5" min="0.1" max="5" step="0.05">
                         </div>
-                    </div>
-                    <div class="param-row is-hidden" data-tp-mode-panel="minimum_surprisal" id="takeProfitMinimumSurprisalSettings">
-                        <div class="param-group">
-                            <label class="param-label">Lookback Trades</label>
-                            <input type="number" class="param-input" value="40" min="5" step="1" data-shared-tp-field="takeProfitAdaptiveLookbackTrades">
+                        <div class="param-group is-hidden" data-tp-modes="expectancy_optimal regime_calibrated minimum_surprisal">
+                            <label class="param-label" for="takeProfitAdaptiveGridSteps">Grid Steps</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveGridSteps" value="7" min="3" max="25" step="1">
                         </div>
-                        <div class="param-group">
-                            <label class="param-label">Grid Steps</label>
-                            <input type="number" class="param-input" value="7" min="3" max="25" step="1" data-shared-tp-field="takeProfitAdaptiveGridSteps">
+                        <div class="param-group is-hidden" data-tp-modes="regime_calibrated">
+                            <label class="param-label" for="takeProfitAdaptiveRegimeBlend">Regime Blend</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveRegimeBlend" value="0.6" min="0" max="1" step="0.05">
                         </div>
-                        <div class="param-group">
-                            <label class="param-label">Min TP Multiplier</label>
-                            <input type="number" class="param-input" value="0.75" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMinMultiplier">
-                        </div>
-                        <div class="param-group">
-                            <label class="param-label">Max TP Multiplier</label>
-                            <input type="number" class="param-input" value="1.5" min="0.1" max="5" step="0.05" data-shared-tp-field="takeProfitAdaptiveMaxMultiplier">
-                            <div class="param-hint">Chooses the TP that best matches observed hit/miss outcomes given the entry-quality distribution, minimizing outcome surprisal.</div>
+                        <div class="param-group is-hidden" data-tp-modes="information_coefficient">
+                            <label class="param-label" for="takeProfitAdaptiveIcScale">IC Scale</label>
+                            <input type="number" class="param-input" id="takeProfitAdaptiveIcScale" value="0.5" min="0" max="2" step="0.05">
                         </div>
                     </div>
+                    <div class="param-hint is-hidden" data-tp-modes="edge_weighted">Scales the base TP by current entry quality, signal strength, and regime alignment on the signal bar.</div>
+                    <div class="param-hint is-hidden" data-tp-modes="expectancy_optimal">Searches a TP grid around the base target and selects the candidate with the best geometric growth on rolling closed trades.</div>
+                    <div class="param-hint is-hidden" data-tp-modes="regime_calibrated">Blends the global TP optimum with the current regime's historical TP optimum. Higher = more regime-specific.</div>
+                    <div class="param-hint is-hidden" data-tp-modes="information_coefficient">Uses correlation between entry quality and realized MFE to widen or tighten the target.</div>
+                    <div class="param-hint is-hidden" data-tp-modes="path_efficiency">Measures how cleanly winners reach profit. Cleaner paths earn wider TP, messy winners tighten it.</div>
+                    <div class="param-hint is-hidden" data-tp-modes="serial_dependency">Compares recent vs. rolling hit-rate behavior. Hot streaks widen TP, cold streaks tighten it.</div>
+                    <div class="param-hint is-hidden" data-tp-modes="minimum_surprisal">Chooses the TP that best matches observed hit/miss outcomes given the entry-quality distribution, minimizing outcome surprisal.</div>
                 </div>
             </div>
         </div>
-    </div>
+    </details>
 
-    <div class="settings-section" data-complexity="simple" data-section="sizing">
-        <div class="section-header collapsible" data-target="tradeSizingBody">
+    <details class="settings-section" data-complexity="simple" data-section="sizing" open>
+        <summary class="section-header collapsible" data-target="tradeSizingBody" aria-controls="tradeSizingBody">
             <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
@@ -495,8 +316,8 @@
                 <input type="checkbox" id="fixedTradeToggle" checked>
                 <span class="section-toggle-track"></span>
             </label>
-        </div>
-        <div class="section-body accordion-body" id="tradeSizingBody">
+        </summary>
+        <div class="section-body" id="tradeSizingBody">
             <div class="param-row">
                 <div class="param-group" id="initialCapitalGroup">
                     <label class="param-label">Initial Capital ($)</label>
@@ -624,4 +445,102 @@
                 </div>
             </div>
         </div>
-    </div>
+    </details>
+    <details class="settings-section" data-complexity="standard" data-section="confirmation">
+        <summary class="section-header collapsible" data-target="confirmationSectionBody" aria-controls="confirmationSectionBody">
+            <div class="section-heading-group">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Entry Confirmation</div>
+            </div>
+            <label class="section-toggle" aria-label="Toggle entry confirmation">
+                <input type="checkbox" id="confirmationStrategiesToggle">
+                <span class="section-toggle-track"></span>
+            </label>
+        </summary>
+        <div class="section-body" id="confirmationSectionBody">
+            <div class="section-feature-body" id="confirmationStrategiesSettings">
+                <input type="hidden" id="confirmationStrategies" value="">
+                <input type="hidden" id="confirmationStrategyParams" value="">
+                <div class="param-row">
+                    <div class="param-group">
+                        <label class="param-label">Mode</label>
+                        <select class="param-input" id="confirmationMode">
+                            <option value="agree" selected>Agree</option>
+                            <option value="disagree">Disagree</option>
+                            <option value="veto_opposite">Veto Opposite</option>
+                            <option value="confirm_within_window">Confirm Within Window</option>
+                            <option value="veto_within_window">Veto Within Window</option>
+                        </select>
+                        <div class="param-hint">`agree` requires matching same-bar direction. `disagree` requires the opposite same-bar direction. `veto_opposite` blocks only same-bar opposite signals. Window modes use the chart-bar radius below.</div>
+                    </div>
+                    <div class="param-group">
+                        <label class="param-label">Window Bars</label>
+                        <input type="number" class="param-input" id="confirmationWindowBars" value="0" min="0" step="1">
+                        <div class="param-hint">Symmetric bar radius for `confirm_within_window` and `veto_within_window`. 0 keeps same-bar behavior.</div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div class="param-row-header">
+                            <label class="param-label">Require Confirmation for Signal-Based Exits</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle confirmation for signal-based exits">
+                                <input type="checkbox" id="confirmationSignalExitsToggle" checked>
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">When enabled, signal-based exits must satisfy the selected confirmation strategies. Stop-loss and take-profit exits are unaffected.</div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div class="param-row-header">
+                            <label class="param-label">Entropy Ratio Regime Alignment</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle entropy ratio regime alignment confirmation">
+                                <input type="checkbox" id="confirmationEntropyRatioRegimeAlignment">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
+                        <div class="param-group">
+                            <label class="param-label">Slow Window</label>
+                            <input type="number" class="param-input" id="confirmationEntropySlowWindow" value="30" min="2" step="1">
+                        </div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div class="param-row-header">
+                            <label class="param-label">Body Direction Placement Coherence</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle body direction placement coherence confirmation">
+                                <input type="checkbox" id="confirmationBodyDirectionPlacementCoherence">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar.</div>
+                        <div class="param-group">
+                            <label class="param-label">Coherence Threshold</label>
+                            <input type="number" class="param-input" id="confirmationBodyDirectionPlacementCoherenceThreshold" value="0.7" min="0.3" max="0.95" step="0.01">
+                        </div>
+                    </div>
+                </div>
+                <div class="param-row">
+                    <div class="param-group">
+                        <div class="param-row-header">
+                            <label class="param-label">EMA Trend</label>
+                            <label class="section-toggle section-toggle--sm" aria-label="Toggle EMA trend confirmation">
+                                <input type="checkbox" id="confirmationEmaTrend">
+                                <span class="section-toggle-track"></span>
+                            </label>
+                        </div>
+                        <div class="param-hint">Requires the confirmation strategy to agree on the same buy or sell bar. On a synthetic pair, agreeing long means the base leg is above its EMA vs the side leg.</div>
+                        <div class="param-group">
+                            <label class="param-label">EMA Period</label>
+                            <input type="number" class="param-input" id="confirmationEmaPeriod" value="50" min="2" step="1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </details>

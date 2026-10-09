@@ -19,7 +19,7 @@ It combines:
 - Validate robustness with walk-forward analysis and latest-OOS checks
 - Run Batch Backtest post-analysis with OPEN_SCORE USD Replay (a research-only diagnostic; see [`docs/mine-timing-validation-findings.md`](docs/mine-timing-validation-findings.md) for the validation status of removed surfaces)
 - Build live or scheduled alert subscriptions through the Worker API
-- Use Quick View to inspect backtest stats, trades, and per-trade diagnostics
+- Inspect backtest stats in Results and per-trade diagnostics in Trades; the toolbar's results shortcut opens Results
 
 Trade timing quality scores are descriptive diagnostics. Exit Score is measured on each strategy's own trades; it is not an isolated exit-rule benchmark.
 
@@ -138,8 +138,8 @@ flowchart LR
 
 ## How It Boots
 1. `index.ts` delegates startup to `lib/app-bootstrap.ts`.
-2. The bootstrap registry injects the runtime HTML layout from `html-partials/*`.
-3. Strategy metadata is loaded, with built-in strategy code loaded on demand; then the chart layer and feature managers are initialized in dependency order.
+2. Explicit, sequential bootstrap steps inject the runtime HTML layout from `html-partials/*`.
+3. Strategy metadata is loaded, with built-in strategy code loaded on demand; then the chart layer and feature managers are initialized in their declared call order.
 4. Saved settings are restored and applied back into UI state and feature state.
 5. Initial market data is loaded, after which reactive state updates drive chart, backtest, and renderer refreshes.
 

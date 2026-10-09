@@ -1,8 +1,8 @@
+import "../../styles/alerts.css";
 /**
  * Alert Handlers - wires up the Alerts tab UI to the alert service.
  */
 
-import { ensureLazyStylesheet } from "../lazy-styles";
 
 import {
     alertService,
@@ -308,7 +308,6 @@ async function loadSignalHistory() {
 }
 
 export function initAlertHandlers() {
-    ensureLazyStylesheet("alerts-styles", new URL("../../styles/alerts.css", import.meta.url).href);
     initAlertModals();
 
     const urlInput = getOptionalElement<HTMLInputElement>('alertWorkerUrl');

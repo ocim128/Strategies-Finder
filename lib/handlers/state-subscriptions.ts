@@ -13,7 +13,6 @@ import { SYMBOL_MAP } from "../constants";
 import { clearAll } from "../app-actions";
 import { livePositionsService } from "../live-positions-service";
 import { isBinanceDataProvider } from "../binance-market";
-import { activateLazyFeature } from "../lazy-feature-init";
 import {
     logBacktestResultUiFailure,
     runBacktestResultUiSteps,
@@ -83,21 +82,7 @@ export function setupStateSubscriptions() {
                 run: () => chartManager.displayTradeMarkers(result.trades, uiManager.formatPrice),
             },
         ]);
-        void activateLazyFeature("quick-view")
-            .then(async () => {
-                if (state.currentBacktestResult !== result) {
-                    return;
-                }
 
-                const { quickViewManager } = await import("../quick-view/quick-view-service");
-                quickViewManager.setJumpToTrade(jumpToTrade);
-                return quickViewManager.onBacktestComplete(result);
-            })
-            .catch((error) => {
-                debugLogger.warn("quick_view.lazy_init_failed", {
-                    error: error instanceof Error ? error.message : String(error),
-                });
-            });
     });
     const isPanelVisible = (tabId: string) => {
         const panel = document.getElementById(`${tabId}Tab`) as HTMLElement | null;

@@ -1,30 +1,13 @@
-    <div class="settings-section" data-complexity="standard" data-section="engine">
-        <div class="section-header collapsible" data-target="engineBody">
-            <div class="section-heading-group">
-                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
-                        <path d="M7 10l5 5 5-5z" />
-                    </svg></span>
-                <div class="section-title">Backend Engine</div>
-            </div>
-            <label class="section-toggle" aria-label="Toggle Rust backend">
-                <input type="checkbox" id="useRustEngineToggle" checked>
-                <span class="section-toggle-track"></span>
-            </label>
-        </div>
-        <div class="section-body accordion-body" id="engineBody">
-            <div class="param-hint">Prefer Rust for faster backtests when available. Turn off to force TypeScript.</div>
-        </div>
-    </div>
-    <div class="settings-section" data-complexity="standard" data-section="realism">
-        <div class="section-header collapsible collapsed" data-target="realismBody">
+    <details class="settings-section" data-complexity="standard" data-section="realism">
+        <summary class="section-header collapsible" data-target="realismBody" aria-controls="realismBody">
             <div class="section-heading-group">
                 <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
                         <path d="M7 10l5 5 5-5z" />
                     </svg></span>
                 <div class="section-title">Backtest Realism</div>
             </div>
-        </div>
-        <div class="section-body accordion-body collapsed" id="realismBody">
+        </summary>
+        <div class="section-body" id="realismBody">
             <div class="param-row">
                 <div class="param-group">
                     <label class="param-label">Execution Model</label>
@@ -76,4 +59,21 @@
             <div class="param-hint">Realism settings use the TypeScript engine (Rust skipped for accuracy).</div>
 
         </div>
-    </div>
+    </details>
+    <details class="settings-section" data-complexity="standard" data-section="engine" open>
+        <summary class="section-header collapsible" data-target="engineBody" aria-controls="engineBody">
+            <div class="section-heading-group">
+                <span class="section-chevron"><svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M7 10l5 5 5-5z" />
+                    </svg></span>
+                <div class="section-title">Backend Engine</div>
+            </div>
+            <label class="section-toggle" aria-label="Toggle Rust backend">
+                <input type="checkbox" id="useRustEngineToggle" checked>
+                <span class="section-toggle-track"></span>
+            </label>
+        </summary>
+        <div class="section-body" id="engineBody">
+            <div class="param-hint">Prefer Rust for faster backtests when available. Turn off to force TypeScript.</div>
+        </div>
+    </details>

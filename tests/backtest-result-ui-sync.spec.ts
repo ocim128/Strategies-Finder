@@ -21,9 +21,9 @@ describe("backtest result UI sync", () => {
                 },
             },
             {
-                step: "quick_view",
+                step: "trade_markers",
                 run: () => {
-                    calls.push("quick_view");
+                    calls.push("trade_markers");
                 },
             },
         ]));
@@ -31,7 +31,7 @@ describe("backtest result UI sync", () => {
         assert.deepEqual(calls, [
             "strategy_indicators",
             "results_panel",
-            "quick_view",
+            "trade_markers",
         ]);
     });
 });

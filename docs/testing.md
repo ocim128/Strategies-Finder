@@ -6,6 +6,10 @@ globals, module caches, and mocks cannot leak between files. Browser specs
 (`*.browser.spec.ts`) are bundled with esbuild before execution. E2E is a
 separate command.
 
+Browser specs omit CSS during bundling; Vite owns loading feature styles in the application, and E2E checks the rendered behavior. Browser lifecycle specs that import styled UI services use the `.browser.spec.ts` suffix, including Opportunity Explorer.
+
+The runner also treats a streamed TAP `not ok` result as a failure. This covers suite-construction failures that some Node versions report while exiting zero; a successful process exit alone cannot turn those results into PASS. The runner contract spec exercises this with an isolated failing suite and preserved logs.
+
 ## Dependency and compiler checks
 
 `npm run deps:check` resolves each direct dependency from this app, prints its

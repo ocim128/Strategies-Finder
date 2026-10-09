@@ -2,14 +2,12 @@ import {
     settingsManager,
     sortStrategyConfigsNewestFirst,
     type StrategyConfig,
-    type BacktestSettingsData,
 } from "../settings-manager";
 import { uiManager } from "../ui-manager";
 import { debugLogger } from "../debug-logger";
 import { refreshEngineStatus } from "../engine-status-indicator";
 import { state } from "../state";
 import { setCurrentInterval, setCurrentSymbol } from "../state-actions";
-import { backtestService } from "../backtest-service";
 import { dataManager } from "../data-manager";
 import {
     createStrategyShareLink,
@@ -17,7 +15,6 @@ import {
     parseStrategyConfigFromSharedInput,
 } from "../strategy-share-service";
 import { strategyPanelController } from "../strategy-panel-controller";
-import { parseInputNumber } from "../dom-input-readers";
 import { copyToClipboard } from "../browser-transfer";
 import { createSettingsHandlersDom } from "./settings-handlers-dom";
 import { buildSharedSyntheticApplyPlan, type SharedChartContext } from "./settings-handlers-shared";
@@ -432,10 +429,6 @@ export function setupSettingsHandlers() {
     const sharedConfig = parseStrategyConfigFromCurrentUrl();
     if (sharedConfig) {
         const sharedChartContext = getSharedChartContextFromUrl();
-        const previousDataFingerprint = getDataFingerprint(state.ohlcvData);
-        const requiresDataReload =
-            state.currentSymbol !== sharedChartContext.symbol ||
-            state.currentInterval !== sharedChartContext.interval;
 
         let imported: StrategyConfig | null = null;
         try {
@@ -454,14 +447,7 @@ export function setupSettingsHandlers() {
                     updateConfigDropdown(importedConfig.name);
                     activateSharedLinkViewMode();
                     consumeSharedConfigFromUrl();
-                    scheduleSharedAutoBacktest({
-                        expectedSymbol: sharedChartContext.symbol,
-                        expectedInterval: sharedChartContext.interval,
-                        previousDataFingerprint,
-                        requiresDataReload,
-                        expectedConfig: importedConfig,
-                    });
-                    uiManager.showToast(`Shared configuration "${importedConfig.name}" loaded`, 'success');
+                    uiManager.showToast(`Shared configuration "${importedConfig.name}" loaded. Click Run to backtest.`, 'success');
                     debugLogger.event('ui.config.shared.loaded', { name: importedConfig.name, source: 'url' });
                 })
                 .catch((error) => {
@@ -525,105 +511,6 @@ function activateSharedLinkViewMode(): void {
     const allowedTabs = new Set(['results', 'trades']);
     strategyPanelController.setVisibleTabs(allowedTabs);
     strategyPanelController.switchTab('results');
-}
-
-interface SharedBacktestWaitOptions {
-    expectedSymbol: string;
-    expectedInterval: string;
-    previousDataFingerprint: string;
-    requiresDataReload: boolean;
-    expectedConfig: StrategyConfig;
-}
-
-function getDataFingerprint(data: Array<{ time: unknown }>): string {
-    const length = data.length;
-    if (length === 0) return '0';
-    const first = String(data[0]?.time ?? '');
-    const last = String(data[length - 1]?.time ?? '');
-    return `${length}:${first}:${last}`;
-}
-
-function isNumberClose(a: number, b: number): boolean {
-    const delta = Math.abs(a - b);
-    const scale = Math.max(1, Math.abs(a), Math.abs(b));
-    return delta <= 1e-6 * scale;
-}
-
-function isSharedConfigApplied(config: StrategyConfig): boolean {
-    if (state.currentStrategyKey !== config.strategyKey) return false;
-
-    const liveSettings = settingsManager.getBacktestSettings();
-    const expectedSettings = config.backtestSettings;
-    const expectedKeys = Object.keys(expectedSettings) as Array<keyof BacktestSettingsData>;
-
-    for (const key of expectedKeys) {
-        const expected = expectedSettings[key] as unknown;
-        const actual = liveSettings[key] as unknown;
-
-        if (typeof expected === 'number') {
-            const actualNumber = typeof actual === 'number' ? actual : Number(actual);
-            if (!Number.isFinite(actualNumber) || !isNumberClose(actualNumber, expected)) {
-                return false;
-            }
-            continue;
-        }
-
-        if (typeof expected === 'boolean' || typeof expected === 'string') {
-            if (actual !== expected) return false;
-            continue;
-        }
-
-        if (Array.isArray(expected) || (expected && typeof expected === 'object')) {
-            if (JSON.stringify(actual) !== JSON.stringify(expected)) return false;
-        }
-    }
-
-    for (const [paramKey, expected] of Object.entries(config.strategyParams)) {
-        const input = document.getElementById(`param_${paramKey}`) as HTMLInputElement | HTMLSelectElement | null;
-        if (!input) return false;
-        const parsed = parseInputNumber(input.value);
-        if (parsed === null || !isNumberClose(parsed, expected)) {
-            return false;
-        }
-    }
-
-    return true;
-}
-
-function scheduleSharedAutoBacktest(options: SharedBacktestWaitOptions): void {
-    const maxAttempts = 40;
-    const pollMs = 250;
-    let attempt = 0;
-
-    const runWhenReady = () => {
-        attempt += 1;
-
-        const symbolReady = state.currentSymbol === options.expectedSymbol;
-        const intervalReady = state.currentInterval === options.expectedInterval;
-        const hasData = state.ohlcvData.length > 0;
-        const dataFingerprint = getDataFingerprint(state.ohlcvData);
-        const dataReloaded = !options.requiresDataReload || dataFingerprint !== options.previousDataFingerprint;
-        const configReady = isSharedConfigApplied(options.expectedConfig);
-        const runButton = createSettingsHandlersDom().runBacktest;
-        const isBusy = runButton?.disabled ?? false;
-
-        if (symbolReady && intervalReady && hasData && dataReloaded && configReady && !isBusy) {
-            void backtestService.runCurrentBacktest().catch((error) => {
-                debugLogger.error('ui.config.shared.autobacktest_failed', { error: error instanceof Error ? error.message : String(error) });
-                uiManager.showToast('Auto backtest failed. Run manually.', 'error');
-            });
-            return;
-        }
-
-        if (attempt < maxAttempts) {
-            window.setTimeout(runWhenReady, pollMs);
-            return;
-        }
-
-        uiManager.showToast('Shared config loaded. Data still syncing, run backtest manually.', 'warning');
-    };
-
-    window.setTimeout(runWhenReady, 200);
 }
 
 /**

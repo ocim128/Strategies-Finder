@@ -35,6 +35,8 @@ This directory is the maintained documentation set for Strategies Finder. Keep t
 
 ## Records and Audits
 
+- [ui-complexity-audit.md](ui-complexity-audit.md) - implemented UI deletion and simplification record, retained compatibility, measurements, and regression coverage.
+
 - [complexity-maintainability-audit.md](complexity-maintainability-audit.md) - repository-wide audit at `7ac14088`, with implemented cleanup, measured reductions, and evidence gates for remaining recommendations.
 
 

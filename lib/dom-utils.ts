@@ -1,50 +1,12 @@
-const elementCache: Map<string, HTMLElement> = new Map();
-
-function getCachedConnectedElement(id: string): HTMLElement | null {
-    const element = elementCache.get(id);
-    if (!element) {
-        return null;
-    }
-    if (element.isConnected) {
-        return element;
-    }
-    elementCache.delete(id);
-    return null;
-}
-
-export function clearDomElementCache(): void {
-    elementCache.clear();
-}
-
-/**
- * Safely get an element by ID and throw an error if not found.
- * Caches the element for future lookups.
- */
+/** Get a required element, failing at the feature's initialization boundary. */
 export function getRequiredElement<T extends HTMLElement>(id: string): T {
-    let element = getCachedConnectedElement(id);
-    if (!element) {
-        element = document.getElementById(id);
-        if (element) {
-            elementCache.set(id, element);
-        }
-    }
-
-    if (!element) {
-        throw new Error(`Required element with id "${id}" not found`);
-    }
+    const element = document.getElementById(id);
+    if (!element) throw new Error(`Required element with id "${id}" not found`);
     return element as T;
 }
 
 export function getOptionalElement<T extends HTMLElement>(id: string): T | null {
-    const cached = getCachedConnectedElement(id);
-    if (cached) {
-        return cached as T;
-    }
-    const element = document.getElementById(id);
-    if (element) {
-        elementCache.set(id, element);
-    }
-    return (element as T | null) ?? null;
+    return document.getElementById(id) as T | null;
 }
 
 export type RequiredDomElementMap<TIds extends Record<string, string>> = {
@@ -71,20 +33,13 @@ export function getRequiredDomElements<TIds extends Record<string, string>>(
  * Set text content of an element and optionally apply a class.
  */
 export function updateTextContent(id: string, text: string, className?: string) {
-    const cachedEl = getElementByIdCached(id);
-    if (cachedEl) {
-        cachedEl.textContent = text;
+    const element = getOptionalElement(id);
+    if (element) {
+        element.textContent = text;
         if (className !== undefined) {
-            cachedEl.className = className;
+            element.className = className;
         }
     }
-}
-
-/**
- * Internal helper for cached lookup
- */
-function getElementByIdCached(id: string): HTMLElement | null {
-    return getOptionalElement(id);
 }
 
 /**
@@ -93,7 +48,7 @@ function getElementByIdCached(id: string): HTMLElement | null {
 export function setVisible(target: string, visible: boolean, displayMode?: string): void;
 export function setVisible(target: HTMLElement | null | undefined, visible: boolean, displayMode?: string): void;
 export function setVisible(target: string | HTMLElement | null | undefined, visible: boolean, displayMode: string = 'block') {
-    const el = typeof target === 'string' ? getElementByIdCached(target) : target;
+    const el = typeof target === 'string' ? getOptionalElement(target) : target;
     if (el) {
         el.style.display = visible ? displayMode : 'none';
     }

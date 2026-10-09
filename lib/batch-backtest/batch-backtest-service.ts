@@ -1,3 +1,4 @@
+import "../../styles/batch-backtest.css";
 /**
  * Batch Backtest UI service.
  *
@@ -14,7 +15,6 @@ import { ensureBuiltInStrategyLoaded } from "../strategies/built-in-catalog";
 import { state } from "../state";
 import { strategyRegistry } from "../../strategyRegistry";
 import { setVisible } from "../dom-utils";
-import { ensureLazyStylesheet } from "../lazy-styles";
 import { createBatchBacktestDom, type BatchBacktestDom } from "./batch-backtest-dom";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
@@ -184,7 +184,6 @@ export class BatchBacktestService {
 
     public init(): void {
         if (this.disposed) return;
-        ensureLazyStylesheet("batch-backtest-styles", new URL("../../styles/batch-backtest.css", import.meta.url).href);
         if (this.initialized) {
             return;
         }

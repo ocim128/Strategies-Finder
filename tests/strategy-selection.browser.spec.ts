@@ -14,7 +14,6 @@ import { after, before, beforeEach, describe, it } from "node:test";
 import { setupEventHandlers } from "../lib/handlers/ui-event-handlers";
 import { uiManager } from "../lib/ui-manager";
 import { state } from "../lib/state";
-import { clearDomElementCache } from "../lib/dom-utils";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "../lib/strategy-defaults";
 import { setCurrentStrategyKey } from "../lib/state-actions";
 import { FinderResultActions } from "../lib/finder/browser/finder-result-actions";
@@ -221,7 +220,6 @@ function restoreBrowser(): void {
     });
     elementsById.clear();
     toasts.length = 0;
-    clearDomElementCache();
 }
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,10 @@ Direction, Risk, Sizing, Confirmation, Execution, and Engine shortcuts open and 
 
 Section headers show live summaries even while collapsed. These refresh after edits, loading or restoring configurations, resetting defaults, and changing strategies. Engine summaries describe the preference; actual engine selection still depends on availability and supported settings.
 
+Sections use native `details`/`summary` disclosures, in their final HTML order: Direction, Risk, Sizing, Confirmation, Execution, Engine. Enter or Space toggles a focused summary. Section shortcuts and search open the matching disclosure before focusing its control. Feature switches inside a summary change the feature without collapsing the section. Simple mode hides Standard sections; the historical saved `advanced` display preset loads as Standard.
+
+Adaptive percentage take-profit parameters have one canonical input per setting. The selected take-profit mode shows and enables only its relevant fields; switching modes retains edits to shared fields. ATR mode hides and disables these percentage-only controls. Configuration restore writes the same canonical IDs, without mirrored inputs or synthetic propagation events.
+
 ## Saving and restoring
 
 General settings retain the existing debounced browser autosave. The status reports pending writes, successful writes, and storage failures. Editing search or configuration names does not schedule an autosave. Strategy parameters are kept through named configurations, rather than the general-settings autosave.
@@ -21,6 +25,8 @@ Deletion reports success and refreshes configuration consumers only after the st
 For multiple configurations, expand **Bulk delete configurations**, check the configurations to remove (or use **Select all**), then click **Delete selected…**. The confirmation lists the selected names. The checklist follows the dropdown's newest-first order and keeps checked items when configurations are saved or imported. Bulk selection does not load or apply a configuration. The entire selection is deleted in one storage write; if a selected configuration has disappeared or storage rejects the write, none are deleted and the selection remains available for retry. Successful deletion refreshes the dropdown and checklist, notifies configuration consumers, and clears tracking if the loaded configuration was deleted.
 
 The bulk checklist supports **Shift-click**: click one configuration, then hold Shift and click another to set the entire range to the second checkbox's new state. Ranges work in either direction, including clearing checked ranges, and use the current displayed order. The last clicked configuration remains the anchor across list refreshes while it still exists. Select all or deleting the anchor resets the range anchor.
+
+Opening a shared link loads its configuration and chart context, then shows Results/Trades with the existing view restrictions. Click **Run** to backtest the loaded setup; shared links do not start a backtest automatically. The URL share token is consumed after successful application. Sharing/import formats and synthetic-pair regeneration are unchanged.
 
 ## Strategy selection ownership
 

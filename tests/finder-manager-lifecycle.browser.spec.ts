@@ -18,7 +18,6 @@ import { FinderUI } from "../lib/finder/finder-ui";
 import { normalizeFinderLatestResultsSnapshot } from "../lib/finder/finder-result-snapshot";
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { createEmptyRankingMeasurement, type AssetSwitchArmSummary } from "../lib/batch-backtest/open-score-replay/types";
-import { clearDomElementCache } from "../lib/dom-utils";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
 import { ASSET_OPPORTUNITY_ALL_SORTS } from "../lib/finder/finder-asset-opportunity-metrics";
 import { createFakeFinderElement, createFakeFinderManagerDom } from "./helpers/fake-finder-manager-dom";
@@ -577,7 +576,6 @@ after(() => {
     else (globalThis as any).HTMLSelectElement = savedHtmlSelectElement;
     if (savedHtmlTextAreaElement === undefined) delete (globalThis as any).HTMLTextAreaElement;
     else (globalThis as any).HTMLTextAreaElement = savedHtmlTextAreaElement;
-    clearDomElementCache();
 });
 
 function manager(): any {
@@ -602,7 +600,6 @@ beforeEach(() => {
     elsById.clear();
     (globalThis as any).localStorage._store.clear();
     (globalThis as any).localStorage._writes.clear();
-    clearDomElementCache();
     installMockFetch();
 });
 

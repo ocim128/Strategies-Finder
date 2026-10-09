@@ -88,6 +88,31 @@ describe("test runner contracts", () => {
         }
     });
 
+    it("fails suite-construction errors even when the child exits zero", () => {
+        const fixtureRoot = fs.mkdtempSync(path.join(root, "artifacts/runner-suite-"));
+        try {
+            fs.mkdirSync(path.join(fixtureRoot, "scripts"));
+            fs.mkdirSync(path.join(fixtureRoot, "tests"));
+            const runner = path.join(fixtureRoot, "scripts/run-tests.ts");
+            fs.copyFileSync(path.join(root, "scripts/run-tests.ts"), runner);
+            fs.writeFileSync(path.join(fixtureRoot, "tests/broken.spec.ts"),
+                'import { describe } from "node:test"; describe("broken suite", () => { throw new Error("fixture suite error"); });');
+            fs.writeFileSync(path.join(fixtureRoot, "tests/todo.spec.ts"),
+                'import { it } from "node:test"; it("expected pending failure", { todo: true }, () => { throw new Error("pending"); });');
+            const result = spawnSync(process.execPath, [esnoCli, runner, "--json"], {
+                cwd: fixtureRoot, encoding: "utf8", timeout: 15_000,
+            });
+            assert.equal(result.status, 1, result.stderr);
+            const summary = JSON.parse(result.stdout);
+            assert.equal(summary.failedCount, 1);
+            assert.equal(summary.passedCount, 1);
+            const failed = summary.results.find((row: { status: string }) => row.status === "FAIL");
+            assert.match(fs.readFileSync(failed.logFile, "utf8"), /fixture suite error/);
+        } finally {
+            fs.rmSync(fixtureRoot, { recursive: true, force: true });
+        }
+    });
+
     it("records browser compilation failures and finishes other specs and the summary", () => {
         // Keep this copied runner isolated from the outer run's latest/ logs.
         // It can still resolve dependencies through the app's parent directories.
@@ -178,6 +203,7 @@ describe("test runner contracts", () => {
         assert.equal(classifyTestRunStatus(0, false, false, false), "PASS");
         assert.equal(classifyTestRunStatus(0, false, false, false, "catalog unavailable"), "SKIP");
         assert.equal(classifyTestRunStatus(1, false, false, false, "catalog unavailable"), "FAIL");
+        assert.equal(classifyTestRunStatus(0, false, false, false, undefined, true), "FAIL");
     });
 
     it("sanitizes platform-specific log names", () => {

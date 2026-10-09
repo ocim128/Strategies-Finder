@@ -19,7 +19,6 @@
 }
 
 
-
 .indicator-badge {
 
     display: flex;
@@ -47,7 +46,6 @@
 }
 
 
-
 .indicator-color {
 
     width: 8px;
@@ -59,13 +57,11 @@
 }
 
 
-
 .indicator-name {
 
     color: var(--text-secondary);
 
 }
-
 
 
 .indicator-value {
@@ -75,7 +71,6 @@
     font-family: var(--font-family-mono);
 
 }
-
 
 
 .indicator-remove {
@@ -107,7 +102,6 @@
 }
 
 
-
 .indicator-remove:hover {
 
     background: var(--red);
@@ -115,171 +109,6 @@
     color: var(--text-on-accent);
 
 }
-
-
-
-.entry-preview-panel {
-
-    display: flex;
-
-    flex-direction: column;
-
-    gap: var(--space-1);
-
-    padding: var(--space-2);
-
-    min-width: 210px;
-
-    background: var(--glass-bg);
-
-    border: 1px solid var(--glass-border);
-
-    border-radius: var(--radius-s);
-
-    font-size: var(--font-size-xs);
-
-    color: var(--text-secondary);
-
-    box-shadow: var(--glass-shadow);
-
-    backdrop-filter: blur(16px) saturate(140%);
-
-    -webkit-backdrop-filter: blur(16px) saturate(140%);
-
-}
-
-
-
-.entry-preview-header {
-
-    display: flex;
-
-    justify-content: space-between;
-
-    align-items: center;
-
-    gap: var(--space-2);
-
-    margin-bottom: 2px;
-
-}
-
-
-
-.entry-preview-title {
-
-    font-size: var(--font-size-2xs);
-
-    text-transform: uppercase;
-
-    letter-spacing: var(--tracking-wide);
-
-    color: var(--text-primary);
-
-    font-weight: var(--font-weight-semibold);
-
-}
-
-
-
-.entry-preview-status {
-
-    font-size: 11px;
-
-    text-transform: uppercase;
-
-    padding: 2px 6px;
-
-    border-radius: var(--radius-xs);
-
-    background: var(--bg-tertiary);
-
-    color: var(--text-secondary);
-
-}
-
-
-
-.entry-preview-status.triggered {
-
-    background: hsl(var(--hsl-success) / 0.2);
-
-    color: var(--green);
-
-}
-
-
-
-.entry-preview-status.waiting {
-
-    background: var(--accent-soft);
-
-    color: var(--accent-color);
-
-}
-
-
-
-.entry-preview-status.unavailable {
-
-    background: var(--bg-tertiary);
-
-    color: var(--text-tertiary);
-
-}
-
-
-
-.entry-preview-row {
-
-    display: flex;
-
-    justify-content: space-between;
-
-    align-items: center;
-
-    gap: var(--space-2);
-
-    font-family: var(--font-family-mono);
-
-}
-
-
-
-.entry-preview-legacy-rows,
-
-.entry-preview-rows {
-
-    display: flex;
-
-    flex-direction: column;
-
-    gap: var(--space-1);
-
-}
-
-
-
-.entry-preview-row span:first-child {
-
-    color: var(--text-tertiary);
-
-    font-family: inherit;
-
-}
-
-
-
-.entry-preview-note {
-
-    margin-top: 2px;
-
-    font-size: var(--font-size-2xs);
-
-    color: var(--text-tertiary);
-
-}
-
 
 
 /* Equity curve */

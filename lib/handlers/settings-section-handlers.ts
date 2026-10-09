@@ -1,7 +1,6 @@
 import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
 import { parseInputNumber } from "../dom-input-readers";
 import { ADVANCED_SIZING_SUBSECTION_IDS } from "../advanced-sizing-dom";
-import { TAKE_PROFIT_MODE_PANEL_IDS } from "../take-profit-dom";
 import { setStrategyTimeframeSettings } from "../state-actions";
 import { setupExitStrategyOverride } from "./exit-strategy-override-handler";
 import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
@@ -95,58 +94,16 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     const riskPercentageGroups = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('.param-group')) : [];
     const riskPercentageInputs = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLInputElement>('input')) : [];
     const riskPercentageSelects = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLSelectElement>('select')) : [];
-    const takeProfitModePanels = riskPercentage
-        ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('[data-tp-mode-panel]'))
+    const takeProfitFields = riskPercentage
+        ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('[data-tp-modes]'))
         : [];
-    const sharedTakeProfitFieldIds = [
-        'takeProfitAdaptiveLookbackTrades',
-        'takeProfitAdaptiveRecentWindow',
-        'takeProfitAdaptiveMinMultiplier',
-        'takeProfitAdaptiveMaxMultiplier',
-        'takeProfitAdaptiveGridSteps',
-        'takeProfitAdaptiveRegimeBlend',
-        'takeProfitAdaptiveIcScale',
-    ] as const;
-    const syncSharedTakeProfitFields = () => {
-        if (!riskPercentage) return;
-        sharedTakeProfitFieldIds.forEach((fieldId) => {
-            const canonical = document.getElementById(fieldId) as HTMLInputElement | HTMLSelectElement | null;
-            if (!canonical) return;
-            const mirrors = riskPercentage.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`[data-shared-tp-field="${fieldId}"]`);
-            mirrors.forEach((mirror) => {
-                mirror.value = canonical.value;
-                mirror.disabled = canonical.disabled;
-            });
-        });
-    };
-    const bindSharedTakeProfitFieldMirrors = () => {
-        if (!riskPercentage) return;
-        sharedTakeProfitFieldIds.forEach((fieldId) => {
-            const canonical = document.getElementById(fieldId) as HTMLInputElement | HTMLSelectElement | null;
-            if (!canonical) return;
-            riskPercentage.querySelectorAll<HTMLInputElement | HTMLSelectElement>(`[data-shared-tp-field="${fieldId}"]`).forEach((mirror) => {
-                mirror.addEventListener('input', () => {
-                    canonical.value = mirror.value;
-                    canonical.dispatchEvent(new Event('input', { bubbles: true }));
-                });
-                mirror.addEventListener('change', () => {
-                    canonical.value = mirror.value;
-                    canonical.dispatchEvent(new Event('change', { bubbles: true }));
-                });
-            });
-        });
-        syncSharedTakeProfitFields();
-    };
-
     const applyTakeProfitMode = () => {
         const mode = takeProfitModeSelect.value;
-        const activePanelId = TAKE_PROFIT_MODE_PANEL_IDS[mode as keyof typeof TAKE_PROFIT_MODE_PANEL_IDS] ?? null;
-        takeProfitModePanels.forEach((panel) => {
-            const panelMode = panel.dataset.tpModePanel;
-            const shouldShow = panelMode === mode && (mode === 'mfe_bootstrap' || panel.id === activePanelId);
-            setInteractiveSectionState(panel, shouldShow);
+        takeProfitFields.forEach((field) => {
+            const enabled = riskModeSelect.value === 'percentage'
+                && field.dataset.tpModes!.split(' ').includes(mode);
+            setInteractiveSectionState(field, enabled);
         });
-        syncSharedTakeProfitFields();
     };
 
     const applyRiskMode = () => {
@@ -164,18 +121,11 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
         setDisabledState(riskPercentageInputs, isPercentage);
         setDisabledState(riskPercentageSelects, isPercentage);
 
-        if (isPercentage) {
-            applyTakeProfitMode();
-        } else {
-            takeProfitModePanels.forEach((panel) => {
-                setInteractiveSectionState(panel, false);
-            });
-        }
+        applyTakeProfitMode();
     };
 
     riskModeSelect.addEventListener('change', applyRiskMode);
     takeProfitModeSelect.addEventListener('change', applyTakeProfitMode);
-    bindSharedTakeProfitFieldMirrors();
     applyRiskMode();
 
     const confirmationStrategiesInput = dom.confirmationStrategies;

@@ -20,6 +20,9 @@ import { setupSettingsSections } from "./settings-section-handlers";
 
 export function setupEventHandlers() {
     const dom = createUiEventHandlersDom();
+    dom.viewResultsBtn.addEventListener("click", () => {
+        strategyPanelController.switchTab("results", { focus: true });
+    });
 
     setupSymbolSearch(dom);
     setupSettingsSections(dom);

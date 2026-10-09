@@ -40,25 +40,15 @@ class StrategyPanelController {
     private tabButtons = new Map<string, HTMLButtonElement>();
     private tabPanels = new Map<string, HTMLElement>();
     private moreItems = new Map<string, HTMLButtonElement>();
-    private secondaryPanels = new Map<string, HTMLElement>();
     private allowedTabs: Set<string> | null = null;
     private activeTabId: string | null = null;
     private isResizing = false;
     private pendingWidthPx: number | null = null;
     private initialized = false;
-    private handlePointerMove: ((event: PointerEvent) => void) | null = null;
-    private handleStopResizing: ((event?: PointerEvent) => void) | null = null;
-    private tabClickListeners = new Map<string, () => void>();
-    private tabKeydownListeners = new Map<string, (event: KeyboardEvent) => void>();
-    private togglePanelClickListener: (() => void) | null = null;
-    private toggleChartClickListener: (() => void) | null = null;
-    private panelResizeHandlePointerDownListener: ((event: PointerEvent) => void) | null = null;
+    private events: AbortController | null = null;
+    private resizePointerId: number | null = null;
     private readonly chartSyncFrame = coalesceAnimationFrame(() => this.resizeCharts());
     private moreMenuOpen = false;
-    private moreTriggerClickListener: (() => void) | null = null;
-    private moreMenuItemClickListener = new Map<string, () => void>();
-    private moreMenuKeydownListener: ((event: KeyboardEvent) => void) | null = null;
-    private documentClickListenerForMore: ((event: MouseEvent) => void) | null = null;
 
     public init(): void {
         if (this.initialized) {
@@ -66,6 +56,7 @@ class StrategyPanelController {
         }
 
         this.dom = createStrategyPanelDom();
+        this.events = new AbortController();
         this.captureTabs();
         this.captureMoreItems();
         this.bindEvents();
@@ -74,79 +65,19 @@ class StrategyPanelController {
     }
 
     public destroy(): void {
-        const dom = this.dom;
-
-        if (dom) {
-            this.tabButtons.forEach((tab, tabId) => {
-                const clickListener = this.tabClickListeners.get(tabId);
-                const keydownListener = this.tabKeydownListeners.get(tabId);
-                
-                if (clickListener) {
-                    tab.removeEventListener("click", clickListener);
-                }
-                if (keydownListener) {
-                    tab.removeEventListener("keydown", keydownListener as EventListener);
-                }
-            });
-
-            if (this.togglePanelClickListener) {
-                dom.togglePanel.removeEventListener("click", this.togglePanelClickListener);
-            }
-
-            if (this.toggleChartClickListener) {
-                dom.toggleChart.removeEventListener("click", this.toggleChartClickListener);
-            }
-
-            if (this.panelResizeHandlePointerDownListener) {
-                dom.panelResizeHandle.removeEventListener("pointerdown", this.panelResizeHandlePointerDownListener as EventListener);
-            }
-
-            if (this.moreTriggerClickListener) {
-                dom.panelMoreTrigger.removeEventListener("click", this.moreTriggerClickListener);
-            }
-
-            this.moreItems.forEach((item, tabId) => {
-                const listener = this.moreMenuItemClickListener.get(tabId);
-                if (listener) {
-                    item.removeEventListener("click", listener);
-                }
-            });
-
-            if (this.moreMenuKeydownListener) {
-                dom.panelMoreMenu.removeEventListener("keydown", this.moreMenuKeydownListener as EventListener);
-            }
-        }
-
-        if (this.documentClickListenerForMore) {
-            document.removeEventListener("click", this.documentClickListenerForMore);
-        }
-
-        this.tabClickListeners.clear();
-        this.tabKeydownListeners.clear();
-        this.togglePanelClickListener = null;
-        this.toggleChartClickListener = null;
-        this.panelResizeHandlePointerDownListener = null;
-        this.moreTriggerClickListener = null;
-        this.moreMenuItemClickListener.clear();
-        this.moreMenuKeydownListener = null;
-        this.documentClickListenerForMore = null;
-        this.moreMenuOpen = false;
-
-        if (this.handlePointerMove) {
-            window.removeEventListener("pointermove", this.handlePointerMove as EventListener);
-            this.handlePointerMove = null;
-        }
-        if (this.handleStopResizing) {
-            window.removeEventListener("pointerup", this.handleStopResizing as EventListener);
-            window.removeEventListener("pointercancel", this.handleStopResizing as EventListener);
-            this.handleStopResizing = null;
-        }
+        this.stopResizing(false);
+        this.events?.abort();
+        this.events = null;
         this.chartSyncFrame.cancel();
-
-        this.isResizing = false;
+        this.closeMoreMenu();
         this.pendingWidthPx = null;
         this.initialized = false;
         this.dom = null;
+        this.tabButtons.clear();
+        this.tabPanels.clear();
+        this.moreItems.clear();
+        this.orderedTabIds = [];
+        this.activeTabId = null;
     }
 
     public switchTab(tabId: string, options: SwitchTabOptions = {}): boolean {
@@ -174,37 +105,16 @@ class StrategyPanelController {
 
         this.activeTabId = tabId;
 
-        this.orderedTabIds.forEach((id) => {
-            const tab = this.tabButtons.get(id);
-            const panel = this.tabPanels.get(id);
+        this.tabButtons.forEach((tab, id) => {
             const isActive = id === tabId;
-
-            if (tab) {
-                tab.classList.toggle("active", isActive);
-                tab.setAttribute("aria-selected", String(isActive));
-                tab.tabIndex = isActive ? 0 : -1;
-                if (focus && isActive) {
-                    tab.focus();
-                }
-            }
-
-            if (panel) {
-                panel.hidden = !isActive;
-                panel.style.display = isActive ? "block" : "none";
-            }
+            tab.classList.toggle("active", isActive);
+            tab.setAttribute("aria-selected", String(isActive));
+            tab.tabIndex = isActive ? 0 : -1;
+            if (focus && isActive) tab.focus();
         });
-
-        // Secondary destinations are reached via the More menu, not via the
-        // persistent tab list, so the loop above only manages persistent
-        // panels. Remember any secondary panel we show so it can be hidden
-        // again when the user switches back to a persistent tab.
-        if (!this.tabPanels.has(tabId)) {
-            this.secondaryPanels.set(tabId, nextPanel);
-        }
-        this.secondaryPanels.forEach((panel, id) => {
-            const isActive = id === tabId;
-            panel.hidden = !isActive;
-            panel.style.display = isActive ? "block" : "none";
+        this.tabPanels.forEach((panel, id) => {
+            panel.hidden = id !== tabId;
+            panel.style.display = id === tabId ? "block" : "none";
         });
 
         if (focus && !nextTab) {
@@ -287,10 +197,6 @@ class StrategyPanelController {
         if (!fallbackTabId) {
             this.activeTabId = null;
             this.tabPanels.forEach((panel) => {
-                panel.hidden = true;
-                panel.style.display = "none";
-            });
-            this.secondaryPanels.forEach((panel) => {
                 panel.hidden = true;
                 panel.style.display = "none";
             });
@@ -395,6 +301,11 @@ class StrategyPanelController {
         this.orderedTabIds = [];
         this.tabButtons.clear();
         this.tabPanels.clear();
+        for (const panel of Array.from(dom.panelContent.children) as HTMLElement[]) {
+            if (panel.id.endsWith("Tab")) {
+                this.tabPanels.set(panel.id.slice(0, -3), panel);
+            }
+        }
 
         tabs.forEach((tab) => {
             const tabId = tab.dataset.tab?.trim();
@@ -414,7 +325,6 @@ class StrategyPanelController {
 
             this.orderedTabIds.push(tabId);
             this.tabButtons.set(tabId, tab);
-            this.tabPanels.set(tabId, panel);
         });
     }
 
@@ -435,160 +345,96 @@ class StrategyPanelController {
 
     private bindEvents(): void {
         const dom = this.dom;
-        if (!dom) return;
+        if (!dom || !this.events) return;
+        const options = { signal: this.events.signal };
 
-        this.tabButtons.forEach((tab, tabId) => {
-            const clickListener = () => {
-                this.switchTab(tabId);
-            };
-            this.tabClickListeners.set(tabId, clickListener);
-            tab.addEventListener("click", clickListener);
-
-            const keydownListener = (event: KeyboardEvent) => {
-                const tabs = this.getVisibleTabs();
-                const currentIndex = tabs.indexOf(tab);
-                if (currentIndex === -1) {
-                    return;
-                }
-
-                if (event.key === "ArrowDown" || event.key === "ArrowRight") {
-                    event.preventDefault();
-                    tabs[(currentIndex + 1) % tabs.length]?.focus();
-                    return;
-                }
-
-                if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
-                    event.preventDefault();
-                    tabs[(currentIndex - 1 + tabs.length) % tabs.length]?.focus();
-                    return;
-                }
-
-                if (event.key === "Home") {
-                    event.preventDefault();
-                    tabs[0]?.focus();
-                    return;
-                }
-
-                if (event.key === "End") {
-                    event.preventDefault();
-                    tabs[tabs.length - 1]?.focus();
-                    return;
-                }
-
-                if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    this.switchTab(tabId, { focus: true });
-                }
-            };
-            this.tabKeydownListeners.set(tabId, keydownListener);
-            tab.addEventListener("keydown", keydownListener);
-        });
-
-        this.togglePanelClickListener = () => {
-            this.toggleCollapsed();
-        };
-        dom.togglePanel.addEventListener("click", this.togglePanelClickListener);
-
-        this.toggleChartClickListener = () => {
-            this.toggleChartHidden();
-        };
-        dom.toggleChart.addEventListener("click", this.toggleChartClickListener);
-
-        this.panelResizeHandlePointerDownListener = (event: PointerEvent) => {
-            if (this.isMobileLayout()) {
-                return;
+        dom.strategyTabs.addEventListener("click", (event) => {
+            const tab = (event.target as Element).closest<HTMLButtonElement>(".panel-tab");
+            if (tab && dom.strategyTabs.contains(tab)) this.switchTab(tab.dataset.tab!);
+        }, options);
+        dom.strategyTabs.addEventListener("keydown", (event: KeyboardEvent) => {
+            const tab = (event.target as Element).closest<HTMLButtonElement>(".panel-tab");
+            const tabs = this.getVisibleTabs();
+            const index = tab ? tabs.indexOf(tab) : -1;
+            if (index < 0) return;
+            let next: HTMLButtonElement | undefined;
+            switch (event.key) {
+                case "ArrowDown": case "ArrowRight": next = tabs[(index + 1) % tabs.length]; break;
+                case "ArrowUp": case "ArrowLeft": next = tabs[(index - 1 + tabs.length) % tabs.length]; break;
+                case "Home": next = tabs[0]; break;
+                case "End": next = tabs[tabs.length - 1]; break;
+                case "Enter": case " ": this.switchTab(tab!.dataset.tab!, { focus: true }); break;
+                default: return;
             }
-
-            if (event.button !== 0) {
-                return;
-            }
-
-            this.isResizing = true;
-            document.body.classList.add("is-resizing");
-            dom.panelResizeHandle.classList.add("is-resizing");
-            dom.panelResizeHandle.setPointerCapture(event.pointerId);
             event.preventDefault();
-        };
-        dom.panelResizeHandle.addEventListener("pointerdown", this.panelResizeHandlePointerDownListener);
-
-        this.moreTriggerClickListener = () => {
-            this.toggleMoreMenu();
-        };
-        dom.panelMoreTrigger.addEventListener("click", this.moreTriggerClickListener);
-
-        this.moreItems.forEach((item, tabId) => {
-            const itemClickListener = () => {
-                this.switchTab(tabId);
-                this.closeMoreMenu();
-            };
-            this.moreMenuItemClickListener.set(tabId, itemClickListener);
-            item.addEventListener("click", itemClickListener);
-        });
-
-        this.moreMenuKeydownListener = (event: KeyboardEvent) => {
+            next?.focus();
+        }, options);
+        dom.togglePanel.addEventListener("click", () => this.toggleCollapsed(), options);
+        dom.toggleChart.addEventListener("click", () => this.toggleChartHidden(), options);
+        dom.panelMoreTrigger.addEventListener("click", () => this.toggleMoreMenu(), options);
+        dom.panelMoreMenu.addEventListener("click", (event) => {
+            const item = (event.target as Element).closest<HTMLButtonElement>("button[data-tab]");
+            if (!item || !dom.panelMoreMenu.contains(item)) return;
+            this.switchTab(item.dataset.tab!);
+            this.closeMoreMenu();
+        }, options);
+        dom.panelMoreMenu.addEventListener("keydown", (event: KeyboardEvent) => {
             if (event.key === "Escape" && this.moreMenuOpen) {
                 event.preventDefault();
                 this.closeMoreMenu();
                 dom.panelMoreTrigger.focus();
             }
-        };
-        dom.panelMoreMenu.addEventListener("keydown", this.moreMenuKeydownListener);
-
-        this.documentClickListenerForMore = (event: MouseEvent) => {
-            if (!this.moreMenuOpen) {
-                return;
-            }
+        }, options);
+        document.addEventListener("click", (event) => {
             const target = event.target as Node | null;
-            if (target && dom.panelMoreMenu.contains(target)) {
-                return;
+            if (this.moreMenuOpen && target
+                && !dom.panelMoreMenu.contains(target) && !dom.panelMoreTrigger.contains(target)) {
+                this.closeMoreMenu();
             }
-            if (target && dom.panelMoreTrigger.contains(target)) {
-                return;
-            }
-            this.closeMoreMenu();
-        };
-        document.addEventListener("click", this.documentClickListenerForMore);
+        }, options);
 
-        this.handlePointerMove = (event: PointerEvent) => {
-            if (!this.isResizing || !this.dom) {
-                return;
-            }
-
+        dom.panelResizeHandle.addEventListener("pointerdown", (event: PointerEvent) => {
+            if (this.isMobileLayout() || event.button !== 0) return;
+            this.isResizing = true;
+            this.resizePointerId = event.pointerId;
+            document.body.classList.add("is-resizing");
+            dom.panelResizeHandle.classList.add("is-resizing");
+            dom.panelResizeHandle.setPointerCapture(event.pointerId);
+            event.preventDefault();
+        }, options);
+        window.addEventListener("pointermove", (event: PointerEvent) => {
+            if (!this.isResizing || event.pointerId !== this.resizePointerId) return;
             if (this.isMobileLayout()) {
-                this.handleStopResizing?.(event);
+                this.stopResizing();
                 return;
             }
-
-            const nextWidthPx = this.clampWidth(window.innerWidth - event.clientX);
-            this.pendingWidthPx = nextWidthPx;
-            this.dom.strategyPanel.style.setProperty("--strategy-panel-width", `${nextWidthPx}px`);
+            const width = this.clampWidth(window.innerWidth - event.clientX);
+            this.pendingWidthPx = width;
+            dom.strategyPanel.style.setProperty("--strategy-panel-width", `${width}px`);
             this.syncCharts(false);
+        }, options);
+        const stop = (event: PointerEvent) => {
+            if (event.pointerId === this.resizePointerId) this.stopResizing();
         };
+        window.addEventListener("pointerup", stop, options);
+        window.addEventListener("pointercancel", stop, options);
+        dom.panelResizeHandle.addEventListener("lostpointercapture", stop, options);
+    }
 
-        this.handleStopResizing = (event?: PointerEvent) => {
-            if (!this.isResizing || !this.dom) {
-                return;
-            }
-
-            this.isResizing = false;
-            document.body.classList.remove("is-resizing");
-            this.dom.panelResizeHandle.classList.remove("is-resizing");
-            
-            if (event && dom.panelResizeHandle.hasPointerCapture(event.pointerId)) {
-                dom.panelResizeHandle.releasePointerCapture(event.pointerId);
-            }
-
-            if (this.pendingWidthPx !== null) {
-                this.dom.strategyPanel.style.setProperty("--strategy-panel-width", `${this.pendingWidthPx}px`);
-                this.saveLayoutState();
-            }
-
+    private stopResizing(persist = true): void {
+        if (!this.isResizing || !this.dom) return;
+        this.isResizing = false;
+        document.body.classList.remove("is-resizing");
+        const handle = this.dom.panelResizeHandle;
+        handle.classList.remove("is-resizing");
+        if (this.resizePointerId !== null && handle.hasPointerCapture(this.resizePointerId)) {
+            handle.releasePointerCapture(this.resizePointerId);
+        }
+        this.resizePointerId = null;
+        if (persist) {
+            if (this.pendingWidthPx !== null) this.saveLayoutState();
             this.syncCharts(true);
-        };
-
-        window.addEventListener("pointermove", this.handlePointerMove);
-        window.addEventListener("pointerup", this.handleStopResizing);
-        window.addEventListener("pointercancel", this.handleStopResizing);
+        }
     }
 
     private restoreLayoutState(): void {

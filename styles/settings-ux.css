@@ -159,12 +159,6 @@
     -webkit-backdrop-filter: none;
 }
 
-/* The outer accordion was flattened. The toggle element is kept hidden in the
-   DOM for contract stability; the body is always visible. */
-.strategy-workspace-header [hidden] {
-    display: none !important;
-}
-
 .strategy-workspace-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
@@ -496,7 +490,7 @@
 }
 
 /* Stronger heading for the currently expanded section */
-.section-header.collapsible:not(.collapsed) .section-title {
+.settings-section[open] > .section-header .section-title {
     color: var(--text-primary);
 }
 
@@ -515,26 +509,16 @@
     height: 12px;
 }
 
-.section-header.collapsible.collapsed .section-chevron {
+.settings-section:not([open]) > .section-header .section-chevron {
     transform: rotate(-90deg);
 }
 
-/* The section body slides/collapses */
-.section-body.accordion-body {
-    overflow: hidden;
-    transition: max-height 0.2s var(--ease-out-expo), opacity 0.15s ease;
-    max-height: 2400px;
-    opacity: 1;
-    will-change: max-height;
+/* Native details owns disclosure visibility and keyboard interaction. */
+summary.section-header {
+    list-style: none;
 }
-
-.section-body.accordion-body.collapsed {
-    max-height: 0;
-    opacity: 0;
-    margin-top: 0;
-    margin-bottom: 0;
-    pointer-events: none;
-    will-change: auto;
+summary.section-header::-webkit-details-marker {
+    display: none;
 }
 
 /* --------------------------------------------------------------------------

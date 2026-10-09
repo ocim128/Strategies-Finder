@@ -1,7 +1,7 @@
 /**
  * Trade navigation through the shared `jumpToTrade` callback created in
  * setupStateSubscriptions (the same callback instance is handed to the Trades
- * list and Quick View). The callback must resolve equivalent timestamp shapes
+ * list). The callback must resolve equivalent timestamp shapes
  * through the canonical candle time index and keep the ±20-bar visible range
  * behavior as datasets are replaced, appended to, and head-evicted.
  */
@@ -9,7 +9,6 @@ import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { setupStateSubscriptions } from "../lib/handlers/state-subscriptions";
 import { state } from "../lib/state";
-import { clearDomElementCache } from "../lib/dom-utils";
 import { waitFor } from "./helpers/wait-for";
 import type { OHLCVData, Trade, Time } from "../lib/types/strategies";
 
@@ -191,7 +190,6 @@ function restoreBrowser(): void {
     });
     elementsById.clear();
     visibleLogicalRanges.length = 0;
-    clearDomElementCache();
 }
 // ---------------------------------------------------------------------------
 // Fixtures

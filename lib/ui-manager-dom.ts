@@ -10,12 +10,10 @@ export const SETTINGS_WORKSPACE_REQUIRED_IDS = [
     "settingsConfigStatus",
     "restoreSettingsConfigBtn",
     "strategyWorkspaceHeader",
-    "strategyWorkspaceToggle",
     "strategyWorkspaceBody",
     "strategyWorkspaceSections",
     "strategyMetaName",
     "strategyMetaDescription",
-    "strategyMetaKey",
     "strategyParamCount",
 ] as const;
 
@@ -30,12 +28,10 @@ export function createSettingsWorkspaceDom() {
         settingsConfigStatus: getRequiredElement("settingsConfigStatus"),
         restoreSettingsConfigBtn: getRequiredElement<HTMLButtonElement>("restoreSettingsConfigBtn"),
         strategyWorkspaceHeader: getRequiredElement("strategyWorkspaceHeader"),
-        strategyWorkspaceToggle: getRequiredElement("strategyWorkspaceToggle"),
         strategyWorkspaceBody: getRequiredElement("strategyWorkspaceBody"),
         strategyWorkspaceSections: getRequiredElement("strategyWorkspaceSections"),
         strategyMetaName: getRequiredElement("strategyMetaName"),
         strategyMetaDescription: getRequiredElement("strategyMetaDescription"),
-        strategyMetaKey: getRequiredElement("strategyMetaKey"),
         strategyParamCount: getRequiredElement("strategyParamCount"),
     };
 }

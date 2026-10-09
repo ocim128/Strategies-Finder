@@ -19,7 +19,6 @@ import {
     initLivePositionsHandlers,
 } from "../lib/handlers/live-positions-handlers";
 import { livePositionsService, type ClosedTrade } from "../lib/live-positions-service";
-import { clearDomElementCache } from "../lib/dom-utils";
 import { flushMicrotasks } from "./helpers/flush-microtasks";
 
 // ---------------------------------------------------------------------------
@@ -227,7 +226,6 @@ function restoreBrowser(): void {
     });
     elementsById.clear();
     localStorageStore.clear();
-    clearDomElementCache();
 }
 
 // ---------------------------------------------------------------------------

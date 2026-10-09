@@ -171,7 +171,7 @@ const verifySettingsWorkspace = async (page: Page): Promise<void> => {
     await page.evaluate(() => {
         if (document.getElementById('settingsTab')!.dataset.preset !== 'standard') throw new Error('Search did not reveal a Standard section');
         const header = document.querySelector('[data-target="realismBody"]')!;
-        if (header.getAttribute('aria-expanded') !== 'true') throw new Error('Search did not open the execution accordion');
+        if (!(header.closest('details') as HTMLDetailsElement).open) throw new Error('Search did not open the execution accordion');
         (document.getElementById('slippageBps') as HTMLInputElement).value = '17';
         document.getElementById('slippageBps')!.dispatchEvent(new Event('input', { bubbles: true }));
     });
@@ -224,12 +224,180 @@ const verifySettingsWorkspace = async (page: Page): Promise<void> => {
         if (getComputedStyle(workspace).gridTemplateColumns.split(' ').length !== 1) throw new Error('Narrow Settings panel did not stack');
         if (panel.scrollWidth > panel.clientWidth) throw new Error('Narrow Settings panel overflowed horizontally');
         (document.querySelector('#settingsQuickNav button[aria-controls="directionBody"]') as HTMLButtonElement).click();
-        if (document.querySelector('[data-target="directionBody"]')!.getAttribute('aria-expanded') !== 'true') throw new Error('Quick navigation did not open Direction');
+        if (!(document.querySelector('[data-section="direction"]') as HTMLDetailsElement).open) throw new Error('Quick navigation did not open Direction');
     });
     await page.setViewport({ width: 1440, height: 1000 });
     await page.evaluate(() => { document.querySelector<HTMLElement>('.panel-content')!.scrollTop = 0; });
+    await verifySimplifiedSettings(page);
+    await verifyPanelNavigationLifecycle(page);
     await verifyBulkConfigDeletion(page);
     console.log('Settings layout, search, autosave feedback, configuration drift and restore passed.');
+};
+
+const verifySimplifiedSettings = async (page: Page): Promise<void> => {
+    await page.evaluate(() => {
+        const manager = (window as any).__settingsManager;
+        const saved = manager.getBacktestSettings();
+        const risk = document.querySelector<HTMLDetailsElement>('[data-section="risk"]')!;
+        risk.open = true;
+        const cases: Record<string, string[]> = {
+            fixed: [], mfe_bootstrap: ['MfeBootstrapPercentile'],
+            edge_weighted: ['AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier'],
+            expectancy_optimal: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier', 'AdaptiveGridSteps'],
+            regime_calibrated: ['AdaptiveLookbackTrades', 'AdaptiveGridSteps', 'AdaptiveRegimeBlend'],
+            information_coefficient: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier', 'AdaptiveIcScale'],
+            path_efficiency: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier'],
+            serial_dependency: ['AdaptiveLookbackTrades', 'AdaptiveRecentWindow', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier'],
+            minimum_surprisal: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier', 'AdaptiveGridSteps'],
+        };
+        try {
+            for (const [mode, fields] of Object.entries(cases)) {
+                manager.applyBacktestSettings({ ...saved, riskSettingsToggle: true, riskMode: 'percentage',
+                    takeProfitMode: mode, takeProfitAdaptiveLookbackTrades: 53, takeProfitAdaptiveMinMultiplier: 0.85 });
+                for (const control of document.querySelectorAll<HTMLInputElement>('[data-tp-modes] input')) {
+                    const expected = fields.includes(control.id.replace('takeProfit', ''));
+                    if (control.disabled === expected || Boolean(control.getClientRects().length) !== expected) {
+                        throw new Error(`${mode}: incorrect visibility/enabled state for ${control.id}`);
+                    }
+                }
+                if (manager.getBacktestSettings().takeProfitAdaptiveLookbackTrades !== 53
+                    || manager.getBacktestSettings().takeProfitAdaptiveMinMultiplier !== 0.85) {
+                    throw new Error(`${mode}: shared fields were lost on restore`);
+                }
+            }
+            manager.applyBacktestSettings({ ...saved, riskSettingsToggle: true, riskMode: 'percentage', takeProfitMode: 'expectancy_optimal' });
+            const control = document.getElementById('takeProfitAdaptiveLookbackTrades') as HTMLInputElement;
+            control.value = '61';
+            control.dispatchEvent(new Event('input', { bubbles: true }));
+            (document.getElementById('takeProfitMode') as HTMLSelectElement).value = 'serial_dependency';
+            document.getElementById('takeProfitMode')!.dispatchEvent(new Event('change', { bubbles: true }));
+            if (control.value !== '61' || control.disabled) throw new Error('Changing mode lost the canonical edit');
+            manager.applyBacktestSettings({ ...saved, riskMode: 'simple' });
+            if (Array.from(document.querySelectorAll<HTMLInputElement>('[data-tp-modes] input')).some(input => !input.disabled)) {
+                throw new Error('ATR mode left adaptive percentage inputs enabled');
+            }
+        } finally {
+            manager.applyBacktestSettings(saved);
+        }
+    });
+    // Native summary activation must work through the keyboard, without JS roles.
+    await page.focus('[data-section="direction"] > summary');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => !(document.querySelector('[data-section="direction"]') as HTMLDetailsElement).open);
+    await page.keyboard.press('Space');
+    await page.waitForFunction(() => (document.querySelector('[data-section="direction"]') as HTMLDetailsElement).open);
+    // A feature switch inside summary must not collapse the section.
+    const riskOpen = await page.$eval('[data-section="risk"]', el => (el as HTMLDetailsElement).open);
+    await page.click('[data-section="risk"] > summary .section-toggle');
+    await page.$eval('[data-section="risk"]', (el, expected) => {
+        if ((el as HTMLDetailsElement).open !== expected) throw new Error('Feature toggle changed disclosure state');
+    }, riskOpen);
+    await page.click('[data-section="risk"] > summary .section-toggle');
+    await page.waitForFunction(() => document.getElementById('settingsSaveStatus')!.dataset.state === 'saved');
+    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('playground_app_settings')!).data.backtestSettings);
+    if (persisted.takeProfitAdaptiveLookbackTrades === 61) throw new Error('Restoration failed to replace the edited adaptive value');
+    console.log('Canonical take-profit modes, editing, restore, autosave and native disclosures passed.');
+};
+
+const verifyPanelNavigationLifecycle = async (page: Page): Promise<void> => {
+    await page.evaluate(async () => {
+        const { strategyPanelController: controller } = await import('/lib/strategy-panel-controller.ts');
+        const win = window as any;
+        win.__panelController = controller;
+        const tabs = document.getElementById('strategyTabs')!;
+        let switches = 0;
+        // Avoid esbuild's inferred-name helper in a serialized browser callback.
+        const count = [() => { switches += 1; }][0];
+        window.addEventListener('strategy-panel:tab-change', count);
+        try {
+            controller.destroy();
+            controller.init();
+            controller.destroy();
+            controller.init();
+            switches = 0;
+            tabs.querySelector<HTMLElement>('[data-tab="results"]')!.click();
+            if (switches !== 1 || controller.getActiveTabId() !== 'results') throw new Error('Reinitialization duplicated navigation listeners');
+            controller.setVisibleTabs(['results', 'trades']);
+            if (controller.switchTab('finder')) throw new Error('Restricted navigation allowed Finder');
+            if (document.querySelectorAll('#panelContent > div:not([hidden])').length !== 1) throw new Error('Multiple panels visible');
+            controller.setVisibleTabs(null);
+            controller.switchTab('settings', { persist: false });
+        } finally {
+            window.removeEventListener('strategy-panel:tab-change', count);
+        }
+    });
+    await page.focus('.panel-tab[data-tab="settings"]');
+    await page.keyboard.press('ArrowRight');
+    await page.waitForFunction(() => (document.activeElement as HTMLElement)?.dataset.tab === 'results');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.querySelector('.panel-tab[data-tab="results"]')!.getAttribute('aria-selected') === 'true');
+    await page.click('#panelMoreTrigger');
+    await page.focus('#panelMoreMenu [data-tab="walkforward"]');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.activeElement?.id === 'panelMoreTrigger'
+        && document.getElementById('panelMoreTrigger')!.getAttribute('aria-expanded') === 'false');
+    await page.click('#viewResultsBtn');
+    await page.waitForFunction(() => document.querySelector('.panel-tab[data-tab="results"]')!.getAttribute('aria-selected') === 'true');
+    await page.evaluate(() => (window as any).__panelController.setChartHidden(false, false));
+    const handle = await page.$('#panelResizeHandle');
+    const box = await handle!.boundingBox();
+    if (!box) throw new Error('Resize handle was not visible');
+    await page.mouse.move(box.x + box.width / 2, box.y + 50);
+    await page.mouse.down();
+    await page.mouse.move(box.x - 40, box.y + 50, { steps: 3 });
+    await page.evaluate(() => {
+        const controller = (window as any).__panelController;
+        if (!document.body.classList.contains('is-resizing')) throw new Error('Panel resize did not start');
+        controller.destroy();
+        if (document.body.classList.contains('is-resizing')) throw new Error('Destroy left the resize interaction active');
+        controller.init();
+        controller.setChartHidden(true, false);
+    });
+    await page.mouse.up();
+    await page.click('.panel-tab[data-tab="settings"]');
+    console.log('Delegated navigation, reinitialization, restrictions, keyboard and results shortcut passed.');
+};
+
+const verifySharedLinkManualRun = async (page: Page): Promise<void> => {
+    const link = await page.evaluate(async () => {
+        const { DEFAULT_BACKTEST_SETTINGS } = await import('/lib/settings-manager.ts');
+        const { createStrategyShareLink } = await import('/lib/strategy-share-service.ts');
+        const { loadBuiltInStrategyByKey } = await import('/strategyRegistry.ts');
+        const strategy = await loadBuiltInStrategyByKey('ema_confirmation');
+        const stamp = new Date().toISOString();
+        const config = {
+            name: 'Shared manual-run fixture', strategyKey: 'ema_confirmation', strategyParams: strategy!.defaultParams,
+            backtestSettings: { ...DEFAULT_BACKTEST_SETTINGS, useRustEngine: false },
+            createdAt: stamp, updatedAt: stamp, symbol: 'MOCK_CRYPTO', interval: '4h',
+        };
+        // The old display-only preset must still load into Standard mode.
+        localStorage.setItem('playground_settings_preset', 'advanced');
+        const source = new URL(window.location.href);
+        source.searchParams.set('symbol', 'MOCK_CRYPTO');
+        source.searchParams.set('interval', '4h');
+        return createStrategyShareLink(config, source.toString());
+    });
+    await page.goto(link, { waitUntil: 'domcontentloaded' });
+    await waitForCondition(page, () => {
+        const win = window as any;
+        return win.__state?.currentSymbol === 'MOCK_CRYPTO' && win.__state?.currentInterval === '4h'
+            && win.__state?.ohlcvData.length > 100
+            && win.__debug?.getEntries().some((entry: any) => entry.message === 'app.init.ready')
+            && win.__debug?.getEntries().some((entry: any) => entry.message === 'ui.config.shared.loaded');
+    }, 15000, 'shared configuration application');
+    await wait(750);
+    await page.evaluate(() => {
+        const win = window as any;
+        if (win.__state.currentBacktestResult || win.__debug.getEntries().some((entry: any) => entry.message === 'backtest.start')) {
+            throw new Error('Shared link started an automatic backtest');
+        }
+        if (document.querySelectorAll('.panel-tab:not([hidden])').length !== 2) throw new Error('Shared view lost its tab restrictions');
+        if (document.getElementById('settingsTab')!.dataset.preset !== 'standard') throw new Error('Legacy Advanced preset did not normalize');
+        if (new URL(window.location.href).searchParams.has('strategyShare')) throw new Error('Share token was not consumed');
+    });
+    await page.click('#runBacktest');
+    await page.waitForFunction(() => Boolean((window as any).__state.currentBacktestResult), { timeout: 15000 });
+    console.log('Shared configuration application, manual Run and legacy display preset compatibility passed.');
 };
 
 const verifyBulkConfigDeletion = async (page: Page): Promise<void> => {
@@ -1213,12 +1381,11 @@ const expectedJumpRange = (dataIndex: number, dataLength: number) => ({
 });
 
 /**
- * Real-browser coverage for the shared trades navigation, Quick View bounded
- * preparation/ordering, and live-position detail-modal response ownership.
+ * Real-browser coverage for trades navigation and live-position detail-modal response ownership.
  * The current backtest at this point is the Monte Carlo fixture; the lazy-tab
  * reload test runs afterwards and resets in-memory state.
  */
-const verifyTradesQuickViewAndModal = async (page: Page): Promise<void> => {
+const verifyTradesAndModal = async (page: Page): Promise<void> => {
     const tradesTotal = await page.evaluate(() => {
         const state = (window as any).__state;
         return state?.currentBacktestResult?.trades?.length ?? 0;
@@ -1265,80 +1432,6 @@ const verifyTradesQuickViewAndModal = async (page: Page): Promise<void> => {
         throw new Error(`Trades table row click jumped ${JSON.stringify(tableJump)} instead of ${JSON.stringify(tableExpected)}`);
     }
 
-    // --- Trade navigation surface 2 + Quick View ordering/counts ---
-    // Every backtest commit auto-shows Quick View, so the overlay is already
-    // open here; toggle it closed first so the button path is exercised.
-    await page.waitForFunction(() => Boolean(document.getElementById('quickViewOverlay')), { timeout: 15000 });
-    const qvInitiallyVisible = await page.evaluate(() =>
-        document.getElementById('quickViewOverlay')?.classList.contains('is-visible') ?? false);
-    if (qvInitiallyVisible) {
-        await page.click('#quickViewBtn');
-        await page.waitForFunction(() => !document.getElementById('quickViewOverlay')?.classList.contains('is-visible'), { timeout: 5000 });
-    }
-    await page.click('#quickViewBtn');
-    await page.waitForFunction(() => document.getElementById('quickViewOverlay')?.classList.contains('is-visible'), { timeout: 15000 });
-    const qvNewest = await page.evaluate(() => {
-        const state = (window as any).__state;
-        const trades = state.currentBacktestResult.trades;
-        const rows = Array.from(document.querySelectorAll('#qvTradesList .qv-trade-item')) as HTMLElement[];
-        const firstRaw = rows[0]?.dataset.entryTime;
-        // No named inner helpers here: evaluate callbacks are serialized and
-        // esbuild's __name keep-names helper does not exist in the page.
-        return {
-            total: trades.length,
-            countText: document.getElementById('qvTradesCount')?.textContent ?? '',
-            sortLabel: document.getElementById('qvSortLabel')?.textContent ?? '',
-            rowCount: rows.length,
-            firstRowTime: firstRaw ? Number(JSON.parse(decodeURIComponent(firstRaw))) : null,
-            newestTradeTime: Number(trades[trades.length - 1].entryTime),
-            oldestTradeTime: Number(trades[0].entryTime),
-        };
-    });
-    if (qvNewest.countText !== String(qvNewest.total)) throw new Error(`Quick View count shows "${qvNewest.countText}" instead of ${qvNewest.total}`);
-    if (qvNewest.sortLabel !== 'Newest first') throw new Error(`Quick View default sort label is "${qvNewest.sortLabel}"`);
-    if (qvNewest.rowCount !== Math.min(qvNewest.total, 100)) throw new Error(`Quick View renders ${qvNewest.rowCount} rows for ${qvNewest.total} trades`);
-    if (qvNewest.firstRowTime !== qvNewest.newestTradeTime) throw new Error('Quick View newest-first ordering does not start at the newest trade');
-
-    // Overlay-internal buttons are clicked through dispatched DOM events:
-    // puppeteer's hit-test clicks are sensitive to overlay stacking/layout.
-    await page.evaluate(() => document.getElementById('qvSortToggle')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await page.waitForFunction(() => document.getElementById('qvSortLabel')?.textContent === 'Oldest first', { timeout: 5000 });
-    const qvOldest = await page.evaluate(() => {
-        const state = (window as any).__state;
-        const trades = state.currentBacktestResult.trades;
-        const first = document.querySelector('#qvTradesList .qv-trade-item') as HTMLElement | null;
-        return {
-            firstRowTime: first ? Number(JSON.parse(decodeURIComponent(first.dataset.entryTime!))) : null,
-            oldestTradeTime: Number(trades[0].entryTime),
-        };
-    });
-    if (qvOldest.firstRowTime !== qvOldest.oldestTradeTime) throw new Error('Quick View oldest-first ordering does not start at the oldest trade');
-
-    // Quick View row click navigates through the same shared jumpToTrade and
-    // closes the overlay.
-    await page.evaluate(() => {
-        (window as any).__jumpCalls.length = 0;
-    });
-    await page.evaluate(() => document.querySelector('#qvTradesList .qv-trade-item')
-        ?.dispatchEvent(new MouseEvent('click', { bubbles: true })));
-    await page.waitForFunction(() => !document.getElementById('quickViewOverlay')?.classList.contains('is-visible'), { timeout: 5000 });
-    const qvNav = await page.evaluate(() => {
-        const state = (window as any).__state;
-        const trades = state.currentBacktestResult.trades;
-        const oldestTime = Number(trades[0].entryTime);
-        let dataIndex = -1;
-        state.ohlcvData.forEach((bar: { time: unknown }, index: number) => {
-            if (Number(bar.time) === oldestTime) dataIndex = index;
-        });
-        return dataIndex;
-    });
-    if (qvNav < 0) throw new Error('Quick View oldest trade time is not in the loaded candles');
-    const qvExpected = expectedJumpRange(qvNav, (await page.evaluate(() => (window as any).__state.ohlcvData.length)) as number);
-    const qvJump = await page.evaluate(() => (window as any).__jumpCalls.pop() ?? null);
-    if (!qvJump || qvJump.from !== qvExpected.from || qvJump.to !== qvExpected.to) {
-        throw new Error(`Quick View row click jumped ${JSON.stringify(qvJump)} instead of ${JSON.stringify(qvExpected)}`);
-    }
     // Restore the real timeScale method (the spy shadowed an own property).
     await page.evaluate(() => {
         delete (window as any).__state.chart.timeScale().setVisibleLogicalRange;
@@ -1505,7 +1598,7 @@ const verifyTradesQuickViewAndModal = async (page: Page): Promise<void> => {
         win.__lpSvc.setViewMode('open');
     });
 
-    console.log('Trades navigation surfaces, Quick View ordering/counts and modal close/reopen ownership passed.');
+    console.log('Trades navigation and modal close/reopen ownership passed.');
 };
 
 async function runTest() {
@@ -1788,12 +1881,13 @@ async function runTest() {
                 console.log('Layout verification passed.');
             }
 
-            console.log('Verifying trades navigation, Quick View and detail-modal ownership...');
-            await verifyTradesQuickViewAndModal(page);
+            console.log('Verifying trades navigation and detail-modal ownership...');
+            await verifyTradesAndModal(page);
 
             console.log('Verifying lazy-tab feedback and recovery...');
             await verifyLazyTabRecovery(page, errors);
 
+            await verifySharedLinkManualRun(page);
             await assertNoDebugErrors(page, errors);
 
             // Real-browser coverage against production-built output (root and

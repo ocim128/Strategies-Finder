@@ -1,4 +1,4 @@
-import { ensureLazyStylesheet } from "./lazy-styles";
+import "../styles/data-mining.css";
 import type { Time } from "lightweight-charts";
 import { state } from "./state";
 import { setCurrentInterval, setCurrentSymbol } from "./state-actions";
@@ -76,7 +76,6 @@ export class DataMiningManager {
     }
 
     public init(): void {
-        ensureLazyStylesheet("data-mining-styles", new URL("../styles/data-mining.css", import.meta.url).href);
         const dom = queryDataMiningDom();
         if (!dom) return;
         this.dom = dom;

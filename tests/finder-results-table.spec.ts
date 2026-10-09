@@ -9,7 +9,6 @@ import {
     type FinderTableMetricKey,
 } from "../lib/finder/finder-results-table";
 import { FinderUI } from "../lib/finder/finder-ui";
-import { clearDomElementCache } from "../lib/dom-utils";
 import { createEmptyBacktestResult } from "../lib/strategies/backtest/position-stats";
 import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metrics";
 import { createEmptyRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
@@ -61,12 +60,10 @@ function withMiniDom<T>(run: (mini: MiniDom) => T): T {
     const savedDocument = (globalThis as unknown as { document?: unknown }).document;
     const mini = createMiniDom();
     (globalThis as unknown as { document: unknown }).document = mini;
-    clearDomElementCache();
     try {
         return run(mini);
     } finally {
         (globalThis as unknown as { document?: unknown }).document = savedDocument;
-        clearDomElementCache();
     }
 }
 
