@@ -67,9 +67,11 @@ before rerunning only that spec.
 `.github/workflows/strategies-finder-test-specs.yml` reuses three artifact
 families without inferring any test outcome from a cache:
 
-- Puppeteer browsers: a job-level `PUPPETEER_CACHE_DIR` under the runner temp
-  directory is cached ahead of `npm ci` in both the unit and e2e jobs (both
-  launch Puppeteer). Keys are `puppeteer-<os>-<arch>-<lockfile hash>`.
+- Puppeteer browsers: each browser-using job exports `PUPPETEER_CACHE_DIR`
+  (under the runner temp directory) through `GITHUB_ENV` in an early step —
+  `runner` is not available in job-level `env` — and that exact directory is
+  cached ahead of `npm ci` in both the unit and e2e jobs (both launch
+  Puppeteer). Keys are `puppeteer-<os>-<arch>-<lockfile hash>`.
 - Cargo: the rust job caches `~/.cargo/registry`, `~/.cargo/git`, and
   `rust-engine/target` after toolchain install. The exact key includes the
   dtolnay toolchain `cachekey` (compiler identity and platform) plus a
@@ -77,15 +79,19 @@ families without inferring any test outcome from a cache:
   a dependency change rebuilds incrementally instead of evicting everything.
   fmt/test/clippy always run.
 - Test timing history: the unit job restores only
-  `artifacts/test-logs/timings.json` before `npm run ci` (never `latest/`).
+  `artifacts/test-logs/timings.json` before `npm run ci` (never `latest/`)
+  via `actions/cache/restore@v4`, paired with an explicit
+  `actions/cache/save@v4` after a green run — the combined action would add a
+  second automatic post-job save of the same run-unique key.
   Keys carry the timing `formatVersion`, runner OS, and Node version, and end
   with `<run id>-<run attempt>`; saves happen only after a green run under
   that unique key, so immutable cache entries cannot freeze scheduling
   history.
 
-Remove the corresponding steps to restore cold-cache behavior. Net savings
-depend on hosted download/compile versus cache-transfer time and are verified
-from workflow logs, not locally.
+The workflow is validated with actionlint, not only YAML parsing. Remove the
+corresponding steps to restore cold-cache behavior. Net savings depend on
+hosted download/compile versus cache-transfer time and are verified from
+workflow logs, not locally.
 
 ## RTK as the primary agent CLI
 
