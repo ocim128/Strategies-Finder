@@ -30,6 +30,8 @@ let dom: MonteCarloDomElements | null = null;
 let isRunning = false;
 let abortController: AbortController | null = null;
 let initialized = false;
+let observedBacktestResult = state.currentBacktestResult;
+let backtestRevision = 0;
 
 export function initMonteCarloService(): void {
     if (initialized) {
@@ -101,31 +103,40 @@ async function handleRun(): Promise<void> {
     }
 
     isRunning = true;
-    abortController = new AbortController();
+    const runController = new AbortController();
+    const runBacktestRevision = backtestRevision;
+    abortController = runController;
     setRunningState(true);
     dom.statusSpan.textContent = `Running Monte Carlo: 0/${(scenarioPlans.length * effectiveSimulations).toLocaleString()} simulations...`;
 
     try {
         const results: Array<{ plan: ScenarioPlan; result: MonteCarloResult }> = [];
+        const sizing = createChartMonteCarloSizingConfig();
 
         for (let scenarioIndex = 0; scenarioIndex < scenarioPlans.length; scenarioIndex++) {
             const plan = scenarioPlans[scenarioIndex];
             const result = await runMonteCarloSimulation(
                 backtestResult,
                 plan.settings,
-                state.ohlcvData,
+                sizing.ohlcvData,
                 undefined,
                 {
-                    signal: abortController.signal,
-                    sizing: createChartMonteCarloSizingConfig(),
+                    signal: runController.signal,
+                    sizing,
                     onProgress: (progress: MonteCarloProgress) => {
-                        if (!dom) {
+                        if (!dom || runBacktestRevision !== backtestRevision || runController.signal.aborted) {
                             return;
                         }
                         dom.statusSpan.textContent = formatProgressStatus(plan.label, progress, scenarioIndex, scenarioPlans.length);
                     },
                 },
             );
+            // The engine yields even after its final simulation. A replacement
+            // backtest or Cancel during that yield must prevent publication.
+            if (runBacktestRevision !== backtestRevision) {
+                return;
+            }
+            runController.signal.throwIfAborted();
             results.push({ plan, result });
         }
 
@@ -157,7 +168,7 @@ async function handleRun(): Promise<void> {
             aggregateExecutionTimeMs,
         );
     } catch (error) {
-        if (!dom) {
+        if (!dom || runBacktestRevision !== backtestRevision) {
             return;
         }
 
@@ -399,6 +410,17 @@ export function showMonteCarloTab(): void {
 export function refreshMonteCarloFromState(): void {
     if (!dom) {
         return;
+    }
+
+    if (state.currentBacktestResult !== observedBacktestResult) {
+        const hadBacktest = observedBacktestResult !== null;
+        observedBacktestResult = state.currentBacktestResult;
+        backtestRevision++;
+        abortController?.abort();
+        dom.resultsContainer.style.display = "none";
+        dom.statusSpan.textContent = observedBacktestResult
+            ? hadBacktest ? "Backtest changed. Run Monte Carlo again." : "Ready"
+            : "Please run a backtest first";
     }
 
     if (!state.currentBacktestResult) {

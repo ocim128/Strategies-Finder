@@ -4,6 +4,30 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-09 — Keep Monte Carlo results tied to their backtest
+
+- **Evidence:** `refreshMonteCarloFromState` retained completed results when a
+  different backtest was published. An active simulation could also publish
+  the old backtest's results after replacement or Cancel during its final
+  asynchronous yield. The new service regression failed first on retained
+  results, then on stale publication after adding cancellation alone.
+- **Change:** Invalidate displayed results and abort active runs on backtest
+  replacement or clearing. Guard progress, publication, and error feedback
+  with the input revision and check cancellation after each awaited scenario.
+  Capture chart data and sizing once for all scenarios. Preserve completed
+  results when reopening the same backtest and allow retry after cancellation.
+  Updated the Monte Carlo guide; no DOM or persisted contracts changed.
+- **Checks:** `npm run validate:changes -- --run` passed both typechecks and all
+  three Monte Carlo specs. The service regression covers completed results,
+  final-yield and mid-run replacement, A → B → A replacement, clearing,
+  final-yield Cancel, and successful retries. `npm run test:e2e` passed,
+  including lazy initialization and all three rendered Monte Carlo scenarios;
+  `git diff --check` passed. Commands ran through RTK.
+- **Follow-up:** Reconcile the planning-only banner in
+  `confirmed-defects-remediation-plan.md` with current implementations before
+  choosing work from it: its percentage-drawdown correction is already present
+  in the TypeScript and Rust helpers.
+
 ## 2026-10-09 — Verified complexity-audit cleanup
 
 - **Evidence:** Rechecked the caller graph and focused specs against `7ac14088`,

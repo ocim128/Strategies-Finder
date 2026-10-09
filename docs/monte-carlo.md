@@ -12,6 +12,12 @@ main summary, with all three shown in Method Comparison. The seed makes runs
 reproducible. Simulation counts are capped according to trade count and active
 scenarios; Cancel aborts the running simulation.
 
+Results belong to the backtest used for the run. Replacing or clearing that
+backtest hides its Monte Carlo results and cancels any active simulation,
+including one at its final asynchronous yield. Run Monte Carlo again for the
+new backtest; reopening the tab with the same backtest preserves its results.
+All scenarios within a run share the captured chart data and sizing settings.
+
 Paths use the chart's current capital sizing settings and the Monte Carlo
 Initial Capital control. Results include profit, drawdown and Sharpe
 distributions, confidence intervals, equity paths and ruin frequency.
