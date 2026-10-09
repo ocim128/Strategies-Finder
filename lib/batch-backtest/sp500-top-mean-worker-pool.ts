@@ -61,10 +61,9 @@ export async function resolveServerWorkerEntryPath(fileName: string): Promise<st
 
 /**
  * Per-worker steady-state footprint estimate used by the auto worker-count
- * memory ceiling: base heap plus a parsed-seed CSV cache that (audit
- * parse-thrash finding) now covers the run's full leg universe — up to 512
- * COLUMNAR entries (~1.2 MB per 25k-bar 30m seed, held off the V8 heap so
- * worker GC stays clean).
+ * memory ceiling: base heap, 24 materialized legs, and a parsed-seed cache
+ * capped at 16 million candle points (768 MB) as well as 512 columnar entries.
+ * The point cap keeps long seed histories within this estimate.
  */
 export const TOP_MEAN_WORKER_FOOTPRINT_BYTES = 1_600_000_000;
 /** Share of physical RAM usable for the SUM of worker footprints. */
@@ -276,7 +275,10 @@ function pairLegs(symbol: string): [string, string] {
  */
 export const TOP_MEAN_SHARD_TILE_ASSETS = 12;
 const TOP_MEAN_DENSE_TILE_MIN_PAIRS = 10_000;
-const TOP_MEAN_DENSE_TILE_MIN_DENSITY = 0.75;
+// A ~40%-sampled 500-asset universe still fills ~55 pairs per tile. Requiring
+// 75% density sent 50k-pair runs through the one-leg planner and thrashed the
+// leg LRU. Keep truly sparse universes on coarse shards to bound file overhead.
+const TOP_MEAN_DENSE_TILE_MIN_DENSITY = 0.35;
 
 /**
  * Group pairs into asset-tile shards (asset_tile_v1 layout, cache-locality

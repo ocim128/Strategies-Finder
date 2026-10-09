@@ -187,8 +187,8 @@ function testCacheAwareShardPlanning(): void {
 
     const largeSparsePairs: string[] = [];
     const sparseLegs = Array.from({ length: 300 }, (_, i) => `S${String(i).padStart(3, "0")}•`);
-    for (let i = 0; i < sparseLegs.length && largeSparsePairs.length < 10_000; i += 1) {
-        for (let offset = 1; offset <= 68 && largeSparsePairs.length < 10_000; offset += 1) {
+    for (let offset = 1; offset <= 68 && largeSparsePairs.length < 10_000; offset += 1) {
+        for (let i = 0; i < sparseLegs.length && largeSparsePairs.length < 10_000; i += 1) {
             const j = (i + offset) % sparseLegs.length;
             if (i < j) largeSparsePairs.push(`${sparseLegs[i]!}+${sparseLegs[j]!}`);
         }
@@ -199,6 +199,18 @@ function testCacheAwareShardPlanning(): void {
         "leg_affinity_v1",
         "large sparse universes keep coarse shards and avoid tile fragmentation",
     );
+
+    // A sampled 500-asset universe is sufficiently populated for tiles even
+    // though it does not contain 75% of the full pair matrix.
+    const sampledLegs = Array.from({ length: 500 }, (_, i) => `R${String(i).padStart(3, "0")}\u2022`);
+    const sampledPairs: string[] = [];
+    for (let i = 0; i < sampledLegs.length; i++) {
+        for (let j = i + 1; j < sampledLegs.length; j++) {
+            if ((i * 503 + j) % 5 < 2) sampledPairs.push(`${sampledLegs[i]}+${sampledLegs[j]}`);
+        }
+    }
+    assert.equal(resolveDefaultTopMeanShardLayout(sampledPairs), "asset_tile_v1");
+    assert.equal(resolveDefaultTopMeanShardLayout([...sampledPairs, ...sampledPairs]), "asset_tile_v1");
 
     // The tile layout stays reachable for manifests explicitly stamped
     // asset_tile_v1, and remains deterministic.

@@ -54,6 +54,7 @@ import { SyntheticLegCache } from "./synthetic-leg-cache";
 import { runParallelArtifactScan } from "./sp500-top-mean-scan-pool";
 import type { StageOutcome } from "./open-score-replay/internal-types";
 import type { ArtifactScanResult } from "./open-score-replay/artifact-scan";
+import type { OpenScoreUsdSharedArtifactCache } from "./open-score-replay/types";
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } from "./open-score-replay/arm-contract";
 import { compactCausalArmDefinitions } from "./open-score-replay/causal-arm-constants";
 // Import hygiene (docs/open-score-cap-tilt.md): the ONLY import allowed from
@@ -1511,12 +1512,14 @@ export class TopMeanCoordinatorEngine {
                 }
                 // The sequential path counts tradeless artifacts inside the
                 // loader generator; the parallel scan bypasses that generator,
-                // so hand the counter over here (reset per pass, as above).
+                // so hand the counter over here. Cached annual passes retain
+                // this same immutable artifact count without scanning again.
                 noTradePairs = outcome.tradelessPairs;
                 return { ok: true, result: outcome.result };
             };
 
             let replayPassIndex = 0;
+            const sharedArtifactCache: OpenScoreUsdSharedArtifactCache = {};
             const runReplayForWindow = (
                 sampleFromSec: number | undefined,
                 sampleToSec: number | undefined,
@@ -1537,8 +1540,8 @@ export class TopMeanCoordinatorEngine {
                 };
                 return runOpenScoreUsdReplay(
                     (() => {
-                        // Reset per pass so annual replay does not double-count.
-                        noTradePairs = 0;
+                        // Reset for a fresh scan; cached passes retain its count.
+                        if (!sharedArtifactCache.prepared) noTradePairs = 0;
                         return (async function* (runId: string, baseDir?: string) {
                             for await (const artifact of iterateRunCompactArtifacts(runId, baseDir, { strict: true })) {
                                 if (artifact.result.trades.length === 0) noTradePairs += 1;
@@ -1554,6 +1557,7 @@ export class TopMeanCoordinatorEngine {
                         // from it and load no target datasets.
                         // Batch TOP_MEAN and Finder share the same causal arm set.
                         enableCausalArms: true,
+                        ...(finderArmProfile ? {} : { sharedArtifactCache }),
                         enableDirectionalArm: !finderArmProfile,
                         directionalTotalPairs: enumRes.canonicalPairs.length,
                         loadTargetDataset,
@@ -1793,6 +1797,8 @@ export class TopMeanCoordinatorEngine {
                 }
             }
 
+            // Release the sole retained delta index before persistence/archive.
+            sharedArtifactCache.prepared = undefined;
             this.performanceDiagnostic.phases.replayMs = performance.now() - replayStartedAt;
             const parsedDailyCacheAfter = getParsedIbkrDailyCacheStats();
             this.performanceDiagnostic.replay.parsedDailyCacheHits = Math.max(0, parsedDailyCacheAfter.hits - parsedDailyCacheBefore.hits);

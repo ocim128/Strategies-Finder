@@ -18,6 +18,13 @@ columnar loader, materializing only the newest requested bars on cache hits.
 Detached loads retain the full series. See the
 [price-data guide](price-data.md) for shared loader and freshness contracts.
 
+Shared IBKR parsed columns in worker isolates are bounded by 512 series and
+16 million candle points (768 MB). Main-thread daily/4h working sets keep
+their separate limits. CSV mtime validation and per-run cache invalidation
+remain authoritative. TOP_MEAN Arm Performance children still make one replay
+pass; the standalone coordinator's annual delta-index cache is not retained
+between Finder candidates.
+
 Asset Opportunity fixed-horizon `oosHorizonBasis` accepts `pair` (default),
 `base_only` (BASE long), and `quote_only` (QUOTE short). Single and batch runs
 load the selected synthetic leg through the run-scoped dataset cache and align

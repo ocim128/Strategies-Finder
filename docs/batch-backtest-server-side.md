@@ -691,7 +691,8 @@ horizon values are retained. The switch replay does not use cooldown.
 ### Performance Diagnostics
 
 The coordinator streams compact artifacts from disk for the current snapshot,
-target discovery, and each replay window. The snapshot reopens the iterator
+target discovery, and replay reconstruction (once for unweighted runs, per
+window for cap-tilt). The snapshot reopens the iterator
 for its endpoint, latest-event, and vote passes; neither it nor the coordinator
 retains a run-wide trade array. This trades repeated sequential reads for a
 bounded heap even when artifact JSON totals several GB. Shard read-ahead stays
@@ -713,7 +714,13 @@ successful completion. JSON serialization still runs on the server thread.
 Replay sorts one pair's temporary deltas at a time, then retains them in
 columnar typed arrays (37 bytes per delta) rather than JS objects. Event
 bucketing also uses typed arrays and releases each source stream after copying
-it. Timestamp, score, P&L, and confidence columns remain Float64 so numeric
+it. Standalone, unweighted replays retain that single immutable bucket index
+through the annual passes, then release it before result persistence. Each
+annual pass still rebuilds its accumulators, causal support histories, picks,
+cooldown and portfolio from scratch, including pre-window carry-in votes.
+Cap-tilt replays rescan because their coverage counters depend on the window;
+single-pass Finder children do not retain a replay index. Timestamp, score,
+P&L, and confidence columns remain Float64 so numeric
 precision and selector semantics are preserved. Total RAM still scales with
 trade deltas and event snapshots; these changes remove the full-corpus and
 per-delta JS-object heap growth. Standalone runs terminate workers after shard
@@ -777,11 +784,20 @@ switchover a one-time rebuild. See the
 [price-data guide](price-data.md#sqlite-metadata-freshness) for the
 revision contract. Worker-thread
 reads and synthetic-cache writes use their thread as the blocking boundary,
-avoiding Node's shared filesystem thread-pool bottleneck. Hosts with at least 48 GiB of
-RAM automatically raise each server loader's leg/pair LRUs from the 24/16
-defaults to 128/32; lower-memory hosts retain the defaults. An empty Workers
-field uses every available logical core up to the 32-worker cap. Enter a lower
-value only when the machine must reserve capacity for another workload.
+avoiding Node's shared filesystem thread-pool bottleneck. Main-thread loaders
+on hosts with at least 48 GiB of RAM raise their leg/pair LRUs from 24/16 to
+128/32. Worker isolates retain 24/16 regardless of machine RAM, and their IBKR
+parsed-column cache is capped at both 512 series and 16 million candle points
+(768 MB). Entry count alone allowed long histories to exceed the 1.6 GB
+per-worker footprint estimate. An empty Workers field uses available logical
+cores up to 32, further limited by 75% of physical RAM divided by that estimate.
+Explicit worker counts still override the memory ceiling.
+
+New runs with at least 10,000 pairs and 35% coverage of their unique unordered
+pair matrix choose the existing `asset_tile_v1` layout. Each tile needs at most
+24 legs, so both legs stay cached instead of fetching one new second leg per
+pair. Smaller and sparse universes keep coarse `leg_affinity_v1` shards to
+avoid excessive task/file overhead. Resumes preserve their stamped layout.
 
 Large TOP_MEAN runs thrash the per-worker leg LRU (a 50k-pair run measured
 ~38k leg misses), so each miss re-reads its seed. IBKR seed loads therefore
@@ -790,6 +806,10 @@ consult the disk-backed parsed-seed sidecar
 re-parsing the CSV text; on a 24-worker run with large-cap seeds this cut the
 measured load path from ~31 ms to ~6–10 ms per pair. See the
 [price-data guide](price-data.md) for the sidecar contract.
+Sidecar writers use separate temporary files per write, including across
+threads sharing a process id. A Windows rename conflict accepts another
+writer's result only after validating its format, CSV mtime and size; leftover
+temporary files are removed.
 
 Replay stage 1 (artifact scan) can likewise fan out: when the run does not use
 cap-tilt weighting and at least 8 shards completed, the coordinator scans
@@ -799,6 +819,26 @@ merge reproduces the sequential scan's first-encounter asset indexing and
 stable per-pair delta order exactly, so results are unchanged; the sequential
 scan remains the fallback for cap-tilt runs, resumed shards with read
 failures, and small runs.
+
+For a read-only, reproducible replay comparison against a completed local run:
+
+```powershell
+rtk proxy npm.cmd exec -- esno scripts/bench-top-mean-replay.ts --run-id <runId> --year 2025
+```
+
+It benchmarks the full window and two independent years at the manifest's
+fixed cutoff, with 5 bps slippage and 0.1% commission, and prints phase timings
+and full-result SHA-256 fingerprints (normalizing only elapsed report text).
+It does not rewrite the saved run. On the 49,601-pair October 9 switch fixture,
+annual passes fell from 3.5–3.6 seconds to 0.9 seconds with identical full-window
+and annual fingerprints. These isolated replay measurements exclude backtests
+and do not predict total coordinator latency.
+On the same saved pair set, a 28-worker loading-only comparison using the new
+bounded caches took 26.3 seconds / 49,301 leg misses with coarse shards versus
+19.7 seconds / 19,260 misses with tiles. Both produced 183,543,538 candle bars
+and no load errors. A preceding stress run with the old worker cache limits
+exceeded 72 GB committed memory on a 64 GiB host and was stopped; it is not a
+completed before/after timing measurement.
 
 IBKR and crypto historical CSV cache hits materialize only the requested
 newest bars. Complete columnar entries remain available to full-series callers;

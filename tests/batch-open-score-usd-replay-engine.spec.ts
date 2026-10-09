@@ -11,6 +11,7 @@ import { MAX_ACTIVE_BLOCK_COUNT, MAX_ACTIVE_BOOTSTRAP_SEED } from "../lib/batch-
 import { selectClosedCandleWindow, selectExecutionAwareClosedCandles } from "../lib/alert-evaluation-window";
 import type { BatchSyntheticPairArtifact } from "../lib/batch-backtest/batch-synthetic-artifact";
 import type { BacktestResult, OHLCVData, Time, Trade } from "../lib/types/strategies";
+import type { OpenScoreUsdSharedArtifactCache } from "../lib/batch-backtest/open-score-replay/types";
 
 const T0 = 1_700_000_000;
 
@@ -195,6 +196,66 @@ function makeTarget(asset: string, bars: number, priceAt: (i: number) => number)
 async function* fromArray<T>(items: T[]): AsyncIterable<T> {
     for (const item of items) yield item;
 }
+
+describe("run-scoped artifact replay index", () => {
+    it("matches fresh full and independent windows without retaining pair streams or rereading artifacts", async () => {
+        const pairs = [
+            makePair("A", "B", [makeTrade("long", T0, T0 + 20_000, 5), makeTrade("short", T0 + 25_000, null, -2)], 3),
+            makePair("C", "B", [makeTrade("long", T0 + 4_000, T0 + 16_000, -1)], -1),
+            makePair("A", "C", [makeTrade("short", T0 + 10_000, T0 + 30_000, 3)], 3),
+            makePair("D", "B", []),
+        ];
+        const targets = ["A", "B", "C", "D"].map((asset, n) => makeTarget(asset, 50, (i) => 100 + n + i * (n + 1)));
+        const normalize = (result: Awaited<ReturnType<typeof runOpenScoreUsdReplay>>) => ({
+            ...result, reportLines: result.reportLines.map((line) => line.replace(/elapsed=[0-9.]+s/g, "elapsed=Xs")),
+        });
+        for (const mode of ["horizon", "asset_switch"] as const) {
+            const cache: OpenScoreUsdSharedArtifactCache = {};
+            let reads = 0;
+            for (const window of [
+                {}, { sampleFromSec: T0 + 8_000, sampleToSec: T0 + 35_000 },
+                { sampleToSec: T0 - 1 }, {},
+            ]) {
+                const options = { mode, horizons: [2, 5], interval: "1h", enableCausalArms: true,
+                    enableDirectionalArm: true, directionalTotalPairs: pairs.length,
+                    evaluationCutoffSec: T0 + 49_000, includeEventDetails: true,
+                    independentWindow: true, selectionCooldownBars: 2,
+                    loadTargetDataset: async (asset: string) => targets.find((target) => target.asset === asset)?.data ?? null, ...window };
+                const fresh = await runOpenScoreUsdReplay(() => fromArray(pairs), () => fromArray(targets), options);
+                const phases: string[] = [];
+                const reused = await runOpenScoreUsdReplay(() => { reads++; return fromArray(pairs); }, () => fromArray(targets), {
+                    ...options, sharedArtifactCache: cache, onPhase: (_phase, detail) => { phases.push(detail); },
+                });
+                expect(normalize(reused), `${mode}: ${JSON.stringify(window)}`).to.deep.equal(normalize(fresh));
+                expect(cache.prepared!.scan.streams).to.have.length(0);
+                expect(reads).to.equal(1);
+                expect(cache.prepared!.indexedDeltas.flatDeltas.length).to.be.greaterThan(0);
+                expect(phases.some((phase) => phase.startsWith("placed event deltas"))).to.equal(false);
+            }
+            const cancelled = await runOpenScoreUsdReplay(() => { throw new Error("cache must bypass scan"); }, undefined, {
+                mode, horizons: [2], interval: "1h", enableCausalArms: true, enableDirectionalArm: true,
+                sharedArtifactCache: cache, shouldStop: () => true,
+            });
+            expect(cancelled.complete).to.equal(false);
+            expect(cancelled.reportLines.join(" ")).to.match(/cancelled/);
+        }
+    });
+
+    it("recomputes window-specific cap-tilt coverage instead of using cached baseline deltas", async () => {
+        const pair = makePair("A", "B", [makeTrade("long", T0, T0 + 5_000), makeTrade("long", T0 + 10_000, null)]);
+        const targets = [makeTarget("A", 40, () => 100), makeTarget("B", 40, () => 100)];
+        const cache: OpenScoreUsdSharedArtifactCache = {};
+        for (const sampleFromSec of [undefined, T0 + 8_000]) {
+            const options = { horizons: [2], interval: "1h", sampleFromSec,
+                capTiltWeight: "smallBase2x" as const, lookupMarketCap: (asset: string) => asset === "A" ? 1 : 2 };
+            const fresh = await runOpenScoreUsdReplay(() => fromArray([pair]), () => fromArray(targets), options);
+            const reused = await runOpenScoreUsdReplay(() => fromArray([pair]), () => fromArray(targets), { ...options, sharedArtifactCache: cache });
+            expect(reused.reportLines.map((line) => line.replace(/elapsed=[0-9.]+s/g, "elapsed=Xs")))
+                .to.deep.equal(fresh.reportLines.map((line) => line.replace(/elapsed=[0-9.]+s/g, "elapsed=Xs")));
+            expect(cache.prepared).to.equal(undefined);
+        }
+    });
+});
 
 describe("TOP_RAW_DIRECTIONAL centered-pair experiment", () => {
     it("waits for the third actual pair candle across weekends, and never counts trades closed before or on it", async () => {

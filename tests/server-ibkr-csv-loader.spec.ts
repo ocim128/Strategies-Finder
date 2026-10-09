@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync, utimesSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -15,6 +15,7 @@ import { runAssetSwitchReplay } from "../lib/batch-backtest/open-score-replay/as
 import { replayArmFields, type ReplayArmResults } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import { normalizeTradFiDailyCandles } from "../lib/data/data-interval-utils";
 import type { OHLCVData } from "../lib/types/strategies";
+import { debugLogger } from "../lib/debug-logger";
 
 const CSV = [
     "time,open,high,low,close,volume",
@@ -24,6 +25,9 @@ const CSV = [
 ].join("\n");
 
 async function main(): Promise<void> {
+    assert.deepEqual(resolveServerBatchCacheBudget(64 * 1024 ** 3, true), {
+        legCacheMaxEntries: 24, pairCacheMaxEntries: 16,
+    }, "worker object-cache budget must not expand with shared machine RAM");
     const tanhBaseDir = mkdtempSync(join(tmpdir(), "server-ibkr-tanh-placeholder-"));
     try {
         const csvDir = join(tanhBaseDir, "price-data", "ibkr", "csv", "1d");
@@ -242,7 +246,20 @@ async function main(): Promise<void> {
         utimesSync(sidecarCsvPath, 1800000000, 1800000000);
 
         clearParsedIbkrCsvCache();
-        const first = await loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir);
+        const writeFailures: string[] = [];
+        const originalWarn = debugLogger.warn;
+        debugLogger.warn = (message, data) => { if (message === "ibkr.seed_sidecar_write_failed") writeFailures.push(JSON.stringify(data)); };
+        let first: OHLCVData[] | null;
+        try {
+            // All cold requests pass the async cache check before any parse
+            // publishes columns. Concurrent sidecar writes must stay atomic.
+            const reads = await Promise.all(Array.from({ length: 16 }, () =>
+                loadFreshIbkrCandlesFromDisk("TSLA\u2022", "30m", undefined, sidecarBaseDir)));
+            first = reads[0]!;
+            for (const read of reads) assert.deepEqual(read, first);
+        } finally { debugLogger.warn = originalWarn; }
+        assert.deepEqual(writeFailures, [], "concurrent writers use separate temporary files");
+        assert.deepEqual(readdirSync(join(sidecarBaseDir, "price-data", "ibkr", "seed-cache", "30m")), ["TSLA.csv.bin"]);
         assert.equal(first!.length, 2, "first load parses the CSV text");
         assert.ok(existsSync(sidecarPath), "first text parse writes the columnar sidecar");
 

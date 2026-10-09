@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import { mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
-import { isMainThread } from "node:worker_threads";
+import { isMainThread, threadId } from "node:worker_threads";
+import { randomUUID } from "node:crypto";
 import { debugLogger } from "../debug-logger";
 import { extractCandlesFromCsvPayload } from "../candle-cache";
 import { normalizeIbkrCandles } from "../data/data-interval-utils";
@@ -43,6 +44,9 @@ const IBKR_HEADER = "time,open,high,low,close,volume";
  * full re-parse.
  */
 const PARSED_CSV_CACHE_MAX_ENTRIES = 512;
+// Up to 768 MB of six-column seeds per worker, independent of history length.
+// An entry-only cap could retain 2.4 GB at 100k bars × 512 legs PER worker.
+const PARSED_WORKER_SEED_CACHE_MAX_POINTS = 16_000_000;
 const PARSED_4H_TARGET_CACHE_MAX_ENTRIES = 4_096;
 const PARSED_DAILY_TARGET_CACHE_MAX_ENTRIES = 8_192;
 // Six Float64 columns per candle: at most 384 MB of backing arrays.
@@ -62,7 +66,8 @@ function candlesFromColumnsTail(columns: OhlcvColumns, limitBars: number): OHLCV
 
 type ParsedCsvCache = Map<string, { mtimeMs: number; columns: OhlcvColumns }>;
 
-const parsedCsvCache: ParsedCsvCache = new Map();
+const parsedCsvCache: ParsedCsvCache = isMainThread ? new Map()
+    : new PointBoundedParsedCache(PARSED_WORKER_SEED_CACHE_MAX_POINTS, PARSED_CSV_CACHE_MAX_ENTRIES);
 // The coordinator replays thousands of standalone 4h targets across annual
 // passes. Keep that main-thread target working set separate from the normal
 // cache so it cannot evict the 30m seed cache used by other server work.
@@ -269,34 +274,48 @@ async function readSeedSidecar(
 }
 
 function writeSeedSidecarSync(filePath: string, mtimeMs: number, sizeBytes: number, columns: OhlcvColumns): void {
+    const sidecarPath = seedSidecarPathForCsv(filePath);
+    const temporary = `${sidecarPath}.${process.pid}.${threadId}.${randomUUID()}.tmp`;
     try {
         const payload = seedSidecarBuffer(columns, mtimeMs, sizeBytes);
-        const sidecarPath = seedSidecarPathForCsv(filePath);
         mkdirSync(dirname(sidecarPath), { recursive: true });
         // tmp-then-rename: a crash or concurrent writer can never leave a
         // half-written sidecar that parseSeedSidecarBuffer would trust.
-        const temporary = `${sidecarPath}.${process.pid}.tmp`;
+        // Worker threads share process.pid. A unique file per write prevents
+        // one worker from truncating or renaming another worker's payload.
         writeFileSync(temporary, payload);
-        renameSync(temporary, sidecarPath);
+        try { renameSync(temporary, sidecarPath); }
+        catch (error) {
+            // Windows may deny replacement while another worker reads the
+            // winner's file. Accept that winner only after exact validation.
+            if (!parseSeedSidecarBuffer(readFileSync(sidecarPath), mtimeMs, sizeBytes)) throw error;
+        }
     } catch (error) {
         debugLogger.warn("ibkr.seed_sidecar_write_failed", {
             error: error instanceof Error ? error.message : String(error),
         });
+    } finally {
+        try { unlinkSync(temporary); } catch { /* Renamed already or unavailable. */ }
     }
 }
 
 async function writeSeedSidecarAsync(filePath: string, mtimeMs: number, sizeBytes: number, columns: OhlcvColumns): Promise<void> {
+    const sidecarPath = seedSidecarPathForCsv(filePath);
+    const temporary = `${sidecarPath}.${process.pid}.${threadId}.${randomUUID()}.tmp`;
     try {
         const payload = seedSidecarBuffer(columns, mtimeMs, sizeBytes);
-        const sidecarPath = seedSidecarPathForCsv(filePath);
         await mkdir(dirname(sidecarPath), { recursive: true });
-        const temporary = `${sidecarPath}.${process.pid}.tmp`;
         await writeFile(temporary, payload);
-        await rename(temporary, sidecarPath);
+        try { await rename(temporary, sidecarPath); }
+        catch (error) {
+            if (!await readSeedSidecar(filePath, mtimeMs, sizeBytes)) throw error;
+        }
     } catch (error) {
         debugLogger.warn("ibkr.seed_sidecar_write_failed", {
             error: error instanceof Error ? error.message : String(error),
         });
+    } finally {
+        await unlink(temporary).catch(() => undefined);
     }
 }
 

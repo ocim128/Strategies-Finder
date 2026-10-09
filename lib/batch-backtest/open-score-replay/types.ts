@@ -13,11 +13,21 @@ import type { ActiveCapTiltWeight, CapTiltWeight } from "../cap-tilt-contract";
 import { REPLAY_ARM_FIELDS, isCausalArm, replayArmFields, type ReplayArmField } from "./arm-contract";
 import type { StageOutcome } from "./internal-types";
 import type { ArtifactScanResult } from "./artifact-scan";
+import type { IndexedScoreDeltas } from "./event-sweep";
 import { TOP_MEAN_HORIZONS_MAX_VALUE } from "../sp500-top-mean-request-limits";
 
 // ============================================================================
 // Public types
 // ============================================================================
+
+export interface OpenScoreUsdSharedArtifactCache {
+    prepared?: {
+        scan: ArtifactScanResult;
+        indexedDeltas: IndexedScoreDeltas;
+        causalArms: boolean;
+        directionalArm: boolean;
+    };
+}
 
 export interface ReplayComparison {
     /** Eligible events that entered both arms. */
@@ -855,6 +865,15 @@ export interface RunOpenScoreUsdReplayOptions {
      * caller-injected market-cap lookup during reconstruction.
      */
     scanOverride?: () => Promise<StageOutcome<ArtifactScanResult> | null>;
+    /**
+     * Caller-owned, run-scoped cache for an IMMUTABLE artifact set. Reuses the
+     * scan metadata and one bucketed delta representation across independent
+     * windows; accumulator, support, selection and cooldown state always reset.
+     * Keep causal/directional flags fixed. Cap-tilt bypasses this cache because
+     * its scan coverage counters depend on the requested window. Clear after
+     * the final pass; never reuse across runs or changed source artifacts.
+     */
+    sharedArtifactCache?: OpenScoreUsdSharedArtifactCache;
     /**
      * Cap-tilt weighting (docs/open-score-cap-tilt.md): the base leg of LONG
      * trades gets entry delta +2 (instead of +1) when the entry-time market

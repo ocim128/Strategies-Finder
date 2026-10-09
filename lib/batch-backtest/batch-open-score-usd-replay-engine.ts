@@ -198,7 +198,18 @@ export async function runOpenScoreUsdReplay(
     // Stage implementation: ./open-score-replay/artifact-scan.ts. An optional
     // scanOverride (TOP_MEAN parallel scan pool) replaces the sequential scan
     // entirely when it returns a result; null falls back to the loader path.
-    const overriddenScan = options.scanOverride ? await options.scanOverride() : null;
+    // The cache belongs to one immutable coordinator run. Only the flat
+    // bucket index survives: indexing consumes and releases the pair streams.
+    const artifactCache = capTiltActive ? undefined : options.sharedArtifactCache;
+    const prepared = artifactCache?.prepared;
+    const directionalArm = replayMode === "asset_switch" && options.enableDirectionalArm !== false;
+    if (prepared && (prepared.causalArms !== Boolean(options.enableCausalArms) || prepared.directionalArm !== directionalArm)) {
+        throw new Error("Artifact replay cache requires fixed causal and directional arm flags.");
+    }
+    if (shouldStop()) return emptyResult({ reportLines: ["OPEN_SCORE USD | cancelled before artifact scan."] });
+    const overriddenScan = prepared
+        ? { ok: true as const, result: prepared.scan }
+        : options.scanOverride ? await options.scanOverride() : null;
     const scanOutcome = overriddenScan ?? await scanArtifacts({
         enableDirectionalArm: replayMode === "asset_switch" && options.enableDirectionalArm !== false,
         enableCausalArms: options.enableCausalArms,
@@ -228,7 +239,7 @@ export async function runOpenScoreUsdReplay(
 
 
     const assetCount = assetNames.length;
-    const totalDeltas = streams.reduce((s, st) => s + st.length, 0);
+    const totalDeltas = prepared?.indexedDeltas.flatDeltas.length ?? streams.reduce((s, st) => s + st.length, 0);
     const emptyCausalDiagnostics = { eligibleCandidates: {}, unavailableDegree: 0, unavailableSupportHistory: 0 };
     const emptyCalculatedResult = async (partial: Partial<OpenScoreUsdReplayResult>): Promise<OpenScoreUsdReplayResult> => {
         if (!options.enableCausalArms) return emptyResult(partial);
@@ -249,6 +260,10 @@ export async function runOpenScoreUsdReplay(
     // sweep consumes and clears the per-pair streams; the flat bucketed arrays
     // it builds internally become the only delta indexing.
     const sweepOutcome = await sweepScoreEvents({
+        indexedDeltas: prepared?.indexedDeltas,
+        ...(artifactCache ? { onIndexedDeltas: (indexedDeltas) => {
+            artifactCache.prepared = { scan, indexedDeltas, causalArms: Boolean(options.enableCausalArms), directionalArm };
+        } } : {}),
         enableDirectionalArm: options.enableDirectionalArm,
         directionalTotalPairs: options.directionalTotalPairs,
         enableCausalArms: options.enableCausalArms,

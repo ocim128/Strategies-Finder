@@ -26,7 +26,7 @@ export interface EventSweepResult {
     causalArmDiagnostics?: CausalArmDiagnostics;
 }
 
-export async function sweepScoreEvents(args: {
+export interface ScoreEventSweepArgs {
     enableDirectionalArm?: boolean;
     directionalTotalPairs?: number;
     enableCausalArms?: boolean;
@@ -43,8 +43,20 @@ export async function sweepScoreEvents(args: {
     /** Report-window pair/asset counts reused by cancellation early exits. */
     pairCount: number;
     assetCount: number;
-}): Promise<StageOutcome<EventSweepResult>> {
-    const { streams, profitableStreams, sampleFromSec, sampleToSec, shouldStop, onPhase, pairCount, assetCount } = args;
+    /** Immutable bucket index reused by independent replay windows. */
+    indexedDeltas?: IndexedScoreDeltas;
+    onIndexedDeltas?: (index: IndexedScoreDeltas) => void;
+}
+
+export interface IndexedScoreDeltas {
+    bucketTimes: Float64Array;
+    bucketStart: Uint32Array;
+    flatDeltas: ScoreDeltaBuffer;
+    flatStreamIdx: Uint32Array;
+}
+
+export async function indexScoreDeltas(args: ScoreEventSweepArgs): Promise<StageOutcome<IndexedScoreDeltas>> {
+    const { streams, shouldStop, onPhase, pairCount, assetCount } = args;
     const totalDeltas = streams.reduce((s, st) => s + st.length, 0);
     // --- Phase 2: time-bucketed merge -> decision events + candidates ------
     // The prior implementation merged streams with a binary k-way heap: that
@@ -60,7 +72,7 @@ export async function sweepScoreEvents(args: {
     // order. Each linear indexing/counting/placement pass yields at bounded
     // delta intervals so progress and Stop reach the server before the final
     // accumulator sweep on a huge pair list.
-    const cancelled = (): StageOutcome<EventSweepResult> => ({
+    const cancelled = (): StageOutcome<IndexedScoreDeltas> => ({
         ok: false,
         earlyExit: { reportLine: "OPEN_SCORE USD | cancelled during event sweep.", pairs: pairCount, assets: assetCount },
     });
@@ -159,6 +171,24 @@ export async function sweepScoreEvents(args: {
     streams.length = 0;
     timeIndex.clear();
 
+    return { ok: true, result: { bucketTimes, bucketStart, flatDeltas, flatStreamIdx } };
+}
+
+export async function sweepScoreEvents(args: ScoreEventSweepArgs): Promise<StageOutcome<EventSweepResult>> {
+    const { profitableStreams, sampleFromSec, sampleToSec, shouldStop, onPhase, pairCount, assetCount } = args;
+    const cancelled = (): StageOutcome<EventSweepResult> => ({
+        ok: false,
+        earlyExit: { reportLine: "OPEN_SCORE USD | cancelled during event sweep.", pairs: pairCount, assets: assetCount },
+    });
+    if (shouldStop()) return cancelled();
+    const indexed = args.indexedDeltas
+        ? { ok: true as const, result: args.indexedDeltas }
+        : await indexScoreDeltas(args);
+    if (!indexed.ok) return indexed;
+    if (!args.indexedDeltas) args.onIndexedDeltas?.(indexed.result);
+    const { bucketTimes, bucketStart, flatDeltas, flatStreamIdx } = indexed.result;
+    const totalDeltas = flatDeltas.length;
+    onPhase("events", "sweeping indexed score deltas", 0, totalDeltas);
     const rawScore = new Array<number>(assetCount).fill(0);
     const directionalScore = new Float64Array(assetCount);
     const directionalEnabled = args.mode === "asset_switch" && args.enableDirectionalArm !== false;
