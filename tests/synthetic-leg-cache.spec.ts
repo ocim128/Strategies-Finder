@@ -141,6 +141,16 @@ describe("SyntheticLegCache", () => {
 
         expect(await cache.get("same-key")).to.equal(2);
     });
+
+    it("reports existence through has() without distorting hit accounting", () => {
+        const cache = new SyntheticLegCache<number>(4);
+        cache.set("entry", Promise.resolve(1));
+        const hitsBefore = cache.hitCount();
+
+        expect(cache.has("entry")).to.equal(true);
+        expect(cache.has("missing")).to.equal(false);
+        expect(cache.hitCount()).to.equal(hitsBefore, "has() must not count a cache hit");
+    });
 });
 
 describe("synthetic cache keys", () => {

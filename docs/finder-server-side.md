@@ -604,7 +604,13 @@ The worker-local `pairCache` and pair-metadata LRU use the same reserve-aware
 limit through `resolveAssetOpportunityPairCacheCapacity`; if a partition
 exceeds that limit, earlier pairs may be reloaded on later holdout iterations.
 Failed or empty loads are never cached
-— they stay retryable. Iteration diagnostics report prepared-candle cache
+— they stay retryable. This includes the optional aligned-leg closes: a
+failed metadata load is evicted (with a structured warning and a 2-second
+retry cooldown scoped to the run's metadata cache) instead of being cached as
+empty metadata, so a recovered dependency serves later holdout iterations,
+neighbouring contexts with their own caches are never suppressed by another
+context's failure or joined to another context's pending work, and legitimately
+missing alignment stays cached as nulls. Iteration diagnostics report prepared-candle cache
 hits/misses and isolate `closedCandlePreparation` time inside
 `dataPreparation`.
 

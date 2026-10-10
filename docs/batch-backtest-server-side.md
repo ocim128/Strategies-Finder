@@ -804,7 +804,16 @@ switchover a one-time rebuild. See the
 [price-data guide](price-data.md#sqlite-metadata-freshness) for the
 revision contract. Worker-thread
 reads and synthetic-cache writes use their thread as the blocking boundary,
-avoiding Node's shared filesystem thread-pool bottleneck. Main-thread loaders
+avoiding Node's shared filesystem thread-pool bottleneck. Atomic cache
+publications give every write its own sibling temporary file (a per-write
+UUID, not a per-process name that worker threads share) and retry the
+publishing rename a few times, because Windows renames onto a destination
+another writer is concurrently replacing fail transiently with EPERM; each
+failed writer cleans up only its own temporary file. The LRU-touch memo used
+by the oldest-mtime-first prune is bounded by the same `MAX_CACHE_FILES` cap
+and releases a path's record when that file is pruned, so bookkeeping cannot
+outgrow the on-disk cache; an evicted memo entry only costs a later
+filesystem stat. Main-thread loaders
 on hosts with at least 48 GiB of RAM raise their leg/pair LRUs from 24/16 to
 128/32. Worker isolates retain 24/16 regardless of machine RAM, and their IBKR
 parsed-column cache is capped at both 512 series and 16 million candle points
@@ -812,6 +821,36 @@ parsed-column cache is capped at both 512 series and 16 million candle points
 per-worker footprint estimate. An empty Workers field uses available logical
 cores up to 32, further limited by 75% of physical RAM divided by that estimate.
 Explicit worker counts still override the memory ceiling.
+
+Within one loader instance, in-flight synthetic-pair productions, leg
+fetches, and metadata attempts are scoped to BOTH the caller's active cache
+identity (loader instance or run context) AND its cancellation owner (the
+caller's AbortSignal, or none): overlapping requests that share a cache and a
+signal — or share a cache and no signal — join one production and share one
+fingerprint computation, disk lookup, build, and write, while a caller with
+an independent cache or an independent signal starts its own production, so
+another context's pending work can never bypass a valid cache hit and another
+caller's abort can never decide its result. Productions capture a cache
+generation at creation; `clearCaches()` invalidates them, and a stale or
+cancelled production publishes nothing — its bars, metadata, and retry state
+can never overwrite entries published by a newer generation. Settlement
+cleanup removes a pending entry only while it still points at the exact
+promise being settled, so a stale producer can never delete a newer
+same-key producer. Settled aligned closes are cached WITH the dataset
+reference (held weakly) they were computed from; retrieval serves them only
+when that provenance is the exact cached pair dataset (bar-count equality
+remains a sanity check), and publication replaces any entry from another
+dataset instead of keeping it merely because the key exists. A pending
+metadata join also requires the exact pair dataset identity. Shared
+resampled leg closes distinguish source datasets even when their candle
+counts and timestamps match; coverage and the latest close detect browser
+stream append/trim/tail updates. Historical corrections replace the source
+dataset or invalidate the loader. Source identity bookkeeping is weak and
+the resampled-series LRU remains bounded. The optional
+aligned-metadata failure cooldown (2 seconds per pair, bounded bookkeeping)
+is scoped to the metadata-cache owner, so independent run contexts retry
+independently while contexts sharing a metadata cache share the cooldown.
+Pair bars remain available whenever only the optional metadata fails.
 
 New runs with at least 10,000 pairs and 35% coverage of their unique unordered
 pair matrix choose the existing `asset_tile_v1` layout. Each tile needs at most

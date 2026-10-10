@@ -25,6 +25,8 @@ import {
     SYNTHETIC_PAIR_CACHE_VERSION,
     __cacheFilePathForTests,
     __clearSyntheticPairDiskCacheForTests,
+    __lruTouchMemoSizeForTests,
+    __setLruTouchCapForTests,
     __setSeedDirForTests,
     __setSeriesMetaFetcherForTests,
     __setSyntheticPairCacheDirForTests,
@@ -37,6 +39,7 @@ import {
     MAX_CACHE_FILES,
     pruneOnStartup,
     pruneSyntheticPairDiskCache,
+    pruneSyntheticPairDiskCacheAsync,
     storeSyntheticPair,
 } from "../lib/batch-backtest/synthetic-pair-disk-cache";
 
@@ -699,4 +702,124 @@ test("a cache MISS does not refresh mtime (touch only fires on a validated hit)"
 
     const mtimeAfter = statSync(p).mtimeMs;
     assert.equal(mtimeAfter, mtimeBefore, "a miss must not refresh mtime");
+});
+
+// --------------------------------------------------------------------------
+// Concurrent atomic publication: every write needs its own temp file, because
+// concurrent writers to one pair (worker threads included) share the process
+// id and used to share one `<file>.<pid>.tmp` path.
+// --------------------------------------------------------------------------
+
+test("concurrent same-key writes all publish and leave no temp files behind", async () => {
+    const args = makeArgs();
+    const outcomes = await Promise.all(
+        Array.from({ length: 8 }, () => storeSyntheticPair(args, makeBars(4))),
+    );
+    assert.equal(
+        outcomes.filter(Boolean).length,
+        8,
+        "no writer may fail through a shared temp-file rename",
+    );
+    const leftovers = readdirSync(cacheDir).filter((f) => f.endsWith(".tmp"));
+    assert.equal(leftovers.length, 0, "each writer must consume or clean up its own temp file");
+
+    const loaded = await loadCachedSyntheticPair(args);
+    assert.ok(loaded !== null, "the published cache file must be readable");
+    assert.equal(loaded!.bars.length, 4, "the published payload must be complete");
+});
+
+test("a failed publication cleans up only its own temp file", async () => {
+    const goodArgs = makeArgs();
+    assert.equal(await storeSyntheticPair(goodArgs, makeBars(2)), true);
+    const goodPath = __cacheFilePathForTests(goodArgs);
+
+    // The final rename cannot replace a directory, so this writer fails after
+    // writing its temp file and must unlink exactly that temp file.
+    const blockedArgs = makeArgs({ pairKey: "blocked|pair" });
+    mkdirSync(__cacheFilePathForTests(blockedArgs), { recursive: true });
+    assert.equal(await storeSyntheticPair(blockedArgs, makeBars(2)), false);
+
+    assert.equal(existsSync(goodPath), true, "the concurrent successful pair must be untouched");
+    const leftovers = readdirSync(cacheDir).filter((f) => f.endsWith(".tmp"));
+    assert.equal(leftovers.length, 0, "the failed writer must clean up its own temp file");
+    assert.ok(await loadCachedSyntheticPair(goodArgs), "cache still serves the successful pair");
+});
+
+// --------------------------------------------------------------------------
+// Bounded LRU-touch bookkeeping: the touch memo must not retain one entry per
+// path ever hit, and pruning must release the pruned paths' records.
+// --------------------------------------------------------------------------
+
+function makeKeyedCryptoArgs(key: string): SyntheticPairDiskCacheArgs {
+    const args = makeCryptoArgs();
+    args.pairKey = `${key}|BTCUSDT|PAXGUSDT|1h|1h|50000|synthetic`;
+    return args;
+}
+
+test("LRU-touch bookkeeping stays bounded under repeated distinct cache hits", async () => {
+    __setLruTouchCapForTests(4);
+    try {
+        __setSeriesMetaFetcherForTests(async () => ({ ok: true, lastTime: 1782914400, barsCount: 65003, updatedAt: 1 }));
+        const argsByKey = ["CAP0", "CAP1", "CAP2", "CAP3", "CAP4", "CAP5"].map(makeKeyedCryptoArgs);
+        for (const a of argsByKey) {
+            assert.equal(await storeSyntheticPair(a, makeBars(2)), true);
+        }
+        // Each hit records a memo entry; with six distinct hits against a cap
+        // of four, the memo must evict its oldest entries instead of growing.
+        for (const a of argsByKey) {
+            assert.ok(await loadCachedSyntheticPair(a));
+        }
+        assert.ok(
+            __lruTouchMemoSizeForTests() <= 4,
+            `memo size ${__lruTouchMemoSizeForTests()} must stay under the cap`,
+        );
+
+        // An entry evicted from the memo is harmless: the next hit falls
+        // through to the filesystem stat check and still refreshes the mtime.
+        const evictedPath = __cacheFilePathForTests(argsByKey[0]!);
+        touchFile(evictedPath, (LRU_TOUCH_THROTTLE_MS / 1000) + 600);
+        const mtimeBefore = statSync(evictedPath).mtimeMs;
+        assert.ok(await loadCachedSyntheticPair(argsByKey[0]!));
+        assert.ok(
+            statSync(evictedPath).mtimeMs > mtimeBefore,
+            "a hit whose memo entry was evicted must still refresh mtime via stat",
+        );
+    } finally {
+        __setLruTouchCapForTests(null);
+    }
+});
+
+test("pruned files release their LRU-touch records in both prune paths", async () => {
+    __setSeriesMetaFetcherForTests(async () => ({ ok: true, lastTime: 1782914400, barsCount: 65003, updatedAt: 1 }));
+    const argsA = makeKeyedCryptoArgs("PRUNE-A");
+    const argsB = makeKeyedCryptoArgs("PRUNE-B");
+    for (const a of [argsA, argsB]) {
+        assert.equal(await storeSyntheticPair(a, makeBars(2)), true);
+    }
+    for (const a of [argsA, argsB]) {
+        assert.ok(await loadCachedSyntheticPair(a));
+    }
+    const sizeAfterHits = __lruTouchMemoSizeForTests();
+    assert.ok(sizeAfterHits >= 2, "both hits must have recorded touch memos");
+
+    // Synchronous prune path (startup): A is the oldest mtime, so it is
+    // evicted and its memo record must be released with the file.
+    const syncResult = pruneSyntheticPairDiskCache({ maxFiles: 1, maxBytes: MAX_CACHE_BYTES });
+    assert.equal(syncResult.evictedFiles, 1);
+    assert.equal(
+        __lruTouchMemoSizeForTests(),
+        sizeAfterHits - 1,
+        "the sync prune must release the pruned path's memo",
+    );
+
+    // Async prune path (deferred post-write): evict the remaining pair file
+    // and confirm its memo record is released too.
+    const asyncResult = await pruneSyntheticPairDiskCacheAsync({ maxFiles: 0, maxBytes: MAX_CACHE_BYTES });
+    assert.ok(asyncResult !== null);
+    assert.equal(asyncResult.evictedFiles, 1);
+    assert.equal(
+        __lruTouchMemoSizeForTests(),
+        sizeAfterHits - 2,
+        "the async prune must release the pruned path's memo",
+    );
 });

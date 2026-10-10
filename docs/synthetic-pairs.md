@@ -50,6 +50,18 @@ npm run synthetic:pair -- --base-symbol ETHUSDT --quote-symbol PAXGUSDT --symbol
 
 Output is saved to `price-data/synthetic/<SYMBOL>-<interval>.json` by default.
 
+The run summary distinguishes two different bar counts:
+
+- `AlignedSourceBars` — source candles present in both legs after
+  intersection-only alignment, counted before any aggregation.
+- `SyntheticBars` — the final target-interval bar count written to the payload.
+- `Dropped` — source alignment losses only: base source bars with no aligned
+  quote counterpart. Merging several aligned source bars into one target bar
+  is aggregation, not a loss, so a fully aligned 8:1 reconstruction reports
+  `Dropped=0` while `AlignedSourceBars=8` and `SyntheticBars=1`. When the
+  payload was aggregated, a final `Aggregated ...` line names the effective
+  source interval.
+
 Import the generated JSON via **Data Mining → Import JSON → Load JSON to Chart**.
 
 ## How It Works
@@ -107,6 +119,13 @@ Internal executor callers can supply `backtestRunOptions.stopLossStressRanges`, 
 - Both inputs are sorted ascending and deduped by last-write-wins before alignment.
 - Bars where the quote `open`, `close`, `high`, or `low` are zero or non-finite are dropped.
 - If fewer than `minBars` (default 1) valid synthetic bars remain, generation fails with an error.
+
+`meta.alignedBars` / `meta.droppedBars` describe the SOURCE interval: a
+dropped bar is a base source bar with no aligned quote bar. The UI's
+synthetic diagnostics use the pipeline's effective source interval — when a
+finer seed interval was selected but a leg only exists at the target
+interval, the fallback reports the target interval and `aggregated: false`
+even though a sub-bar interval was initially chosen.
 
 ### Symbol Derivation
 
@@ -200,6 +219,19 @@ The shared fetch → align → aggregate pipeline lives in `buildSyntheticPairFr
 - `sourceBarsCap` — Finder passes `DATA_CHART_TOTAL_LIMIT` to keep remote gap-fill bounded.
 - `tailSliceBars` — a caller can trim the final bars to a target limit.
 - `allowEmptyLegs` — Data Mining uses this to emit its own per-leg diagnostics before failing.
+- `assumeNormalizedLegs` — canonical loaders (Binance sanitize, IBKR CSV
+  sort/dedupe, server persistence normalization) return ascending,
+  deduplicated, numerically-timed candles, so Batch and Data Mining build
+  pairs through the fused normalized transform instead of re-parsing each
+  leg. Data Mining verifies each leg with `ensureNormalizedLegBars` at its
+  fetch boundary: the scan checks the canonical parser's observable contract
+  (numeric, normalized Unix-second times in strict order, finite numeric
+  OHLC and volume) and returns canonical input zero-copy; anything else is
+  re-normalized through `parseOhlcvBars`, so ISO strings, BusinessDay
+  objects, millisecond/string timestamps, duplicates, and invalid rows
+  convert exactly like the generic path. The generic
+  parser stays for arbitrary external inputs such as the CLI's file mode
+  and the Worker API's remote candles.
 
 ### IBKR Synthetic Pairs & 4H Aggregation
 

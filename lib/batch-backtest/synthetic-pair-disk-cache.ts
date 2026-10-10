@@ -35,6 +35,7 @@
  * §"synthetic-pair disk cache").
  */
 
+import { randomUUID } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
@@ -109,6 +110,14 @@ const PRUNE_BATCH_SIZE = 64;
  * throttle bounds disk writes: at most one `utimes` per file per window.
  */
 export const LRU_TOUCH_THROTTLE_MS = 5 * 60_000;
+/**
+ * Insertion-order cap on {@link lastLruTouchByPath}. Pruning removes cache
+ * files but cannot anticipate which paths were touched, so without a cap the
+ * memo retained one entry per path ever hit — unbounded process-lifetime
+ * retention despite the on-disk file cap. MAX_CACHE_FILES is the natural
+ * bound: the memo only needs to cover files that can currently exist.
+ */
+export const MAX_LRU_TOUCH_ENTRIES = MAX_CACHE_FILES;
 
 let cacheDirForTests: string | null = null;
 /**
@@ -431,6 +440,33 @@ export async function loadCachedSyntheticPair(
  * stalled Stop and `/status` servicing during large cold-cache runs. The
  * caller (`loadCachedSyntheticPair`) treats this as fire-and-forget.
  */
+/**
+ * Record an LRU-touch memo entry under the insertion-order cap. Re-inserting
+ * keeps the entry youngest; the oldest entries are dropped first. An evicted
+ * entry is harmless — the next hit on that path simply falls through to the
+ * filesystem `stat` check instead of the memo.
+ */
+function rememberLruTouch(filePath: string, at: number): void {
+    lastLruTouchByPath.delete(filePath);
+    lastLruTouchByPath.set(filePath, at);
+    while (lastLruTouchByPath.size > lruTouchCap()) {
+        const oldestPath = lastLruTouchByPath.keys().next().value;
+        if (oldestPath === undefined) break;
+        lastLruTouchByPath.delete(oldestPath);
+    }
+}
+
+/** Test seam: shrink the memo cap so specs can exercise eviction cheaply. */
+let lruTouchCapForTests: number | null = null;
+
+export function __setLruTouchCapForTests(cap: number | null): void {
+    lruTouchCapForTests = cap;
+}
+
+function lruTouchCap(): number {
+    return Math.max(1, lruTouchCapForTests ?? MAX_LRU_TOUCH_ENTRIES);
+}
+
 async function touchCacheFileForLru(filePath: string): Promise<void> {
     try {
         const now = Date.now();
@@ -440,12 +476,12 @@ async function touchCacheFileForLru(filePath: string): Promise<void> {
         }
         const mtimeMs = (await stat(filePath)).mtimeMs;
         if (now - mtimeMs < LRU_TOUCH_THROTTLE_MS) {
-            lastLruTouchByPath.set(filePath, mtimeMs);
+            rememberLruTouch(filePath, mtimeMs);
             return;
         }
         const nowSec = now / 1000;
         await utimes(filePath, nowSec, nowSec);
-        lastLruTouchByPath.set(filePath, now);
+        rememberLruTouch(filePath, now);
     } catch {
         // Locked file, vanished between read and touch, permission error —
         // leave the mtime alone. Pruning will still work; it just won't see
@@ -572,6 +608,65 @@ export async function storeSyntheticPair(
 }
 
 /**
+ * Sibling temp path for one atomic write. The name must be unique per WRITE,
+ * not per process: concurrent writers to the same pair (worker threads share
+ * the process id) previously shared `<file>.<pid>.tmp`, so one writer's
+ * rename could steal or delete another's in-flight temp file and fail the
+ * write. `randomUUID()` makes collisions practically impossible; each failed
+ * writer cleans up only the temp path it created.
+ */
+function atomicTempPath(filePath: string): string {
+    return `${filePath}.${process.pid}.${randomUUID()}.tmp`;
+}
+
+/**
+ * Concurrent publication of the same pair races on the RENAME, not the temp
+ * file: on Windows a rename onto a destination another writer is concurrently
+ * replacing fails with EPERM/EACCES even though every writer uses its own
+ * temp path. The competing rename finishes in microseconds, so a short
+ * bounded retry makes same-key publication reliable without changing the
+ * rename-based durability contract. Other errors (missing temp, permissions)
+ * are not transient and surface immediately.
+ */
+const ATOMIC_RENAME_ATTEMPTS = 4;
+const ATOMIC_RENAME_RETRY_DELAY_MS = 5;
+
+function isTransientRenameError(error: unknown): boolean {
+    const code = (error as NodeJS.ErrnoException)?.code;
+    return code === "EPERM" || code === "EACCES";
+}
+
+async function renameWithRetry(tmp: string, filePath: string): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+        try {
+            await rename(tmp, filePath);
+            return;
+        } catch (error) {
+            if (attempt >= ATOMIC_RENAME_ATTEMPTS || !isTransientRenameError(error)) {
+                throw error;
+            }
+            await new Promise((resolve) => setTimeout(resolve, ATOMIC_RENAME_RETRY_DELAY_MS * attempt));
+        }
+    }
+}
+
+function renameWithRetrySync(tmp: string, filePath: string): void {
+    for (let attempt = 1; ; attempt += 1) {
+        try {
+            renameSync(tmp, filePath);
+            return;
+        } catch (error) {
+            if (attempt >= ATOMIC_RENAME_ATTEMPTS || !isTransientRenameError(error)) {
+                throw error;
+            }
+            // The sync writer only runs inside workers (see storeSyntheticPair),
+            // where a bounded blocking wait is allowed.
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ATOMIC_RENAME_RETRY_DELAY_MS * attempt);
+        }
+    }
+}
+
+/**
  * Write `buffer` to `filePath` atomically via a sibling temp file + rename.
  * `rename` is atomic on the same filesystem (NTFS/ext4), so a crash mid-write
  * leaves either the old file or the new file — never a truncated hybrid.
@@ -581,10 +676,10 @@ export async function storeSyntheticPair(
  * producer promise.
  */
 async function writeAtomic(filePath: string, buffer: Buffer): Promise<void> {
-    const tmp = `${filePath}.${process.pid}.tmp`;
+    const tmp = atomicTempPath(filePath);
     try {
         await writeFile(tmp, buffer);
-        await rename(tmp, filePath);
+        await renameWithRetry(tmp, filePath);
     } catch (error) {
         try { await unlink(tmp); } catch { /* best-effort cleanup */ }
         throw error;
@@ -592,10 +687,10 @@ async function writeAtomic(filePath: string, buffer: Buffer): Promise<void> {
 }
 
 function writeAtomicSync(filePath: string, buffer: Buffer): void {
-    const tmp = `${filePath}.${process.pid}.tmp`;
+    const tmp = atomicTempPath(filePath);
     try {
         writeFileSync(tmp, buffer);
-        renameSync(tmp, filePath);
+        renameWithRetrySync(tmp, filePath);
     } catch (error) {
         try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
         throw error;
@@ -614,6 +709,11 @@ export function __setSyntheticPairCacheDirForTests(dir: string | null): void {
     startupPruneDone = false;
     pruneScheduled = false;
     lastLruTouchByPath.clear();
+}
+
+/** Test-only snapshot of the LRU-touch memo size (bounded-retention checks). */
+export function __lruTouchMemoSizeForTests(): number {
+    return lastLruTouchByPath.size;
 }
 
 /**
@@ -695,6 +795,9 @@ export function pruneSyntheticPairDiskCache(options: SyntheticPairCachePruneOpti
         if (totalBytes <= maxBytes && totalFiles <= maxFiles) break;
         try {
             unlinkSync(entry.path);
+            // The file no longer exists; its touch memo must not outlive it,
+            // or the memo would retain a stale path until the size cap evicted it.
+            lastLruTouchByPath.delete(entry.path);
             totalBytes -= entry.size;
             totalFiles -= 1;
             evictedBytes += entry.size;
@@ -884,6 +987,8 @@ export async function pruneSyntheticPairDiskCacheAsync(
             if (totalBytes <= maxBytes && totalFiles <= maxFiles) break;
             try {
                 await unlink(entry.path);
+                // Sync twin keeps memo retention in lockstep with disk state.
+                lastLruTouchByPath.delete(entry.path);
                 totalBytes -= entry.size;
                 totalFiles -= 1;
                 evictedBytes += entry.size;

@@ -16,7 +16,7 @@ import { isIbkrSymbol } from "./local-daily-datasets";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { parseIntervalSeconds } from "./interval-utils";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
-import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, isSyntheticSymbol, pickSourceInterval, resolveSyntheticAvailableIntervals, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
+import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, ensureNormalizedLegBars, isSyntheticSymbol, pickSourceInterval, resolveSyntheticAvailableIntervals, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
 
 interface NormalizedCandle {
     time: number;
@@ -790,6 +790,12 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                 interval,
                 targetBars: SYNTHETIC_TARGET_BARS,
                 allowEmptyLegs: true,
+                // The canonical browser loaders (Binance sanitize, IBKR CSV
+                // sort/dedupe) already return normalized candles, so use the
+                // fused normalized transform like the Batch loaders.
+                // ensureNormalizedLegBars verifies that shape per leg and only
+                // pays a canonicalizing pass for a loader that breaks it.
+                assumeNormalizedLegs: true,
                 // offline:true so synthetic leg fetches skip the remote Binance
                 // gap-fill tail and read straight from SQLite/IndexedDB when
                 // present. Synthetic pair freshness is bounded for the whole
@@ -798,26 +804,33 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                 // the Binance round-trip the TTL gate is meant to avoid. The
                 // offline contract still falls back to remote for cold symbols,
                 // so a brand-new pair fetches normally.
-                fetchLeg: (legSymbol, sourceInterval, bars) =>
-                    dataManager.fetchHistoricalData(legSymbol, sourceInterval, bars, { offline: true }),
+                fetchLeg: async (legSymbol, legInterval, bars) =>
+                    ensureNormalizedLegBars(
+                        await dataManager.fetchHistoricalData(legSymbol, legInterval, bars, { offline: true }),
+                    ),
             });
             const syntheticBars = result.bars;
+            // Completion diagnostics must describe the pipeline's EFFECTIVE
+            // resolution: when the target-interval fallback ran, the initial
+            // source selection never fetched and no aggregation happened.
+            const effectiveSourceInterval = result.sourceInterval;
+            const aggregated = effectiveSourceInterval !== interval;
 
             this.recordDiagnostic('synth_legs_fetched', {
-                baseBars: result.base.length, quoteBars: result.quote.length, sourceInterval,
+                baseBars: result.base.length, quoteBars: result.quote.length, sourceInterval: effectiveSourceInterval,
                 baseFirst: result.base[0]?.time, baseLast: result.base[result.base.length - 1]?.time,
                 quoteFirst: result.quote[0]?.time, quoteLast: result.quote[result.quote.length - 1]?.time,
             });
 
             if (result.base.length === 0) {
-                this.recordDiagnostic('synth_zero_data', { leg: 'base', symbol: baseSymbol, sourceInterval });
-                uiManager.showToast(`No data for ${baseSymbol} on ${sourceInterval}.`, 'error');
+                this.recordDiagnostic('synth_zero_data', { leg: 'base', symbol: baseSymbol, sourceInterval: effectiveSourceInterval });
+                uiManager.showToast(`No data for ${baseSymbol} on ${effectiveSourceInterval}.`, 'error');
                 this.setStatus(`No data for ${baseSymbol}.`, 'error');
                 return false;
             }
             if (result.quote.length === 0) {
-                this.recordDiagnostic('synth_zero_data', { leg: 'quote', symbol: quoteSymbol, sourceInterval });
-                uiManager.showToast(`No data for ${quoteSymbol} on ${sourceInterval}.`, 'error');
+                this.recordDiagnostic('synth_zero_data', { leg: 'quote', symbol: quoteSymbol, sourceInterval: effectiveSourceInterval });
+                uiManager.showToast(`No data for ${quoteSymbol} on ${effectiveSourceInterval}.`, 'error');
                 this.setStatus(`No data for ${quoteSymbol}.`, 'error');
                 return false;
             }
@@ -830,7 +843,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                 alignedBars: result.meta.alignedBars,
                 droppedBars: result.meta.droppedBars,
                 afterAggregation: syntheticBars.length,
-                aggregated: !!source,
+                aggregated,
             });
 
             this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, syntheticBars);
@@ -840,7 +853,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                 firstTime: syntheticBars[0]?.time, lastTime: syntheticBars[syntheticBars.length - 1]?.time,
             });
 
-            const subBarNote = source ? ` (sub-bar: ${sourceInterval}->${interval}, ${source.ratio}x)` : '';
+            const subBarNote = aggregated && source ? ` (sub-bar: ${effectiveSourceInterval}->${interval}, ${source.ratio}x)` : '';
             this.setStatus(
                 `Loaded ${syntheticBars.length} synthetic bars for ${syntheticSymbol}${subBarNote} (dropped ${result.meta.droppedBars}).`,
                 'success'

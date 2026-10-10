@@ -11,6 +11,7 @@
 import type { Time } from 'lightweight-charts';
 import type { OHLCVData } from '../../lib/types/strategies';
 import { parseOhlcvBars } from './ohlcv-file';
+import { parseTimeToUnixSeconds } from '../../lib/time-normalization';
 import { parseIntervalSeconds } from '../../lib/interval-utils';
 import { SYNTHETIC_SOURCE_BARS_LIMIT } from '../../lib/data/constants';
 import { getLocalDailyDatasetConfig, isIbkrSymbol } from '../../lib/local-daily-datasets';
@@ -234,6 +235,28 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
 export function buildSyntheticPairPayload(
     options: BuildSyntheticPairPayloadOptions
 ): SyntheticPairPayload {
+    return buildSyntheticPairPayloadWithMeta(options).payload;
+}
+
+/**
+ * Detail result for callers (the generation CLI) that need the transform's
+ * alignment metadata for diagnostics without rebuilding the dataset. The
+ * payload is byte-identical to {@link buildSyntheticPairPayload}'s output.
+ */
+export interface SyntheticPairPayloadWithMeta {
+    payload: SyntheticPairPayload;
+    /** Source-level alignment metadata: losses measured BEFORE aggregation. */
+    meta: SyntheticPairDatasetMeta;
+    /**
+     * Whether the payload was aggregated from a finer effective source
+     * interval (derived from the resolved source, not the caller's request).
+     */
+    aggregated: boolean;
+}
+
+export function buildSyntheticPairPayloadWithMeta(
+    options: BuildSyntheticPairPayloadOptions
+): SyntheticPairPayloadWithMeta {
     const { baseSymbol, quoteSymbol, interval, base, quote, minBars = 1, generatedAt, sourceInterval, wickMode = 'matched' } = options;
     const normalizedBase = normalizeSymbol(baseSymbol);
     const normalizedQuote = normalizeSymbol(quoteSymbol);
@@ -244,29 +267,38 @@ export function buildSyntheticPairPayload(
     const finalBars = sourceInterval
         ? aggregateSyntheticBars(dataset.bars, interval)
         : dataset.bars;
+    const sourceSeconds = sourceInterval ? parseIntervalSeconds(sourceInterval) : null;
+    const targetSeconds = parseIntervalSeconds(interval);
+    const aggregated = Boolean(
+        sourceSeconds && targetSeconds && sourceSeconds < targetSeconds
+    );
 
     return {
-        symbol,
-        interval,
-        provider: 'synthetic',
-        generatedAt: generatedAt ?? new Date().toISOString(),
-        source: {
-            baseSymbol: normalizedBase,
-            quoteSymbol: normalizedQuote,
-            method: 'ratio',
-            sourceInterval,
-            ...(wickMode === 'worst_case' ? { wickMode } : {}),
+        payload: {
+            symbol,
+            interval,
+            provider: 'synthetic',
+            generatedAt: generatedAt ?? new Date().toISOString(),
+            source: {
+                baseSymbol: normalizedBase,
+                quoteSymbol: normalizedQuote,
+                method: 'ratio',
+                sourceInterval,
+                ...(wickMode === 'worst_case' ? { wickMode } : {}),
+            },
+            bars: finalBars.length,
+            data: finalBars.map((bar) => ({
+                time: Number(bar.time),
+                datetime: new Date(Number(bar.time) * 1000).toISOString(),
+                open: bar.open,
+                high: bar.high,
+                low: bar.low,
+                close: bar.close,
+                volume: bar.volume,
+            })),
         },
-        bars: finalBars.length,
-        data: finalBars.map((bar) => ({
-            time: Number(bar.time),
-            datetime: new Date(Number(bar.time) * 1000).toISOString(),
-            open: bar.open,
-            high: bar.high,
-            low: bar.low,
-            close: bar.close,
-            volume: bar.volume,
-        })),
+        meta: dataset.meta,
+        aggregated,
     };
 }
 
@@ -374,6 +406,42 @@ export interface SyntheticPairFromLegsResult {
     sourceInterval: string;
     base: OHLCVData[];
     quote: OHLCVData[];
+}
+
+/**
+ * Verify-or-normalize guard for legs entering the normalized fast path.
+ *
+ * The canonical loaders (Binance sanitize, IBKR CSV sort/dedupe, persistence
+ * normalization) return ascending, deduplicated, numerically-timed candles,
+ * which is exactly what `assumeNormalizedLegs` trusts. One O(n) scan verifies
+ * the canonical parser's OBSERVABLE contract — numeric, normalized
+ * Unix-second times in strictly ascending order with finite numeric OHLC and
+ * volume — and returns the input array UNCHANGED (zero-copy) when it holds.
+ * Any other shape (ISO strings, BusinessDay objects, millisecond or string
+ * timestamps, duplicates, non-finite rows) is handed to `parseOhlcvBars`, so
+ * conversion, invalid-row filtering, sorting, and last-write-wins dedupe come
+ * from the one canonical implementation instead of a second normalizer.
+ */
+export function ensureNormalizedLegBars(bars: readonly OHLCVData[]): OHLCVData[] {
+    let prevTime = -Infinity;
+    for (const bar of bars) {
+        const time = (bar as OHLCVData | undefined)?.time;
+        if (typeof time !== "number"
+            || !Number.isFinite(time)
+            || parseTimeToUnixSeconds(time) !== time
+            || time <= prevTime) {
+            return parseOhlcvBars(bars);
+        }
+        prevTime = time;
+        if (!Number.isFinite(bar.open)
+            || !Number.isFinite(bar.high)
+            || !Number.isFinite(bar.low)
+            || !Number.isFinite(bar.close)
+            || !Number.isFinite(bar.volume)) {
+            return parseOhlcvBars(bars);
+        }
+    }
+    return bars as OHLCVData[];
 }
 
 /**

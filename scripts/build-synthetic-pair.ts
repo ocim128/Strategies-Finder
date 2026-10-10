@@ -6,7 +6,7 @@ import type { OHLCVData } from "../lib/types/strategies";
 import { parseOhlcvDataFile } from "./lib/ohlcv-file";
 import { parseIntervalSeconds } from "../lib/interval-utils";
 import {
-    buildSyntheticPairPayload,
+    buildSyntheticPairPayloadWithMeta,
     deriveSyntheticSymbol,
     pickSourceInterval,
     type SyntheticPairPayload,
@@ -56,6 +56,19 @@ function fail(message: string): never {
     throw new Error(message);
 }
 
+const VALUE_FLAGS: ReadonlySet<string> = new Set([
+    "--base-symbol",
+    "--quote-symbol",
+    "--symbol",
+    "--interval",
+    "--bars",
+    "--out",
+    "--base-file",
+    "--quote-file",
+    "--wick-mode",
+    "--source-interval",
+]);
+
 export function parseCliOptions(argv: string[]): CliOptions {
     let baseSymbol: string | undefined;
     let quoteSymbol: string | undefined;
@@ -76,22 +89,29 @@ export function parseCliOptions(argv: string[]): CliOptions {
             return { baseSymbol: "", quoteSymbol: "", symbol: "", interval: "", bars: 0, outPath: "", help: true };
         }
 
-        if (arg === "--base-symbol" && next) { baseSymbol = next; i += 1; continue; }
-        if (arg === "--quote-symbol" && next) { quoteSymbol = next; i += 1; continue; }
-        if (arg === "--symbol" && next) { symbol = next; i += 1; continue; }
-        if (arg === "--interval" && next) { interval = next; i += 1; continue; }
-        if (arg === "--bars" && next) { bars = Number(next); i += 1; continue; }
-        if (arg === "--out" && next) { outPath = next; i += 1; continue; }
-        if (arg === "--base-file" && next) { baseFile = next; i += 1; continue; }
-        if (arg === "--quote-file" && next) { quoteFile = next; i += 1; continue; }
+        if (!VALUE_FLAGS.has(arg)) {
+            fail(`Unknown argument: ${arg}. Run with --help to list the supported flags.`);
+        }
+        // Every supported flag takes a value; a missing or flag-shaped value
+        // is a usage error, not a silently dropped option.
+        if (next === undefined || next.startsWith("--")) {
+            fail(`${arg} requires a value.`);
+        }
+        i += 1;
+        if (arg === "--base-symbol") { baseSymbol = next; continue; }
+        if (arg === "--quote-symbol") { quoteSymbol = next; continue; }
+        if (arg === "--symbol") { symbol = next; continue; }
+        if (arg === "--interval") { interval = next; continue; }
+        if (arg === "--bars") { bars = Number(next); continue; }
+        if (arg === "--out") { outPath = next; continue; }
+        if (arg === "--base-file") { baseFile = next; continue; }
+        if (arg === "--quote-file") { quoteFile = next; continue; }
         if (arg === "--wick-mode") {
             if (next !== 'matched' && next !== 'worst_case') fail('--wick-mode must be matched or worst_case.');
-            wickMode = next; i += 1; continue;
+            wickMode = next;
+            continue;
         }
-        if (arg === "--source-interval") {
-            if (!next || next.startsWith('--')) fail('--source-interval requires an interval.');
-            sourceInterval = next.trim().toLowerCase(); i += 1; continue;
-        }
+        sourceInterval = next.trim().toLowerCase();
     }
 
     if (!baseSymbol) fail("--base-symbol is required.");
@@ -103,6 +123,11 @@ export function parseCliOptions(argv: string[]): CliOptions {
     const normalizedQuote = quoteSymbol.trim().toUpperCase();
     const normalizedSymbol = symbol?.trim().toUpperCase() || deriveSyntheticSymbol(normalizedBase, normalizedQuote);
     const resolvedInterval = interval.trim().toLowerCase();
+    // Validate the target interval itself; --source-interval's divisibility
+    // check below only fires when an explicit source was supplied.
+    if (!parseIntervalSeconds(resolvedInterval)) {
+        fail(`--interval must be a supported interval like 15m or 4h (received "${interval}").`);
+    }
     if (sourceInterval) {
         const targetSeconds = parseIntervalSeconds(resolvedInterval);
         const sourceSeconds = parseIntervalSeconds(sourceInterval);
@@ -134,6 +159,7 @@ function printRunSummary(
     filePath: string,
     baseBars: number,
     quoteBars: number,
+    alignedSourceBars: number,
     droppedBars: number
 ): void {
     console.log(`[SyntheticPair] Base=${payload.source.baseSymbol} Quote=${payload.source.quoteSymbol} Interval=${payload.interval}`);
@@ -142,7 +168,10 @@ function printRunSummary(
         console.log('[SyntheticPair] STRESS: outer-envelope wicks; chart import regenerates strategy signals and can add TP touches.');
         console.log('[SyntheticPair] Use synthetic:stress-stops for adverse-only stops with original signals and TP checks.');
     }
-    console.log(`[SyntheticPair] FetchedBase=${baseBars} FetchedQuote=${quoteBars} SyntheticBars=${payload.bars} Dropped=${droppedBars}`);
+    console.log(
+        `[SyntheticPair] FetchedBase=${baseBars} FetchedQuote=${quoteBars} AlignedSourceBars=${alignedSourceBars}`
+        + ` SyntheticBars=${payload.bars} Dropped=${droppedBars}`
+    );
     console.log(`[SyntheticPair] Output=${filePath}`);
 }
 
@@ -203,7 +232,7 @@ export async function run(argv: string[]): Promise<void> {
         fail(`No quote data returned for ${options.quoteSymbol} on ${sourceInterval}.`);
     }
 
-    const payload = buildSyntheticPairPayload({
+    const { payload, meta, aggregated } = buildSyntheticPairPayloadWithMeta({
         baseSymbol: options.baseSymbol,
         quoteSymbol: options.quoteSymbol,
         symbol: options.symbol,
@@ -218,9 +247,14 @@ export async function run(argv: string[]): Promise<void> {
     fs.mkdirSync(path.dirname(options.outPath), { recursive: true });
     fs.writeFileSync(options.outPath, JSON.stringify(payload, null, 2), "utf8");
 
-    const alignedBars = payload.bars;
-    const droppedBars = Math.max(0, baseBars.length - alignedBars);
-    printRunSummary(payload, options.outPath, baseBars.length, quoteBars.length, droppedBars);
+    // Dropped counts SOURCE alignment losses (base bars with no aligned quote
+    // bar); the final target-bar count after aggregation is payload.bars, a
+    // separate number. An 8:1 fully-aligned aggregation therefore reports
+    // Dropped=0 even though 8 source bars became 1 target bar.
+    printRunSummary(payload, options.outPath, baseBars.length, quoteBars.length, meta.alignedBars, meta.droppedBars);
+    if (aggregated) {
+        console.log(`[SyntheticPair] Aggregated ${meta.alignedBars} aligned source bars (${sourceInterval} -> ${options.interval}).`);
+    }
 }
 
 if (process.argv[1] && /build-synthetic-pair\.(ts|js)$/i.test(process.argv[1])) {

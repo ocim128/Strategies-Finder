@@ -6,9 +6,10 @@ import {
     alignLegCloses,
     createBatchDatasetLoadDiagnostics,
     createBatchDatasetLoaderCore,
+    type CachedPairMetadata,
 } from "../lib/batch-backtest/batch-dataset-loader-core";
 import type { BatchDatasetLoadResult } from "../lib/batch-backtest/batch-dataset-loader-core";
-import { SyntheticLegCache } from "../lib/batch-backtest/synthetic-leg-cache";
+import { SyntheticLegCache, buildLegCacheKey, buildPairCacheKey } from "../lib/batch-backtest/synthetic-leg-cache";
 import {
     clearServerBatchDatasetCaches,
     fetchServerHistoricalData,
@@ -19,6 +20,7 @@ import {
     fetchServerHistoricalDataWithFetcher,
 } from "../lib/data/server-data-fetcher-factory";
 import type { DataFetcher } from "../lib/data/data-fetcher";
+import { DATA_CHART_TOTAL_LIMIT, SYNTHETIC_TARGET_BARS } from "../lib/data/constants";
 import { withLocalIbkrFixture } from "./helpers/local-ibkr-fixture";
 import { withLocalCryptoFixture, writeCryptoCsv } from "./helpers/local-crypto-fixture";
 import type { OHLCVData, Time } from "../lib/types/strategies";
@@ -195,9 +197,7 @@ describe("batch-backtest server loader parity", () => {
             },
         });
         const pairCache = new SyntheticLegCache<OHLCVData[]>(8);
-        const pairMetadataCache = new SyntheticLegCache<
-            Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
-        >(8);
+        const pairMetadataCache = new SyntheticLegCache<CachedPairMetadata>(8);
         const firstContext = {
             legCache: new SyntheticLegCache<OHLCVData[]>(8),
             pairCache,
@@ -271,6 +271,827 @@ describe("batch-backtest server loader parity", () => {
         expect(bypassContext.diagnostics.sourceLoads).to.equal(2);
     });
 
+    it("coalesces concurrent same-pair disk misses into one fingerprint, lookup, build, and write", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        let fingerprintCalls = 0;
+        let diskReads = 0;
+        let writes = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => {
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return source;
+            },
+            computeSyntheticPairFingerprint: async () => {
+                fingerprintCalls += 1;
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return "test-fingerprint";
+            },
+            loadCachedSyntheticPair: async () => {
+                diskReads += 1;
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return null;
+            },
+            storeSyntheticPair: async () => {
+                writes += 1;
+                return true;
+            },
+        });
+        const context = { diagnostics: createBatchDatasetLoadDiagnostics() };
+
+        const [first, second] = await Promise.all([
+            loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+            loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+        ]);
+
+        expect(first).to.equal(second);
+        expect(fingerprintCalls).to.equal(1);
+        expect(diskReads).to.equal(1);
+        expect(writes).to.equal(1);
+        expect(context.diagnostics.pairBuilds).to.equal(1);
+        expect(context.diagnostics.pairCacheMisses).to.equal(1);
+        expect(context.diagnostics.pairCacheHits).to.equal(1);
+        expect(context.diagnostics.diskCacheMisses).to.equal(1);
+    });
+
+    it("shares one disk lookup across concurrent same-pair disk hits", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        let diskReads = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => {
+                throw new Error("a shared disk hit must not rebuild the pair");
+            },
+            loadCachedSyntheticPair: async () => {
+                diskReads += 1;
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return { bars: source };
+            },
+        });
+        const context = { diagnostics: createBatchDatasetLoadDiagnostics() };
+
+        const [first, second] = await Promise.all([
+            loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+            loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+        ]);
+
+        expect(first).to.equal(second);
+        expect(diskReads).to.equal(1);
+        expect(context.diagnostics.diskCacheHits).to.equal(1);
+    });
+
+    it("serves concurrent bars-only and metadata consumers from one producer", async () => {
+        const times: number[] = [];
+        for (let bucket = 0; bucket < 2; bucket += 1) {
+            for (let i = 0; i < 8; i += 1) times.push(bucket * 8 * 1800 + i * 1800);
+        }
+        const source: OHLCVData[] = times.map((time, i) => ({
+            time: time as Time,
+            open: 100 + i,
+            high: 100.5 + i,
+            low: 99.5 + i,
+            close: 101 + i,
+            volume: 10,
+        }));
+        let fetches = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => {
+                fetches += 1;
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return source;
+            },
+        });
+        const context = {
+            preferInMemorySyntheticPairs: true,
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+
+        const [bars, withMetadata] = await Promise.all([
+            loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+            loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+        ]);
+
+        expect(context.diagnostics.pairBuilds).to.equal(1);
+        expect(bars).to.have.length(2);
+        expect(withMetadata.data).to.equal(bars);
+        expect(withMetadata.baseCloses).to.deep.equal([108, 116]);
+        expect(withMetadata.quoteCloses).to.deep.equal([108, 116]);
+        expect(fetches).to.equal(2);
+    });
+
+    it("allows a retry after a failed pair build instead of caching the rejection", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        let attempts = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => {
+                attempts += 1;
+                if (attempts <= 2) throw new Error("leg temporarily unavailable");
+                return source;
+            },
+        });
+
+        let firstError: unknown;
+        try {
+            await loader.load("BASE\u2022+QUOTE\u2022", "4h");
+        } catch (error) {
+            firstError = error;
+        }
+        expect((firstError as Error)?.message).to.match(/leg temporarily unavailable/);
+        expect(loader.getCacheStats().pair.size).to.equal(0);
+
+        const retried = await loader.load("BASE\u2022+QUOTE\u2022", "4h");
+        expect(retried).to.have.length(1);
+        expect(attempts).to.equal(4);
+    });
+
+    it("does not cache an aborted pair result", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        const controller = new AbortController();
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => {
+                controller.abort();
+                return source;
+            },
+        });
+        const context = { diagnostics: createBatchDatasetLoadDiagnostics() };
+
+        const aborted = await loader.load("BASE\u2022+QUOTE\u2022", "4h", controller.signal, context);
+        expect(aborted).to.have.length(0);
+        expect(loader.getCacheStats().pair.size).to.equal(0);
+
+        const fresh = await loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context);
+        expect(fresh).to.have.length(1);
+    });
+
+    it("keeps pair bars available when metadata fails, then retries after the dependency recovers", async (t) => {
+        t.mock.timers.enable({ apis: ["Date"] });
+        const times: number[] = [];
+        for (let bucket = 0; bucket < 2; bucket += 1) {
+            for (let i = 0; i < 8; i += 1) times.push(bucket * 8 * 1800 + i * 1800);
+        }
+        const source: OHLCVData[] = times.map((time, i) => ({
+            time: time as Time,
+            open: 100 + i,
+            high: 100.5 + i,
+            low: 99.5 + i,
+            close: 101 + i,
+            volume: 10,
+        }));
+        const cachedBars: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100.5, low: 99.5, close: 108, volume: 10 },
+            { time: 14400 as Time, open: 108, high: 108.5, low: 107.5, close: 116, volume: 10 },
+        ];
+        let legAttempts = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            loadCachedSyntheticPair: async () => ({ bars: cachedBars }),
+            fetchHistorical: async () => {
+                legAttempts += 1;
+                if (legAttempts <= 2) throw new Error("leg temporarily unavailable");
+                await new Promise((resolve) => setImmediate(resolve));
+                return source;
+            },
+        });
+
+        const failed = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(failed.data).to.equal(cachedBars);
+        expect(failed.baseCloses).to.equal(undefined);
+        expect(legAttempts).to.equal(2);
+
+        // The retry cooldown suppresses immediate re-attempts for the same
+        // pair while the dependency is down, without caching a fake success.
+        const suppressed = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(suppressed.baseCloses).to.equal(undefined);
+        expect(legAttempts).to.equal(2);
+
+        // After the cooldown window the next request retries and recovers.
+        t.mock.timers.tick(2100);
+        const recovered = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(recovered.baseCloses).to.deep.equal([108, 116]);
+        expect(recovered.quoteCloses).to.deep.equal([108, 116]);
+        expect(legAttempts).to.equal(4);
+    });
+
+    it("shares one in-flight metadata attempt across concurrent consumers", async () => {
+        const times: number[] = [];
+        for (let bucket = 0; bucket < 2; bucket += 1) {
+            for (let i = 0; i < 8; i += 1) times.push(bucket * 8 * 1800 + i * 1800);
+        }
+        const source: OHLCVData[] = times.map((time, i) => ({
+            time: time as Time,
+            open: 100 + i,
+            high: 100.5 + i,
+            low: 99.5 + i,
+            close: 101 + i,
+            volume: 10,
+        }));
+        const cachedBars: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100.5, low: 99.5, close: 108, volume: 10 },
+            { time: 14400 as Time, open: 108, high: 108.5, low: 107.5, close: 116, volume: 10 },
+        ];
+        let legAttempts = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            loadCachedSyntheticPair: async () => {
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return { bars: cachedBars };
+            },
+            fetchHistorical: async () => {
+                legAttempts += 1;
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                return source;
+            },
+        });
+
+        const [first, second] = await Promise.all([
+            loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h"),
+            loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h"),
+        ]);
+
+        expect(first.baseCloses).to.deep.equal([108, 116]);
+        expect(second.baseCloses).to.deep.equal(first.baseCloses);
+        expect(legAttempts).to.equal(2);
+    });
+
+    it("does not cache aborted metadata and serves a fresh retry", async () => {
+        const times: number[] = [];
+        for (let bucket = 0; bucket < 2; bucket += 1) {
+            for (let i = 0; i < 8; i += 1) times.push(bucket * 8 * 1800 + i * 1800);
+        }
+        const source: OHLCVData[] = times.map((time, i) => ({
+            time: time as Time,
+            open: 100 + i,
+            high: 100.5 + i,
+            low: 99.5 + i,
+            close: 101 + i,
+            volume: 10,
+        }));
+        const cachedBars: OHLCVData[] = [
+            { time: 0 as Time, open: 100, high: 100.5, low: 99.5, close: 108, volume: 10 },
+            { time: 14400 as Time, open: 108, high: 108.5, low: 107.5, close: 116, volume: 10 },
+        ];
+        const controller = new AbortController();
+        let legAttempts = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            loadCachedSyntheticPair: async () => ({ bars: cachedBars }),
+            fetchHistorical: async (_symbol, _interval, _limit, options) => {
+                legAttempts += 1;
+                if (options?.signal) controller.abort();
+                await new Promise((resolve) => setImmediate(resolve));
+                return source;
+            },
+        });
+
+        const aborted = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", controller.signal);
+        expect(aborted.data).to.equal(cachedBars);
+        expect(aborted.baseCloses).to.equal(undefined);
+
+        const retried = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(retried.baseCloses).to.deep.equal([108, 116]);
+        expect(legAttempts).to.be.greaterThan(2);
+    });
+
+    it("keeps an aborted caller's cancellation from failing an independently signaled caller", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        let openGate!: () => void;
+        const gate = new Promise<void>((resolve) => { openGate = resolve; });
+        let fingerprints = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+            computeSyntheticPairFingerprint: async () => {
+                fingerprints += 1;
+                await gate;
+                return "test-fingerprint";
+            },
+            loadCachedSyntheticPair: async () => null,
+        });
+        const abortedCaller = new AbortController();
+        const healthyCaller = new AbortController();
+
+        const cancelled = loader.load("BASE\u2022+QUOTE\u2022", "4h", abortedCaller.signal);
+        const healthy = loader.load("BASE\u2022+QUOTE\u2022", "4h", healthyCaller.signal);
+        abortedCaller.abort();
+        openGate();
+        const [first, second] = await Promise.all([cancelled, healthy]);
+
+        expect(fingerprints).to.equal(2, "independent cancellation owners must not share one producer");
+        expect(first).to.have.length(0);
+        expect(second).to.have.length(1);
+        expect(healthyCaller.signal.aborted).to.equal(false);
+    });
+
+    it("shares one production for a shared signal and caches nothing when it is aborted", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        let openGate!: () => void;
+        const gate = new Promise<void>((resolve) => { openGate = resolve; });
+        let fingerprints = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+            computeSyntheticPairFingerprint: async () => {
+                fingerprints += 1;
+                await gate;
+                return "test-fingerprint";
+            },
+            loadCachedSyntheticPair: async () => null,
+        });
+        const shared = new AbortController();
+        const context = { diagnostics: createBatchDatasetLoadDiagnostics() };
+
+        const first = loader.load("BASE\u2022+QUOTE\u2022", "4h", shared.signal, context);
+        const second = loader.load("BASE\u2022+QUOTE\u2022", "4h", shared.signal, context);
+        shared.abort();
+        openGate();
+
+        expect(await first).to.have.length(0);
+        expect(await second).to.have.length(0);
+        expect(fingerprints).to.equal(1, "same-signal callers legitimately share one producer");
+        expect(loader.getCacheStats().pair.size).to.equal(0);
+    });
+
+    it("serves an aborted-at-entry cached lookup without touching or poisoning the cache", async () => {
+        const source: OHLCVData[] = [0, 1800, 3600, 5400].map((time) => ({
+            time: time as Time,
+            open: 100,
+            high: 102,
+            low: 99,
+            close: 101,
+            volume: 10,
+        }));
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => source,
+        });
+        expect(await loader.load("BASE\u2022+QUOTE\u2022", "4h")).to.have.length(1);
+
+        const controller = new AbortController();
+        controller.abort();
+        expect(await loader.load("BASE\u2022+QUOTE\u2022", "4h", controller.signal)).to.have.length(0);
+
+        const healthy = await loader.load("BASE\u2022+QUOTE\u2022", "4h");
+        expect(healthy).to.have.length(1);
+        expect(loader.getCacheStats().pair.size).to.be.greaterThan(0);
+    });
+
+    it("does not let an invalidated stale producer overwrite metadata published after clearCaches", async () => {
+        const oldLegs: OHLCVData[] = Array.from({ length: 8 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: 100,
+            high: 110,
+            low: 90,
+            close: 101 + i,
+            volume: 10,
+        }));
+        const newLegs: OHLCVData[] = Array.from({ length: 16 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: 200,
+            high: 220,
+            low: 190,
+            close: 201 + i,
+            volume: 10,
+        }));
+        let openGate!: () => void;
+        const writeGate = new Promise<void>((resolve) => { openGate = resolve; });
+        let signalWrite!: () => void;
+        const writeEntered = new Promise<void>((resolve) => { signalWrite = resolve; });
+        let legs = oldLegs;
+        let writes = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async () => legs,
+            storeSyntheticPair: async () => {
+                writes += 1;
+                if (writes === 1) {
+                    signalWrite();
+                    await writeGate;
+                }
+                return true;
+            },
+        });
+
+        const staleRequest = loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        await writeEntered;
+        loader.clearCaches();
+        legs = newLegs;
+        const freshRequest = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(freshRequest.data).to.have.length(2);
+        expect(freshRequest.baseCloses).to.deep.equal([208, 216]);
+
+        openGate();
+        await staleRequest;
+
+        const cachedRequest = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(cachedRequest.data).to.have.length(2);
+        expect(cachedRequest.baseCloses).to.deep.equal(
+            [208, 216],
+            "metadata served for the cached pair must belong to the cached dataset",
+        );
+    });
+
+    it("scopes metadata retry cooldowns to the owning run context", async () => {
+        const seed: OHLCVData[] = Array.from({ length: 8 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: 100,
+            high: 110,
+            low: 90,
+            close: 101 + i,
+            volume: 10,
+        }));
+        const pairBars: OHLCVData[] = [{ time: 0 as Time, open: 100, high: 110, low: 90, close: 108, volume: 10 }];
+        let fetches = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            loadCachedSyntheticPair: async () => ({ bars: pairBars }),
+            fetchHistorical: async () => {
+                fetches += 1;
+                throw new Error("run A leg failure");
+            },
+        });
+        const makeContext = () => ({
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairMetadataCache: new SyntheticLegCache<CachedPairMetadata>(8),
+        });
+        const failing = makeContext();
+        const healthy = makeContext();
+        const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * 8, DATA_CHART_TOTAL_LIMIT);
+        for (const symbol of ["BASE\u2022", "QUOTE\u2022"]) {
+            healthy.legCache.set(buildLegCacheKey(symbol, "30m", sourceBars), Promise.resolve(seed));
+        }
+
+        const failed = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, failing);
+        expect(failed.baseCloses).to.equal(undefined);
+
+        const recovered = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, healthy);
+        expect(recovered.baseCloses).to.deep.equal(
+            [108],
+            "an independent context with healthy legs must not inherit another context's cooldown",
+        );
+    });
+
+    it("shares one cold metadata production across concurrent consumers", async () => {
+        const seed: OHLCVData[] = Array.from({ length: 8 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: 100,
+            high: 110,
+            low: 90,
+            close: 101 + i,
+            volume: 10,
+        }));
+        let fetches = 0;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            legCacheMaxEntries: 1,
+            fetchDetached: async () => [],
+            fetchHistorical: async () => {
+                fetches += 1;
+                await new Promise((resolve) => setImmediate(resolve));
+                return seed;
+            },
+        });
+        const context = {
+            preferInMemorySyntheticPairs: true,
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        };
+
+        const [first, second] = await Promise.all([
+            loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+            loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, context),
+        ]);
+
+        expect(fetches).to.equal(2);
+        expect(context.diagnostics.alignedSeriesMisses).to.equal(2);
+        expect(first.baseCloses).to.deep.equal([108]);
+        expect(second.baseCloses).to.deep.equal([108]);
+    });
+
+    it("serves mixed bars-only and metadata consumers from one production in both launch orders", async () => {
+        const seed: OHLCVData[] = Array.from({ length: 8 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: 100,
+            high: 110,
+            low: 90,
+            close: 101 + i,
+            volume: 10,
+        }));
+        for (const metadataFirst of [true, false]) {
+            let fetches = 0;
+            const loader = createBatchDatasetLoaderCore({
+                logPrefix: "batch.test",
+                fetchDetached: async () => [],
+                fetchHistorical: async () => {
+                    fetches += 1;
+                    await new Promise((resolve) => setImmediate(resolve));
+                    return seed;
+                },
+            });
+            const context = {
+                preferInMemorySyntheticPairs: true,
+                legCache: new SyntheticLegCache<OHLCVData[]>(8),
+                diagnostics: createBatchDatasetLoadDiagnostics(),
+            };
+            const launchBarsOnly = (): Promise<OHLCVData[]> => loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, context);
+            const launchWithMetadata = (): Promise<BatchDatasetLoadResult> => loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, context);
+            // Promise.all preserves argument order; pick results by role.
+            const settled = await Promise.all(
+                metadataFirst ? [launchWithMetadata(), launchBarsOnly()] : [launchBarsOnly(), launchWithMetadata()],
+            );
+            const bars = (metadataFirst ? settled[1] : settled[0]) as OHLCVData[];
+            const metadata = (metadataFirst ? settled[0] : settled[1]) as BatchDatasetLoadResult;
+
+            expect(fetches, `launch order metadataFirst=${metadataFirst}`).to.equal(2);
+            expect(context.diagnostics.pairBuilds, `launch order metadataFirst=${metadataFirst}`).to.equal(1);
+            expect(bars).to.have.length(1);
+            expect(metadata.baseCloses).to.deep.equal([108]);
+        }
+    });
+
+    it("replaces cached metadata from a different dataset even at the same bar count (changed prices)", async () => {
+        // Same length, same timestamps, different closes: length equality must
+        // never pass for dataset identity.
+        const legsAt = (closeStart: number): OHLCVData[] => Array.from({ length: 8 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: closeStart - 1 + i,
+            high: closeStart + 2 + i,
+            low: closeStart - 3 + i,
+            close: closeStart + i,
+            volume: 10,
+        }));
+        let legs = legsAt(101);
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            legCacheMaxEntries: 1,
+            pairCacheMaxEntries: 1,
+            fetchDetached: async () => [],
+            fetchHistorical: async () => legs,
+        });
+
+        const first = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(first.data.map((bar) => bar.time)).to.deep.equal([0]);
+        expect(first.baseCloses).to.deep.equal([108]);
+
+        // Evict BASE+QUOTE from the capacity-1 pair cache; its metadata stays.
+        await loader.load("BASE\u2022+THIRD\u2022", "4h");
+
+        legs = legsAt(201);
+        const rebuilt = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(rebuilt.data.map((bar) => bar.time)).to.deep.equal([0]);
+        expect(rebuilt.baseCloses).to.deep.equal([208]);
+
+        const cached = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(cached.data.map((bar) => bar.time)).to.deep.equal([0]);
+        expect(cached.baseCloses).to.deep.equal(
+            [208],
+            "cached metadata must belong to the exact cached dataset, not merely match its length",
+        );
+    });
+
+    it("replaces cached metadata from a different dataset with different timestamps", async () => {
+        const firstLegs: OHLCVData[] = Array.from({ length: 8 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: 100,
+            high: 110,
+            low: 90,
+            close: 101 + i,
+            volume: 10,
+        }));
+        const shiftedLegs: OHLCVData[] = firstLegs.map((bar) => ({ ...bar, time: (Number(bar.time) + 14400) as Time, close: bar.close + 100 }));
+        let legs = firstLegs;
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            legCacheMaxEntries: 1,
+            pairCacheMaxEntries: 1,
+            fetchDetached: async () => [],
+            fetchHistorical: async () => legs,
+        });
+
+        const first = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(first.baseCloses).to.deep.equal([108]);
+
+        await loader.load("BASE\u2022+THIRD\u2022", "4h");
+
+        legs = shiftedLegs;
+        const rebuilt = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(rebuilt.data.map((bar) => bar.time)).to.deep.equal([14400]);
+        expect(rebuilt.baseCloses).to.deep.equal([208]);
+
+        const cached = await loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h");
+        expect(cached.data.map((bar) => bar.time)).to.deep.equal([14400]);
+        expect(cached.baseCloses).to.deep.equal([208]);
+    });
+
+    for (const sharedSignal of [false, true]) {
+        it(`serves a context's own cached pair while another context's production is pending (sharedSignal=${sharedSignal})`, async () => {
+            let openGate!: () => void;
+            const gate = new Promise<void>((resolve) => { openGate = resolve; });
+            const loader = createBatchDatasetLoaderCore({
+                logPrefix: "batch.test",
+                fetchDetached: async () => [],
+                fetchHistorical: async () => [{ time: 0 as Time, open: 100, high: 110, low: 90, close: 108, volume: 10 }],
+                computeSyntheticPairFingerprint: async () => {
+                    await gate;
+                    return "test-fingerprint";
+                },
+                loadCachedSyntheticPair: async () => null,
+            });
+            const makeContext = () => ({
+                legCache: new SyntheticLegCache<OHLCVData[]>(8),
+                pairCache: new SyntheticLegCache<OHLCVData[]>(8),
+                pairMetadataCache: new SyntheticLegCache<CachedPairMetadata>(8),
+            });
+            const contextA = makeContext();
+            const contextB = makeContext();
+            // B already holds a valid settled pair, its metadata (with provenance),
+            // and healthy legs in its OWN caches.
+            const ownBars: OHLCVData[] = [{ time: 14400 as Time, open: 207, high: 210, low: 205, close: 208, volume: 80 }];
+            const pairKey = buildPairCacheKey({
+                syntheticSymbol: "BASE\u2022+QUOTE\u2022",
+                baseSymbol: "BASE\u2022",
+                quoteSymbol: "QUOTE\u2022",
+                interval: "4h",
+                sourceInterval: "30m",
+                sourceBars: Math.min(SYNTHETIC_TARGET_BARS * 8, DATA_CHART_TOTAL_LIMIT),
+            });
+            contextB.pairCache.set(pairKey, Promise.resolve(ownBars));
+            contextB.pairMetadataCache.set(pairKey, Promise.resolve({
+                baseCloses: [208],
+                quoteCloses: [208],
+                datasetRef: new WeakRef(ownBars),
+            }));
+            const sourceBars = Math.min(SYNTHETIC_TARGET_BARS * 8, DATA_CHART_TOTAL_LIMIT);
+            for (const symbol of ["BASE\u2022", "QUOTE\u2022"]) {
+                contextB.legCache.set(buildLegCacheKey(symbol, "30m", sourceBars), Promise.resolve(
+                    Array.from({ length: 8 }, (_, i) => ({
+                        time: (14400 + i * 1800) as Time,
+                        open: 207,
+                        high: 210,
+                        low: 205,
+                        close: 201 + i,
+                        volume: 10,
+                    })),
+                ));
+            }
+
+            const shared = new AbortController();
+            const signal = sharedSignal ? shared.signal : undefined;
+            const pendingOther = loader.load("BASE\u2022+QUOTE\u2022", "4h", signal, contextA);
+            const own = loader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", signal, contextB);
+            openGate();
+
+            await pendingOther;
+            const result = await own;
+            expect(result.data.map((bar) => bar.time)).to.deep.equal(
+                [14400],
+                "an independent context must not join another context's pending production",
+            );
+            expect(result.baseCloses).to.deep.equal([208]);
+        });
+    }
+
+    it("scopes leg productions to the active leg cache across independent contexts", async () => {
+        const seed: OHLCVData[] = Array.from({ length: 8 }, (_, i) => ({
+            time: (i * 1800) as Time,
+            open: 100,
+            high: 110,
+            low: 90,
+            close: 101 + i,
+            volume: 10,
+        }));
+        let openGate!: () => void;
+        const gate = new Promise<void>((resolve) => { openGate = resolve; });
+        const fetches: string[] = [];
+        const loader = createBatchDatasetLoaderCore({
+            logPrefix: "batch.test",
+            fetchDetached: async () => [],
+            fetchHistorical: async (symbol) => {
+                fetches.push(symbol);
+                if (symbol === "BASE\u2022") await gate;
+                return seed;
+            },
+        });
+        const makeContext = () => ({
+            preferInMemorySyntheticPairs: true,
+            legCache: new SyntheticLegCache<OHLCVData[]>(8),
+            pairCache: new SyntheticLegCache<OHLCVData[]>(8),
+            diagnostics: createBatchDatasetLoadDiagnostics(),
+        });
+        const contextA = makeContext();
+        const contextB = makeContext();
+
+        const firstPair = loader.load("BASE\u2022+QUOTE\u2022", "4h", undefined, contextA);
+        const secondPair = loader.load("BASE\u2022+THIRD\u2022", "4h", undefined, contextB);
+        openGate();
+        await Promise.all([firstPair, secondPair]);
+
+        expect(fetches.filter((symbol) => symbol === "BASE\u2022").length).to.equal(
+            2,
+            "independent leg caches must each fetch the shared leg themselves",
+        );
+    });
+
+    for (const oldRequestSucceeds of [true, false]) {
+        it(`keeps a newer pending production when a stale one settles (${oldRequestSucceeds ? "success" : "rejection"})`, async () => {
+            let settleOld!: (value: string) => void;
+            let failOld!: (error: Error) => void;
+            const oldGate = new Promise<string>((resolve, reject) => { settleOld = resolve; failOld = reject; });
+            let releaseNew!: (value: string) => void;
+            const newGate = new Promise<string>((resolve) => { releaseNew = resolve; });
+            let fingerprints = 0;
+            const loader = createBatchDatasetLoaderCore({
+                logPrefix: "batch.test",
+                fetchDetached: async () => [],
+                fetchHistorical: async () => [{ time: 0 as Time, open: 100, high: 110, low: 90, close: 108, volume: 10 }],
+                computeSyntheticPairFingerprint: async () => {
+                    const call = fingerprints += 1;
+                    return call === 1 ? oldGate : newGate;
+                },
+                loadCachedSyntheticPair: async () => ({ bars: [{ time: 0 as Time, open: 100, high: 110, low: 90, close: 108, volume: 10 }] }),
+            });
+
+            const stale = loader.load("BASE\u2022+QUOTE\u2022", "4h").catch(() => [] as OHLCVData[]);
+            loader.clearCaches();
+            const fresh = loader.load("BASE\u2022+QUOTE\u2022", "4h");
+            if (oldRequestSucceeds) {
+                settleOld("old-fingerprint");
+            } else {
+                failOld(new Error("old generation failed"));
+            }
+            await stale;
+
+            const joining = loader.load("BASE\u2022+QUOTE\u2022", "4h");
+            const fingerprintsBeforeRelease = fingerprints;
+            releaseNew("new-fingerprint");
+            const [freshBars, joiningBars] = await Promise.all([fresh, joining]);
+
+            expect(fingerprintsBeforeRelease).to.equal(
+                2,
+                "the joining request must await the newer production instead of starting a third",
+            );
+            expect(freshBars).to.equal(joiningBars);
+        });
+    }
+
     it("keeps browser and server loaders as wrappers around the shared core", () => {
         expect(existsSync(BROWSER_LOADER)).to.equal(true);
         expect(existsSync(SERVER_LOADER)).to.equal(true);
@@ -310,9 +1131,7 @@ describe("batch-backtest server loader parity", () => {
             preferInMemorySyntheticPairs: true,
             legCache: new SyntheticLegCache<OHLCVData[]>(8),
             pairCache: new SyntheticLegCache<OHLCVData[]>(8),
-            pairMetadataCache: new SyntheticLegCache<
-                Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
-            >(8),
+            pairMetadataCache: new SyntheticLegCache<CachedPairMetadata>(8),
             diagnostics: createBatchDatasetLoadDiagnostics(),
         };
         const cold = await coldLoader.loadWithMetadata("BASE\u2022+QUOTE\u2022", "4h", undefined, coldContext);
@@ -405,17 +1224,13 @@ describe("batch-backtest server loader parity", () => {
         // each resample once, then every partner alignment reuses the series.
         const first = {
             legCache: new SyntheticLegCache<OHLCVData[]>(8),
-            pairMetadataCache: new SyntheticLegCache<
-                Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
-            >(8),
+            pairMetadataCache: new SyntheticLegCache<CachedPairMetadata>(8),
             preferInMemorySyntheticPairs: true,
             diagnostics: createBatchDatasetLoadDiagnostics(),
         };
         const second = {
             legCache: first.legCache,
-            pairMetadataCache: new SyntheticLegCache<
-                Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
-            >(8),
+            pairMetadataCache: new SyntheticLegCache<CachedPairMetadata>(8),
             preferInMemorySyntheticPairs: true,
             diagnostics: createBatchDatasetLoadDiagnostics(),
         };

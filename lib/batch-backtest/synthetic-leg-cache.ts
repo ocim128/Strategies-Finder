@@ -78,6 +78,22 @@ export class SyntheticLegCache<T> {
         this.store.delete(key);
     }
 
+    /**
+     * Existence check without touching hit/miss accounting — for
+     * check-then-set publication that must not distort cache statistics.
+     */
+    has(key: string): boolean {
+        return this.store.has(key);
+    }
+
+    /**
+     * Value read without touching hit/miss accounting — for publication and
+     * provenance checks that must not distort cache statistics.
+     */
+    peek(key: string): Promise<T> | undefined {
+        return this.store.get(key);
+    }
+
     deleteIfValue(key: string, promise: Promise<T>): void {
         if (this.store.get(key) === promise) {
             this.store.delete(key);

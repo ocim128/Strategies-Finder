@@ -6,12 +6,15 @@ import {
     buildSyntheticPairDataset,
     buildSyntheticPairFromLegs,
     buildSyntheticPairPayload,
+    buildSyntheticPairPayloadWithMeta,
+    ensureNormalizedLegBars,
     pickSourceInterval,
     resolveSyntheticAvailableIntervals,
     resolveSyntheticSourceBars,
     SyntheticAlignmentError,
     SyntheticQuoteError,
 } from '../scripts/lib/synthetic-pair';
+import { parseOhlcvBars } from '../scripts/lib/ohlcv-file';
 import type { OHLCVData } from '../lib/types/strategies';
 
 function bar(time: number, overrides: Partial<OHLCVData> = {}): OHLCVData {
@@ -662,5 +665,220 @@ describe('buildSyntheticPairFromLegs', () => {
         // sourceInterval reported as '4h' (subdivided stayed true) — the
         // effective resolution of the surviving leg.
         assert.equal(result.sourceInterval, '4h');
+    });
+});
+
+describe('UI normalized fast path parity', () => {
+    const BULLET = '\u2022';
+
+    function legBarsAt(times: number[], legOffset: number): OHLCVData[] {
+        return times.map((time, i) => bar(time, {
+            open: 100 + i + legOffset,
+            high: 104 + i + legOffset,
+            low: 97 + i + legOffset,
+            close: 101 + i + legOffset,
+            volume: 10 + i,
+        }));
+    }
+
+    function runBothPaths(args: {
+        baseSymbol: string;
+        quoteSymbol: string;
+        interval: string;
+        targetBars: number;
+        fetchLeg: (symbol: string, sourceInterval: string, sourceBars: number) => Promise<OHLCVData[]>;
+    }) {
+        const run = async (assumeNormalizedLegs: boolean) => buildSyntheticPairFromLegs({
+            ...args,
+            assumeNormalizedLegs,
+        });
+        return Promise.all([run(false), run(true)]);
+    }
+
+    it('produces identical bars and meta for IBKR legs with stock session gaps (30m -> 4h)', async () => {
+        // Friday afternoon plus Monday morning 30m bars: the weekend gap must
+        // survive both paths and land in separate 4h buckets.
+        const times: number[] = [];
+        const fridayOpen = Date.UTC(2024, 0, 5, 14, 30) / 1000;
+        const mondayOpen = Date.UTC(2024, 0, 8, 14, 30) / 1000;
+        for (let i = 0; i < 10; i += 1) times.push(fridayOpen + i * 1800);
+        for (let i = 0; i < 10; i += 1) times.push(mondayOpen + i * 1800);
+
+        const [generic, optimized] = await runBothPaths({
+            baseSymbol: `MU${BULLET}`,
+            quoteSymbol: `CRWD${BULLET}`,
+            interval: '4h',
+            targetBars: 64,
+            fetchLeg: async (symbol) => symbol === `MU${BULLET}` ? legBarsAt(times, 0) : legBarsAt(times, 40),
+        });
+
+        assert.equal(generic.sourceInterval, '30m');
+        assert.deepEqual(optimized.sourceInterval, generic.sourceInterval);
+        assert.deepEqual(optimized.bars, generic.bars);
+        assert.deepEqual(optimized.meta, generic.meta);
+        assert.equal(optimized.meta.droppedBars, 0);
+        assert.equal(optimized.bars.length, 4, 'each session splits into two 4h buckets and the weekend gap separates them');
+    });
+
+    it('produces identical bars and meta for representative crypto legs', async () => {
+        const times = Array.from({ length: 96 }, (_, i) => i * 1800);
+        const [generic, optimized] = await runBothPaths({
+            baseSymbol: 'BNBUSDT',
+            quoteSymbol: 'PAXGUSDT',
+            interval: '4h',
+            targetBars: 24,
+            fetchLeg: async (symbol) => symbol === 'BNBUSDT' ? legBarsAt(times, 0) : legBarsAt(times, 40),
+        });
+
+        assert.equal(generic.sourceInterval, '30m');
+        assert.deepEqual(optimized.bars, generic.bars);
+        assert.deepEqual(optimized.meta, generic.meta);
+        assert.equal(optimized.bars.length, 12);
+    });
+
+    it('keeps the target-interval fallback identical in both paths', async () => {
+        // Crypto default: 4h target subdivides to 30m; the legs only have 4h
+        // data, so the pipeline falls back to the target interval without
+        // aggregation. Both paths must report the fallback resolution.
+        const targetBars = [0, 14400, 28800].map((time) => bar(time));
+
+        const [generic, optimized] = await runBothPaths({
+            baseSymbol: 'BNBUSDT',
+            quoteSymbol: 'PAXGUSDT',
+            interval: '4h',
+            targetBars: 3,
+            fetchLeg: async (_symbol, sourceInterval) => sourceInterval === '4h' ? targetBars : [],
+        });
+
+        assert.equal(generic.sourceInterval, '4h');
+        assert.deepEqual(optimized.sourceInterval, generic.sourceInterval);
+        assert.deepEqual(optimized.bars, generic.bars);
+        assert.deepEqual(optimized.meta, generic.meta);
+    });
+
+    it('returns already-canonical input unchanged (zero-copy)', () => {
+        const canonical = [bar(0), bar(1800), bar(3600)];
+        assert.equal(ensureNormalizedLegBars(canonical), canonical, 'canonical legs must pass through without a copy');
+    });
+
+    it('feeds unsorted duplicate-bearing legs through the normalized path with generic-path results', async () => {
+        const messy = [...legBarsAt([3600, 1800, 0, 1800], 0)];
+
+        const [generic, optimized] = await runBothPaths({
+            baseSymbol: 'BNBUSDT',
+            quoteSymbol: 'PAXGUSDT',
+            interval: '30m',
+            targetBars: 4,
+            // The UI boundary guard (as in data-mining-manager's fetchLeg)
+            // canonicalizes the leg before the fast path sees it.
+            fetchLeg: async () => ensureNormalizedLegBars(messy),
+        });
+
+        assert.deepEqual(optimized.bars, generic.bars);
+        assert.deepEqual(optimized.meta, generic.meta);
+    });
+});
+
+describe('ensureNormalizedLegBars canonical parser parity', () => {
+    // Every case is a shape the generic parser normalizes or rejects. The
+    // guard's output must equal parseOhlcvBars on the raw input, and a
+    // guarded fast-path build on RAW legs must match the generic path build
+    // on the same raw legs (guarding only the comparison legs would conceal
+    // normalization defects).
+    const rawBar = (time: OHLCVData['time'] | number, overrides: Partial<OHLCVData> = {}): OHLCVData => ({
+        ...bar(0, overrides),
+        time: time as OHLCVData['time'],
+    });
+    const cases: Array<[string, OHLCVData[]]> = [
+        ['iso date strings', [rawBar('2024-01-01T00:00:00Z'), rawBar('2024-01-01T00:30:00Z')]],
+        ['business day objects', [rawBar({ year: 2024, month: 1, day: 1 }), rawBar({ year: 2024, month: 1, day: 2 })]],
+        ['millisecond timestamps', [rawBar(1704067200000), rawBar(1704069000000)]],
+        ['numeric string timestamps', [rawBar('1704067200'), rawBar('1704069000')]],
+        ['fractional second timestamps', [rawBar(1704067200.5), rawBar(1704069000.5)]],
+        ['non-finite ohlc', [rawBar(0), { ...rawBar(1800), high: Number.NaN }]],
+        ['non-finite volume', [rawBar(0), { ...rawBar(1800), volume: Number.NaN }]],
+        ['unsorted duplicate rows', [rawBar(1800, { close: 999 }), rawBar(0), rawBar(1800, { close: 101 })]],
+    ];
+
+    for (const [name, raw] of cases) {
+        it(`canonicalizes ${name} exactly like the generic parser`, () => {
+            assert.deepEqual(ensureNormalizedLegBars(raw), parseOhlcvBars(raw));
+        });
+
+        it(`builds ${name} identically through the guarded fast path and the generic path`, async () => {
+            const [generic, optimized] = await Promise.all([
+                buildSyntheticPairFromLegs({
+                    baseSymbol: 'BNBUSDT',
+                    quoteSymbol: 'PAXGUSDT',
+                    interval: '30m',
+                    targetBars: 4,
+                    fetchLeg: async () => raw,
+                }),
+                buildSyntheticPairFromLegs({
+                    baseSymbol: 'BNBUSDT',
+                    quoteSymbol: 'PAXGUSDT',
+                    interval: '30m',
+                    targetBars: 4,
+                    assumeNormalizedLegs: true,
+                    fetchLeg: async () => ensureNormalizedLegBars(raw),
+                }),
+            ]);
+            assert.deepEqual(optimized.bars, generic.bars);
+            assert.deepEqual(optimized.meta, generic.meta);
+        });
+    }
+});
+
+describe('buildSyntheticPairPayloadWithMeta', () => {
+    const base = [bar(0), bar(1800), bar(3600), bar(5400), bar(7200), bar(9000), bar(10800), bar(12600)];
+
+    it('returns the exact public payload alongside source-level alignment meta', () => {
+        const generatedAt = '2024-01-01T00:00:00.000Z';
+        const payloadOptions = {
+            baseSymbol: 'MU•',
+            quoteSymbol: 'CRWD•',
+            interval: '4h',
+            sourceInterval: '30m' as const,
+            generatedAt,
+            base,
+            quote: base,
+        };
+
+        const { payload, meta, aggregated } = buildSyntheticPairPayloadWithMeta({ ...payloadOptions });
+
+        assert.deepEqual(payload, buildSyntheticPairPayload({ ...payloadOptions }));
+        assert.equal(aggregated, true);
+        assert.equal(meta.alignedBars, 8, 'aligned source bars are counted before aggregation');
+        assert.equal(meta.droppedBars, 0, 'a fully aligned 8:1 aggregation has zero source alignment losses');
+        assert.equal(payload.bars, 1, 'the final payload keeps its aggregated bar count');
+    });
+
+    it('reports no aggregation when the payload is built at the target interval', () => {
+        const { meta, aggregated } = buildSyntheticPairPayloadWithMeta({
+            baseSymbol: 'BNBUSDT',
+            quoteSymbol: 'PAXGUSDT',
+            interval: '15m',
+            base,
+            quote: base,
+        });
+
+        assert.equal(aggregated, false);
+        assert.equal(meta.alignedBars, 8);
+        assert.equal(meta.droppedBars, 0);
+    });
+
+    it('counts genuine alignment losses at the source level', () => {
+        const quoteMissingFirst = base.slice(1);
+        const { meta } = buildSyntheticPairPayloadWithMeta({
+            baseSymbol: 'MU•',
+            quoteSymbol: 'CRWD•',
+            interval: '4h',
+            sourceInterval: '30m',
+            base,
+            quote: quoteMissingFirst,
+        });
+
+        assert.equal(meta.alignedBars, 7);
+        assert.equal(meta.droppedBars, 1);
     });
 });

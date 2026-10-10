@@ -19,6 +19,15 @@ import {
 
 const STALE_FRAGMENT_MAX_THRESHOLD = 10_000;
 const STALE_FRAGMENT_MIN_THRESHOLD = 200;
+/**
+ * After an aligned-metadata failure, skip re-attempts for this short, bounded
+ * window so a permanently unavailable leg cannot turn every metadata consumer
+ * into a full leg refetch, while a transient outage still recovers on the
+ * next request after the window. Successful metadata loads clear the record.
+ */
+const ALIGNED_METADATA_RETRY_COOLDOWN_MS = 2_000;
+/** Hard cap on cooldown bookkeeping; the map is cleared when exceeded. */
+const ALIGNED_METADATA_COOLDOWN_MAX_KEYS = 1024;
 
 export interface BatchDatasetLoaderCore {
     load(
@@ -61,6 +70,28 @@ interface AlignedLegClosesSeries {
     closes: number[];
 }
 
+/** Aligned closes for one pair dataset; both arrays always exist. */
+interface AlignedPairCloses {
+    baseCloses: readonly (number | null)[];
+    quoteCloses: readonly (number | null)[];
+}
+
+/** Cancellation owner of an in-flight production: its AbortSignal, or null. */
+type ProductionOwner = AbortSignal | null;
+
+/**
+ * Cached aligned closes with PROVENANCE: the exact pair dataset (by array
+ * reference, held weakly so eviction never retains large datasets) they were
+ * computed from. Retrieval validates this identity, so same-length data from
+ * a different dataset is never served.
+ */
+export interface CachedPairMetadata extends AlignedPairCloses {
+    datasetRef: WeakRef<OHLCVData[]>;
+}
+
+/** Bounded cache of aligned leg closes keyed by pair. */
+type PairMetadataCache = SyntheticLegCache<CachedPairMetadata>;
+
 /** Per-run load counters used to split the Asset Opportunity data path. */
 export interface BatchDatasetLoadDiagnostics {
     requests: number;
@@ -97,11 +128,11 @@ export interface BatchDatasetLoadContext {
     pairCache?: SyntheticLegCache<OHLCVData[]>;
     /**
      * Metadata paired with `pairCache`. Keeping aligned leg closes here avoids
-     * resampling and remapping both legs on every metadata cache hit.
+     * resampling and remapping both legs on every metadata cache hit. Entries
+     * carry the dataset reference they were computed from, so a same-length
+     * dataset replacement is never served stale closes.
      */
-    pairMetadataCache?: SyntheticLegCache<
-        Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
-    >;
+    pairMetadataCache?: SyntheticLegCache<CachedPairMetadata>;
     /**
      * Optional bounded PLAIN-dataset cache for callers that reload the same
      * symbol|interval series repeatedly across iterations (Asset Opportunity
@@ -195,9 +226,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     const pairCacheMaxEntries = Math.max(1, Math.floor(options.pairCacheMaxEntries ?? 16));
     const legCache = new SyntheticLegCache<OHLCVData[]>(legCacheMaxEntries);
     const pairCache = new SyntheticLegCache<OHLCVData[]>(pairCacheMaxEntries);
-    const pairMetadataCache = new SyntheticLegCache<
-        Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">
-    >(pairCacheMaxEntries);
+    const pairMetadataCache = new SyntheticLegCache<CachedPairMetadata>(pairCacheMaxEntries);
     // Bounded per-leg resampled time/close series shared across every pair
     // aligned at the same target interval. `alignLegCloses` only consumes
     // timestamps + closes, so resampling a leg once per (leg, interval) removes
@@ -208,6 +237,140 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
     // `diskStats` — not part of the `getCacheStats()` wire contract.
     const alignedSeriesCache = new SyntheticLegCache<AlignedLegClosesSeries>(legCacheMaxEntries);
     const diskStats = { hits: 0, misses: 0, writes: 0 };
+    // In-flight productions are scoped to their cancellation OWNER (the
+    // AbortSignal of the caller that started them, or null for uncancellable
+    // callers). Joining is only safe within one ownership group: a producer
+    // must never let its own caller's abort decide another caller's result.
+    // Entries are removed at settlement or invalidation, and a per-owner map
+    // is removed when it empties, so bookkeeping cannot accumulate.
+    // Bumped by clearCaches(). Productions capture the value at creation and
+    // publish nothing (bars, metadata, or retry state) once it is stale, so a
+    // request that was invalidated mid-flight can never overwrite newer cache
+    // entries.
+    let datasetGeneration = 0;
+    const datasetIds = new WeakMap<readonly OHLCVData[], number>();
+    let nextDatasetId = 0;
+
+    function datasetId(data: readonly OHLCVData[]): number {
+        let id = datasetIds.get(data);
+        if (id === undefined) {
+            id = ++nextDatasetId;
+            datasetIds.set(data, id);
+        }
+        return id;
+    }
+    // Metadata retry cooldowns are scoped to the metadata-cache owner (loader
+    // instance or run context): contexts with separate caches retry
+    // independently, contexts intentionally sharing a cache share cooldowns.
+    const metadataRetryCooldownsByCache = new WeakMap<PairMetadataCache, Map<string, number>>();
+
+    function metadataCooldownMap(metadataCache: PairMetadataCache): Map<string, number> {
+        let map = metadataRetryCooldownsByCache.get(metadataCache);
+        if (!map) {
+            map = new Map();
+            metadataRetryCooldownsByCache.set(metadataCache, map);
+        }
+        return map;
+    }
+
+    function metadataCooldownActive(metadataCache: PairMetadataCache, pairKey: string): boolean {
+        const failedAt = metadataCooldownMap(metadataCache).get(pairKey);
+        return failedAt !== undefined && Date.now() - failedAt < ALIGNED_METADATA_RETRY_COOLDOWN_MS;
+    }
+
+    function armMetadataCooldown(metadataCache: PairMetadataCache, pairKey: string): void {
+        const map = metadataCooldownMap(metadataCache);
+        if (map.size >= ALIGNED_METADATA_COOLDOWN_MAX_KEYS) {
+            map.clear();
+        }
+        map.set(pairKey, Date.now());
+    }
+
+    // In-flight productions are additionally scoped to the caller's ACTIVE
+    // cache identity (loader instance or run context): independent contexts
+    // with their own caches never join another context's pending work or
+    // bypass their own valid cache hits, while contexts sharing a cache and
+    // compatible cancellation ownership still deduplicate.
+    const pendingPairProductionsByCache = new Map<SyntheticLegCache<OHLCVData[]>, Map<ProductionOwner, Map<string, Promise<BatchDatasetLoadResult>>>>();
+    const pendingLegProductionsByCache = new Map<SyntheticLegCache<OHLCVData[]>, Map<ProductionOwner, Map<string, Promise<OHLCVData[]>>>>();
+    const pendingMetadataByCache = new Map<PairMetadataCache, Map<ProductionOwner, Map<string, Promise<AlignedPairCloses>>>>();
+
+    function pendingMapFor<T>(
+        byCache: Map<unknown, Map<ProductionOwner, Map<string, Promise<T>>>>,
+        cache: unknown,
+        owner: ProductionOwner,
+    ): Map<string, Promise<T>> {
+        let byOwner = byCache.get(cache) as Map<ProductionOwner, Map<string, Promise<T>>> | undefined;
+        if (!byOwner) {
+            byOwner = new Map();
+            byCache.set(cache, byOwner);
+        }
+        let map = byOwner.get(owner);
+        if (!map) {
+            map = new Map();
+            byOwner.set(owner, map);
+        }
+        return map;
+    }
+
+    /**
+     * Remove a pending entry only while it still points at the exact promise
+     * being settled. A stale production's cleanup (after cache invalidation
+     * or replacement) must never delete a newer same-key producer.
+     */
+    function dropPendingIf<T>(
+        byCache: Map<unknown, Map<ProductionOwner, Map<string, Promise<T>>>>,
+        cache: unknown,
+        owner: ProductionOwner,
+        key: string,
+        promise: Promise<T>,
+    ): void {
+        const byOwner = byCache.get(cache) as Map<ProductionOwner, Map<string, Promise<T>>> | undefined;
+        if (!byOwner) return;
+        const map = byOwner.get(owner);
+        if (!map || map.get(key) !== promise) return;
+        map.delete(key);
+        if (map.size === 0) {
+            byOwner.delete(owner);
+            if (byOwner.size === 0) byCache.delete(cache);
+        }
+    }
+
+    /**
+     * Aligned closes belong to a pair dataset only when their provenance is
+     * that exact dataset (reference identity, held weakly). Bar-count
+     * equality remains as an additional sanity check.
+     */
+    function metadataMatchesPairDataset(
+        entry: CachedPairMetadata | undefined,
+        pairBars: readonly OHLCVData[],
+    ): boolean {
+        return entry !== undefined
+            && entry.datasetRef.deref() === pairBars
+            && entry.baseCloses.length === pairBars.length
+            && entry.quoteCloses.length === pairBars.length;
+    }
+
+    /**
+     * Publish settled metadata carrying its dataset provenance. An existing
+     * entry for the same dataset is kept; anything else (another dataset, or
+     * a dataset that no longer exists) is REPLACED, never kept merely because
+     * the key exists. Bars are published by the same settlement callback, so
+     * the pair cache and metadata stay coherent per producer; the retrieval
+     * identity check is the final correctness gate.
+     */
+    function publishSettledMetadata(
+        metadataCache: PairMetadataCache,
+        pairKey: string,
+        closes: AlignedPairCloses,
+        dataset: OHLCVData[],
+    ): void {
+        metadataCache.set(pairKey, Promise.resolve({
+            baseCloses: closes.baseCloses,
+            quoteCloses: closes.quoteCloses,
+            datasetRef: new WeakRef(dataset),
+        }));
+    }
 
     async function load(
         symbol: string,
@@ -329,19 +492,54 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
 
         const activePairCache = context?.pairCache ?? pairCache;
         const activePairMetadataCache = context?.pairMetadataCache ?? pairMetadataCache;
+        const owner: ProductionOwner = signal ?? null;
+        const generation = datasetGeneration;
+
+        // Same-cache, same-ownership pending production: these callers share
+        // the active pair cache AND a signal (or none), so joining preserves
+        // single-producer behavior for one batch run without letting one
+        // caller's abort decide another's result or bypassing another
+        // context's own cache hit.
+        const pendingProduction = pendingPairProductionsByCache.get(activePairCache)?.get(owner)?.get(pairKey);
+        if (pendingProduction) {
+            if (diagnostics) diagnostics.pairCacheHits += 1;
+            debugLogger.event(`${options.logPrefix}.synthetic_pair_production_joined`, {
+                syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
+            });
+            return consumePairProduction(pendingProduction, {
+                activePairCache,
+                activePairMetadataCache,
+                pairKey,
+                baseSymbol,
+                quoteSymbol,
+                interval,
+                signal,
+                context,
+                includeMetadata,
+            });
+        }
+
         const cachedPair = activePairCache.get(pairKey);
         if (cachedPair) {
             if (diagnostics) diagnostics.pairCacheHits += 1;
             debugLogger.event(`${options.logPrefix}.synthetic_pair_cache_hit`, {
                 syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
             });
-            const data = await cachedPair;
+            let data: OHLCVData[];
+            try {
+                data = await cachedPair;
+            } catch (error) {
+                if (signal?.aborted) return { data: [] };
+                throw error;
+            }
+            if (signal?.aborted) return { data: [] };
             if (!includeMetadata) return { data, baseSymbol, quoteSymbol };
             return {
                 data,
                 baseSymbol,
                 quoteSymbol,
                 ...(await loadOrCacheAlignedLegCloses(
+                    activePairCache,
                     activePairMetadataCache,
                     pairKey,
                     baseSymbol,
@@ -355,66 +553,57 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         }
         if (diagnostics) diagnostics.pairCacheMisses += 1;
 
-        // Server-side disk cache (optional). Skipped in browser mode (no hook).
-        // On hit, seed the in-memory pairCache so subsequent calls dedupe normally.
         const diskArgs: SyntheticPairDiskCacheArgs = {
             pairKey, syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
         };
         const bypassDiskCache = context?.preferInMemorySyntheticPairs === true;
-        let fingerprint: string | null | undefined;
-        if (bypassDiskCache) {
-            if (diagnostics) diagnostics.diskCacheBypasses += 1;
-        } else {
-            const fingerprintStartedAt = performance.now();
-            fingerprint = options.computeSyntheticPairFingerprint
-                ? await options.computeSyntheticPairFingerprint(diskArgs)
-                : undefined;
-            if (diagnostics) diagnostics.timingsMs.fingerprint += performance.now() - fingerprintStartedAt;
-            if (options.loadCachedSyntheticPair) {
-                const diskLookupStartedAt = performance.now();
-                try {
-                    const cached = await options.loadCachedSyntheticPair(diskArgs, fingerprint);
-                    if (cached) {
-                        diskStats.hits += 1;
-                        if (diagnostics) diagnostics.diskCacheHits += 1;
-                        debugLogger.event(`${options.logPrefix}.synthetic_pair_disk_cache_hit`, {
-                            syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
+        if (bypassDiskCache && diagnostics) diagnostics.diskCacheBypasses += 1;
+
+        // This caller's ownership group becomes the single producer for the
+        // pair. The production is registered in the owner-scoped pending map
+        // BEFORE its first asynchronous boundary, so overlapping same-owner
+        // requests share one fingerprint computation, disk lookup, build, and
+        // write. Settlement publishes results into the shared caches only
+        // when the owning signal is still live and the caches have not been
+        // invalidated meanwhile — a stale or cancelled production can never
+        // overwrite a newer entry.
+        const production = (async (): Promise<BatchDatasetLoadResult> => {
+            let fingerprint: string | null | undefined;
+            if (!bypassDiskCache) {
+                const fingerprintStartedAt = performance.now();
+                fingerprint = options.computeSyntheticPairFingerprint
+                    ? await options.computeSyntheticPairFingerprint(diskArgs)
+                    : undefined;
+                if (diagnostics) diagnostics.timingsMs.fingerprint += performance.now() - fingerprintStartedAt;
+                if (options.loadCachedSyntheticPair) {
+                    const diskLookupStartedAt = performance.now();
+                    try {
+                        const cached = await options.loadCachedSyntheticPair(diskArgs, fingerprint);
+                        if (cached) {
+                            diskStats.hits += 1;
+                            if (diagnostics) diagnostics.diskCacheHits += 1;
+                            debugLogger.event(`${options.logPrefix}.synthetic_pair_disk_cache_hit`, {
+                                syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
+                            });
+                            // Aligned closes are not part of the disk payload;
+                            // includeMetadata callers load them below through
+                            // the retryable metadata loader.
+                            return { data: cached.bars, baseSymbol, quoteSymbol };
+                        }
+                        diskStats.misses += 1;
+                        if (diagnostics) diagnostics.diskCacheMisses += 1;
+                    } catch (error) {
+                        debugLogger.warn(`${options.logPrefix}.synthetic_pair_disk_cache_read_failed`, {
+                            syntheticSymbol, error: error instanceof Error ? error.message : String(error),
                         });
-                        const diskPromise = Promise.resolve(cached.bars);
-                        activePairCache.set(pairKey, diskPromise);
-                        const data = await diskPromise;
-                        if (!includeMetadata) return { data, baseSymbol, quoteSymbol };
-                        return {
-                            data,
-                            baseSymbol,
-                            quoteSymbol,
-                            ...(await loadOrCacheAlignedLegCloses(
-                                activePairMetadataCache,
-                                pairKey,
-                                baseSymbol,
-                                quoteSymbol,
-                                interval,
-                                data,
-                                signal,
-                                context,
-                            )),
-                        };
+                        diskStats.misses += 1;
+                        if (diagnostics) diagnostics.diskCacheMisses += 1;
+                    } finally {
+                        if (diagnostics) diagnostics.timingsMs.diskLookup += performance.now() - diskLookupStartedAt;
                     }
-                    diskStats.misses += 1;
-                    if (diagnostics) diagnostics.diskCacheMisses += 1;
-                } catch (error) {
-                    debugLogger.warn(`${options.logPrefix}.synthetic_pair_disk_cache_read_failed`, {
-                        syntheticSymbol, error: error instanceof Error ? error.message : String(error),
-                    });
-                    diskStats.misses += 1;
-                    if (diagnostics) diagnostics.diskCacheMisses += 1;
-                } finally {
-                    if (diagnostics) diagnostics.timingsMs.diskLookup += performance.now() - diskLookupStartedAt;
                 }
             }
-        }
 
-        const pairBuildPromise = (async (): Promise<BatchDatasetLoadResult> => {
             if (signal?.aborted) return { data: [] };
             const pairBuildStartedAt = performance.now();
             const result = await buildSyntheticPairFromLegs({
@@ -465,21 +654,113 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 quoteCloses: alignLegClosesFromSeries(data, await quoteSeries),
             };
         })();
-        if (includeMetadata) {
-            const metadataPromise = pairBuildPromise.then((result) => ({
-                baseCloses: result.baseCloses,
-                quoteCloses: result.quoteCloses,
-            }));
-            cacheSuccessfulLoad(activePairMetadataCache, pairKey, metadataPromise, signal);
-        }
-        const barsPromise = pairBuildPromise.then((result) => result.data);
-        const data = await cacheSuccessfulLoad(activePairCache, pairKey, barsPromise, signal);
-        const built = await pairBuildPromise;
-        return { ...built, data };
+        pendingMapFor(pendingPairProductionsByCache, activePairCache, owner).set(pairKey, production);
+        void production.then(
+            (result) => {
+                dropPendingIf(pendingPairProductionsByCache, activePairCache, owner, pairKey, production);
+                if (generation !== datasetGeneration) return; // caches invalidated: publish nothing
+                if (signal?.aborted) return; // owning caller cancelled: publish nothing
+                if (result.data.length === 0) return; // never cache an empty result
+                // Bars and metadata are published by the SAME settlement
+                // callback with the same dataset, so the pair cache and the
+                // metadata cache stay coherent per producer.
+                activePairCache.set(pairKey, Promise.resolve(result.data));
+                if (includeMetadata
+                    && result.baseCloses !== undefined && result.quoteCloses !== undefined) {
+                    publishSettledMetadata(
+                        activePairMetadataCache,
+                        pairKey,
+                        { baseCloses: result.baseCloses, quoteCloses: result.quoteCloses },
+                        result.data,
+                    );
+                }
+            },
+            () => {
+                // Rejections are retryable: drop the pending entry, publish nothing.
+                dropPendingIf(pendingPairProductionsByCache, activePairCache, owner, pairKey, production);
+            },
+        );
+        return consumePairProduction(production, {
+            activePairCache,
+            activePairMetadataCache,
+            pairKey,
+            baseSymbol,
+            quoteSymbol,
+            interval,
+            signal,
+            context,
+            includeMetadata,
+        });
     }
 
+    /**
+     * Await a pair production for ONE consumer. Cancellation stays
+     * per-consumer: an aborted caller observes empty bars without evicting or
+     * influencing the production other callers (same owner, already settled)
+     * may still be served from the shared caches.
+     */
+    async function consumePairProduction(
+        production: Promise<BatchDatasetLoadResult>,
+        args: {
+            activePairCache: SyntheticLegCache<OHLCVData[]>;
+            activePairMetadataCache: PairMetadataCache;
+            pairKey: string;
+            baseSymbol: string;
+            quoteSymbol: string;
+            interval: string;
+            signal?: AbortSignal;
+            context?: BatchDatasetLoadContext;
+            includeMetadata: boolean;
+        },
+    ): Promise<BatchDatasetLoadResult> {
+        let built: BatchDatasetLoadResult;
+        try {
+            built = await production;
+        } catch (error) {
+            if (args.signal?.aborted) return { data: [] };
+            throw error;
+        }
+        if (args.signal?.aborted) return { data: [] };
+        const { data, baseSymbol, quoteSymbol } = built;
+        if (!args.includeMetadata) return { data, baseSymbol, quoteSymbol };
+        // Fresh builds carry closes computed from the exact dataset just
+        // produced. A disk-hit result does not, so its metadata loads through
+        // the retryable loader below. Either way the pair bars remain
+        // available when the optional metadata fails.
+        if (built.baseCloses !== undefined && built.quoteCloses !== undefined) {
+            return { data, baseSymbol, quoteSymbol, baseCloses: built.baseCloses, quoteCloses: built.quoteCloses };
+        }
+        return {
+            data,
+            baseSymbol,
+            quoteSymbol,
+            ...(await loadOrCacheAlignedLegCloses(
+                args.activePairCache,
+                args.activePairMetadataCache,
+                args.pairKey,
+                args.baseSymbol,
+                args.quoteSymbol,
+                args.interval,
+                data,
+                args.signal,
+                args.context,
+            )),
+        };
+    }
+
+    /**
+     * Aligned closes for an already-available pair series (pair cache or disk
+     * hit). A same-cache, same-owner in-flight attempt is joined so concurrent
+     * consumers share one cold production; settled metadata is served only
+     * when its dataset provenance is the exact pair dataset being served;
+     * failures warn with the pair identity, arm a metadata-cache-scoped
+     * cooldown, and leave nothing cached so a later request retries.
+     * Legitimate "no aligned leg bar" outcomes are successes and stay cached
+     * as nulls.
+     */
     async function loadOrCacheAlignedLegCloses(
-        metadataCache: SyntheticLegCache<Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">>,
+        activePairCache: SyntheticLegCache<OHLCVData[]>,
+        metadataCache: PairMetadataCache,
         pairKey: string,
         baseSymbol: string,
         quoteSymbol: string,
@@ -488,28 +769,93 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
     ): Promise<Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">> {
-        const cachedMetadata = metadataCache.get(pairKey);
-        if (cachedMetadata) return cachedMetadata;
+        const owner: ProductionOwner = signal ?? null;
+        const generation = datasetGeneration;
 
-        const metadataPromise = loadAlignedLegCloses(
+        const pendingKey = `${pairKey}|dataset:${datasetId(pairBars)}`;
+        const pendingAttempt = pendingMetadataByCache.get(metadataCache)?.get(owner)?.get(pendingKey);
+        if (pendingAttempt) {
+            try {
+                const closes = await pendingAttempt;
+                return closes.baseCloses.length === pairBars.length && closes.quoteCloses.length === pairBars.length
+                    ? closes : {};
+            } catch {
+                // The failed attempt already warned and armed its cooldown;
+                // this consumer keeps its bars without closes.
+                return {};
+            }
+        }
+
+        const cachedMetadata = metadataCache.get(pairKey);
+        if (cachedMetadata) {
+            try {
+                const entry = await cachedMetadata;
+                if (metadataMatchesPairDataset(entry, pairBars)) {
+                    return { baseCloses: entry.baseCloses, quoteCloses: entry.quoteCloses };
+                }
+                // Metadata computed against a different dataset (same length
+                // or not): drop it and recompute for these bars.
+                metadataCache.deleteIfValue(pairKey, cachedMetadata);
+            } catch {
+                // Defensive: a rejected entry is retryable and serves nothing.
+                metadataCache.deleteIfValue(pairKey, cachedMetadata);
+                return {};
+            }
+        }
+        if (metadataCooldownActive(metadataCache, pairKey)) {
+            // Recent failure for THIS cache owner: serve bars without closes
+            // and without another leg refetch. Nothing is cached, so the next
+            // request after the window retries the metadata.
+            return {};
+        }
+
+        const attempt = loadAlignedLegCloses(
+            metadataCache,
+            pairKey,
             baseSymbol,
             quoteSymbol,
             interval,
             pairBars,
             signal,
             context,
+            generation,
         );
-        return cacheSuccessfulLoad(metadataCache, pairKey, metadataPromise, signal);
+        pendingMapFor(pendingMetadataByCache, metadataCache, owner).set(pendingKey, attempt);
+        void attempt.then(
+            async (closes) => {
+                dropPendingIf(pendingMetadataByCache, metadataCache, owner, pendingKey, attempt);
+                if (generation !== datasetGeneration) return; // caches invalidated
+                if (signal?.aborted) return; // cancelled: publish nothing
+                // If the served pair moved on to another dataset while this
+                // attempt ran, the closes no longer describe the cached bars:
+                // never publish stale provenance over a newer dataset.
+                const storedPair = activePairCache.peek(pairKey);
+                const currentBars = storedPair ? await storedPair.catch(() => undefined) : undefined;
+                if (currentBars !== undefined && currentBars !== pairBars) return;
+                publishSettledMetadata(metadataCache, pairKey, closes, pairBars as OHLCVData[]);
+            },
+            () => {
+                dropPendingIf(pendingMetadataByCache, metadataCache, owner, pendingKey, attempt);
+            },
+        );
+        try {
+            return await attempt;
+        } catch {
+            return {};
+        }
     }
 
     async function loadAlignedLegCloses(
+        metadataCache: PairMetadataCache,
+        pairKey: string,
         baseSymbol: string,
         quoteSymbol: string,
         interval: string,
         pairBars: readonly OHLCVData[],
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
-    ): Promise<Pick<BatchDatasetLoadResult, "baseCloses" | "quoteCloses">> {
+        generation = datasetGeneration,
+    ): Promise<AlignedPairCloses> {
         try {
             const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
             const source = pickSourceInterval(interval, 12, available);
@@ -531,6 +877,11 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                     subdivided = false;
                 }
             }
+            if (signal?.aborted) {
+                // Cancellation is not a metadata failure: reject without
+                // warning or arming the retry cooldown.
+                throw new Error(`Aligned metadata load aborted for ${baseSymbol}+${quoteSymbol} ${interval}.`);
+            }
             // Align on the TARGET interval, matching the fresh-build path
             // below: the pair carries bucket-open timestamps, so the aligned
             // close must be the bucket's LAST source close (after resampling),
@@ -542,15 +893,26 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 getSharedAlignedSeries(baseSymbol, sourceInterval, sourceBars, interval, base, context?.diagnostics),
                 getSharedAlignedSeries(quoteSymbol, sourceInterval, sourceBars, interval, quote, context?.diagnostics),
             ]);
-            return {
+            const closes = {
                 baseCloses: alignLegClosesFromSeries(pairBars, await baseSeries),
                 quoteCloses: alignLegClosesFromSeries(pairBars, await quoteSeries),
             };
-        } catch {
-            // The pair itself may come from the pair cache/disk cache even when
-            // its legs are no longer available. The ledger must use null here,
-            // never a proxy or zero-filled ratio.
-            return {};
+            metadataCooldownMap(metadataCache).delete(pairKey);
+            return closes;
+        } catch (error) {
+            if (signal?.aborted) throw error;
+            if (generation === datasetGeneration) {
+                // A stale-generation failure belongs to caches that were
+                // already invalidated: never warn or arm retry state against
+                // a newer generation.
+                debugLogger.warn(`${options.logPrefix}.synthetic_pair_aligned_metadata_failed`, {
+                    syntheticSymbol: `${baseSymbol}+${quoteSymbol}`,
+                    interval,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+                armMetadataCooldown(metadataCache, pairKey);
+            }
+            throw error;
         }
     }
 
@@ -569,6 +931,19 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             if (diagnostics) diagnostics.legCacheHits += 1;
             debugLogger.event(`${options.logPrefix}.synthetic_leg_cache_hit`, { sourceSymbol, sourceInterval, sourceBars });
             return cached;
+        }
+        // Same-owner pending leg fetch: joining keeps one fetch per ownership
+        // group. Cross-owner callers start their own fetch instead, so an
+        // aborted owner's legs can never resolve empty data into another
+        // caller's build. The shared leg cache receives only settled,
+        // uncancelled results.
+        const owner: ProductionOwner = signal ?? null;
+        const generation = datasetGeneration;
+        const pending = pendingLegProductionsByCache.get(activeLegCache)?.get(owner)?.get(legKey);
+        if (pending) {
+            if (diagnostics) diagnostics.legCacheHits += 1;
+            debugLogger.event(`${options.logPrefix}.synthetic_leg_production_joined`, { sourceSymbol, sourceInterval, sourceBars });
+            return pending;
         }
         if (diagnostics) diagnostics.legCacheMisses += 1;
 
@@ -605,15 +980,29 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                             }),
                             fetchLeg(false)),
                 );
-        return cacheSuccessfulLoad(activeLegCache, legKey, promise, signal);
+        pendingMapFor(pendingLegProductionsByCache, activeLegCache, owner).set(legKey, promise);
+        void promise.then(
+            (data) => {
+                dropPendingIf(pendingLegProductionsByCache, activeLegCache, owner, legKey, promise);
+                if (generation !== datasetGeneration) return; // caches invalidated
+                if (signal?.aborted) return; // cancelled fetch: publish nothing
+                activeLegCache.set(legKey, Promise.resolve(data));
+            },
+            () => {
+                // Rejections are retryable: drop the pending entry, publish nothing.
+                dropPendingIf(pendingLegProductionsByCache, activeLegCache, owner, legKey, promise);
+            },
+        );
+        return promise;
     }
 
     /**
      * Resampled time/close series for one leg at one target interval, shared
      * across all pairs that align the same leg. Keyed by the leg-cache identity
-     * plus target interval plus a coverage anchor (bar count + first/last
-     * timestamp) so a refetch with newer data cannot silently reuse a stale
-     * series. Only non-failing, resolved leg data reaches this point.
+     * plus target interval and source dataset identity. Coverage and last
+     * close also guard the browser stream's in-place append/trim/tail updates;
+     * historical corrections arrive as replacement datasets or invalidate
+     * the loader. Identity bookkeeping holds source arrays only weakly.
      */
     function getSharedAlignedSeries(
         sourceSymbol: string,
@@ -626,7 +1015,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         const coverageAnchor = legBars.length > 0
             ? `${legBars.length}:${legBars[0]!.time}:${legBars[legBars.length - 1]!.time}`
             : "empty";
-        const seriesKey = `${buildLegCacheKey(sourceSymbol, sourceInterval, sourceBars)}|align:${targetInterval}|${coverageAnchor}`;
+        const seriesKey = `${buildLegCacheKey(sourceSymbol, sourceInterval, sourceBars)}|align:${targetInterval}|dataset:${datasetId(legBars)}|${coverageAnchor}|close:${legBars[legBars.length - 1]?.close}`;
         const cached = alignedSeriesCache.get(seriesKey);
         if (cached) {
             if (diagnostics) diagnostics.alignedSeriesHits = (diagnostics.alignedSeriesHits ?? 0) + 1;
@@ -646,6 +1035,15 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             pairCache.clear();
             pairMetadataCache.clear();
             alignedSeriesCache.clear();
+            // Invalidate in-flight productions: their captured generation no
+            // longer matches, so their settlement publishes nothing into the
+            // fresh caches. Identity-checked cleanup keeps any production a
+            // NEWER request already registered.
+            datasetGeneration += 1;
+            pendingPairProductionsByCache.clear();
+            pendingLegProductionsByCache.clear();
+            pendingMetadataByCache.clear();
+            metadataRetryCooldownsByCache.get(pairMetadataCache)?.clear();
             diskStats.hits = 0;
             diskStats.misses = 0;
             diskStats.writes = 0;
@@ -744,29 +1142,6 @@ export function alignLegCloses(
     return alignLegClosesFromSeries(pairBars, buildAlignedLegClosesSeries(legBars, interval));
 }
 
-
-function cacheSuccessfulLoad<T>(
-    cache: SyntheticLegCache<T>,
-    key: string,
-    promise: Promise<T>,
-    signal?: AbortSignal,
-): Promise<T> {
-    let cached: Promise<T>;
-    cached = promise
-        .then((data) => {
-            if (signal?.aborted) {
-                cache.deleteIfValue(key, cached);
-                return data;
-            }
-            return data;
-        })
-        .catch((error) => {
-            cache.deleteIfValue(key, cached);
-            throw error;
-        });
-    cache.set(key, cached);
-    return cached;
-}
 
 export function resolveStaleFragmentBarThreshold(interval: string): number {
     const intervalSeconds = parseIntervalSeconds(interval);
