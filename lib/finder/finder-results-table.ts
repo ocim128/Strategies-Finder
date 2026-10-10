@@ -3,10 +3,9 @@ import type { FinderArmPerformanceRankingSort } from "./finder-arm-performance-m
 import type { FinderScope } from "../types/finder";
 
 /**
- * Stable identity for a formatted card metric the comparison table consumes.
- * Keys decouple table layout from card wording: a chip carries its already
- * formatted value plus this key, so renaming a label cannot change table
- * identity or turn a present value into `--`.
+ * Stable identity for one comparison-table column's metric. Keys decouple
+ * table layout from card wording: a row declares its already formatted value
+ * under this key, so renaming a visible label cannot change table identity.
  */
 export type FinderTableMetricKey =
     | "net"
@@ -38,15 +37,7 @@ export type FinderTableMetricKey =
     | "mean"
     | "random"
     | "deltaMed"
-    | "events"
-    /** Full display text of the replay status line, shown under the candidate title. */
-    | "status";
-
-/** data-* attributes carrying a keyed metric chip's identity and formatted value. */
-export const FINDER_METRIC_DATA = {
-    key: "data-finder-metric",
-    value: "data-finder-metric-value",
-} as const;
+    | "events";
 
 /** Arm Performance column selection, resolved once by the renderer per render pass. */
 export interface FinderArmTableContext {
@@ -87,31 +78,49 @@ export function getFinderTableColumns(scope: FinderScope, arm?: FinderArmTableCo
     }
 }
 
-/** Keyed formatted values declared by one card's metric chips, in DOM order. */
-export function readFinderTableMetricValues(card: HTMLElement): Map<FinderTableMetricKey, string> {
-    const values = new Map<FinderTableMetricKey, string>();
-    for (const chip of Array.from(card.querySelectorAll<HTMLElement>(`.finder-metrics [${FINDER_METRIC_DATA.key}]`))) {
-        const key = chip.getAttribute(FINDER_METRIC_DATA.key) as FinderTableMetricKey | null;
-        if (key) values.set(key, chip.getAttribute(FINDER_METRIC_DATA.value) ?? "--");
-    }
-    return values;
+/**
+ * One candidate's display parts, produced once by FinderUI and laid out either
+ * as a result card or as a comparison-table row. `main` carries the parameters,
+ * detail lines, metric chips and disclosures (with their lazy listeners);
+ * `metricValues` carries the same formatted strings the table shows per column.
+ * Replay status is explicit so it stays visible outside closed disclosures.
+ */
+export interface FinderResultRowParts {
+    /** 1-based candidate rank shown in the Rank column. */
+    rank: string;
+    /** Candidate identity heading (strategy name, badges). */
+    title: HTMLElement;
+    /** Visible OOS verdict badges shown beside the title. */
+    oosBadges: readonly HTMLElement[];
+    /** Replay status line rendered under the title; absent when complete. */
+    status?: string;
+    /** Card body: sub text, params, detail lines, metric chips, disclosures. */
+    main: HTMLElement;
+    /** Apply action; without it the table renders a read-only cell. */
+    apply?: HTMLButtonElement;
+    /** Formatted metric values keyed for the comparison table. */
+    metricValues: ReadonlyMap<FinderTableMetricKey, string>;
 }
 
-/** Keyed column value for one row; missing metadata keeps the `--` fallback. */
+/** Keyed column value for one row; a missing value keeps the `--` fallback. */
 export function getFinderTableMetric(values: ReadonlyMap<FinderTableMetricKey, string>, key: FinderTableMetricKey): string {
     return values.get(key) ?? "--";
 }
 
-/** Move existing detail and Apply nodes so their listeners and index contract stay intact. */
+/**
+ * Append the selected comparison-table layout: scope-level notes stay above
+ * the table, and each candidate's parts become one final row. Without rows,
+ * only the notes are appended and no table is built.
+ */
 export function appendFinderResultsTable(
     list: HTMLElement,
-    fragment: DocumentFragment,
+    notes: readonly Node[],
+    rows: readonly FinderResultRowParts[],
     scope: FinderScope,
     arm?: FinderArmTableContext,
 ): void {
-    const cards = Array.from(fragment.querySelectorAll<HTMLElement>(".finder-row"));
-    if (cards.length === 0) {
-        list.appendChild(fragment);
+    if (rows.length === 0) {
+        for (const note of notes) list.appendChild(note);
         return;
     }
     const tableColumns = getFinderTableColumns(scope, arm);
@@ -136,24 +145,21 @@ export function appendFinderResultsTable(
     head.appendChild(header);
     table.appendChild(head);
     const body = document.createElement("tbody");
-    for (const card of cards) {
-        const values = readFinderTableMetricValues(card);
-        const row = document.createElement("tr");
+    for (const parts of rows) {
+        const tr = document.createElement("tr");
         const rank = document.createElement("td");
-        rank.textContent = card.querySelector(".finder-rank")?.textContent ?? "";
-        row.appendChild(rank);
+        rank.textContent = parts.rank;
+        tr.appendChild(rank);
         const identity = document.createElement("th");
         identity.scope = "row";
-        const title = card.querySelector<HTMLElement>(".finder-title");
-        if (title) identity.appendChild(title);
-        for (const badge of Array.from(card.querySelectorAll<HTMLElement>(".finder-metrics > .finder-oos"))) {
+        identity.appendChild(parts.title);
+        for (const badge of parts.oosBadges) {
             identity.appendChild(badge);
         }
-        const status = values.get("status");
-        if (status) {
+        if (parts.status) {
             const statusLine = document.createElement("div");
             statusLine.className = "finder-sub";
-            statusLine.textContent = status;
+            statusLine.textContent = parts.status;
             identity.appendChild(statusLine);
         }
         const details = document.createElement("details");
@@ -161,27 +167,24 @@ export function appendFinderResultsTable(
         const summary = document.createElement("summary");
         summary.textContent = "Parameters & details";
         details.appendChild(summary);
-        const main = card.querySelector<HTMLElement>(".finder-main");
-        if (main) details.appendChild(main);
+        details.appendChild(parts.main);
         identity.appendChild(details);
-        row.appendChild(identity);
+        tr.appendChild(identity);
         const action = document.createElement("td");
-        const apply = card.querySelector<HTMLButtonElement>(".finder-apply");
-        if (apply) action.appendChild(apply);
+        if (parts.apply) action.appendChild(parts.apply);
         else action.textContent = "Read only";
-        row.appendChild(action);
+        tr.appendChild(action);
         for (const column of tableColumns) {
             const cell = document.createElement("td");
             cell.className = "finder-comparison-metric";
-            cell.textContent = getFinderTableMetric(values, column.key);
-            row.appendChild(cell);
+            cell.textContent = getFinderTableMetric(parts.metricValues, column.key);
+            tr.appendChild(cell);
         }
-        body.appendChild(row);
-        card.remove();
+        body.appendChild(tr);
     }
     table.appendChild(body);
     wrap.appendChild(table);
     // Scope-level research notes and validation summaries remain above the table.
-    list.appendChild(fragment);
+    for (const note of notes) list.appendChild(note);
     list.appendChild(wrap);
 }

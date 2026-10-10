@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
-    FINDER_METRIC_DATA,
+    appendFinderResultsTable,
     getFinderTableColumns,
     getFinderTableMetric,
-    readFinderTableMetricValues,
     type FinderArmTableContext,
+    type FinderResultRowParts,
     type FinderTableMetricKey,
 } from "../lib/finder/finder-results-table";
 import { FinderUI } from "../lib/finder/finder-ui";
@@ -33,23 +33,6 @@ const armContext = (overrides: Partial<FinderArmTableContext> = {}): FinderArmTa
 
 const labels = (scope: Parameters<typeof getFinderTableColumns>[0], arm?: FinderArmTableContext) =>
     getFinderTableColumns(scope, arm).map((column) => column.label);
-
-/** A minimal card stub exposing keyed metric chips, mirroring FinderUI.createMetricChip. */
-function fakeCard(chips: ReadonlyArray<{ text: string; key?: FinderTableMetricKey; value?: string }>): HTMLElement {
-    const chipNodes = chips.map((chip) => ({
-        textContent: chip.text,
-        getAttribute: (name: string) => {
-            if (name === FINDER_METRIC_DATA.key) return chip.key ?? null;
-            if (name === FINDER_METRIC_DATA.value) return chip.value ?? null;
-            return null;
-        },
-    }));
-    return {
-        querySelector: () => null,
-        querySelectorAll: (selector: string) =>
-            selector === `.finder-metrics [${FINDER_METRIC_DATA.key}]` ? chipNodes : [],
-    } as unknown as HTMLElement;
-}
 
 // ---------------------------------------------------------------------------
 // Real FinderUI output helpers (mini DOM with working traversal)
@@ -338,72 +321,130 @@ describe("Finder comparison table metrics", () => {
         }
     });
 
-    it("resolves values by metric key, independent of the card's visible wording", () => {
-        // Regression: renaming a card label must not change the table's metric
-        // identity. The net chip below is displayed as "Revenue" but keeps the
-        // `net` key and its formatted value.
-        const card = fakeCard([
-            { text: "Revenue -$21.50", key: "net", value: "-$21.50" },
-            { text: "Payback 0.00", key: "pf", value: "0.00" },
-            { text: "Median TP --", key: "medPf", value: "--" },
-            { text: "Mean n/a", key: "mean", value: "n/a" },
-            { text: "Completed trades 5 · entries 6", key: "completedTrades", value: "5 · entries 6" },
-        ]);
-        const values = readFinderTableMetricValues(card);
-        assert.equal(getFinderTableMetric(values, "net"), "-$21.50");
-        assert.equal(getFinderTableMetric(values, "pf"), "0.00");
-        assert.equal(getFinderTableMetric(values, "medPf"), "--");
-        assert.equal(getFinderTableMetric(values, "mean"), "n/a");
-        assert.equal(getFinderTableMetric(values, "completedTrades"), "5 · entries 6");
-    });
-
-    it("retains unavailable, zero, signed and contributor-adjusted display values without inventing metrics", () => {
-        const values = readFinderTableMetricValues(fakeCard([
-            { text: "Med PF --", key: "medPf", value: "--" },
-            { text: "PF 0.00", key: "pf", value: "0.00" },
-            { text: "Total net P&L −$21.50", key: "totalNetPnl", value: "−$21.50" },
-            { text: "Mean n/a", key: "mean", value: "n/a" },
-            { text: "Ordering CI lower +3.10%", key: "rankingSortScore", value: "+3.10%" },
-            { text: "Rank eligibility rerun required", key: "rankEligibility", value: "rerun required" },
-            { text: "Scored events 0", key: "scoredEvents", value: "0" },
-            { text: "Status incomplete", key: "status", value: "Status incomplete" },
-        ]));
-        assert.equal(getFinderTableMetric(values, "medPf"), "--");
-        assert.equal(getFinderTableMetric(values, "pf"), "0.00");
-        assert.equal(getFinderTableMetric(values, "totalNetPnl"), "−$21.50");
-        assert.equal(getFinderTableMetric(values, "mean"), "n/a");
-        assert.equal(getFinderTableMetric(values, "rankingSortScore"), "+3.10%");
-        assert.equal(getFinderTableMetric(values, "rankEligibility"), "rerun required");
-        assert.equal(getFinderTableMetric(values, "scoredEvents"), "0");
-        // The status line keeps the full display text.
-        assert.equal(values.get("status"), "Status incomplete");
-    });
-
-    it("falls back to -- when a column's chip metadata is missing", () => {
-        const values = readFinderTableMetricValues(fakeCard([
-            { text: "Support 2/3", key: "support", value: "2/3" },
-            { text: "Trades 12" },
-        ]));
+    it("falls back to -- when a row declares no value for a column", () => {
+        // Rows declare their formatted values explicitly, so a column without
+        // a declared value can only render the shared `--` fallback.
+        const values = new Map<FinderTableMetricKey, string>([["support", "2/3"]]);
         assert.equal(getFinderTableMetric(values, "support"), "2/3");
         assert.equal(getFinderTableMetric(values, "trades"), "--");
-        assert.equal(getFinderTableMetric(values, "net"), "--");
+        assert.equal(getFinderTableMetric(new Map(), "net"), "--");
     });
 
-    it("reads chips nested in Arm measurement details with a descendant selector", () => {
-        // Ranking renders technical chips inside the measurement panel; the
-        // card-wide read must use a descendant selector so those nested chips
-        // still feed the table.
-        const selectors: string[] = [];
-        const card = {
-            querySelectorAll: (selector: string) => {
-                selectors.push(selector);
-                return [];
-            },
-        } as unknown as HTMLElement;
-        readFinderTableMetricValues(card);
-        assert.equal(selectors.length, 1);
-        assert.match(selectors[0]!, /^\.finder-metrics \[/);
-        assert.ok(!selectors[0]!.includes(">"), "must not restrict the read to direct children");
+    it("renders keyed cells from explicit formatted values, not card wording", () => {
+        // The card chip and its comparison cell must share one formatted
+        // string: the chip composes `label value` wording while the cell
+        // carries the value itself under the column's stable key.
+        withMiniDom((mini) => {
+            const view = renderTable(mini, (ui) => ui.renderResults([makeChartItem()]));
+            assert.equal(cellText(view, 0, "Net"), "+$123.00");
+            assert.equal(cellText(view, 0, "PF"), "2.00");
+            const chips = descendants(view.table, (node) =>
+                node.tagName !== "TD" && node.textContent === "Net +$123.00");
+            assert.equal(chips.length, 1, "the card chip must show the same formatted value under its label");
+            const pfChips = descendants(view.table, (node) =>
+                node.tagName !== "TD" && node.textContent === "PF 2.00");
+            assert.equal(pfChips.length, 1, "each keyed metric renders exactly one chip");
+        });
+    });
+});
+
+describe("appendFinderResultsTable consumes declared row values", () => {
+    interface RowFixtureOptions {
+        /** Keyed values the row declares for the comparison table. */
+        declared: ReadonlyArray<readonly [FinderTableMetricKey, string]>;
+        /** Misleading chip text placed in the row's card body. */
+        chipText?: string;
+        /** Nest the misleading chip inside a closed disclosure. */
+        chipInsideClosedDisclosure?: boolean;
+    }
+
+    /** Explicit row parts with optionally contradictory chip wording. */
+    const buildRow = (options: RowFixtureOptions): FinderResultRowParts => {
+        const title = document.createElement("div");
+        title.className = "finder-title";
+        title.textContent = "Fixture candidate";
+        const main = document.createElement("div");
+        main.className = "finder-main";
+        if (options.chipText !== undefined) {
+            const metrics = document.createElement("div");
+            metrics.className = "finder-metrics";
+            const chip = document.createElement("span");
+            chip.textContent = options.chipText;
+            metrics.appendChild(chip);
+            if (options.chipInsideClosedDisclosure) {
+                const disclosure = document.createElement("details");
+                const summary = document.createElement("summary");
+                summary.textContent = "Parameters & details";
+                disclosure.appendChild(summary);
+                disclosure.appendChild(metrics);
+                main.appendChild(disclosure);
+            } else {
+                main.appendChild(metrics);
+            }
+        }
+        const apply = document.createElement("button");
+        apply.className = "btn btn-secondary finder-apply";
+        apply.textContent = "Apply";
+        return {
+            rank: "1",
+            title,
+            oosBadges: [],
+            main,
+            apply,
+            metricValues: new Map(options.declared),
+        };
+    };
+
+    const renderRowTable = (mini: MiniDom, rows: readonly FinderResultRowParts[]): TableView => {
+        // The table builder is exercised against the same mini DOM the
+        // FinderUI-based tests use; the list element only needs the append
+        // and query behavior the builder already relies on.
+        const list = mini.getElementById("finderList")! as unknown as HTMLElement;
+        appendFinderResultsTable(list, [], rows, "current_chart");
+        return readTable(mini);
+    };
+
+    it("renders the declared net value even when a chip contradicts it", () => {
+        withMiniDom((mini) => {
+            const view = renderRowTable(mini, [buildRow({
+                declared: [["net", "-$21.50"]],
+                chipText: "Net +$999.00",
+            })]);
+            assert.equal(cellText(view, 0, "Net"), "-$21.50");
+            assert.equal(cellText(view, 0, "PF"), "--");
+        });
+    });
+
+    it("falls back to -- when the net key is absent, regardless of chip wording", () => {
+        withMiniDom((mini) => {
+            const view = renderRowTable(mini, [buildRow({
+                declared: [["pf", "2.00"]],
+                chipText: "Net +$999.00",
+            })]);
+            assert.equal(cellText(view, 0, "Net"), "--");
+            assert.equal(cellText(view, 0, "PF"), "2.00");
+        });
+    });
+
+    it("keeps keyed cells independent of renamed chip wording", () => {
+        withMiniDom((mini) => {
+            const view = renderRowTable(mini, [buildRow({
+                declared: [["net", "-$21.50"]],
+                chipText: "Revenue -$21.50",
+            })]);
+            assert.equal(cellText(view, 0, "Net"), "-$21.50");
+        });
+    });
+
+    it("cannot be overridden by contradictory chip text inside a closed disclosure", () => {
+        withMiniDom((mini) => {
+            const view = renderRowTable(mini, [buildRow({
+                declared: [["net", "-$21.50"]],
+                chipText: "Net +$999.00",
+                chipInsideClosedDisclosure: true,
+            })]);
+            assert.equal(cellText(view, 0, "Net"), "-$21.50");
+        });
     });
 });
 
@@ -572,6 +613,24 @@ describe("Finder comparison table renders keyed cells from FinderUI output", () 
             assert.equal(selected.headers[3], "Selected asset sort score");
             assert.equal(cellText(selected, 0, "Selected asset sort score"), "56.33%");
             assert.equal(cellText(selected, 0, "Rank eligibility"), "available");
+
+            // Technical arm chips stay nested inside the measurement-details
+            // disclosure; the ranking columns resolve from the row's explicitly
+            // declared values instead of reading that disclosure.
+            const measurementSummary = descendants(overall.table, (node) => node.tagName === "SUMMARY")
+                .find((summary) => summary.textContent === "Measurement details");
+            assert.ok(measurementSummary, "ranking mode must keep the measurement details disclosure");
+            const disclosure = measurementSummary!.parentNode!;
+            assert.equal(
+                descendants(disclosure, (node) => node.textContent === "RAW").length,
+                1,
+                "technical arm chips stay nested inside the measurement disclosure",
+            );
+            assert.equal(
+                descendants(disclosure, (node) => node.textContent === "Scored events 1336").length,
+                0,
+                "table-column metrics must not come from the nested disclosure",
+            );
         });
     });
 
@@ -614,58 +673,6 @@ describe("Finder comparison table renders keyed cells from FinderUI output", () 
                 descendants(breakdownDetails, (node) => node.className.includes("finder-symbol-row")).length,
                 1,
                 "opening the breakdown must populate its rows",
-            );
-        });
-    });
-
-    it("keeps the keyed value when the visible card label changes", () => {
-        withMiniDom((mini) => {
-            const ui = new FinderUI();
-            const originalChip = (ui as unknown as {
-                createTableMetricChip: (label: string, value: string, key: FinderTableMetricKey) => HTMLSpanElement;
-            }).createTableMetricChip.bind(ui);
-            (ui as unknown as { createTableMetricChip: unknown }).createTableMetricChip =
-                (label: string, value: string, key: FinderTableMetricKey) => originalChip(`RENAMED ${label}`, value, key);
-            ui.setResultsView("table");
-            ui.renderResults([makeChartItem()]);
-
-            const view = readTable(mini);
-            // The renamed chip remains visible inside the moved card details...
-            assert.ok(
-                descendants(view.table, (node) => node.textContent === "RENAMED Net +$123.00").length > 0,
-                "renamed card chip should remain visible in the details",
-            );
-            // ...while the Net column still resolves the keyed value.
-            assert.equal(cellText(view, 0, "Net"), "+$123.00");
-            assert.equal(cellText(view, 0, "PF"), "2.00");
-        });
-    });
-
-    it("shows -- in every comparison cell when chip metadata is stripped", () => {
-        // The audit probe stripped metric metadata: whole-row text checks kept
-        // passing on values that only lived in Parameters & details. Header-
-        // scoped cell assertions must detect exactly this case.
-        withMiniDom((mini) => {
-            const ui = new FinderUI();
-            const bareChip = (text: string): HTMLSpanElement => {
-                const span = document.createElement("span");
-                span.textContent = text;
-                return span;
-            };
-            (ui as unknown as { createTableMetricChip: unknown }).createTableMetricChip =
-                (label: string, value: string) => bareChip(`${label} ${value}`);
-            ui.setResultsView("table");
-            ui.renderResults([makeChartItem({ oosResult: makeBacktestResult(), oosVerdict: "pass" })]);
-
-            const view = readTable(mini);
-            for (const header of view.headers.slice(3)) {
-                assert.equal(cellText(view, 0, header), "--", `${header} must not fall back to details text`);
-            }
-            // The unkeyed chip text is still in the moved card details — only
-            // the header-scoped cell assertions can tell the difference.
-            assert.ok(
-                descendants(view.table, (node) => node.textContent === "Net +$123.00").length > 0,
-                "sanity: the stripped chip text still exists inside details",
             );
         });
     });

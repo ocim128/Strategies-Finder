@@ -1,7 +1,8 @@
 import { RANKING_MEASUREMENT_SEMANTICS } from "../batch-backtest/open-score-replay/types";
 import {
     appendFinderResultsTable,
-    FINDER_METRIC_DATA,
+    type FinderArmTableContext,
+    type FinderResultRowParts,
     type FinderTableMetricKey,
 } from "./finder-results-table";
 import { getFinderArmRankingMetric, getFinderArmPerformanceRankValue, getFinderCausalAvailabilityDetails, resolveFinderArmRankingHorizon } from "./finder-arm-performance-metrics";
@@ -15,7 +16,7 @@ import {
     formatScore as formatUiScore,
     formatNullableCurrency,
 } from "../ui-formatters";
-import type { FinderArmPerformanceCandidate, FinderArmPerformanceRunContext, FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
+import type { FinderArmPerformanceCandidate, FinderArmPerformanceRunContext, FinderAssetOpportunityResult, FinderMode, FinderOosVerdict, FinderRandomBenchmark, FinderResult, FinderScope, FinderStrategyQualityResult, FinderUniverseCandidate, FinderUniverseOosAggregate, FinderUniverseSymbolMetrics } from "../types/finder";
 import type { FinderAssetOosNextExitMetrics } from "./finder-asset-opportunity-oos";
 import type { BacktestResult, StrategyParams, Time } from "../types/strategies";
 import { getFinderSelectionResult } from "./finder-engine";
@@ -102,8 +103,7 @@ export class FinderUI {
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
 
-        const fragment = document.createDocumentFragment();
-        results.forEach((item, index) => {
+        const rows = results.map((item, index): FinderResultRowParts => {
             const title = document.createElement("div");
             title.className = "finder-title";
             const titleText = document.createElement("span");
@@ -112,47 +112,52 @@ export class FinderUI {
 
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
+            const metricValues = new Map<FinderTableMetricKey, string>();
+            const oosBadges: HTMLElement[] = [];
             const result = getFinderDisplayResult(item);
 
-                metrics.appendChild(this.createTableMetricChip("Net", formatNullableCurrency(result.netProfit), "net"));
-                metrics.appendChild(this.createTableMetricChip("PF", formatProfitFactor(result.profitFactor), "pf"));
-                metrics.appendChild(this.createTableMetricChip("Sharpe", result.sharpeRatio.toFixed(2), "sharpe"));
-                if (Number.isFinite(item.compositeEdgeRatio)) {
-                    metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
-                }
-                if (Number.isFinite(item.exitAlpha)) {
-                    metrics.appendChild(this.createMetricChip(`Exit α ${formatExitAlpha(item.exitAlpha!)}`));
-                }
-                if (typeof result.tradeTimingQuality?.entryScore === "number") {
-                    metrics.appendChild(this.createMetricChip(`Entry ${formatUiScore(result.tradeTimingQuality.entryScore)}`));
-                }
-                if (typeof result.tradeTimingQuality?.exitScore === "number") {
-                    metrics.appendChild(this.createMetricChip(`Exit ${formatUiScore(result.tradeTimingQuality.exitScore)}`));
-                }
-                metrics.appendChild(this.createTableMetricChip("DD", `${result.maxDrawdownPercent.toFixed(2)}%`, "dd"));
-                metrics.appendChild(this.createTableMetricChip("Trades", String(result.totalTrades), "trades"));
-                if (item.oosResult && item.oosVerdict) {
-                    const oos = item.oosResult;
-                    metrics.appendChild(this.createOosMetricChip(oos.netProfit, oos.profitFactor, oos.totalTrades, item.oosVerdict));
-                }
-                if (Number.isFinite(item.oosExitAlpha)) {
-                    metrics.appendChild(this.createMetricChip(`OOS Exit α ${formatExitAlpha(item.oosExitAlpha!)}`));
-                }
-                if (item.endpointAdjusted) {
-                    metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(result)));
-                    metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
-                }
-            fragment.appendChild(this.createResultRow({
+            this.appendTableMetric(metrics, metricValues, "Net", "net", formatNullableCurrency(result.netProfit));
+            this.appendTableMetric(metrics, metricValues, "PF", "pf", formatProfitFactor(result.profitFactor));
+            this.appendTableMetric(metrics, metricValues, "Sharpe", "sharpe", result.sharpeRatio.toFixed(2));
+            if (Number.isFinite(item.compositeEdgeRatio)) {
+                metrics.appendChild(this.createMetricChip(`ER ${item.compositeEdgeRatio!.toFixed(2)}`));
+            }
+            if (Number.isFinite(item.exitAlpha)) {
+                metrics.appendChild(this.createMetricChip(`Exit α ${formatExitAlpha(item.exitAlpha!)}`));
+            }
+            if (typeof result.tradeTimingQuality?.entryScore === "number") {
+                metrics.appendChild(this.createMetricChip(`Entry ${formatUiScore(result.tradeTimingQuality.entryScore)}`));
+            }
+            if (typeof result.tradeTimingQuality?.exitScore === "number") {
+                metrics.appendChild(this.createMetricChip(`Exit ${formatUiScore(result.tradeTimingQuality.exitScore)}`));
+            }
+            this.appendTableMetric(metrics, metricValues, "DD", "dd", `${result.maxDrawdownPercent.toFixed(2)}%`);
+            this.appendTableMetric(metrics, metricValues, "Trades", "trades", String(result.totalTrades));
+            if (item.oosResult && item.oosVerdict) {
+                const oos = item.oosResult;
+                const badge = this.createOosMetricChip(oos.netProfit, oos.profitFactor, oos.totalTrades, item.oosVerdict);
+                oosBadges.push(badge);
+                metrics.appendChild(badge);
+            }
+            if (Number.isFinite(item.oosExitAlpha)) {
+                metrics.appendChild(this.createMetricChip(`OOS Exit α ${formatExitAlpha(item.oosExitAlpha!)}`));
+            }
+            if (item.endpointAdjusted) {
+                metrics.appendChild(this.createMetricChip(this.formatSelectionSummary(result)));
+                metrics.appendChild(this.createMetricChip(`Endpoint bias removed (${item.endpointRemovedTrades})`));
+            }
+            return this.createResultRow({
                 index,
                 title,
                 subText: item.key,
                 paramsText: this.formatParams(item.params),
                 detailLines: this.formatDetailLines(item),
                 metrics,
-            }));
+                metricValues,
+                oosBadges,
+            });
         });
-        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "current_chart");
-        else list.appendChild(fragment);
+        this.appendResultNodes(list, [], rows, "current_chart");
     }
 
     public renderUniverseResults(results: FinderUniverseCandidate[]): void {
@@ -169,26 +174,26 @@ export class FinderUI {
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
 
-        const fragment = document.createDocumentFragment();
-        results.forEach((item, index) => {
+        const rows = results.map((item, index): FinderResultRowParts => {
             const title = document.createElement("div");
             title.className = "finder-title";
             title.textContent = item.strategyName;
 
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
-            metrics.appendChild(this.createTableMetricChip("Robust", item.robustUniverseScore.toFixed(1), "robust"));
+            const metricValues = new Map<FinderTableMetricKey, string>();
+            this.appendTableMetric(metrics, metricValues, "Robust", "robust", item.robustUniverseScore.toFixed(1));
             metrics.appendChild(this.createMetricChip(item.oosAggregate
                 ? `Stable ${item.windowStabilityScore.toFixed(1)}`
                 : "Stable --"));
-            metrics.appendChild(this.createTableMetricChip("Ratio", `${(item.profitableActiveRatio * 100).toFixed(1)}%`, "ratio"));
-            metrics.appendChild(this.createTableMetricChip("Active", String(item.activeSymbols), "active"));
+            this.appendTableMetric(metrics, metricValues, "Ratio", "ratio", `${(item.profitableActiveRatio * 100).toFixed(1)}%`);
+            this.appendTableMetric(metrics, metricValues, "Active", "active", String(item.activeSymbols));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
-            metrics.appendChild(this.createTableMetricChip("Med Exp", item.medianExpectancy.toFixed(2), "medExp"));
+            this.appendTableMetric(metrics, metricValues, "Med Exp", "medExp", item.medianExpectancy.toFixed(2));
             metrics.appendChild(this.createMetricChip(item.medianSharpeAvailable
                 ? `Med Sharpe ${item.medianSharpe.toFixed(2)}`
                 : "Med Sharpe --"));
-            metrics.appendChild(this.createTableMetricChip("Med PF", formatProfitFactor(item.medianProfitFactor), "medPf"));
+            this.appendTableMetric(metrics, metricValues, "Med PF", "medPf", formatProfitFactor(item.medianProfitFactor));
             if (item.medianCompositeEdgeRatio > 0) {
                 metrics.appendChild(this.createMetricChip(`Med ER ${item.medianCompositeEdgeRatio.toFixed(2)}`));
             }
@@ -207,9 +212,12 @@ export class FinderUI {
                 metrics.appendChild(this.createMetricChip(`Med R/DD ${returnDrawdown}`));
             }
             metrics.appendChild(this.createMetricChip(`Worst ${formatNullableCurrency(item.worstNetProfit)}`));
-            metrics.appendChild(this.createTableMetricChip("Trades", String(item.totalTrades), "trades"));
+            this.appendTableMetric(metrics, metricValues, "Trades", "trades", String(item.totalTrades));
+            const oosBadges: HTMLElement[] = [];
             if (item.oosAggregate) {
-                metrics.appendChild(this.createUniverseOosChip(item.oosAggregate));
+                const badge = this.createUniverseOosChip(item.oosAggregate);
+                oosBadges.push(badge);
+                metrics.appendChild(badge);
             }
 
             const details = document.createElement("details");
@@ -297,18 +305,19 @@ export class FinderUI {
                 }
             });
 
-            fragment.appendChild(this.createResultRow({
+            return this.createResultRow({
                 index,
                 title,
                 subText: `${item.strategyKey} | ${item.profitableSymbols}/${item.activeSymbols} profitable active symbols${this.formatStrategyVerdictSuffix(item.profitableActiveRatio)}`,
                 paramsText: this.formatParams(item.params),
                 metrics,
+                metricValues,
+                oosBadges,
                 details,
                 detailLines: this.formatUniverseExitStrategyDetail(item),
-            }));
+            });
         });
-        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "symbol_universe");
-        else list.appendChild(fragment);
+        this.appendResultNodes(list, [], rows, "symbol_universe");
     }
 
     public renderAssetOpportunityResults(results: FinderAssetOpportunityResult[]): void {
@@ -325,7 +334,7 @@ export class FinderUI {
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
 
-        const fragment = document.createDocumentFragment();
+        const notes: HTMLElement[] = [];
         const freshResults = results.filter((result) => result.freshStatus === "fresh");
         const averageForwardValidation = calculateFinderAssetOosAverageHorizonMetrics(
             freshResults.map((result) => result.oosHorizonMetrics),
@@ -333,7 +342,7 @@ export class FinderUI {
         if (averageForwardValidation.length > 0) {
             const hasQuoteOnlyMetrics = freshResults.some((result) => result.oosHorizonMetrics?.basis === "quote_only");
             const hasBaseOnlyMetrics = freshResults.some((result) => result.oosHorizonMetrics?.basis === "base_only");
-            fragment.appendChild(this.createAssetOosOverview(
+            notes.push(this.createAssetOosOverview(
                 hasQuoteOnlyMetrics
                     ? "Average Forward validation · fresh entries · QUOTE short only"
                     : hasBaseOnlyMetrics
@@ -355,7 +364,7 @@ export class FinderUI {
             const hasBaseOnlyMetrics = activePositionResults.some(
                 (result) => result.activePositionContinuationMetrics?.basis === "base_only",
             );
-            fragment.appendChild(this.createAssetOosOverview(
+            notes.push(this.createAssetOosOverview(
                 hasQuoteOnlyMetrics
                     ? "Average open-position continuation · QUOTE short only"
                     : hasBaseOnlyMetrics
@@ -423,10 +432,10 @@ export class FinderUI {
             detail.className = "finder-asset-validation-summary";
             detail.textContent = `${formatNullableSignedPercentPoints(averagePnl)} realized PnL${reasonText ? ` · ${reasonText}` : ""}`;
             summary.appendChild(detail);
-            fragment.appendChild(summary);
+            notes.push(summary);
         }
 
-        results.forEach((item, index) => {
+        const rows = results.map((item, index): FinderResultRowParts => {
             const title = document.createElement("div");
             title.className = "finder-title";
             const symbol = document.createElement("span");
@@ -439,19 +448,20 @@ export class FinderUI {
 
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics finder-asset-metrics";
+            const metricValues = new Map<FinderTableMetricKey, string>();
             const selection = item.selectionResult;
             if (item.freshSignalLibraryCount !== undefined) {
                 metrics.appendChild(this.createMetricChip(`Signals ${item.freshSignalLibraryCount}`));
             }
             metrics.appendChild(this.createMetricChip(`Rank ${item.historicalRank}/${item.totalCandidatesEvaluated}`));
-            metrics.appendChild(this.createTableMetricChip("Support", `${item.support.freshSameDirection}/${item.support.poolSize}`, "support"));
-            metrics.appendChild(this.createTableMetricChip("Agree", `${(item.support.directionAgreementRatio * 100).toFixed(0)}%`, "agree"));
-            metrics.appendChild(this.createTableMetricChip("Exp", selection.expectancy.toFixed(2), "exp"));
-            metrics.appendChild(this.createTableMetricChip("PF", formatProfitFactor(selection.profitFactor), "pf"));
-            metrics.appendChild(this.createTableMetricChip("Net", formatNullableCurrency(selection.netProfit), "net"));
+            this.appendTableMetric(metrics, metricValues, "Support", "support", `${item.support.freshSameDirection}/${item.support.poolSize}`);
+            this.appendTableMetric(metrics, metricValues, "Agree", "agree", `${(item.support.directionAgreementRatio * 100).toFixed(0)}%`);
+            this.appendTableMetric(metrics, metricValues, "Exp", "exp", selection.expectancy.toFixed(2));
+            this.appendTableMetric(metrics, metricValues, "PF", "pf", formatProfitFactor(selection.profitFactor));
+            this.appendTableMetric(metrics, metricValues, "Net", "net", formatNullableCurrency(selection.netProfit));
             metrics.appendChild(this.createMetricChip(`DD ${selection.maxDrawdownPercent.toFixed(2)}%`));
             metrics.appendChild(this.createMetricChip(`Sharpe ${selection.sharpeRatio.toFixed(2)}`));
-            metrics.appendChild(this.createTableMetricChip("Trades", String(selection.totalTrades), "trades"));
+            this.appendTableMetric(metrics, metricValues, "Trades", "trades", String(selection.totalTrades));
             if (item.eodOpenTradePnl !== undefined) {
                 metrics.appendChild(this.createMetricChip(`Open EOD ${formatNullableCurrency(item.eodOpenTradePnl)}`));
             }
@@ -496,13 +506,16 @@ export class FinderUI {
             metrics.appendChild(this.createMetricChip(formatAssetMetric(item.winnerLoserHoldGapBars, "Win-Lose Hold", 1, " bars")));
             metrics.appendChild(this.createMetricChip(formatAssetMetric(item.entryPriceRegimeMembership, "Price Regime", 2)));
             metrics.appendChild(this.createMetricChip(formatAssetMetric(item.equityPathLinearity, "Path R²", 2)));
+            const oosBadges: HTMLElement[] = [];
             if (item.oosResult && item.oosVerdict) {
-                metrics.appendChild(this.createOosMetricChip(
+                const badge = this.createOosMetricChip(
                     item.oosResult.netProfit,
                     item.oosResult.profitFactor,
                     item.oosResult.totalTrades,
                     item.oosVerdict,
-                ));
+                );
+                oosBadges.push(badge);
+                metrics.appendChild(badge);
             }
             if (item.oosNextExitMetrics) {
                 const nextExit = item.oosNextExitMetrics;
@@ -534,18 +547,19 @@ export class FinderUI {
                 details = this.createAssetOosPanel(item.oosHorizonMetrics);
             }
 
-            fragment.appendChild(this.createResultRow({
+            return this.createResultRow({
                 index,
                 title,
                 subText: `${item.strategyName} · ${item.direction} ${item.freshStatus}`,
                 paramsText: this.formatParams(item.params),
                 detailLines,
                 metrics,
+                metricValues,
+                oosBadges,
                 details,
-            }));
+            });
         });
-        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "asset_opportunity");
-        else list.appendChild(fragment);
+        this.appendResultNodes(list, notes, rows, "asset_opportunity");
     }
 
     public renderStrategyQualityResults(results: FinderStrategyQualityResult[]): void {
@@ -562,8 +576,7 @@ export class FinderUI {
         setVisible("finderEmpty", false);
         if (copyButton) copyButton.disabled = false;
 
-        const fragment = document.createDocumentFragment();
-        results.forEach((item, index) => {
+        const rows = results.map((item, index): FinderResultRowParts => {
             const title = document.createElement("div");
             title.className = "finder-title";
             const titleText = document.createElement("span");
@@ -576,20 +589,21 @@ export class FinderUI {
 
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
+            const metricValues = new Map<FinderTableMetricKey, string>();
             metrics.appendChild(this.createMetricChip(`Avg Exp ${item.averageExpectancy.toFixed(2)}`));
-            metrics.appendChild(this.createTableMetricChip("Med Exp", item.medianExpectancy.toFixed(2), "medExp"));
-            metrics.appendChild(this.createTableMetricChip("PF", formatProfitFactor(item.profitFactor), "pf"));
+            this.appendTableMetric(metrics, metricValues, "Med Exp", "medExp", item.medianExpectancy.toFixed(2));
+            this.appendTableMetric(metrics, metricValues, "PF", "pf", formatProfitFactor(item.profitFactor));
             metrics.appendChild(this.createMetricChip(`Avg PF ${formatProfitFactor(item.averageProfitFactor)}`));
             metrics.appendChild(this.createMetricChip(item.sharpeAvailableSymbols > 0
                 ? `Sharpe ${item.averageSharpe.toFixed(2)}`
                 : "Sharpe --"));
-            metrics.appendChild(this.createTableMetricChip("PnL", formatNullableCurrency(item.totalNetProfit), "pnl"));
-            metrics.appendChild(this.createTableMetricChip("Trades", String(item.totalTrades), "trades"));
+            this.appendTableMetric(metrics, metricValues, "PnL", "pnl", formatNullableCurrency(item.totalNetProfit));
+            this.appendTableMetric(metrics, metricValues, "Trades", "trades", String(item.totalTrades));
             metrics.appendChild(this.createMetricChip(`WR ${item.weightedWinRate.toFixed(1)}%`));
-            metrics.appendChild(this.createTableMetricChip("Active", `${item.activeSymbols}/${item.requestedSymbols}`, "active"));
+            this.appendTableMetric(metrics, metricValues, "Active", "active", `${item.activeSymbols}/${item.requestedSymbols}`);
             metrics.appendChild(this.createMetricChip(`Prof ${item.profitableSymbols}`));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
-            metrics.appendChild(this.createTableMetricChip("Worst DD", `${item.worstMaxDrawdownPercent.toFixed(2)}%`, "worstDd"));
+            this.appendTableMetric(metrics, metricValues, "Worst DD", "worstDd", `${item.worstMaxDrawdownPercent.toFixed(2)}%`);
             if (item.oos) {
                 metrics.appendChild(this.createMetricChip(`OOS PnL ${formatNullableCurrency(item.oos.totalNetProfit)}`));
                 metrics.appendChild(this.createMetricChip(`OOS PF ${formatProfitFactor(item.oos.profitFactor)}`));
@@ -633,7 +647,7 @@ export class FinderUI {
                 }
             });
 
-            fragment.appendChild(this.createResultRow({
+            return this.createResultRow({
                 index,
                 title,
                 subText: `${item.strategyKey} | defaults across ${item.requestedSymbols} symbol${item.requestedSymbols === 1 ? "" : "s"}`,
@@ -642,12 +656,12 @@ export class FinderUI {
                     `${item.loadedSymbols}/${item.requestedSymbols} symbols loaded | ${item.failedSymbols} failed`,
                 ],
                 metrics,
+                metricValues,
                 details,
                 showApply: false,
-            }));
+            });
         });
-        if (this.resultsView === "table") appendFinderResultsTable(list, fragment, "strategy_quality");
-        else list.appendChild(fragment);
+        this.appendResultNodes(list, [], rows, "strategy_quality");
     }
 
     public renderArmPerformanceResults(
@@ -718,10 +732,9 @@ export class FinderUI {
 				? `Asset-switch replay holds one long target-asset position per arm, starts flat, and enters fixed $1,000 non-compounding positions. Raw ranking uses total net P&L in USD, including the open mark; costs are informational. Basis: ${effectiveBasis === "raw" ? "raw" : "top contributor excluded"}.${effectiveBasis === "exclude_top_contributor" ? " The highest cumulative asset P&L contribution is removed from the reported totals; the original position path is unchanged." : ""} ${eventFilterText} Ranked-arm ties use the deterministic selector tie-break; unresolved unique-only ties and no-pick decisions keep the current holding. A pending order is shown separately from the current position snapshot.${effectiveBasis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for some saved results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`
 			: `Arm Performance compares each configuration on its own eligible events across ${context?.pairs.length ?? "?"} supplied pairs. Basis: ${effectiveBasis === "raw" ? "raw" : "top contributor excluded"}. ${eventFilterText} Cooldown: ${cooldownBars} bars${cooldownBars > 0 ? " (requires a new run to change)" : " (off)"}. Mean forward return is a research metric, not account P&L. Bootstrap CI does not correct for searching configurations.${effectiveBasis === "exclude_top_contributor" && adjustedMetricsUnavailable ? " Contributor-excluded summaries are unavailable for older results; rerun Finder." : ""}${inventoryIncomplete ? " Cached preview: Re-Sort ranks only the candidates currently available; unseen candidates may rank higher." : ""}${context ? "" : " Apply uses saved candidate settings and current capital settings because the original run context is unavailable."}`;
         if (ranking) note.textContent = `Ranking consistency: descending ${filter.rankingSort === "selected_asset" ? "selected asset score" : "overall ordering CI lower bound"}. Fixed horizon ${rankingHorizon ?? "?"} bars; ${RANKING_MEASUREMENT_SEMANTICS}. All valid events are scored, including overlapping windows. A sortable interval requires at least 100 scored events and ten populated time blocks; initial block width is twice the longest completed forward window. A 50% accuracy is the no-information reference. Intervals do not correct for searching configurations or market dependence. ${filter.eventFilterEnabled ? "Scored-event filter: " + (filter.minEvents ?? 1) + ".." + (filter.maxEvents ?? "unlimited") + "." : "Scored-event filter: off."}${inventoryIncomplete ? " Cached preview: unseen candidates may rank higher." : ""}`;
-        list.appendChild(note);
+        const notes = [note];
 
-        const fragment = document.createDocumentFragment();
-        results.forEach((item, index) => {
+        const rows = results.map((item, index): FinderResultRowParts => {
 			const selectedSwitchMetric = item.replayMode === "asset_switch" ? item.assetSwitchMetrics[arm] : null;
             const pendingOrder = selectedSwitchMetric?.pendingOrder;
             const pendingAction = pendingOrder?.side === "sell"
@@ -743,22 +756,26 @@ export class FinderUI {
                 value === null || !Number.isFinite(value) ? "n/a" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%`;
             const metrics = document.createElement("div");
             metrics.className = "finder-metrics";
+            const metricValues = new Map<FinderTableMetricKey, string>();
             const technicalMetrics = ranking ? document.createElement("div") : metrics;
             technicalMetrics.className = "finder-metrics";
             const rankingMetric = ranking ? getFinderArmRankingMetric(item, arm, filter) : undefined;
             const percent = (value: number | null | undefined): string => value == null ? "n/a" : (value * 100).toFixed(2) + "%";
+            let replayStatus: string | undefined;
             if (ranking) {
                 const sortValue = getFinderArmPerformanceRankValue({}, arm, item.replayMode, undefined, "raw", "ranking_consistency", rankingMetric, filter.rankingSort);
                 const sortLabel = filter.rankingSort === "selected_asset" ? "Selected asset sort score" : "Ordering CI lower";
-                metrics.appendChild(this.createTableMetricChip(sortLabel, percent(sortValue), "rankingSortScore"));
-                metrics.appendChild(this.createTableMetricChip("Rank eligibility", sortValue !== null ? "available" : rankingMetric?.status === "no_events" ? "no events" : rankingMetric ? "insufficient confidence" : "rerun required", "rankEligibility"));
-                metrics.appendChild(this.createTableMetricChip("Selected asset score", percent(rankingMetric?.top1Superiority), "selectedAssetScore"));
-                metrics.appendChild(this.createTableMetricChip("Best asset frequency", percent(rankingMetric?.soleFirstPlaceRate), "bestAssetFrequency"));
+                this.appendTableMetric(metrics, metricValues, sortLabel, "rankingSortScore", percent(sortValue));
+                this.appendTableMetric(metrics, metricValues, "Rank eligibility", "rankEligibility", sortValue !== null ? "available" : rankingMetric?.status === "no_events" ? "no events" : rankingMetric ? "insufficient confidence" : "rerun required");
+                this.appendTableMetric(metrics, metricValues, "Selected asset score", "selectedAssetScore", percent(rankingMetric?.top1Superiority));
+                this.appendTableMetric(metrics, metricValues, "Best asset frequency", "bestAssetFrequency", percent(rankingMetric?.soleFirstPlaceRate));
                 metrics.appendChild(this.createMetricChip(`Shared first place ${percent(rankingMetric?.sharedFirstPlaceRate)}`));
-                metrics.appendChild(this.createTableMetricChip("Overall ordering accuracy", percent(rankingMetric?.meanAccuracy), "overallOrderingAccuracy"));
+                this.appendTableMetric(metrics, metricValues, "Overall ordering accuracy", "overallOrderingAccuracy", percent(rankingMetric?.meanAccuracy));
             }
-			const appendSwitchPnlChip = (label: string, value: number | null, key: FinderTableMetricKey): void => {
-				const chip = this.createTableMetricChip(label, formatNullableCurrency(value), key);
+			const appendSwitchPnlMetric = (label: string, value: number | null, key: FinderTableMetricKey): void => {
+				const formatted = formatNullableCurrency(value);
+				metricValues.set(key, formatted);
+				const chip = this.createMetricChip(`${label} ${formatted}`);
 				if (value !== null && Number.isFinite(value)) {
 					chip.classList.add("finder-metric-value");
 					if (value > 0) chip.classList.add("positive");
@@ -772,27 +789,27 @@ export class FinderUI {
 				const contributorExclusion = switchMetric?.topContributorExclusion;
 				if (!switchMetric) metrics.appendChild(this.createMetricChip("Replay data: rerun required"));
 				if (!ranking && switchMetric && switchMetric.status !== "complete") {
-					const statusText = `Status ${switchMetric.status.replaceAll("_", " ")}`;
-					metrics.appendChild(this.createMetricChip(statusText, { key: "status", value: statusText }));
+					replayStatus = `Status ${switchMetric.status.replaceAll("_", " ")}`;
+					metrics.appendChild(this.createMetricChip(replayStatus));
 				}
-				appendSwitchPnlChip("Total net P&L", effectiveBasis === "exclude_top_contributor"
+				appendSwitchPnlMetric("Total net P&L", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedTotalNetPnl ?? null
 					: switchMetric?.totalNetPnl ?? null, "totalNetPnl");
-				appendSwitchPnlChip("Realized", effectiveBasis === "exclude_top_contributor"
+				appendSwitchPnlMetric("Realized", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedRealizedNetPnl ?? null
 					: switchMetric?.realizedNetPnl ?? null, "realized");
-				appendSwitchPnlChip("Open", effectiveBasis === "exclude_top_contributor"
+				appendSwitchPnlMetric("Open", effectiveBasis === "exclude_top_contributor"
 					? contributorExclusion?.adjustedOpenPositionNetPnl ?? null
 					: switchMetric?.openPositionNetPnl ?? null, "open");
 				// Replay status stays in the primary metrics so it remains visible
 				// when the ranking Measurement details disclosure is closed; in
 				// ranking mode `technicalMetrics` lives inside that disclosure.
 				if (ranking && switchMetric && switchMetric.status !== "complete") {
-					const statusText = `Status ${switchMetric.status.replaceAll("_", " ")}`;
-					metrics.appendChild(this.createMetricChip(statusText, { key: "status", value: statusText }));
+					replayStatus = `Status ${switchMetric.status.replaceAll("_", " ")}`;
+					metrics.appendChild(this.createMetricChip(replayStatus));
 				}
-				technicalMetrics.appendChild(this.createTableMetricChip("Completed trades", `${switchMetric?.completedTrades ?? "n/a"} · entries ${switchMetric?.enteredCount ?? "n/a"}`, "completedTrades"));
-				technicalMetrics.appendChild(this.createTableMetricChip("Costs", formatNullableCurrency(switchMetric?.totalCosts ?? null), "costs"));
+				this.appendTableMetric(technicalMetrics, metricValues, "Completed trades", "completedTrades", `${switchMetric?.completedTrades ?? "n/a"} · entries ${switchMetric?.enteredCount ?? "n/a"}`);
+				this.appendTableMetric(technicalMetrics, metricValues, "Costs", "costs", formatNullableCurrency(switchMetric?.totalCosts ?? null));
 				if (effectiveBasis === "exclude_top_contributor") {
 					metrics.appendChild(this.createMetricChip("TOP CONTRIBUTOR EXCLUDED"));
 					metrics.appendChild(this.createMetricChip(`Excluded ${contributorExclusion?.asset ?? "n/a"} (${formatNullableCurrency(contributorExclusion?.contributionNetPnl ?? null)})`));
@@ -803,14 +820,14 @@ export class FinderUI {
 					? item.metricsExTopContributor?.[arm]
 					: item.metrics?.[arm];
 				technicalMetrics.appendChild(this.createMetricChip(effectiveBasis === "raw" ? "RAW" : "TOP CONTRIBUTOR EXCLUDED"));
-				technicalMetrics.appendChild(this.createTableMetricChip("Events", String(horizonMetric?.events ?? "n/a"), "events"));
-				metrics.appendChild(this.createTableMetricChip(ranking ? "Replay mean" : "Mean", formatPct(horizonMetric?.topMean ?? null), "mean"));
-				technicalMetrics.appendChild(this.createTableMetricChip("Random", formatPct(horizonMetric?.randomMean ?? null), "random"));
-				technicalMetrics.appendChild(this.createTableMetricChip("DeltaMed", formatPct(horizonMetric?.delta ?? null), "deltaMed"));
+				this.appendTableMetric(technicalMetrics, metricValues, "Events", "events", String(horizonMetric?.events ?? "n/a"));
+				this.appendTableMetric(metrics, metricValues, ranking ? "Replay mean" : "Mean", "mean", formatPct(horizonMetric?.topMean ?? null));
+				this.appendTableMetric(technicalMetrics, metricValues, "Random", "random", formatPct(horizonMetric?.randomMean ?? null));
+				this.appendTableMetric(technicalMetrics, metricValues, "DeltaMed", "deltaMed", formatPct(horizonMetric?.delta ?? null));
 				technicalMetrics.appendChild(this.createMetricChip(`deltaMed CI95 [${formatPct(horizonMetric?.ciLower ?? null)}, ${formatPct(horizonMetric?.ciUpper ?? null)}]`));
 			}
             if (ranking) {
-                metrics.appendChild(this.createTableMetricChip("Scored events", String(rankingMetric?.scoredEvents ?? "n/a"), "scoredEvents"));
+                this.appendTableMetric(metrics, metricValues, "Scored events", "scoredEvents", String(rankingMetric?.scoredEvents ?? "n/a"));
                 technicalMetrics.appendChild(this.createMetricChip(rankingMetric ? "Ranking data: " + rankingMetric.status.replaceAll("_", " ") : "Rerun required"));
                 technicalMetrics.appendChild(this.createMetricChip(`Semantics ${item.rankingMeasurement?.semanticsVersion ?? "n/a"}`));
                 if (item.rankingMeasurement && item.rankingMeasurement.horizonBars !== rankingHorizon) {
@@ -869,7 +886,7 @@ export class FinderUI {
                 details.appendChild(panel);
             }
 
-            fragment.appendChild(this.createResultRow({
+            return this.createResultRow({
                 index,
                 title,
                 subText: `${item.strategyKey} · candidate ${item.candidateOrdinal + 1} · ${item.actualEngineMode}`,
@@ -877,15 +894,15 @@ export class FinderUI {
                 detailLines: ranking ? [] : detailLines,
                 details,
                 metrics,
-            }));
-        });
-        if (this.resultsView === "table") {
-            appendFinderResultsTable(list, fragment, "arm_performance", {
-                replayMode,
-                ranking,
-                rankingSort: filter.rankingSort === "selected_asset" ? "selected_asset" : "overall_ordering",
+                metricValues,
+                status: replayStatus,
             });
-        } else list.appendChild(fragment);
+        });
+        this.appendResultNodes(list, notes, rows, "arm_performance", {
+            replayMode,
+            ranking,
+            rankingSort: filter.rankingSort === "selected_asset" ? "selected_asset" : "overall_ordering",
+        });
     }
 
     /**
@@ -955,24 +972,25 @@ export class FinderUI {
         container.style.display = "";
     }
 
-    private createMetricChip(
-        text: string,
-        metric?: { key: FinderTableMetricKey; value: string },
-    ): HTMLSpanElement {
+    private createMetricChip(text: string): HTMLSpanElement {
         const span = document.createElement("span");
         span.textContent = text;
-        if (metric) {
-            // Table-consumed chips carry explicit metric identity so the
-            // comparison table never parses card wording.
-            span.setAttribute(FINDER_METRIC_DATA.key, metric.key);
-            span.setAttribute(FINDER_METRIC_DATA.value, metric.value);
-        }
         return span;
     }
 
-    /** One `label value` chip that the comparison table reads by metric key. */
-    private createTableMetricChip(label: string, value: string, key: FinderTableMetricKey): HTMLSpanElement {
-        return this.createMetricChip(`${label} ${value}`, { key, value });
+    /**
+     * Record one table metric under its stable key and show the same formatted
+     * string as a `label value` chip, so both layouts render one calculation.
+     */
+    private appendTableMetric(
+        metrics: HTMLElement,
+        metricValues: Map<FinderTableMetricKey, string>,
+        label: string,
+        key: FinderTableMetricKey,
+        value: string,
+    ): void {
+        metricValues.set(key, value);
+        metrics.appendChild(this.createMetricChip(`${label} ${value}`));
     }
 
     private createAssetOosOverview(
@@ -1156,27 +1174,42 @@ export class FinderUI {
         return span;
     }
 
+    /**
+     * Lay out scope-level notes and candidate rows in the selected view: the
+     * comparison table consumes the row parts directly, cards wrap each part
+     * in a `.finder-row`.
+     */
+    private appendResultNodes(
+        list: HTMLElement,
+        notes: readonly Node[],
+        rows: readonly FinderResultRowParts[],
+        scope: FinderScope,
+        arm?: FinderArmTableContext,
+    ): void {
+        if (this.resultsView === "table") {
+            appendFinderResultsTable(list, notes, rows, scope, arm);
+            return;
+        }
+        const fragment = document.createDocumentFragment();
+        for (const note of notes) fragment.appendChild(note);
+        for (const row of rows) fragment.appendChild(this.createResultCard(row));
+        list.appendChild(fragment);
+    }
+
+    /** Build one candidate's display parts shared by the card and table layouts. */
     private createResultRow(options: {
         index: number;
         title: HTMLElement;
         subText: string;
         paramsText: string;
-        metrics: HTMLElement;
         detailLines?: string[];
+        metrics: HTMLElement;
+        metricValues: ReadonlyMap<FinderTableMetricKey, string>;
+        oosBadges?: readonly HTMLElement[];
+        status?: string;
         details?: HTMLElement;
         showApply?: boolean;
-        applyDisabled?: boolean;
-    }): HTMLDivElement {
-        const row = document.createElement("div");
-        row.className = "finder-row";
-        if (options.showApply === false) {
-            row.classList.add("finder-row-readonly");
-        }
-
-        const rank = document.createElement("div");
-        rank.className = "finder-rank";
-        rank.textContent = `${options.index + 1}`;
-
+    }): FinderResultRowParts {
         const main = document.createElement("div");
         main.className = "finder-main";
 
@@ -1202,18 +1235,42 @@ export class FinderUI {
             main.appendChild(options.details);
         }
 
-        row.appendChild(rank);
-        row.appendChild(main);
+        let apply: HTMLButtonElement | undefined;
         if (options.showApply !== false) {
-            const button = document.createElement("button");
-            button.className = "btn btn-secondary finder-apply";
-            button.textContent = "Apply";
-            button.dataset.index = options.index.toString();
-            button.disabled = options.applyDisabled === true;
-            if (button.disabled) button.title = "Run context is unavailable in this cached preview.";
-            row.appendChild(button);
+            apply = document.createElement("button");
+            apply.className = "btn btn-secondary finder-apply";
+            apply.textContent = "Apply";
+            apply.dataset.index = options.index.toString();
         }
-        return row;
+        return {
+            rank: `${options.index + 1}`,
+            title: options.title,
+            oosBadges: options.oosBadges ?? [],
+            status: options.status,
+            main,
+            apply,
+            metricValues: options.metricValues,
+        };
+    }
+
+    /** Card layout for one candidate's parts (cards view). */
+    private createResultCard(row: FinderResultRowParts): HTMLDivElement {
+        const card = document.createElement("div");
+        card.className = "finder-row";
+        if (!row.apply) {
+            card.classList.add("finder-row-readonly");
+        }
+
+        const rank = document.createElement("div");
+        rank.className = "finder-rank";
+        rank.textContent = row.rank;
+
+        card.appendChild(rank);
+        card.appendChild(row.main);
+        if (row.apply) {
+            card.appendChild(row.apply);
+        }
+        return card;
     }
 
     private formatParams(params: StrategyParams): string {
