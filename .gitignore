@@ -167,3 +167,7 @@ tests/lib/
 # Local agent-tool state (session plans, runtimes) — never track.
 /.kilo/
 /.zcode/
+/.workbuddy-ai/
+
+# Test temp dirs left behind when a spec's cleanup is aborted mid-run.
+/asset-opportunity-analysis-*/
