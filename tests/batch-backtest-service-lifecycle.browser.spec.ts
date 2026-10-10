@@ -889,7 +889,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
             svc().lastResults = [{ symbol: "ORIGINAL", status: "failed", barCount: 0 }];
             const token = svc().batchRun.currentRunToken();
             const setBusy = (busy: boolean): void => {
-                if (owner === "batch") svc().runInFlight = busy;
+                if (owner === "batch") svc().batchRun.setRunInFlight(busy);
                 if (owner === "analysis") svc().analysisInFlight = busy;
                 if (owner === "preflight") svc().batchActionInFlight = busy;
                 if (owner === "reattach") svc().batchRun.setServerRunActive(busy);
@@ -2273,7 +2273,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         // Directly flip runInFlight on (as if a run were in progress), call
         // runBatch, and assert it short-circuited without touching fetch.
         const dom = setupForAnalysis();
-        svc().runInFlight = true;
+        svc().batchRun.setRunInFlight(true);
         let fetchCalled = false;
         await withMockFetch(() => {
             fetchCalled = true;
@@ -2284,7 +2284,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(fetchCalled, "second runBatch must short-circuit before fetch").to.equal(false);
         expect(dom.batchBacktestStatus.textContent).to.include("already running");
         // Reset for the rest of the suite.
-        svc().runInFlight = false;
+        svc().batchRun.setRunInFlight(false);
     });
 
     it("reconcileStatusRows dedupes a streamed prefix + a recovery page (audit status-row-recovery finding)", () => {
@@ -2478,7 +2478,7 @@ describe("BatchBacktestService Balanced Generator lifecycle", () => {
         const dom = setupForAnalysis();
         (dom.batchBacktestSymbols as any).value = "PREEXISTING+PAIR";
         dom.batchBacktestBalancedAssets.value = "BTC\nETH";
-        svc().runInFlight = true;
+        svc().batchRun.setRunInFlight(true);
 
         dom.batchBacktestBalancedGenerateBtn.click();
         await new Promise((r) => setTimeout(r, 0));

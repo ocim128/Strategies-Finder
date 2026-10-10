@@ -95,11 +95,6 @@ export class BatchRunController {
     // the persisted snapshot reflects the strategy that actually ran — not
     // whatever is selected in `state` later.
     private lastRunStrategyKey: string | null = null;
-    // Number of result rows already appended to the DOM via onSymbolComplete.
-    // Tracked so the post-run path only appends the cancelled back-fill tail
-    // instead of rebuilding every row (the runner emits onSymbolComplete in
-    // strict input order, so the incremental appends are already ordered).
-    private appendedCount = 0;
     // Monotonic run token. A stale run that resumes after a newer run started
     // (e.g. Stop -> Run while the old run is still awaiting executeBacktest)
     // sees its token as stale and stops writing DOM/state, preventing two
@@ -341,7 +336,6 @@ export class BatchRunController {
 
     private renderResultRows(dom: BatchBacktestDom): void {
         this.deps.resultsView.renderResultRows(dom, this.lastResults, this.batchResultSort);
-        this.appendedCount = this.lastResults.length;
     }
 
     // ── Run lifecycle ───────────────────────────────────────────────────
@@ -423,7 +417,6 @@ export class BatchRunController {
         this.lastRunFingerprint = null;
         this.lastRunInterval = null;
         this.lastRunStrategyKey = null;
-        this.appendedCount = 0;
         this.serverHasArtifacts = false;
         // Audit Finding 5: clear the active server run id at the start of each
         // new run; `runBatchServer` assigns a fresh one before POSTing.
@@ -457,18 +450,19 @@ export class BatchRunController {
         // (HTTP failure, stream error before `done`) is recorded as
         // `incomplete` so the Copy Benchmark button is not enabled for a run
         // that never produced authoritative results.
-        let runOutcome: BatchBenchmarkRunOutcome = "done";
-        let reachedTerminal = false;
+        // Terminal outcome; `null` means the run never reached one, so the
+        // benchmark records `incomplete` (see below). Held on an object so the
+        // declared union type survives the callback assignment below (TypeScript
+        // cannot track assignments made inside the callback).
+        const runState: { outcome: BatchBenchmarkRunOutcome | null } = { outcome: null };
         try {
             await this.runBatchServer(dom, token, symbols, strategyKey, strategyParams, backtestSettings, capitalSettings, interval, runFingerprint, (finalOutcome) => {
                 // The server path resolves its terminal outcome AFTER all
                 // recovery attempts. Capture it here so the benchmark reflects
                 // what actually happened (done / cancelled) instead of guessing
                 // from `this.cancelled` after the fact.
-                reachedTerminal = true;
-                runOutcome = finalOutcome;
+                runState.outcome = finalOutcome;
             });
-            reachedTerminal = true;
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -478,8 +472,7 @@ export class BatchRunController {
             // `this.cancelled` as the dominant signal: a user-initiated Stop
             // surfaces a `cancelled` outcome so the benchmark distinguishes it
             // from an HTTP/stream `fatal`.
-            runOutcome = this.cancelled ? "cancelled" : "fatal";
-            reachedTerminal = this.cancelled;
+            runState.outcome = this.cancelled ? "cancelled" : null;
         } finally {
             // Only restore buttons if this run is still the active one.
             if (token === this.runToken) {
@@ -493,18 +486,16 @@ export class BatchRunController {
                 // (the browser never holds `row.data` in this mode).
                 this.updateArtifactActionButtons(dom);
                 this.updateSummary(dom);
-                const completed = reachedTerminal && runOutcome === "done";
-                const progressLabel = completed ? "Done" : runOutcome === "cancelled" ? "Stopped" : "Failed";
-                this.setProgress(dom, completed ? 100 : this.lastProgressPercent, progressLabel);
-                this.setRunBusy(dom, false);
                 // Audit benchmark-rows finding: record the benchmark only after
                 // a known terminal outcome. A run that exited via HTTP/stream
                 // failure without recovery is recorded as `incomplete` (still
                 // observable, but clearly labeled). `this.cancelled` from the
                 // user clicking Stop is a terminal outcome (`cancelled`).
-                const benchmarkOutcome: BatchBenchmarkRunOutcome = reachedTerminal
-                    ? runOutcome
-                    : "incomplete";
+                const benchmarkOutcome: BatchBenchmarkRunOutcome = runState.outcome ?? "incomplete";
+                const completed = benchmarkOutcome === "done";
+                const progressLabel = completed ? "Done" : benchmarkOutcome === "cancelled" ? "Stopped" : "Failed";
+                this.setProgress(dom, completed ? 100 : this.lastProgressPercent, progressLabel);
+                this.setRunBusy(dom, false);
                 this.recordRunBenchmark(strategyKey, interval, runStartedAt, benchmarkOutcome);
             }
         }
@@ -605,7 +596,6 @@ export class BatchRunController {
                     // flush once per animation frame to avoid one reflow per
                     // row on large cached runs.
                     this.lastResults.push(event.row);
-                    this.appendedCount += 1;
                     this.queueLiveRender(dom, event.row, token);
                 },
                 onDone: (event: Extract<BatchStreamEvent, { type: "done" }>) => {
@@ -911,7 +901,6 @@ export class BatchRunController {
         if (accepted.length === 0) return [];
         for (const row of accepted) {
             this.lastResults.push(row);
-            this.appendedCount += 1;
         }
         if (this.batchResultSort) {
             this.renderResultRows(dom);
@@ -1132,7 +1121,6 @@ export class BatchRunController {
         // is correctly labeled. Older snapshots (pre-`strategyKey`) normalize
         // to `null`.
         this.lastRunStrategyKey = snapshot.strategyKey ?? null;
-        this.appendedCount = snapshot.results.length;
         // LocalStorage cannot prove server artifact TTL is still valid, and
         // browser-mode heavy arrays are intentionally not restored. Reattach
         // status may re-enable OPEN_SCORE USD if server artifacts still exist.
@@ -1231,7 +1219,6 @@ export class BatchRunController {
         this.updateArtifactActionButtons(dom);
         if (this.lastResults.length === 0) return;
         this.lastResults = [];
-        this.appendedCount = 0;
         dom.batchBacktestResults.replaceChildren();
         setVisible(dom.batchBacktestEmpty, true);
         dom.batchBacktestCopyBtn.disabled = true;

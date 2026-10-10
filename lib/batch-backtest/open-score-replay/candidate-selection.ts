@@ -311,102 +311,37 @@ export async function buildCandidateViews(args: {
             const eventTimeSec = ev.timeSec;
             // Selection-aggregation plan phase 3: the digest key is only
             // (version, seed, event time, asset), so one asset's digest is
-            // identical across every pickMax in this event. Lazily memoize
-            // per assetIndex — the map is allocated only when a tie actually
+            // identical across every pick in this event. Lazily memoize per
+            // assetIndex — the map is allocated only when a tie actually
             // requests a digest and becomes unreachable with the event, so
             // nothing is retained across events.
             let eventDigestCache: Map<number, string> | null = null;
-            const digestFor = (c: Candidate): string => {
-                const cached = eventDigestCache?.get(c.assetIndex);
+            const digestForIndex = (assetIndex: number): string => {
+                const cached = eventDigestCache?.get(assetIndex);
                 if (cached !== undefined) return cached;
-                const digest = tieBreakDigest(eventTimeSec, assetNames[c.assetIndex]!);
-                (eventDigestCache ??= new Map()).set(c.assetIndex, digest);
+                const digest = tieBreakDigest(eventTimeSec, assetNames[assetIndex]!);
+                (eventDigestCache ??= new Map()).set(assetIndex, digest);
                 return digest;
             };
             type RankKey = "raw" | "mean" | "activePairs" | "z";
-            const rankValue = (candidate: Candidate, key: RankKey): number =>
-                key === "z" ? candidate.z ?? Number.NEGATIVE_INFINITY : candidate[key] ?? Number.NEGATIVE_INFINITY;
-            const pickMax = (candidates: readonly Candidate[], key: RankKey): { winner: Candidate; tiedCount: number } => {
-                // First pass: find the max value.
-                let maxValue = rankValue(candidates[0]!, key);
-                for (let i = 1; i < candidates.length; i += 1) {
-                    const v = rankValue(candidates[i]!, key);
-                    if (v > maxValue) maxValue = v;
-                }
-                // Second pass: collect every candidate at the max, then pick by
-                // tie-break digest. Counting at the end gives the correct tied
-                // total regardless of input order.
-                const tiedAtTop: Candidate[] = [];
-                for (const c of candidates) {
-                    if (rankValue(c, key) === maxValue) tiedAtTop.push(c);
-                }
-                let winner = tiedAtTop[0]!;
-                if (tiedAtTop.length > 1) {
-                    // Precompute every tied candidate's digest ONCE and track the
-                    // current winner's digest alongside the winner itself. The
-                    // prior loop recomputed `digestFor(winner)` on every
-                    // iteration — O(k) TextEncoder.encode + FNV hashes per tie
-                    // event instead of O(1) lookup, and pickMax runs 6–7× per
-                    // event across every event (Phase 3 hot path).
-                    const digests = tiedAtTop.map(digestFor);
-                    let dW = digests[0]!;
-                    for (let i = 1; i < tiedAtTop.length; i += 1) {
-                        const c = tiedAtTop[i]!;
-                        const dC = digests[i]!;
-                        if (dC < dW) { winner = c; dW = dC; }
-                        else if (dC === dW) {
-                            // Tie-digest collision. Asset name is the final
-                            // deterministic fallback (collision is astronomically
-                            // unlikely; no longer surfaced as a verdict flag —
-                            // no consumer ever read it).
-                            if (assetNames[c.assetIndex]! < assetNames[winner.assetIndex]!) { winner = c; dW = dC; }
-                        }
-                    }
-                }
-                return { winner, tiedCount: tiedAtTop.length };
-            };
+            // Every selector below delegates to the shared owner; the memoized
+            // digest keeps pickMax O(1) per lookup on the Phase-3 hot path.
+            const pickMax = (candidates: readonly Candidate[], key: RankKey): { winner: Candidate; tiedCount: number } =>
+                pickRanked(candidates, { key, direction: "max", timeSec: eventTimeSec, assetNames, digestFor: digestForIndex })!;
             const topRaw = positives.length > 0 ? pickMax(positives, "raw") : null;
             const topMean = positives.length > 0 ? pickMax(positives, "mean") : null;
-            const topMeanRawUniquePool = topMean
-                ? positives.filter((candidate) => candidate.mean === topMean.winner.mean)
-                : [];
-            let topMeanRawUnique = -1;
-            let maxRawInTopMeanTie = -Infinity;
-            for (const candidate of topMeanRawUniquePool) {
-                if (candidate.raw > maxRawInTopMeanTie) maxRawInTopMeanTie = candidate.raw;
-            }
-            const topMeanRawMaxRows = topMeanRawUniquePool.filter((candidate) => candidate.raw === maxRawInTopMeanTie);
-            if (topMeanRawMaxRows.length === 1) topMeanRawUnique = topMeanRawMaxRows[0]!.assetIndex;
+            const topMeanRawUniquePool = topMean ? bestValuePool(positives, "mean", "max") : [];
+            const topMeanRawUnique = pickRanked(topMeanRawUniquePool, {
+                key: "raw", direction: "max", timeSec: eventTimeSec, assetNames, digestFor: digestForIndex, uniqueOnly: true,
+            })?.winner.assetIndex ?? -1;
             const uniquePick = (
                 pool: readonly Candidate[],
                 key: "raw" | "mean" | "z",
                 direction: "max" | "min",
-            ): number | null => {
-                if (pool.length === 0) return null;
-                const score = (candidate: Candidate): number => key === "z"
-                    ? candidate.z ?? Number.NEGATIVE_INFINITY
-                    : candidate[key] ?? Number.NEGATIVE_INFINITY;
-                let best = score(pool[0]!);
-                for (let index = 1; index < pool.length; index += 1) {
-                    const value = score(pool[index]!);
-                    if (direction === "max" ? value > best : value < best) best = value;
-                }
-                let winner: number | null = null;
-                for (const candidate of pool) {
-                    if (score(candidate) !== best) continue;
-                    if (winner !== null) return null;
-                    winner = candidate.assetIndex;
-                }
-                return winner;
-            };
-            const bestMeanPool = (pool: readonly Candidate[], direction: "max" | "min"): Candidate[] => {
-                if (pool.length === 0) return [];
-                const best = pool.reduce((value, candidate) => direction === "max"
-                    ? Math.max(value, candidate.mean)
-                    : Math.min(value, candidate.mean),
-                direction === "max" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY);
-                return pool.filter((candidate) => candidate.mean === best);
-            };
+            ): number | null =>
+                pickRanked(pool, { key, direction, timeSec: eventTimeSec, assetNames, digestFor: digestForIndex, uniqueOnly: true })?.winner.assetIndex ?? null;
+            const bestMeanPool = (pool: readonly Candidate[], direction: "max" | "min"): Candidate[] =>
+                bestValuePool(pool, "mean", direction);
             // Profit-gated picks: same digest tie-break, own >= 2 pool gate.
             const poolMinimum = args.includeAllDecisionEvents === true ? 1 : 2;
             const topRawProfit = profitPositives.length >= poolMinimum ? pickMax(profitPositives, "raw") : null;
@@ -527,10 +462,10 @@ class SwitchRankedMaximum {
             return;
         }
         if (value !== this.bestValue) return;
+        const winnerIndex = this.winner;
         const candidateDigest = this.digestFor(assetIndex);
-        this.winnerDigest ??= this.digestFor(this.winner);
-        if (candidateDigest < this.winnerDigest
-            || (candidateDigest === this.winnerDigest && this.assetNames[assetIndex]! < this.assetNames[this.winner]!)) {
+        this.winnerDigest ??= this.digestFor(winnerIndex);
+        if (isBetterTieBreak(assetIndex, candidateDigest, winnerIndex, this.winnerDigest, this.assetNames)) {
             this.winner = assetIndex;
             this.winnerDigest = candidateDigest;
         }
@@ -899,38 +834,89 @@ const usableRankValueMin = (candidate: Candidate, key: UsableRankKey): number =>
     key === "z" ? candidate.z ?? Number.POSITIVE_INFINITY : candidate[key] ?? Number.NEGATIVE_INFINITY;
 
 /**
- * Gap-filtered max ranking with the versioned FNV-1a digest tie-break (smallest
- * digest wins; asset-name order only on a digest collision). Shared with the
- * engine's aggregation loop, which re-resolves profit-only-event picks with the
- * exact same rule. Null for an empty pool.
+ * Canonical OPEN_SCORE tie-break: the smallest versioned FNV-1a digest wins, and
+ * asset-name order is the only fallback on a digest collision. Input order is
+ * never a tie-break. Single owner of the rule for every selector.
  */
-export function pickUsableMaxByAssetNames(
-    pool: readonly Candidate[],
-    key: UsableRankKey,
-    timeSec: number,
+function isBetterTieBreak(
+    candidateIndex: number,
+    candidateDigest: string,
+    winnerIndex: number,
+    winnerDigest: string,
     assetNames: readonly string[],
+): boolean {
+    return candidateDigest < winnerDigest
+        || (candidateDigest === winnerDigest && assetNames[candidateIndex]! < assetNames[winnerIndex]!);
+}
+
+/**
+ * Single owner of "argmax/argmin a candidate pool, resolving ties with the
+ * canonical digest". A missing `z` ranks as -Infinity for a max and +Infinity
+ * for a min, so a z-less candidate never wins a min ranking. Null for an empty
+ * pool, and (with `uniqueOnly`) also for a tied extreme.
+ */
+export function pickRanked(
+    pool: readonly Candidate[],
+    args: {
+        key: UsableRankKey;
+        direction: "max" | "min";
+        timeSec: number;
+        assetNames: readonly string[];
+        /** Memoized digest lookup by assetIndex; defaults to tieBreakDigest. */
+        digestFor?: (assetIndex: number) => string;
+        uniqueOnly?: boolean;
+    },
 ): { winner: Candidate; tiedCount: number } | null {
+    const { key, direction, timeSec, assetNames, digestFor, uniqueOnly } = args;
     if (pool.length === 0) return null;
-    let maxValue = usableRankValue(pool[0]!, key);
+    const valueOf = direction === "max" ? usableRankValue : usableRankValueMin;
+    let best = valueOf(pool[0]!, key);
     for (let i = 1; i < pool.length; i += 1) {
-        const value = usableRankValue(pool[i]!, key);
-        if (value > maxValue) maxValue = value;
+        const value = valueOf(pool[i]!, key);
+        if (direction === "max" ? value > best : value < best) best = value;
     }
-    const tied = pool.filter((candidate) => usableRankValue(candidate, key) === maxValue);
+    const tied = pool.filter((candidate) => valueOf(candidate, key) === best);
+    if (uniqueOnly && tied.length > 1) return null;
     let winner = tied[0]!;
     if (tied.length > 1) {
-        let winnerDigest = tieBreakDigest(timeSec, assetNames[winner.assetIndex]!);
+        const digestAt = digestFor ?? ((index: number): string => tieBreakDigest(timeSec, assetNames[index]!));
+        let winnerDigest = digestAt(winner.assetIndex);
         for (let i = 1; i < tied.length; i += 1) {
             const candidate = tied[i]!;
-            const digest = tieBreakDigest(timeSec, assetNames[candidate.assetIndex]!);
-            if (digest < winnerDigest || (digest === winnerDigest
-                && assetNames[candidate.assetIndex]! < assetNames[winner.assetIndex]!)) {
+            const digest = digestAt(candidate.assetIndex);
+            if (isBetterTieBreak(candidate.assetIndex, digest, winner.assetIndex, winnerDigest, assetNames)) {
                 winner = candidate;
                 winnerDigest = digest;
             }
         }
     }
     return { winner, tiedCount: tied.length };
+}
+
+/** Candidates sharing the pool's best value for `key` (direction-aware). */
+export function bestValuePool(
+    pool: readonly Candidate[],
+    key: UsableRankKey,
+    direction: "max" | "min",
+): Candidate[] {
+    if (pool.length === 0) return [];
+    const valueOf = direction === "max" ? usableRankValue : usableRankValueMin;
+    let best = valueOf(pool[0]!, key);
+    for (let i = 1; i < pool.length; i += 1) {
+        const value = valueOf(pool[i]!, key);
+        if (direction === "max" ? value > best : value < best) best = value;
+    }
+    return pool.filter((candidate) => valueOf(candidate, key) === best);
+}
+
+/** Gap-filtered max ranking with the canonical digest tie-break. Null for an empty pool. */
+export function pickUsableMaxByAssetNames(
+    pool: readonly Candidate[],
+    key: UsableRankKey,
+    timeSec: number,
+    assetNames: readonly string[],
+): { winner: Candidate; tiedCount: number } | null {
+    return pickRanked(pool, { key, direction: "max", timeSec, assetNames });
 }
 
 /**
@@ -945,27 +931,7 @@ export function pickUsableMinByAssetNames(
     timeSec: number,
     assetNames: readonly string[],
 ): { winner: Candidate; tiedCount: number } | null {
-    if (pool.length === 0) return null;
-    let minValue = usableRankValueMin(pool[0]!, key);
-    for (let i = 1; i < pool.length; i += 1) {
-        const value = usableRankValueMin(pool[i]!, key);
-        if (value < minValue) minValue = value;
-    }
-    const tied = pool.filter((candidate) => usableRankValueMin(candidate, key) === minValue);
-    let winner = tied[0]!;
-    if (tied.length > 1) {
-        let winnerDigest = tieBreakDigest(timeSec, assetNames[winner.assetIndex]!);
-        for (let i = 1; i < tied.length; i += 1) {
-            const candidate = tied[i]!;
-            const digest = tieBreakDigest(timeSec, assetNames[candidate.assetIndex]!);
-            if (digest < winnerDigest || (digest === winnerDigest
-                && assetNames[candidate.assetIndex]! < assetNames[winner.assetIndex]!)) {
-                winner = candidate;
-                winnerDigest = digest;
-            }
-        }
-    }
-    return { winner, tiedCount: tied.length };
+    return pickRanked(pool, { key, direction: "min", timeSec, assetNames });
 }
 
 
@@ -1346,12 +1312,7 @@ export async function selectAfterOutcomes(args: {
             let tiedCount = 0;
             let control: "leave_one_out" | "mean_tied_set" = "leave_one_out";
             if (remaining.length > 0 && spec.uniqueRaw) {
-                let bestMean = usableRankValue(remaining[0]!, "mean");
-                for (let i = 1; i < remaining.length; i += 1) {
-                    const value = usableRankValue(remaining[i]!, "mean");
-                    if (spec.direction === "max" ? value > bestMean : value < bestMean) bestMean = value;
-                }
-                rankPool = remaining.filter((candidate) => usableRankValue(candidate, "mean") === bestMean);
+                rankPool = bestValuePool(remaining, "mean", spec.direction);
                 let bestRaw = rankPool[0]!.raw;
                 for (let i = 1; i < rankPool.length; i += 1) {
                     const value = rankPool[i]!.raw;

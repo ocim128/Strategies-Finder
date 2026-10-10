@@ -2,8 +2,6 @@
 import { OHLCVData, Time } from '../types/strategies';
 import { getIntervalSecondsOrDefault } from '../interval-utils';
 
-export interface ResampleOptions {}
-
 /**
  * Gets the number of seconds for a given interval string (e.g., '1m', '1h', '1d').
  */
@@ -13,8 +11,7 @@ export function getIntervalSeconds(interval: string): number {
 
 export function getResampleBucketStart(
     time: number,
-    targetInterval: string,
-    _options?: ResampleOptions
+    targetInterval: string
 ): number {
     const intervalSeconds = getIntervalSeconds(targetInterval);
     if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
@@ -30,18 +27,15 @@ export function getResampleBucketStart(
  */
 export function resampleOHLCV(
     data: OHLCVData[],
-    targetInterval: string,
-    options?: ResampleOptions
+    targetInterval: string
 ): OHLCVData[];
 export function resampleOHLCV(
     data: readonly OHLCVData[],
-    targetInterval: string,
-    options?: ResampleOptions
+    targetInterval: string
 ): readonly OHLCVData[];
 export function resampleOHLCV(
     data: readonly OHLCVData[],
-    targetInterval: string,
-    options?: ResampleOptions
+    targetInterval: string
 ): OHLCVData[] | readonly OHLCVData[] {
     if (data.length === 0) return [];
 
@@ -63,7 +57,7 @@ export function resampleOHLCV(
 
     for (const bar of data) {
         const time = typeof bar.time === 'number' ? bar.time : 0;
-        const periodStart = getResampleBucketStart(time, targetInterval, options);
+        const periodStart = getResampleBucketStart(time, targetInterval);
 
         if (periodStart !== currentPeriodStart) {
             if (currentBar) {
@@ -96,8 +90,8 @@ export function resampleOHLCV(
 /**
  * Maps a base timeframe timestamp to its corresponding higher timeframe timestamp.
  */
-export function mapToBaseTimeframe(time: number, higherInterval: string, options?: ResampleOptions): number {
-    return getResampleBucketStart(time, higherInterval, options);
+export function mapToBaseTimeframe(time: number, higherInterval: string): number {
+    return getResampleBucketStart(time, higherInterval);
 }
 
 

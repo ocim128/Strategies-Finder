@@ -1,5 +1,5 @@
 import type { OHLCVData, Signal, Time } from "./types/strategies";
-import { getIntervalSeconds, type ResampleOptions } from "./strategies/resample-utils";
+import { getIntervalSeconds } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 
 /**
@@ -40,8 +40,7 @@ export function mapSignalsFromHigherTimeframe(
     numericBaseData: OHLCVData[],
     higherData: OHLCVData[],
     higherSignals: Signal[],
-    interval: string,
-    _options?: ResampleOptions
+    interval: string
 ): Signal[] {
     if (higherSignals.length === 0) return [];
 

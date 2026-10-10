@@ -1,7 +1,7 @@
 
 import type { Time } from "lightweight-charts";
 import { OHLCVData } from "../strategies/index";
-import { resampleOHLCV, type ResampleOptions } from "../strategies/resample-utils";
+import { resampleOHLCV } from "../strategies/resample-utils";
 import type { BinanceMarketType } from "../binance-market";
 import { debugLogger } from "../debug-logger";
 import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";
@@ -40,8 +40,7 @@ function parseCustomMinutes(interval: string): number | null {
 }
 
 export function resolveFetchInterval(
-    interval: string,
-    _options?: ResampleOptions
+    interval: string
 ): { sourceInterval: string; needsResample: boolean } {
     const intervalSeconds = getIntervalSeconds(interval);
     if (intervalSeconds === 7200) {
@@ -298,10 +297,10 @@ export async function fetchBinanceData(
     symbol: string,
     interval: string,
     signal?: AbortSignal,
-    options?: ResampleOptions & { marketType?: BinanceMarketType }
+    options?: { marketType?: BinanceMarketType }
 ): Promise<OHLCVData[]> {
     try {
-        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
         const { rows: allRawData } = await fetchBackwardKlinePages({
             mode: 'full',
             symbol,
@@ -315,7 +314,7 @@ export async function fetchBinanceData(
         const mapped = mapToOHLCV(allRawData);
 
         if (needsResample) {
-            const resampled = resampleOHLCV(mapped, interval, options);
+            const resampled = resampleOHLCV(mapped, interval);
             debugLogger.info('data.resample', {
                 symbol,
                 interval,
@@ -344,11 +343,11 @@ export async function fetchBinanceDataWithLimit(
     symbol: string,
     interval: string,
     totalBars: number,
-    options?: HistoricalFetchOptions & ResampleOptions & { marketType?: BinanceMarketType }
+    options?: HistoricalFetchOptions & { marketType?: BinanceMarketType }
 ): Promise<OHLCVData[]> {
     try {
         const targetBars = Math.max(1, Math.floor(totalBars));
-        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
         const { rawLimit, ratio } = resolveRawFetchLimit(targetBars, interval, sourceInterval, needsResample);
         const { rows: allRawData } = await fetchBackwardKlinePages({
             mode: 'historical',
@@ -367,7 +366,7 @@ export async function fetchBinanceDataWithLimit(
         const mapped = mapToOHLCV(allRawData);
 
         if (needsResample) {
-            const resampled = resampleOHLCV(mapped, interval, options);
+            const resampled = resampleOHLCV(mapped, interval);
             return resampled.slice(-targetBars);
         }
 
@@ -390,12 +389,12 @@ export async function fetchBinanceDataBefore(
     interval: string,
     beforeTimeSec: number,
     totalBars: number,
-    options?: HistoricalFetchOptions & ResampleOptions & { marketType?: BinanceMarketType }
+    options?: HistoricalFetchOptions & { marketType?: BinanceMarketType }
 ): Promise<OHLCVData[]> {
     try {
         const targetBars = Math.max(1, Math.floor(totalBars));
         const beforeSec = Math.max(0, Math.floor(beforeTimeSec || 0));
-        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
         const { rawLimit, ratio } = resolveRawFetchLimit(targetBars, interval, sourceInterval, needsResample);
         const { rows: allRawData } = await fetchBackwardKlinePages({
             mode: 'historical-prefix',
@@ -417,7 +416,7 @@ export async function fetchBinanceDataBefore(
         const filtered = mapped.filter(bar => Number(bar.time) < beforeTime);
 
         if (needsResample) {
-            const resampled = resampleOHLCV(filtered, interval, options);
+            const resampled = resampleOHLCV(filtered, interval);
             return resampled.slice(-targetBars);
         }
 
@@ -439,11 +438,11 @@ export async function fetchBinanceDataAfter(
     symbol: string,
     interval: string,
     fromTimeSec: number,
-    options?: HistoricalFetchOptions & ResampleOptions & { marketType?: BinanceMarketType }
+    options?: HistoricalFetchOptions & { marketType?: BinanceMarketType }
 ): Promise<OHLCVData[]> {
     try {
         const fromSec = Math.max(0, Math.floor(fromTimeSec || 0));
-        const { sourceInterval, needsResample } = resolveFetchInterval(interval, options);
+        const { sourceInterval, needsResample } = resolveFetchInterval(interval);
         const targetSeconds = Math.max(1, getIntervalSeconds(interval));
         const sourceSeconds = Math.max(1, getIntervalSeconds(sourceInterval));
         const overlapSeconds = Math.max(targetSeconds, sourceSeconds);
@@ -460,7 +459,7 @@ export async function fetchBinanceDataAfter(
             onProgress: options?.onProgress,
         });
         const mapped = mapToOHLCV(rows);
-        const resampled = needsResample ? resampleOHLCV(mapped, interval, options) : mapped;
+        const resampled = needsResample ? resampleOHLCV(mapped, interval) : mapped;
         return resampled.filter(bar => Number(bar.time) >= (fromSec - targetSeconds));
     } catch (error) {
         if (isAbortError(error)) {

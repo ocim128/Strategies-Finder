@@ -81,17 +81,11 @@ export class BatchBacktestService {
     private set activeServerRunId(runId: string | null) {
         this.batchRun.setActiveServerRunId(runId);
     }
-    private get runInFlight(): boolean {
-        return this.batchRun.getRunInFlight();
-    }
-    private set runInFlight(value: boolean) {
-        this.batchRun.setRunInFlight(value);
-    }
     /**
      * Shared UI single-flight lock for TOP_MEAN / stability (and any other
-     * Batch action that awaits before claiming ownership). Complements
-     * `runInFlight` so rapid clicks cannot stack overlapping POSTs or replace
-     * the active run id while another action is mid-preflight.
+     * Batch action that awaits before claiming ownership). Complements the
+     * run controller's busy state so rapid clicks cannot stack overlapping
+     * POSTs or replace the active run id while another action is mid-preflight.
      */
     private actionInFlight = false;
     private get batchActionInFlight(): boolean {
@@ -375,7 +369,6 @@ export class BatchBacktestService {
     private isBatchUiBusy(): boolean {
         return (
             this.batchActionInFlight
-            || this.runInFlight
             || this.analysisInFlight
             || this.batchRun.isBusy()
             || this.pendingStopPromise !== null

@@ -17,7 +17,7 @@ import {
     normalizeTradeDirection,
 } from "./strategies/backtest/backtest-utils";
 import { runBacktest } from "./strategies/backtest/backtest-engine";
-import { resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
+import { resampleOHLCV } from "./strategies/resample-utils";
 import { parseTimeToUnixSeconds } from "./time-normalization";
 import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./strategy-timeframe";
 import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
@@ -183,7 +183,6 @@ function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest)
 function readStrategyTimeframeConfig(settings: BacktestSettings): {
     enabled: boolean;
     interval: string;
-    resampleOptions?: ResampleOptions;
 } {
     const enabled = settings.strategyTimeframeEnabled === true;
     const parsedMinutes = Number(settings.strategyTimeframeMinutes);
@@ -191,8 +190,7 @@ function readStrategyTimeframeConfig(settings: BacktestSettings): {
         ? Math.max(1, Math.floor(parsedMinutes))
         : 120;
     const interval = `${minutes}m`;
-    const resampleOptions: ResampleOptions | undefined = undefined;
-    return { enabled, interval, resampleOptions };
+    return { enabled, interval };
 }
 
 function executeStrategyWithSettings(
@@ -211,7 +209,7 @@ function executeStrategyWithSettings(
         return applySignalPolarity(strategy.execute(data, params), settings);
     }
 
-    const higherData = resampleOHLCV(numericData, tfConfig.interval, tfConfig.resampleOptions);
+    const higherData = resampleOHLCV(numericData, tfConfig.interval);
     if (higherData.length === 0) return [];
 
     const higherSignals = strategy.execute(higherData, params);
@@ -220,8 +218,7 @@ function executeStrategyWithSettings(
         numericData,
         higherData,
         higherSignals,
-        tfConfig.interval,
-        tfConfig.resampleOptions
+        tfConfig.interval
     );
     return applySignalPolarity(mappedSignals, settings);
 }

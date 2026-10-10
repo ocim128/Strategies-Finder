@@ -12,7 +12,6 @@ import { debugLogger } from "./debug-logger";
 import { uiManager } from "./ui-manager";
 import {
     fetchBinanceDataAfter,
-    fetchBinanceDataWithLimit,
     isBinanceInterval,
     startBinanceStream
 } from "./dataProviders/binance";
@@ -31,7 +30,6 @@ import { chartManager } from "./chart-manager";
 import { countRealtimeGapBars } from "./realtime-gap-utils";
 import { clearLocalDailyCsvCachesForSymbols, mergeCandles } from "./candle-cache";
 import { clearCachedCandlesDatabase } from "./candle-cache";
-import type { ResampleOptions } from "./strategies/resample-utils";
 import {
     DATA_CHART_TOTAL_LIMIT,
     DATA_MAX_RECONNECT_ATTEMPTS,
@@ -379,8 +377,6 @@ export class DataManager {
             debugLogger.info('data.stream.skip_interval', { symbol, interval, provider });
             return;
         }
-        const useBinanceAlignedPolling = isBinanceDataProvider(provider) && this.shouldUseBinanceAlignedPolling();
-
         if (this.isStreaming && this.streamSymbol === symbol && this.streamInterval === interval && this.streamProvider === provider) {
             return;
         }
@@ -392,7 +388,7 @@ export class DataManager {
         this.streamProvider = provider;
         this.streamSessionId += 1;
         this.reconnectAttempts = 0;
-        if (isBinanceDataProvider(provider) && !useBinanceAlignedPolling) {
+        if (isBinanceDataProvider(provider)) {
             this.connectBinanceStream();
         } else {
             this.startPolling();
@@ -459,22 +455,12 @@ export class DataManager {
     // Internal Logic
     // ============================================================================
 
-    private getResampleOptions(interval: string): ResampleOptions | undefined {
-        const normalized = interval.trim().toLowerCase();
-        const intervalSeconds = getIntervalSeconds(normalized);
-        return intervalSeconds === 7200 ? {} : undefined;
-    }
-
     private getStorageInterval(interval: string): string {
         return resolveStorageInterval(interval);
     }
 
     private takeLastCandles(candles: OHLCVData[], limit: number): OHLCVData[] {
         return trimToLastCandles(candles, limit);
-    }
-
-    private shouldUseBinanceAlignedPolling(): boolean {
-        return false;
     }
 
     private isIntervalAlignedTime(timeSec: number, interval: string): boolean {
@@ -672,18 +658,9 @@ export class DataManager {
 
         try {
             let candle: OHLCVData | null = null;
-            const resampleOptions = this.getResampleOptions(interval);
 
             if (this.streamProvider === 'bybit-tradfi') {
-                candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal, resampleOptions);
-            } else if (isBinanceDataProvider(this.streamProvider) && this.shouldUseBinanceAlignedPolling()) {
-                const latestSeries = await fetchBinanceDataWithLimit(symbol, interval, 2, {
-                    signal: abort.signal,
-                    maxRequests: 2,
-                    marketType: getBinanceMarketTypeForProvider(this.streamProvider),
-                    ...(resampleOptions ?? {}),
-                });
-                candle = latestSeries[latestSeries.length - 1] ?? null;
+                candle = await fetchBybitTradFiLatest(symbol, interval, abort.signal);
             }
 
             if (abort.signal.aborted) return;
@@ -742,13 +719,11 @@ if (candle && (isBinanceDataProvider(provider) || provider === 'bybit-tradfi')) 
         this.realtimeGapFillInFlight.add(gapKey);
 
         try {
-            const resampleOptions = this.getResampleOptions(interval);
             const storageInterval = this.getStorageInterval(interval);
             const fetched = await fetchBinanceDataAfter(symbol, interval, fromTimeSec, {
                 maxRequests: 60,
                 requestDelayMs: 80,
                 marketType: getBinanceMarketTypeForProvider(provider),
-                ...(resampleOptions ?? {}),
             });
             const sanitized = this.fetcher.sanitizeBinanceCandles(symbol, storageInterval, fetched, 'stream-gap-fill');
             if (sanitized.length === 0) return;

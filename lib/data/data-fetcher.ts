@@ -21,7 +21,6 @@ import {
     generateMockData,
     isMockSymbol
 } from "../dataProviders/mock";
-import { getIntervalSeconds } from "../dataProviders/utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { findFirstGapAnchorTime } from "../realtime-gap-utils";
 import {
@@ -32,7 +31,6 @@ import {
 import {
     loadSqliteCandles,
 } from "../local-sqlite-api";
-import type { ResampleOptions } from "../strategies/resample-utils";
 import {
     DATA_CACHE_SYNC_MIN_MS,
     DATA_CHART_TOTAL_LIMIT,
@@ -60,7 +58,6 @@ type ProviderFallbackChain = {
     provider: DataProvider | 'mock';
     lookbackBars: number | null;
     maxBars: number;
-    resampleOptions?: ResampleOptions;
     localNonBinance: NonBinanceLocalData | null;
 };
 type FastPathLocalCandlesOptions = {
@@ -183,7 +180,6 @@ export class DataFetcher {
         const maxBars = Number.isFinite(lookbackBars)
             ? Math.max(200, Math.min(DATA_CHART_TOTAL_LIMIT, Math.floor(lookbackBars!)))
             : 1000;
-        const resampleOptions = this.getResampleOptions(interval);
 
         const storageInterval = resolveStorageInterval(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
@@ -219,8 +215,7 @@ export class DataFetcher {
                 symbol,
                 interval,
                 maxBars,
-                signal,
-                resampleOptions
+                signal
             );
             return { data, source: 'network' };
         }
@@ -308,7 +303,6 @@ export class DataFetcher {
         provider: DataProvider,
         options?: HistoricalFetchOptions
     ): Promise<OHLCVData[]> {
-        const resampleOptions = this.getResampleOptions(interval);
         const localNonBinance = !isBinanceDataProvider(provider)
             ? await this.loadNonBinanceLocalData(symbol, interval, limit, options?.signal)
             : null;
@@ -320,7 +314,6 @@ export class DataFetcher {
         if (isBinanceDataProvider(provider)) {
             return fetchBinanceDataWithLimit(symbol, interval, limit, {
                 ...options,
-                ...(resampleOptions ?? {}),
                 marketType: getBinanceMarketTypeForProvider(provider),
             });
         }
@@ -334,8 +327,7 @@ export class DataFetcher {
                 symbol,
                 interval,
                 limit,
-                options?.signal,
-                resampleOptions
+                options?.signal
             );
             if (data.length > 0) {
                 return data;
@@ -601,14 +593,12 @@ export class DataFetcher {
     ): Promise<ProviderFallbackChain> {
         const lookbackBars = this.getChartLookbackBars();
         const maxBars = lookbackBars ?? DATA_CHART_TOTAL_LIMIT;
-        const resampleOptions = this.getResampleOptions(interval);
 
         if (isMockSymbol(symbol)) {
             return {
                 provider: 'mock',
                 lookbackBars,
                 maxBars,
-                resampleOptions,
                 localNonBinance: null,
             };
         }
@@ -622,7 +612,6 @@ export class DataFetcher {
             provider,
             lookbackBars,
             maxBars,
-            resampleOptions,
             localNonBinance,
         };
     }
@@ -721,15 +710,14 @@ export class DataFetcher {
         interval: string,
         signal?: AbortSignal
     ): Promise<OHLCVData[]> {
-        const { lookbackBars, localNonBinance, resampleOptions } = chain;
+        const { lookbackBars, localNonBinance } = chain;
 
         if (localNonBinance && interval.trim().toLowerCase() === '1d') {
             const seededWithLatest = await this.mergeBybitRecentIntoSeed(
                 symbol,
                 interval,
                 localNonBinance.candles,
-                signal,
-                resampleOptions
+                signal
             );
             if (seededWithLatest.liveRefreshed) {
                 void this.persistBybitTradFiDailyOverlay(
@@ -770,9 +758,8 @@ export class DataFetcher {
         const data = typeof lookbackBars === 'number'
             ? await fetchBybitTradFiDataWithLimit(symbol, interval, lookbackBars, {
                 signal,
-                ...(resampleOptions ?? {}),
             })
-            : await fetchBybitTradFiData(symbol, interval, signal, resampleOptions);
+            : await fetchBybitTradFiData(symbol, interval, signal);
         if (data.length > 0) {
             const merged = localNonBinance
                 ? mergeCandles(localNonBinance.candles, data)
@@ -808,12 +795,10 @@ export class DataFetcher {
         symbol: string,
         interval: string,
         limit: number,
-        signal?: AbortSignal,
-        resampleOptions?: ResampleOptions
+        signal?: AbortSignal
     ): Promise<OHLCVData[]> {
         const data = await fetchBybitTradFiDataWithLimit(symbol, interval, limit, {
             signal,
-            ...(resampleOptions ?? {}),
         });
 
         if (data.length > 0) {
@@ -950,12 +935,6 @@ export class DataFetcher {
         });
     }
 
-    private getResampleOptions(interval: string): ResampleOptions | undefined {
-        const normalized = interval.trim().toLowerCase();
-        const intervalSeconds = getIntervalSeconds(normalized);
-        return intervalSeconds === 7200 ? {} : undefined;
-    }
-
     private getBybitSeedOverlayBars(interval: string, seedData: OHLCVData[]): number {
         return estimateBybitSeedOverlayBarsValue(interval, seedData);
     }
@@ -964,14 +943,12 @@ export class DataFetcher {
         symbol: string,
         interval: string,
         seedData: OHLCVData[],
-        signal?: AbortSignal,
-        options?: ResampleOptions
+        signal?: AbortSignal
     ): Promise<{ candles: OHLCVData[]; liveRefreshed: boolean; refreshedCandles: OHLCVData[]; unsupported?: boolean }> {
         try {
             const overlayBars = this.getBybitSeedOverlayBars(interval, seedData);
             const recent = await fetchBybitTradFiDataWithLimit(symbol, interval, overlayBars, {
                 signal,
-                ...(options ?? {}),
             });
             if (recent.length === 0) {
                 return { candles: seedData, liveRefreshed: false, refreshedCandles: [] };
@@ -1026,7 +1003,6 @@ export class DataFetcher {
             ? Math.max(1, Math.min(maxBarsLimit, Math.floor(requestedMaxBars)))
             : DATA_CHART_TOTAL_LIMIT;
         const storageInterval = resolveStorageInterval(interval);
-        const resampleOptions = this.getResampleOptions(interval);
         const cacheKey = this.buildCacheKey(symbol, storageInterval, provider);
         const requestSignal = options?.signal ?? signal;
         const requestDelayMs = options?.requestDelayMs ?? 80;
@@ -1154,7 +1130,6 @@ export class DataFetcher {
                     maxRequests: maxRequests ?? 60,
                     onProgress: options?.onProgress,
                     marketType,
-                    ...(resampleOptions ?? {}),
                 });
             } else if (options?.requireMinBars && cachedCandles.length < effectiveMaxBars) {
                 const firstCachedTime = parseTimeToUnixSeconds(cachedCandles[0]?.time);
@@ -1167,7 +1142,6 @@ export class DataFetcher {
                         ...(maxRequests === undefined ? {} : { maxRequests }),
                         onProgress: options?.onProgress,
                         marketType,
-                        ...(resampleOptions ?? {}),
                     });
             } else {
                 const fetchFromTime = Number(cachedCandles[cachedCandles.length - 1]?.time ?? 0);
@@ -1177,7 +1151,6 @@ export class DataFetcher {
                     maxRequests: maxRequests ?? 60,
                     onProgress: options?.onProgress,
                     marketType,
-                    ...(resampleOptions ?? {}),
                 });
             }
         } else {
@@ -1188,12 +1161,10 @@ export class DataFetcher {
                     ...(maxRequests === undefined ? {} : { maxRequests }),
                     onProgress: options?.onProgress,
                     marketType,
-                    ...(resampleOptions ?? {}),
                 });
             } else {
                 remoteData = await fetchBinanceData(symbol, interval, requestSignal, {
                     marketType,
-                    ...(resampleOptions ?? {}),
                 });
             }
         }

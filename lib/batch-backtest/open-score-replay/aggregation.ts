@@ -19,7 +19,6 @@ import type {
 import type { BotViewPicks, Candidate, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback } from "./internal-types";
 import type { ReplayArmField, SelectorName } from "./types";
 import type { ViewOutcomeRecord } from "./target-outcomes";
-import { tieBreakDigest } from "../max-active-research-contract";
 import {
     buildAssetSelectionBreakdown,
     buildExDominantComparison,
@@ -1160,27 +1159,11 @@ export async function aggregateHorizonResults(args: {
         // Profit-arm-only events (no ordinary view): evaluate the profit arms
         // on their own pools. Picks resolve here with the same FNV-1a
         // event-time/asset tie-break the Phase 3 picker uses.
+        // The confidence arm keeps its own >= 2 pool gate but resolves the pick
+        // through the shared owner, so the digest tie-break has one definition.
         const pickFromPool = (pool: readonly Candidate[], key: "raw" | "mean", timeSec: number): number => {
             if (pool.length < 2) return -1;
-            let best = pool[0]![key]!;
-            for (let i = 1; i < pool.length; i += 1) {
-                const v = pool[i]![key]!;
-                if (v > best) best = v;
-            }
-            const tied = pool.filter((c) => c[key] === best);
-            let winner = tied[0]!;
-            if (tied.length > 1) {
-                let dW = tieBreakDigest(timeSec, assetNames[winner.assetIndex]!);
-                for (let i = 1; i < tied.length; i += 1) {
-                    const c = tied[i]!;
-                    const dC = tieBreakDigest(timeSec, assetNames[c.assetIndex]!);
-                    if (dC < dW || (dC === dW && assetNames[c.assetIndex]! < assetNames[winner.assetIndex]!)) {
-                        winner = c;
-                        dW = dC;
-                    }
-                }
-            }
-            return winner.assetIndex;
+            return pickUsableMaxByAssetNames(pool, key, timeSec, assetNames)?.winner.assetIndex ?? -1;
         };
         for (let pi = 0; pi < gapFilteredProfitOnlyEvents.length; pi += 1) {
             if ((pi & 0x1ff) === 0) {

@@ -20,7 +20,6 @@ import type {
 import { state } from "./lib/state";
 import {
     resampleOHLCV,
-    type ResampleOptions,
 } from "./lib/strategies/resample-utils";
 import {
     getAllBuiltInMeta,
@@ -132,14 +131,13 @@ class StrategyRegistryImpl implements StrategyRegistry {
                 }
 
                 const interval = `${minutes}m`;
-                const resampleOptions: ResampleOptions | undefined = undefined;
-                const higherData = resampleOHLCV(numericData, interval, resampleOptions);
+                const higherData = resampleOHLCV(numericData, interval);
                 if (higherData.length === 0) {
                     return [];
                 }
 
                 const higherSignals = originalExecute(higherData, params, context);
-                return mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, interval, resampleOptions);
+                return mapSignalsFromHigherTimeframe(data, numericData, higherData, higherSignals, interval);
             }
         };
 

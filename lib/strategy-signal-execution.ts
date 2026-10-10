@@ -7,13 +7,12 @@ import type {
     StrategyParams,
 } from "./types/strategies";
 import { applySignalPolarity } from "./strategies/index";
-import { resampleOHLCV, type ResampleOptions } from "./strategies/resample-utils";
+import { resampleOHLCV } from "./strategies/resample-utils";
 import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./strategy-timeframe";
 
 type StrategyTimeframeConfig = {
     enabled: boolean;
     interval: string;
-    resampleOptions?: ResampleOptions;
 };
 
 function readStrategyTimeframeConfig(settings: BacktestSettings): StrategyTimeframeConfig {
@@ -23,8 +22,7 @@ function readStrategyTimeframeConfig(settings: BacktestSettings): StrategyTimefr
         ? Math.max(1, Math.floor(parsedMinutes))
         : 120;
     const interval = `${minutes}m`;
-    const resampleOptions: ResampleOptions | undefined = undefined;
-    return { enabled, interval, resampleOptions };
+    return { enabled, interval };
 }
 
 function executeDirectStrategySignals(
@@ -71,7 +69,7 @@ export function executeBacktestStrategySignals(args: {
         return applySignalPolarity(signals, settings);
     }
 
-    const higherData = resampleOHLCV(numericData, tfConfig.interval, tfConfig.resampleOptions);
+    const higherData = resampleOHLCV(numericData, tfConfig.interval);
     if (higherData.length === 0) {
         return [];
     }
@@ -82,8 +80,7 @@ export function executeBacktestStrategySignals(args: {
         numericData,
         higherData,
         higherSignals,
-        tfConfig.interval,
-        tfConfig.resampleOptions
+        tfConfig.interval
     );
     return applySignalPolarity(mappedSignals, settings);
 }
