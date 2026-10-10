@@ -1135,11 +1135,16 @@ const clickMoreMenuTab = async (page: Page, tabId: string): Promise<void> => {
  *  1. markup failure (tab partial 500): failure feedback with safe Retry +
  *     Reload, keyboard-operable Retry recovers once the outage clears;
  *  2. feature-callback failure (module 500): Reload only, tab round-trips do
- *     not silently retry, and keyboard Reload recovers through a clean reload.
+ *     not silently retry, and keyboard Reload recovers through a clean reload;
+ *  3. malformed Monte Carlo contract (partial served without a required
+ *     control): the mounted tab fails during feature initialization and must
+ *     offer Reload only; reloading against the real markup recovers the tab.
  */
 const verifyLazyTabRecovery = async (page: Page, errors: string[]): Promise<void> => {
     let failDataMiningPartial = true;
     let failWalkForwardService = true;
+    let serveStrippedMonteCarloMarkup = false;
+    let monteCarloPartialModule: string | null = null;
     let walkForwardServiceRequests = 0;
 
     const intercept = (request: import('puppeteer').HTTPRequest) => {
@@ -1150,6 +1155,21 @@ const verifyLazyTabRecovery = async (page: Page, errors: string[]): Promise<void
             } else {
                 void request.continue();
             }
+            return;
+        }
+        if (url.includes('tab-monte-carlo.html')) {
+            if (serveStrippedMonteCarloMarkup && monteCarloPartialModule) {
+                // Malformed contract: the tab root parses and mounts, but a
+                // required control is missing, so the feature callback must
+                // fail and the tab must offer Reload only.
+                void request.respond({
+                    status: 200,
+                    contentType: 'application/javascript',
+                    body: `export default ${JSON.stringify(monteCarloPartialModule)};`,
+                });
+                return;
+            }
+            void request.continue();
             return;
         }
         if (url.includes('walk-forward-service')) {
@@ -1244,7 +1264,55 @@ const verifyLazyTabRecovery = async (page: Page, errors: string[]): Promise<void
             return Boolean(panel && panel.querySelector('#wf-opt-window') && !panel.querySelector('[data-lazy-tab-status]'));
         }, { timeout: 20000 });
 
-        console.log('Lazy-tab loading feedback, safe Retry, Reload-only recovery and suppressed unsafe retries passed.');
+        // --- Malformed Monte Carlo contract: init failure with Reload only ---
+        // Serve the real partial minus one required control: the tab root
+        // parses and mounts, so the failure happens inside the feature
+        // callback when the DOM contract cannot resolve.
+        monteCarloPartialModule = await page.evaluate(async () => (await fetch('html-partials/tab-monte-carlo.html')).text())
+            .then((markup) => {
+                if (!markup.includes('id="mc-cancel-btn"')) {
+                    throw new Error('Monte Carlo partial fixture lost its cancel button');
+                }
+                return markup.replace(/<button[^>]*id="mc-cancel-btn"[^>]*>[\s\S]*?<\/button>\s*/i, '');
+            });
+        serveStrippedMonteCarloMarkup = true;
+        await clickMoreMenuTab(page, 'montecarlo');
+        await page.waitForFunction(() => Boolean(
+            document.querySelector('#montecarloTab [data-lazy-tab-status="failure"]')
+        ), { timeout: 15000 });
+        const mcRetryCount = await page.$$eval('#montecarloTab [data-lazy-tab-retry]', (elements) => elements.length);
+        const mcReloadCount = await page.$$eval('#montecarloTab [data-lazy-tab-reload]', (elements) => elements.length);
+        if (mcRetryCount !== 0 || mcReloadCount !== 1) {
+            throw new Error(`Malformed contract must offer Reload only (retry=${mcRetryCount}, reload=${mcReloadCount})`);
+        }
+        const mcMarkupMounted = await page.$$eval('#montecarloTab #mc-results', (elements) => elements.length);
+        if (mcMarkupMounted !== 1) throw new Error('Malformed-contract init failure lost the mounted tab markup');
+        const mcFailureText = await page.$eval(
+            '#montecarloTab [data-lazy-tab-status] .lazy-tab-status-message',
+            (element) => (element.textContent ?? '').trim()
+        );
+        if (/mc-|button|element|contract/i.test(mcFailureText)) {
+            throw new Error(`Lazy-tab failure message leaks internals: ${mcFailureText}`);
+        }
+
+        // Keyboard Reload against the real markup recovers the tab.
+        serveStrippedMonteCarloMarkup = false;
+        await page.focus('#montecarloTab [data-lazy-tab-reload]');
+        await Promise.all([
+            page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 30000 }),
+            page.keyboard.press('Enter'),
+        ]);
+        await page.waitForFunction(() => {
+            const panel = document.getElementById('montecarloTab');
+            return Boolean(
+                panel
+                && panel.querySelector('#mc-run-btn')
+                && panel.querySelector('#mc-cancel-btn')
+                && !panel.querySelector('[data-lazy-tab-status]')
+            );
+        }, { timeout: 20000 });
+
+        console.log('Lazy-tab loading feedback, safe Retry, Reload-only recovery, malformed-contract handling and suppressed unsafe retries passed.');
     } finally {
         page.off('request', intercept);
         await page.setRequestInterception(false);

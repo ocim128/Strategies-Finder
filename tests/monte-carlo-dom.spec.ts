@@ -22,7 +22,7 @@ it('Monte Carlo controls and results survive lazy tab extraction', async () => {
             return {
                 missing: ids.filter(id => !document.getElementById(id)),
                 resultsOutsideContainer: Array.from(panel.querySelectorAll('[id]'))
-                    .filter(el => /^mc-(risk-|dd-|method-|ci-|profit-|sharpe-|equity-|fan-|ruin-rate|expected-trades|median-trades|sensitivity-)/.test(el.id))
+                    .filter(el => /^mc-(risk-|dd-|method-|ci-|profit-|sharpe-|equity-|fan-|ruin-rate|expected-trades|median-trades)/.test(el.id))
                     .filter(el => !results.contains(el))
                     .map(el => el.id),
                 resultsDisplay: getComputedStyle(results).display,

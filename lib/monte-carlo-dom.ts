@@ -1,4 +1,4 @@
-import { debugLogger } from "./debug-logger";
+import { getRequiredDomElements } from "./dom-utils";
 
 export interface MonteCarloDomElements {
     simulationsInput: HTMLInputElement;
@@ -47,9 +47,6 @@ export interface MonteCarloDomElements {
     expectedTradesToRuinEl: HTMLElement;
     medianTradesToRuinEl: HTMLElement;
     dd95El: HTMLElement;
-    sensitivityHeader: HTMLElement;
-    sensitivitySection: HTMLElement;
-    sensitivityGrid: HTMLElement;
 }
 
 const MONTE_CARLO_DOM_IDS = {
@@ -99,9 +96,6 @@ const MONTE_CARLO_DOM_IDS = {
     expectedTradesToRuinEl: "mc-expected-trades-to-ruin",
     medianTradesToRuinEl: "mc-median-trades-to-ruin",
     dd95El: "mc-dd-95",
-    sensitivityHeader: "mc-sensitivity-header",
-    sensitivitySection: "mc-sensitivity-section",
-    sensitivityGrid: "mc-sensitivity-grid",
 } as const satisfies Record<keyof MonteCarloDomElements, string>;
 
 export const MONTE_CARLO_REQUIRED_IDS = [
@@ -109,126 +103,12 @@ export const MONTE_CARLO_REQUIRED_IDS = [
     "montecarloTab",
 ] as const;
 
-type NullableMonteCarloDomElements = {
-    [K in keyof MonteCarloDomElements]: MonteCarloDomElements[K] | null;
-};
-
-const CRITICAL_DOM_KEYS = [
-    "simulationsInput",
-    "runBtn",
-    "resultsContainer",
-    "emptyState",
-] as const satisfies readonly (keyof MonteCarloDomElements)[];
-type CriticalDomKey = typeof CRITICAL_DOM_KEYS[number];
-
-const SELECTOR_FALLBACKS = {
-    ciBody: "tbody",
-    methodComparisonBody: "#mc-method-comparison-body",
-    ddPercentilesBody: "#mc-dd-percentiles-body",
-    profitHistogram: "#mc-profit-histogram",
-    ddHistogram: "#mc-dd-histogram",
-    sharpeHistogram: "#mc-sharpe-histogram",
-    equityFan: "#mc-equity-fan",
-} as const satisfies Partial<Record<keyof MonteCarloDomElements, string>>;
-type SelectorFallbackKey = keyof typeof SELECTOR_FALLBACKS;
-
-const ELEMENT_FALLBACKS = {
-    simulationCapHint: "simulationsInput",
-    seedInput: "simulationsInput",
-    presetRow: "simulationsInput",
-    preset500Btn: "runBtn",
-    preset2000Btn: "runBtn",
-    preset5000Btn: "runBtn",
-    sequenceToggle: "simulationsInput",
-    bootstrapToggle: "simulationsInput",
-    ruinThresholdInput: "simulationsInput",
-    initialCapitalInput: "simulationsInput",
-    cancelBtn: "runBtn",
-    statusSpan: "runBtn",
-    spinner: "runBtn",
-    sourceBadge: "resultsContainer",
-    summaryProfitLabel: "resultsContainer",
-    simCountEl: "resultsContainer",
-    ruinProbEl: "resultsContainer",
-    medianProfitEl: "resultsContainer",
-    medianSharpeEl: "resultsContainer",
-    medianDdEl: "resultsContainer",
-    execTimeEl: "resultsContainer",
-    riskGrid: "resultsContainer",
-    riskFlagEl: "resultsContainer",
-    ddStressMultipleEl: "resultsContainer",
-    riskDetailEl: "resultsContainer",
-    methodProfitHeader: "resultsContainer",
-    profitDistTitle: "resultsContainer",
-    profitStats: "resultsContainer",
-    ddStats: "resultsContainer",
-    sharpeStats: "resultsContainer",
-    fanLegend: "resultsContainer",
-    ruinRateEl: "resultsContainer",
-    expectedTradesToRuinEl: "resultsContainer",
-    medianTradesToRuinEl: "resultsContainer",
-    dd95El: "resultsContainer",
-    sensitivityHeader: "resultsContainer",
-    sensitivitySection: "resultsContainer",
-    sensitivityGrid: "resultsContainer",
-} as const satisfies Record<
-    Exclude<keyof MonteCarloDomElements, CriticalDomKey | SelectorFallbackKey>,
-    keyof MonteCarloDomElements
->;
-
-const CRITICAL_DOM_KEY_SET = new Set<keyof MonteCarloDomElements>(CRITICAL_DOM_KEYS);
-
-function setElement<K extends keyof MonteCarloDomElements>(
-    elements: NullableMonteCarloDomElements,
-    key: K,
-    element: HTMLElement | null,
-): void {
-    elements[key] = element as NullableMonteCarloDomElements[K];
-}
-
-function readMonteCarloElements(): NullableMonteCarloDomElements {
-    const elements = {} as NullableMonteCarloDomElements;
-
-    for (const key of Object.keys(MONTE_CARLO_DOM_IDS) as Array<keyof MonteCarloDomElements>) {
-        const id = MONTE_CARLO_DOM_IDS[key];
-        const element = document.getElementById(id);
-        if (!element && CRITICAL_DOM_KEY_SET.has(key)) {
-            debugLogger.error("monte_carlo.dom_missing", { id });
-        }
-        setElement(elements, key, element);
-    }
-
-    return elements;
-}
-
-function applyFallbacks(elements: Partial<MonteCarloDomElements>, resultsContainer: HTMLElement): void {
-    const elementRecord = elements as Record<string, HTMLElement | null | undefined>;
-
-    for (const key of Object.keys(ELEMENT_FALLBACKS) as Array<keyof typeof ELEMENT_FALLBACKS>) {
-        elementRecord[key] ??= elementRecord[ELEMENT_FALLBACKS[key]];
-    }
-
-    for (const key of Object.keys(SELECTOR_FALLBACKS) as Array<keyof typeof SELECTOR_FALLBACKS>) {
-        elementRecord[key] ??= resultsContainer.querySelector<HTMLElement>(SELECTOR_FALLBACKS[key]);
-    }
-}
-
-export function createMonteCarloDom(): MonteCarloDomElements | null {
-    const elements = readMonteCarloElements();
-    const { simulationsInput, runBtn, resultsContainer, emptyState } = elements;
-
-    if (!simulationsInput || !runBtn || !resultsContainer || !emptyState) {
-        return null;
-    }
-
-    const resolved = {
-        ...elements,
-        simulationsInput,
-        runBtn,
-        resultsContainer,
-        emptyState,
-    } as Partial<MonteCarloDomElements>;
-    applyFallbacks(resolved, resultsContainer);
-
-    return resolved as MonteCarloDomElements;
+/**
+ * Resolve every control and result section the service binds. Every declared
+ * id is required: a missing element throws so initialization fails before any
+ * listener is attached, and the lazy tab reports the activation failure instead
+ * of silently operating on a substituted element.
+ */
+export function createMonteCarloDom(): MonteCarloDomElements {
+    return getRequiredDomElements(MONTE_CARLO_DOM_IDS) as MonteCarloDomElements;
 }

@@ -38,21 +38,21 @@ export function initMonteCarloService(): void {
         return;
     }
 
-    dom = createMonteCarloDom();
-    if (!dom) {
-        debugLogger.warn("monte_carlo.dom_unavailable");
-        return;
-    }
+    // Required markup resolves first: a missing control throws so the lazy
+    // tab reports the activation failure instead of a successful activation
+    // whose listeners were never attached.
+    const elements = createMonteCarloDom();
+    dom = elements;
 
-    dom.runBtn.addEventListener("click", () => {
+    elements.runBtn.addEventListener("click", () => {
         void handleRun();
     });
-    dom.cancelBtn.addEventListener("click", handleCancel);
-    dom.preset500Btn.addEventListener("click", () => applyPreset(500));
-    dom.preset2000Btn.addEventListener("click", () => applyPreset(2000));
-    dom.preset5000Btn.addEventListener("click", () => applyPreset(5000));
-    dom.sequenceToggle.addEventListener("change", refreshSimulationCapHint);
-    dom.bootstrapToggle.addEventListener("change", refreshSimulationCapHint);
+    elements.cancelBtn.addEventListener("click", handleCancel);
+    elements.preset500Btn.addEventListener("click", () => applyPreset(500));
+    elements.preset2000Btn.addEventListener("click", () => applyPreset(2000));
+    elements.preset5000Btn.addEventListener("click", () => applyPreset(5000));
+    elements.sequenceToggle.addEventListener("change", refreshSimulationCapHint);
+    elements.bootstrapToggle.addEventListener("change", refreshSimulationCapHint);
 
     window.addEventListener("strategy-panel:tab-change", (event: Event) => {
         const customEvent = event as CustomEvent<{ tabId: string }>;
@@ -399,12 +399,6 @@ function setIdleStatusMessageIfRelevant(message: string): void {
 
 function isAbortError(error: unknown): boolean {
     return error instanceof Error && error.name === "AbortError";
-}
-
-export function showMonteCarloTab(): void {
-    if (!dom) {
-        initMonteCarloService();
-    }
 }
 
 export function refreshMonteCarloFromState(): void {

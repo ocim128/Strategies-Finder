@@ -81,9 +81,6 @@ export function renderMonteCarloResults(
     dom.expectedTradesToRuinEl.textContent = result.ruinProbabilityMetrics.expectedTradesToRuin?.toFixed(0) ?? "--";
     dom.medianTradesToRuinEl.textContent = result.ruinProbabilityMetrics.medianTradesToRuin?.toFixed(0) ?? "--";
     dom.dd95El.textContent = `${result.ruinProbabilityMetrics.maxDrawdownDistribution.percentile95.toFixed(1)}%`;
-
-    dom.sensitivityHeader.style.display = "none";
-    dom.sensitivitySection.style.display = "none";
 }
 
 function renderRiskAssessment(result: MonteCarloResult, dom: MonteCarloDomElements): void {
