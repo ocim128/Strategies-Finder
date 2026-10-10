@@ -15,6 +15,10 @@ export const SETTINGS_WORKSPACE_REQUIRED_IDS = [
     "strategyMetaName",
     "strategyMetaDescription",
     "strategyParamCount",
+    "settingsBacktestSummary",
+    "settingsBacktestStatus",
+    "settingsBacktestResults",
+    "settingsBacktestTrades",
 ] as const;
 
 export function createSettingsWorkspaceDom() {
@@ -33,6 +37,10 @@ export function createSettingsWorkspaceDom() {
         strategyMetaName: getRequiredElement("strategyMetaName"),
         strategyMetaDescription: getRequiredElement("strategyMetaDescription"),
         strategyParamCount: getRequiredElement("strategyParamCount"),
+        settingsBacktestSummary: getRequiredElement("settingsBacktestSummary"),
+        settingsBacktestStatus: getRequiredElement("settingsBacktestStatus"),
+        settingsBacktestResults: getRequiredElement<HTMLButtonElement>("settingsBacktestResults"),
+        settingsBacktestTrades: getRequiredElement<HTMLButtonElement>("settingsBacktestTrades"),
     };
 }
 

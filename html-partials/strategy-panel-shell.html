@@ -95,5 +95,22 @@
 
         <div class="panel-content" id="panelContent">
         </div>
+        <section class="settings-backtest-summary" id="settingsBacktestSummary" aria-label="Backtest performance" hidden>
+            <div class="settings-backtest-heading">
+                <span id="settingsBacktestStatus" role="status" aria-live="polite">Last completed backtest</span>
+                <div class="settings-backtest-links">
+                    <button class="btn btn-ghost btn-compact" id="settingsBacktestResults" type="button">Full results</button>
+                    <button class="btn btn-ghost btn-compact" id="settingsBacktestTrades" type="button">Trades</button>
+                </div>
+            </div>
+            <dl class="settings-backtest-metrics">
+                <div><dt>Net profit</dt><dd><span data-backtest-metric="netProfitPercent">—</span><small data-backtest-metric="netProfit">—</small></dd></div>
+                <div><dt>Profit factor</dt><dd data-backtest-metric="profitFactor">—</dd></div>
+                <div><dt>Max drawdown</dt><dd data-backtest-metric="maxDrawdownPercent">—</dd></div>
+                <div><dt>Win rate</dt><dd data-backtest-metric="winRate">—</dd></div>
+                <div><dt>Trades</dt><dd data-backtest-metric="totalTrades">—</dd></div>
+                <div><dt>Sharpe</dt><dd data-backtest-metric="sharpeRatio">—</dd></div>
+            </dl>
+        </section>
     </div>
 </div>

@@ -299,6 +299,81 @@ const verifySimplifiedSettings = async (page: Page): Promise<void> => {
     console.log('Canonical take-profit modes, editing, restore, autosave and native disclosures passed.');
 };
 
+const verifySettingsPerformanceFeedback = async (page: Page): Promise<void> => {
+    // Configuration-delete notifications from the preceding fixture overlap footer links.
+    await page.waitForFunction(() => !document.querySelector('.toast'));
+    await page.click('.panel-tab[data-tab="settings"]');
+    await page.evaluate(async () => {
+        const { settingsManager } = await import('/lib/settings-manager.ts');
+        (window as any).__performanceOriginalSettings = settingsManager.getBacktestSettings();
+        settingsManager.applyBacktestSettings({ ...settingsManager.getBacktestSettings(), useRustEngine: false });
+    });
+    await page.click('#runBacktest');
+    await page.waitForFunction(() => Boolean((window as any).__state.currentBacktestResult)
+        && !(document.getElementById('runBacktest') as HTMLButtonElement).disabled);
+    await page.evaluate(() => {
+        const result = (window as any).__state.currentBacktestResult;
+        if (document.getElementById('settingsTab')!.hidden) throw new Error('Backtest navigated away from Settings');
+        if (document.getElementById('settingsBacktestSummary')!.hidden) throw new Error('Performance summary did not appear');
+        if (document.querySelector('[data-backtest-metric="totalTrades"]')!.textContent !== String(result.totalTrades)) throw new Error('Summary missed trade count');
+        if (document.getElementById('settingsBacktestStatus')!.dataset.state !== 'result') throw new Error('Fresh backtest was marked stale');
+        const panel = document.querySelector<HTMLElement>('.panel-content')!;
+        panel.scrollTop = panel.scrollHeight / 2;
+    });
+    await page.evaluate(() => {
+        const box = document.getElementById('settingsBacktestSummary')!.getBoundingClientRect();
+        const panel = document.querySelector('.panel-content')!.getBoundingClientRect();
+        const body = document.querySelector('.panel-body')!.getBoundingClientRect();
+        if (box.top < panel.bottom || box.bottom > body.bottom + 1) throw new Error('Performance covered controls or disappeared while scrolling settings');
+    });
+    // Check a narrow editing panel independently of the app's other sidebars.
+    await page.evaluate(() => { document.getElementById('strategyPanel')!.style.maxWidth = '390px'; });
+    await page.waitForFunction(() => document.getElementById('settingsBacktestSummary')!.getBoundingClientRect().width < 390);
+    await page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>('.panel-content')!;
+        const box = document.getElementById('settingsBacktestSummary')!.getBoundingClientRect();
+        if (panel.scrollWidth > panel.clientWidth || box.top < panel.getBoundingClientRect().bottom
+            || box.bottom > window.innerHeight) throw new Error('Performance summary overflowed the narrow editing panel');
+    });
+    await (await page.$('#strategyPanel'))!.screenshot({ path: 'artifacts/settings-performance-narrow.png' });
+    await page.evaluate(() => { document.getElementById('strategyPanel')!.style.removeProperty('max-width'); });
+    // An edit during execution must not be presented as the configuration that produced the result.
+    await page.evaluate(async () => {
+        const { backtestService } = await import('/lib/backtest-service.ts');
+        const win = window as any;
+        win.__performancePending = backtestService.runCurrentBacktest();
+        const input = document.getElementById('commission') as HTMLInputElement;
+        input.value = String(Number(input.value) + 0.05);
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+    });
+    await page.waitForFunction(() => document.getElementById('settingsBacktestStatus')!.dataset.state === 'changed');
+    await page.evaluate(async () => { await (window as any).__performancePending; });
+    await page.waitForFunction(() => document.getElementById('settingsBacktestStatus')!.dataset.state === 'changed'
+        && !(document.getElementById('runBacktest') as HTMLButtonElement).disabled);
+    await page.click('#runBacktest');
+    await page.waitForFunction(() => document.getElementById('settingsBacktestStatus')!.dataset.state === 'result'
+        && !(document.getElementById('runBacktest') as HTMLButtonElement).disabled);
+    await page.screenshot({ path: 'artifacts/settings-performance-desktop.png', fullPage: true });
+    await page.click('#settingsBacktestTrades');
+    await page.waitForFunction(() => document.querySelector('.panel-tab[data-tab="trades"]')!.getAttribute('aria-selected') === 'true');
+    await page.evaluate(() => {
+        if (!document.getElementById('settingsBacktestSummary')!.hidden) throw new Error('Settings summary remained visible in Trades');
+    });
+    await page.click('.panel-tab[data-tab="settings"]');
+    await page.click('#settingsBacktestResults');
+    await page.waitForFunction(() => document.querySelector('.panel-tab[data-tab="results"]')!.getAttribute('aria-selected') === 'true');
+    await page.click('.panel-tab[data-tab="settings"]');
+    await page.evaluate(async () => {
+        const { clearBacktestResults } = await import('/lib/state-actions.ts');
+        const { settingsManager } = await import('/lib/settings-manager.ts');
+        clearBacktestResults('e2e_performance_clear');
+        if (!document.getElementById('settingsBacktestSummary')!.hidden) throw new Error('Cleared result remained visible');
+        settingsManager.applyBacktestSettings((window as any).__performanceOriginalSettings);
+        document.querySelector<HTMLElement>('.panel-content')!.scrollTop = 0;
+    });
+    console.log('Settings edit/run/review loop, sticky performance, stale capture, narrow layout and detail links passed.');
+};
+
 const verifyPanelNavigationLifecycle = async (page: Page): Promise<void> => {
     await page.evaluate(async () => {
         const { strategyPanelController: controller } = await import('/lib/strategy-panel-controller.ts');
@@ -1935,6 +2010,7 @@ async function runTest() {
             console.log('Configuration saved successfully.');
 
             await verifySettingsWorkspace(page);
+            await verifySettingsPerformanceFeedback(page);
             await verifyFinderReloadPreview(page);
             await verifyRankingCards(page);
             await verifyFinderWorkspace(page);

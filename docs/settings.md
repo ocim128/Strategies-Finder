@@ -4,6 +4,10 @@ The Settings menu keeps strategy selection, strategy parameters, Library Tools, 
 
 ## Navigation and summaries
 
+Settings includes a pinned **Backtest performance** summary after a result is available. Run a backtest and review net profit (percent and dollars), profit factor, drawdown, win rate, trade count, and Sharpe without leaving the controls you are editing. The form scrolls above the summary, so metrics remain visible without covering inputs; its grid adapts to narrow panels. **Full results** and **Trades** open the detailed views when needed; completion itself never switches tabs, scrolls the form, or moves keyboard focus. The summary is hidden in other tabs.
+
+The summary describes the last completed result. **Settings changed · Run to update** appears when the editable setup differs from the request that produced that result, including edits made during an in-flight run. Reverting those changes clears the marker. This uses the existing captured backtest request; it adds no saved state or separate execution path. Clearing results hides the summary. Finder selections, endpoint previews, and walk-forward OOS results keep their source labels.
+
 Direction, Risk, Sizing, Confirmation, Execution, and Engine shortcuts open and focus the corresponding section. Search matches control labels and their explanatory text, including strategy parameters. Enter opens the first search result; Escape clears the search. Navigation to a section hidden by Simple mode selects Standard through the existing preset controls. Navigation never enables risk, confirmation, or other features. If a control is inactive for the current feature/mode, its result says so and focuses the section header instead.
 
 Section headers show live summaries even while collapsed. These refresh after edits, loading or restoring configurations, resetting defaults, and changing strategies. Engine summaries describe the preference; actual engine selection still depends on availability and supported settings.

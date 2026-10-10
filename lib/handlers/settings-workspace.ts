@@ -1,14 +1,79 @@
 import { settingsManager } from "../settings-manager";
 import { state } from "../state";
 import { STRATEGY_PANEL_SETTINGS_SECTIONS } from "../strategy-panel-settings-registry";
-import { getSettingsSectionSummary } from "../settings-workspace-model";
+import { getSettingsSectionSummary, settingsSnapshotKey } from "../settings-workspace-model";
 import type { SettingsWorkspaceDom } from "../ui-manager-dom";
+import { strategyPanelController } from "../strategy-panel-controller";
+import { strategyRegistry } from "../../strategyRegistry";
+import { paramManager } from "../param-manager";
+import { backtestService } from "../backtest-service";
+import { getCurrentUiBacktestEndpointSnapshot } from "../backtest-endpoint-copy";
+import { formatDecimal, formatPercentPoints, formatProfitFactor, formatSignedCurrency, formatSignedPercentPoints } from "../ui-formatters";
 
 const SECTION_LABELS: Record<string, string> = {
     direction: "Direction", risk: "Risk", sizing: "Sizing", confirmation: "Confirmation", realism: "Execution", engine: "Engine",
 };
 
 export function initSettingsWorkspace(dom: SettingsWorkspaceDom): void {
+    const metricElements = dom.settingsBacktestSummary.querySelectorAll<HTMLElement>('[data-backtest-metric]');
+    let completedConfiguration: string | null = null;
+    const syncPerformanceVisibility = (): void => {
+        dom.settingsBacktestSummary.hidden = !state.currentBacktestResult
+            || strategyPanelController.getActiveTabId() !== 'settings';
+    };
+    const updatePerformanceStatus = (): void => {
+        if (!state.currentBacktestResult) return;
+        const source = state.currentBacktestResultSource;
+        if (completedConfiguration === null) {
+            dom.settingsBacktestStatus.textContent = source === 'finder_selection' ? 'Finder selection'
+                : source === 'walk_forward_oos' ? 'Walk-forward OOS' : 'Last completed backtest';
+            dom.settingsBacktestStatus.dataset.state = 'result';
+            return;
+        }
+        const strategy = strategyRegistry.get(state.currentStrategyKey);
+        const current = settingsSnapshotKey({
+            symbol: state.currentSymbol, interval: state.currentInterval,
+            strategyKey: state.currentStrategyKey,
+            strategyParams: strategy ? paramManager.getValues(strategy) : {},
+            backtestSettings: backtestService.getBacktestSettings(),
+            capitalSettings: backtestService.getCapitalSettings(), blockRange: state.blockRange,
+        });
+        const changed = current !== completedConfiguration;
+        dom.settingsBacktestStatus.dataset.state = changed ? 'changed' : 'result';
+        dom.settingsBacktestStatus.textContent = changed ? 'Settings changed · Run to update'
+            : source === 'endpoint_preview' ? 'Endpoint preview' : 'Last completed backtest';
+    };
+    const renderPerformance = (): void => {
+        const result = state.currentBacktestResult;
+        syncPerformanceVisibility();
+        if (!result) {
+            completedConfiguration = null;
+            return;
+        }
+        // Reuse the request captured by the run, including edits made while it awaited execution.
+        const snapshot = getCurrentUiBacktestEndpointSnapshot();
+        completedConfiguration = snapshot ? settingsSnapshotKey({
+            symbol: snapshot.symbol, interval: snapshot.interval, strategyKey: snapshot.strategyKey,
+            strategyParams: snapshot.strategyParams, backtestSettings: snapshot.backtestSettings,
+            capitalSettings: snapshot.capitalSettings, blockRange: snapshot.blockRange,
+        }) : null;
+        const metrics: Record<string, string> = {
+            netProfit: formatSignedCurrency(result.netProfit), netProfitPercent: formatSignedPercentPoints(result.netProfitPercent),
+            profitFactor: formatProfitFactor(result.profitFactor), maxDrawdownPercent: formatPercentPoints(result.maxDrawdownPercent),
+            winRate: formatPercentPoints(result.winRate, 1), totalTrades: String(result.totalTrades), sharpeRatio: formatDecimal(result.sharpeRatio, 2),
+        };
+        metricElements.forEach(element => {
+            element.textContent = metrics[element.dataset.backtestMetric!];
+            if (element.dataset.backtestMetric!.startsWith('netProfit')) {
+                element.dataset.tone = result.netProfit >= 0 ? 'positive' : 'negative';
+            }
+        });
+        updatePerformanceStatus();
+    };
+    dom.settingsBacktestResults.addEventListener('click', () => strategyPanelController.switchTab('results', { focus: true }));
+    dom.settingsBacktestTrades.addEventListener('click', () => strategyPanelController.switchTab('trades', { focus: true }));
+    state.subscribe('currentBacktestResult', renderPerformance);
+    window.addEventListener('strategy-panel:tab-change', syncPerformanceVisibility);
     const sections = STRATEGY_PANEL_SETTINGS_SECTIONS.map(definition => ({
         definition,
         element: dom.strategyWorkspaceSections.querySelector<HTMLElement>(`[data-section="${definition.id}"]`)!,
@@ -86,6 +151,7 @@ export function initSettingsWorkspace(dom: SettingsWorkspaceDom): void {
     };
 
     const refresh = (): void => {
+        updatePerformanceStatus();
         const settings = settingsManager.getBacktestSettings();
         for (const { definition, summary } of sections) summary.textContent = getSettingsSectionSummary(definition.id, settings);
         const feedback = settingsManager.getWorkspaceFeedback();
@@ -124,8 +190,12 @@ export function initSettingsWorkspace(dom: SettingsWorkspaceDom): void {
     dom.settingsTab.addEventListener("change", queueRefresh);
     settingsManager.subscribeFeedback(queueRefresh);
     state.subscribe("currentStrategyKey", queueRefresh);
+    state.subscribe("blockRange", queueRefresh);
+    state.subscribe("currentSymbol", queueRefresh);
+    state.subscribe("currentInterval", queueRefresh);
     // Strategy controls are rendered asynchronously when selection changes.
     new MutationObserver(() => { queueRefresh(); if (dom.settingsSearch.value) renderSearch(); })
         .observe(dom.settingsTab.querySelector("#strategyParams")!, { childList: true, subtree: true });
     refresh();
+    renderPerformance();
 }

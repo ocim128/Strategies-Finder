@@ -6,6 +6,8 @@ repeating the same investigation.
 
 ## 2026-10-10 — UI complexity reduction
 
+Follow-up: restored immediate performance feedback while tuning settings through a compact pinned summary below the Settings scroll area. Runs update the metrics in place; the edited controls remain visible. Captured-request comparison marks changed inputs, including edits during a run, and detail buttons link to Results/Trades. The removed Quick View overlay remains retired.
+
 Implemented all thirteen UI audit recommendations. Removed Quick View, shared-link auto-run polling, retired screen styles/animation utilities, hidden settings scaffolding, the global DOM cache, generic single-use rendering helpers, and manual stylesheet injection. The toolbar opens Results; shared-link recipients click Run.
 
 Settings now use native disclosures in static HTML order. Shared take-profit fields render once with existing persisted IDs. Navigation delegates container events and uses one AbortController for listener cleanup, including resize teardown. Settings restore reuses bootstrap telemetry. The obsolete bootstrap graph spec was deleted, and TAP suite failures can no longer receive PASS solely from a zero exit code.
