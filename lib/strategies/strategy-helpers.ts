@@ -12,22 +12,17 @@ function getMemoized(cache: WeakMap<OHLCVData[], number[]>, data: OHLCVData[], m
 
 const _h = new WeakMap<OHLCVData[], number[]>();
 const _l = new WeakMap<OHLCVData[], number[]>();
-const _o = new WeakMap<OHLCVData[], number[]>();
 const _c = new WeakMap<OHLCVData[], number[]>();
 const _v = new WeakMap<OHLCVData[], number[]>();
 const _typical = new WeakMap<OHLCVData[], number[]>();
-const _weightedClose = new WeakMap<OHLCVData[], number[]>();
 const _clean = new WeakMap<OHLCVData[], OHLCVData[]>();
 
 export const getHighs = (data: OHLCVData[]): number[] => getMemoized(_h, data, d => d.high);
 export const getLows = (data: OHLCVData[]): number[] => getMemoized(_l, data, d => d.low);
-export const getOpens = (data: OHLCVData[]): number[] => getMemoized(_o, data, d => d.open);
 export const getCloses = (data: OHLCVData[]): number[] => getMemoized(_c, data, d => d.close);
 export const getVolumes = (data: OHLCVData[]): number[] => getMemoized(_v, data, d => d.volume);
 export const getTypicalPrices = (data: OHLCVData[]): number[] =>
     getMemoized(_typical, data, d => (d.high + d.low + d.close) / 3);
-export const getWeightedClosePrices = (data: OHLCVData[]): number[] =>
-    getMemoized(_weightedClose, data, d => (d.high + d.low + 2 * d.close) / 4);
 
 // ============================================================================
 // Signal Helpers
@@ -78,28 +73,6 @@ export const createSellSignal = (
     reason: string,
     sizeFraction?: number
 ): Signal => createSignal(data, index, 'sell', reason, sizeFraction);
-
-/**
- * Helper to cross-check two arrays (e.g. Fast vs Slow MA).
- * Checks for a crossover event at the current index.
- */
-export function checkCrossover(
-    fast: (number | null)[],
-    slow: (number | null)[],
-    index: number
-): 'bullish' | 'bearish' | null {
-    const fPrev = fast[index - 1]!;
-    const sPrev = slow[index - 1]!;
-    const fCurr = fast[index]!;
-    const sCurr = slow[index]!;
-
-    // Bullish: Fast crosses above Slow
-    if (fPrev <= sPrev && fCurr > sCurr) return 'bullish';
-    // Bearish: Fast crosses below Slow
-    if (fPrev >= sPrev && fCurr < sCurr) return 'bearish';
-
-    return null;
-}
 
 /**
  * Ensures the data array is clean by filtering out null or undefined elements.

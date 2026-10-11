@@ -196,10 +196,6 @@ export function signalToPositionDirection(type: Signal['type']): 'long' | 'short
     return type === 'buy' ? 'long' : 'short';
 }
 
-export function directionToSignalType(direction: 'long' | 'short'): Signal['type'] {
-    return direction === 'short' ? 'sell' : 'buy';
-}
-
 export function entrySideForDirection(direction: 'long' | 'short'): 'buy' | 'sell' {
     return direction === 'short' ? 'sell' : 'buy';
 }

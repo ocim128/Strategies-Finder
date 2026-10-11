@@ -8,8 +8,7 @@ import {
 } from "../scripts/strategy-manifest-generator";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { isAllowedLocalRequest, type AuthorizedRequest } from "./local-route-authorization";
-import { sendJson } from "./http-response-utils";
-import { readJsonBody, sendCaughtErrorJson } from "./vite-http-utils";
+import { readJsonBody, sendCaughtErrorJson, sendJson } from "./vite-http-utils";
 
 const STRATEGY_EXPORT_PATTERN = /export\s+const\s+([a-zA-Z][a-zA-Z0-9_]*)\s*:\s*Strategy\s*=/g;
 const MANIFEST_KEY_PATTERN = /key:\s*"([^"]+)"/g;

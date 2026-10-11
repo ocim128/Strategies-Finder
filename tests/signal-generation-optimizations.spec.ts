@@ -2,7 +2,6 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { OHLCVData, Signal, Time } from "../lib/types/strategies";
 import { mapSignalsFromHigherTimeframe } from "../lib/strategy-timeframe";
-import { calculateWilliamsR } from "../lib/strategies/indicators";
 import {
     buildRollingCorrelation,
     buildRollingMinMax,
@@ -93,7 +92,7 @@ describe("signal generation optimizations", () => {
         }
     });
 
-    it("keeps rolling min/max and Williams %R results unchanged while using deque heads", () => {
+    it("keeps rolling min/max results unchanged while using deque heads", () => {
         const values = [3, 1, 4, 2, 5];
         expect(buildRollingMinMax(values, 3)).to.deep.equal({
             min: [null, null, 1, 1, 2],
@@ -103,18 +102,6 @@ describe("signal generation optimizations", () => {
             min: [null, null, null, 1, 1],
             max: [null, null, null, 4, 4],
         });
-
-        expect(calculateWilliamsR(
-            [10, 12, 11, 13],
-            [1, 2, 3, 4],
-            [5, 10, 8, 12],
-            2
-        )).to.deep.equal([
-            null,
-            -100 * (12 - 10) / (12 - 1),
-            -100 * (12 - 8) / (12 - 2),
-            -100 * (13 - 12) / (13 - 3),
-        ]);
     });
 
 });

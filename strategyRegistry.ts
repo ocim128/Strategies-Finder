@@ -330,13 +330,6 @@ export function getStrategyList(): Array<{ key: string; name: string; descriptio
     return result;
 }
 
-/**
- * Validate a strategy key
- */
-export function isValidStrategyKey(key: string): boolean {
-    return /^[a-z][a-z0-9_]*$/.test(key);
-}
-
 export function isBuiltInStrategyKey(key: string): boolean {
     return isBuiltInKey(key);
 }

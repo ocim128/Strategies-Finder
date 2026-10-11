@@ -29,9 +29,6 @@ export interface TopMeanScanWorkerData {
     shardIndexes: number[];
 }
 
-/** NO_QUOTE_LEG marks pairs whose adapted artifact has no quote asset. */
-export const TOP_MEAN_SCAN_NO_QUOTE_LEG = 0xffffffff;
-
 export interface TopMeanScanShardResult {
     missingDirectionalMaturityTrades?: number;
     validDegree?: Array<[string, number]>;

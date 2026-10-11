@@ -4,6 +4,62 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-11 — Dead-code removal pass (post adaptive take-profit refactor)
+
+**Evidence.** A textual reachability scan over the whole tree (code, docs, HTML,
+CSS, JSON) reported 65 exported symbols with exactly one occurrence — their own
+declaration — and no external reference. Each candidate was then checked against
+`git grep` over all 400 commits to distinguish *never consumed* from *orphaned
+by a recent refactor*: a symbol was only deleted when every historical consumer
+had itself been deleted. `5c8c46d9` (remove adaptive take-profit modes) is the
+main orphan source.
+
+**Change.** Net **1,270 lines deleted across 39 files**; four modules and one
+barrel export removed. Nothing was replaced — behavior is unchanged.
+
+- Modules deleted: `lib/http-response-utils.ts` (14-line duplicate of
+  `sendJson`; both importers already imported the real one from
+  `vite-http-utils` on the adjacent line), `lib/strategies/backtest/bar-metrics.ts`
+  (292 lines, zero importers — its only consumer `adaptive-take-profit.ts` was
+  deleted by `5c8c46d9`), `lib/strategies/constants.ts` (only the unused
+  `COLORS` object), `scripts/top-mean-campaign-log.ts` (75 lines, no importer in
+  any of 400 commits).
+- Retired indicators removed from `lib/strategies/indicators.ts` and
+  `trend-confirmation-indicators.ts` (10 + 3 functions, 360 and 107 lines) and
+  their per-function memo caches, which `5c8c46d9` left behind. Live indicators
+  (`SMA`/`EMA`/`ATR`/`Keltner`/`ADX`/`CMF`/`Ichimoku`/`VWAP`/`DMI`/`ParabolicSAR`)
+  are untouched, as is `calculateEma` (still used by `ZeroLagEma` and `DEMA`).
+- Other unreferenced exports removed across 30 further files, including the
+  stale hand-written `AppState` duplicate in `lib/types/index.ts`, six dead
+  `lib/ui-formatters.ts` formatters (202 → 146 lines), `disposeDebugPanel` and
+  its four teardown-only module variables in `lib/debug-panel.ts`,
+  `runFinderCandidateBacktest`, `evaluateTradeLedgerRuleWithReportAsync`,
+  `TradeLedgerSummary`/`TradeLedgerPairSuppression`, and `DEFAULT_SCANNER_CONFIG`.
+  In each case a live sibling was kept (`getScopedBinanceStorageSymbol`,
+  `joinSignalRanks`, `getValidationCheck`, `isBuiltInStrategyKey`,
+  `clearRankPairsRecentLoaderCache`, …).
+- `lib/strategies/index.ts` lost its `export * from './constants';` line; the
+  stale import-hygiene comment in `lib/crypto-data/crypto-data-vite-plugin.ts`
+  referencing the deleted module was corrected.
+- One implementation-pinned test assertion was dropped with its subject
+  (`calculateWilliamsR` in `tests/signal-generation-optimizations.spec.ts`); the
+  behavioral coverage around it (`buildRollingMinMax`/`buildRollingCorrelation`)
+  is retained and the test renamed to describe it.
+
+**Checks.** `tsc --noEmit -p tsconfig.json` and `tsc -p tsconfig.tests.json`
+both exit 0. Full suite: **271 passed, 1 failed, 0 skipped** — the single failure
+is `tests/monte-carlo-dom.spec.ts`, which cannot launch a browser in this
+environment (`puppeteer-core@24.43.1` wants Chrome 148; only Chrome 135 is in the
+Puppeteer cache). That failure reproduces on the untouched baseline and is
+unrelated to this change.
+
+**Follow-up.** Preserve documented strategy-authoring APIs until compatibility is
+checked: exported authoring indicator variants and module disposal/singleton
+functions were left in place deliberately even where unreferenced in-repo.
+Re-run the scan after any future feature retirement — the pattern above (a
+feature commit deleting a consumer but leaving the producer) is the dominant
+source of dead code here.
+
 ## 2026-10-10 — UI complexity reduction
 
 Follow-up: restored immediate performance feedback while tuning settings through a compact pinned summary below the Settings scroll area. Runs update the metrics in place; the edited controls remain visible. Captured-request comparison marks changed inputs, including edits during a run, and detail buttons link to Results/Trades. The removed Quick View overlay remains retired.

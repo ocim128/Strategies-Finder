@@ -4,7 +4,7 @@
  * Used by the server route (hard 400s) and kept as the single source of truth
  * for the legitimate UI range so browser defaults and server caps cannot drift.
  */
-import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight, type ActiveCapTiltWeight, type CapTiltWeight } from "./cap-tilt-contract";
+import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight, type ActiveCapTiltWeight } from "./cap-tilt-contract";
 
 export const TOP_MEAN_HORIZONS_MAX_LENGTH = 8;
 export const TOP_MEAN_HORIZONS_MAX_VALUE = 1000;
@@ -28,7 +28,6 @@ export const TOP_MEAN_RUN_MAX_BODY_BYTES = 64 * 1024 * 1024;
  *  Re-exported from the shared contract leaf so this route and the standalone
  *  OPEN_SCORE USD route cannot drift apart. */
 export const TOP_MEAN_CAP_TILT_WEIGHTS = CAP_TILT_WEIGHTS;
-export type TopMeanCapTiltWeight = CapTiltWeight;
 export type TopMeanActiveCapTiltWeight = ActiveCapTiltWeight;
 
 export type TopMeanValidatedLimits = {

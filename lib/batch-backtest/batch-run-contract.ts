@@ -1,5 +1,4 @@
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
-import type { MaxActiveResearchRegistrationV1 } from "./max-active-research-contract";
 
 export interface BatchRunFingerprintInput {
     symbols: readonly string[];
@@ -134,13 +133,6 @@ export interface BatchRunPairListProvenanceMeta {
     /** "verified" when the recomputed hash matches; "manual/unverified" otherwise. */
     status: "verified" | "manual/unverified";
     /** Short reason for the status, surfaced in /status and the done event. */
-    reason?: string;
-}
-
-/** Optional bounded research registration metadata retained with a Batch run. */
-export interface BatchRunResearchRegistrationMeta {
-    registration: MaxActiveResearchRegistrationV1 | null;
-    status: "verified" | "manual/unverified";
     reason?: string;
 }
 

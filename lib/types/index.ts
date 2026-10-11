@@ -1,7 +1,4 @@
-import type { ISeriesApi, Time, ISeriesMarkersPluginApi, IChartApi } from "lightweight-charts";
-import type { BacktestResult, OHLCVData } from "./strategies";
-import type { BacktestResultSource } from "../state";
-import type { BinanceMarketType } from "../binance-market";
+import type { ISeriesApi } from "lightweight-charts";
 
 export * from './strategies';
 export * from './backtest';
@@ -15,22 +12,4 @@ export interface Indicator {
     type: string;
     series: ISeriesApi<any>[];
     color: string;
-}
-
-export interface AppState {
-    chart: IChartApi;
-    equityChart: IChartApi;
-    candlestickSeries: ISeriesApi<"Candlestick">;
-    equitySeries: ISeriesApi<"Area">;
-    markersPlugin: ISeriesMarkersPluginApi<Time> | null;
-    currentSymbol: string;
-    currentInterval: string;
-    binanceMarketType: BinanceMarketType;
-    isDarkTheme: boolean;
-    mockChartBars: number;
-    ohlcvData: OHLCVData[];
-    indicators: Indicator[];
-    currentBacktestResult: BacktestResult | null;
-    currentBacktestResultSource: BacktestResultSource;
-    currentStrategyKey: string;
 }

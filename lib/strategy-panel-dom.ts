@@ -24,4 +24,3 @@ export function createStrategyPanelDom() {
     };
 }
 
-export type StrategyPanelDom = ReturnType<typeof createStrategyPanelDom>;

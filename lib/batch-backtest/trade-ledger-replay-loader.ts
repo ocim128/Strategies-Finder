@@ -118,17 +118,6 @@ export async function loadLedgerRows(folder: string): Promise<TradeLedgerRow[]> 
     return (await readJsonl<TradeLedgerRow>(path.join(folder, LEDGER_FILE))).values;
 }
 
-/** Keyed by `${signalTime}|${pair}` — the join the checker performs. */
-export async function loadSignalRanks(folder: string): Promise<Map<string, TradeLedgerRankRow>> {
-    const ranksFile = path.join(folder, RANKS_FILE);
-    const map = new Map<string, TradeLedgerRankRow>();
-    if (!existsSync(ranksFile)) return map;
-    await readJsonl<TradeLedgerRankRow>(ranksFile, (rank) => {
-        map.set(`${rank.signalTime}|${rank.pair}`, rank);
-    });
-    return map;
-}
-
 /**
  * Mutates each row's `feat_rank` / `feat_candidatesAtTime` in place from the
  * ranks map. Returns the number of rows that matched a rank entry.

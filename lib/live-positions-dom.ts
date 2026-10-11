@@ -50,4 +50,3 @@ export function createLivePositionsDom() {
     };
 }
 
-export type LivePositionsDom = ReturnType<typeof createLivePositionsDom>;

@@ -4,8 +4,6 @@
  * describe the same wire shapes. Types only — no runtime dependencies.
  */
 
-export type AssetOpportunityExplorerMeasurementMode = "fixed_horizon" | "next_exit";
-
 /** A run's usability for the fixed-horizon heatmap. */
 export type AssetOpportunityExplorerRunSupport =
     | "fixed_horizon"

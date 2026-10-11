@@ -127,41 +127,6 @@ function getConfirmationSignalCache(
     return confirmationCache;
 }
 
-/**
- * Backtest runner used by specialized finder runners. Forces
- * `includeAdvancedAnalytics: false` (finder candidates don't need heavy
- * analytics) and forwards the optional fast-path flags. Both classification and
- * second-market runners duplicated this wrapper with identical behavior.
- */
-export const runFinderCandidateBacktest: typeof runBacktest = (
-    data,
-    signals,
-    initialCapital,
-    positionSizePercent,
-    commissionPercent,
-    settings,
-    sizing,
-    precomputed,
-    options,
-) => runBacktest(
-    data,
-    signals,
-    initialCapital,
-    positionSizePercent,
-    commissionPercent,
-    settings,
-    sizing,
-    precomputed,
-    {
-        includeAdvancedAnalytics: false,
-        includeSharpeRatio: options?.includeSharpeRatio,
-        collectDiagnostics: options?.collectDiagnostics,
-        omitEquityCurve: options?.omitEquityCurve,
-        skipDrawdown: options?.skipDrawdown,
-        forceDisableSignalExits: options?.forceDisableSignalExits,
-    },
-);
-
 export function generateSignalsForJob(
     job: ParamJob,
     data: OHLCVData[],

@@ -35,8 +35,7 @@ import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics, toSlimSingleResul
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execution";
 import { rememberLoopbackOriginFromRequest } from "./local-api-transport";
-import { sendJson } from "./http-response-utils";
-import { readJsonBody, sendCaughtErrorJson } from "./vite-http-utils";
+import { readJsonBody, sendCaughtErrorJson, sendJson } from "./vite-http-utils";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 import { strategies as builtInStrategies } from "./strategies/library";
 import { parseTimeToUnixSeconds } from "./time-normalization";

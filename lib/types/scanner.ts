@@ -26,15 +26,6 @@ export interface ScannerConfig {
     autoRefreshMs?: number;
 }
 
-export const DEFAULT_SCANNER_CONFIG: ScannerConfig = {
-    strategyConfigs: [],
-    interval: '2h',
-    maxPairs: 120,
-    signalFreshnessBars: 3,
-    scanLookbackBars: 1000,
-    autoRefreshMs: undefined,
-};
-
 export interface ScanResult {
     /** Trading pair symbol, e.g., "ETHUSDT" */
     symbol: string;

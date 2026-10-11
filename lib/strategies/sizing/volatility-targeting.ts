@@ -3,10 +3,6 @@ import type { AdvancedSizingSettings, VolScalingMethod } from "../../types/backt
 import type { OHLCVData } from "../../types/strategies";
 import { average, buildCloseReturns, clamp, inferBarsPerYear } from "./shared";
 
-export interface VolTargetingState {
-    currentVolAnnualized: number;
-}
-
 function calculateStandardDeviation(values: readonly number[]): number {
     if (values.length < 2) return 0;
     const mean = average(values);

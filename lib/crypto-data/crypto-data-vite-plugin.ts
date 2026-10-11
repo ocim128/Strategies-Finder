@@ -13,8 +13,8 @@
  * Import hygiene: this module is imported by `vite.config.ts` and therefore
  * bundled by esbuild for the Node dev server. It MUST NOT import anything that
  * transitively reaches `lightweight-charts` (ESM-only) or `chart-manager`. In
- * particular it MUST NOT import `lib/dataProviders/binance.ts` (which pulls
- * `lib/strategies/index` → `lib/strategies/constants` → `chart-manager`). The
+ * particular it MUST NOT import `lib/dataProviders/binance.ts`, which pulls the
+ * `lib/strategies/index` barrel and transitively `chart-manager`. The
  * Binance kline fetcher is implemented inline using only leaf helpers. Symptom
  * of breakage: dev server fails to start with
  * `Failed to resolve "lightweight-charts". This package is ESM only`.

@@ -308,10 +308,6 @@ export class TopMeanCausalFeatureStateMachine {
     }
 }
 
-export function createTopMeanCausalFeatureStateMachine(): TopMeanCausalFeatureStateMachine {
-    return new TopMeanCausalFeatureStateMachine();
-}
-
 export function buildCandidateFeatures(input: TopMeanCausalFeatureBuildInput): TopMeanCandidateFeatureRow[] {
     return new TopMeanCausalFeatureStateMachine().run(input);
 }

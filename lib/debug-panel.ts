@@ -13,10 +13,6 @@ const LAG_LOG_THRESHOLD_MS = 200;
 const LAG_LOG_THROTTLE_MS = 2000;
 let debugPanelInitialized = false;
 let debugPanelAbortController: AbortController | null = null;
-let lagIntervalId: number | null = null;
-let refreshIntervalId: number | null = null;
-let unsubscribeDebugLogger: (() => void) | null = null;
-let cancelScheduledDebugRender: (() => void) | null = null;
 
 function safeStringify(value: unknown): string {
     try {
@@ -66,7 +62,7 @@ export function initDebugPanel() {
     debugPanelAbortController = new AbortController();
     const listenerOptions = { signal: debugPanelAbortController.signal };
 
-    lagIntervalId = window.setInterval(() => {
+    window.setInterval(() => {
         const now = Date.now();
         const drift = now - lastTick - EVENT_LOOP_INTERVAL_MS;
         if (drift > LAG_LOG_THRESHOLD_MS) {
@@ -113,7 +109,6 @@ export function initDebugPanel() {
         renderLogs();
         renderPerf();
     });
-    cancelScheduledDebugRender = renderFrame.cancel;
 
     const setVisible = (visible: boolean) => {
         panel.classList.toggle('active', visible);
@@ -156,7 +151,7 @@ export function initDebugPanel() {
         }
     }, listenerOptions);
 
-    unsubscribeDebugLogger = debugLogger.subscribe(() => {
+    debugLogger.subscribe(() => {
         if (!isVisible()) return;
         // Finder/Batch emit high-frequency cache/progress events; without
         // coalescing, every event rebuilds the full 200-row log DOM. Batch
@@ -175,7 +170,7 @@ export function initDebugPanel() {
         }
     }, listenerOptions);
 
-    refreshIntervalId = window.setInterval(() => {
+    window.setInterval(() => {
         if (isVisible()) {
             renderState();
             renderPerf();
@@ -183,22 +178,4 @@ export function initDebugPanel() {
     }, 500);
 
     debugLogger.event('debug.ready');
-}
-
-export function disposeDebugPanel(): void {
-    if (lagIntervalId !== null) {
-        window.clearInterval(lagIntervalId);
-        lagIntervalId = null;
-    }
-    if (refreshIntervalId !== null) {
-        window.clearInterval(refreshIntervalId);
-        refreshIntervalId = null;
-    }
-    debugPanelAbortController?.abort();
-    debugPanelAbortController = null;
-    unsubscribeDebugLogger?.();
-    unsubscribeDebugLogger = null;
-    cancelScheduledDebugRender?.();
-    cancelScheduledDebugRender = null;
-    debugPanelInitialized = false;
 }

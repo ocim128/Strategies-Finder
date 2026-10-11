@@ -33,10 +33,6 @@ export function getScopedBinanceStorageSymbol(symbol: string, marketType: Binanc
     return marketType === "futures" ? `${BINANCE_FUTURES_STORAGE_PREFIX}${normalizedSymbol}` : normalizedSymbol;
 }
 
-export function isScopedBinanceFuturesStorageSymbol(symbol: string): boolean {
-    return symbol.trim().toUpperCase().startsWith(BINANCE_FUTURES_STORAGE_PREFIX);
-}
-
 export function getUnscopedBinanceStorageSymbol(symbol: string): string {
     let normalizedSymbol = symbol.trim().toUpperCase();
     while (normalizedSymbol.startsWith(BINANCE_FUTURES_STORAGE_PREFIX)) {

@@ -414,8 +414,6 @@ export const VALIDATION_RULES: readonly ValidationRule[] = [
     },
 ];
 
-const RULES_BY_ID = new Map(VALIDATION_RULES.map(rule => [rule.id, rule]));
-
 export type PlannedRuleMatch = {
     ruleId: string;
     summary: string;
@@ -701,10 +699,6 @@ export function inspectValidationMap(): MapIssue[] {
     }
 
     return issues;
-}
-
-export function getValidationRule(ruleId: string): ValidationRule | undefined {
-    return RULES_BY_ID.get(ruleId);
 }
 
 export function getValidationCheck(checkId: string): ValidationCheckDefinition | undefined {

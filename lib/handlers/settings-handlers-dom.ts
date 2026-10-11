@@ -27,4 +27,3 @@ export function createSettingsHandlersDom() {
     };
 }
 
-export type SettingsHandlersDom = ReturnType<typeof createSettingsHandlersDom>;

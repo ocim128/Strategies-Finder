@@ -38,4 +38,3 @@ export function createStateSubscriptionsDom() {
   };
 }
 
-export type StateSubscriptionsDom = ReturnType<typeof createStateSubscriptionsDom>;

@@ -87,11 +87,4 @@ export function resampleOHLCV(
     return resampled;
 }
 
-/**
- * Maps a base timeframe timestamp to its corresponding higher timeframe timestamp.
- */
-export function mapToBaseTimeframe(time: number, higherInterval: string): number {
-    return getResampleBucketStart(time, higherInterval);
-}
-
 

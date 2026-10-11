@@ -61,97 +61,6 @@ function calculateEma(values: number[], period: number, startIndex = 0): Nullabl
     return result;
 }
 
-function calculateWeightedMovingAverage(
-    values: number[],
-    period: number,
-    startIndex = 0
-): NullableSeries {
-    const result: NullableSeries = new Array(values.length).fill(null);
-    const firstIndex = startIndex + period - 1;
-    if (firstIndex >= values.length) return result;
-
-    const weightTotal = period * (period + 1) / 2;
-    let sum = 0;
-    let weightedSum = 0;
-    for (let offset = 0; offset < period; offset++) {
-        const value = values[startIndex + offset];
-        sum += value;
-        weightedSum += value * (offset + 1);
-    }
-    result[firstIndex] = weightedSum / weightTotal;
-
-    for (let i = firstIndex + 1; i < values.length; i++) {
-        const outgoing = values[i - period];
-        weightedSum = weightedSum - sum + period * values[i];
-        sum += values[i] - outgoing;
-        result[i] = weightedSum / weightTotal;
-    }
-    return result;
-}
-
-export function calculateKama(values: number[], period: number): NullableSeries {
-    return getCachedSeries(values, `kama:${period}`, () => {
-        const result: NullableSeries = new Array(values.length).fill(null);
-        if (values.length < period) return result;
-
-        let seed = 0;
-        for (let i = 0; i < period; i++) seed += values[i];
-        let previous = seed / period;
-        result[period - 1] = previous;
-
-        const fast = 2 / 3;
-        const slow = 2 / 31;
-        let volatility = 0;
-        for (let i = 1; i <= period && i < values.length; i++) {
-            volatility += Math.abs(values[i] - values[i - 1]);
-        }
-
-        for (let i = period; i < values.length; i++) {
-            if (i > period) {
-                volatility += Math.abs(values[i] - values[i - 1]);
-                volatility -= Math.abs(values[i - period] - values[i - period - 1]);
-            }
-            const direction = Math.abs(values[i] - values[i - period]);
-            const efficiencyRatio = volatility === 0 ? 0 : direction / volatility;
-            const smoothing = Math.pow(efficiencyRatio * (fast - slow) + slow, 2);
-            previous += smoothing * (values[i] - previous);
-            result[i] = previous;
-        }
-        return result;
-    });
-}
-
-export function calculateLinearRegressionEndpoint(values: number[], period: number): NullableSeries {
-    return getCachedSeries(values, `regression-endpoint:${period}`, () => {
-        const result: NullableSeries = new Array(values.length).fill(null);
-        if (values.length < period) return result;
-
-        const sumX = period * (period - 1) / 2;
-        const sumX2 = period * (period - 1) * (2 * period - 1) / 6;
-        const denominator = period * sumX2 - sumX * sumX;
-        let sumY = 0;
-        let sumXY = 0;
-
-        for (let i = 0; i < period; i++) {
-            sumY += values[i];
-            sumXY += i * values[i];
-        }
-
-        for (let i = period - 1; i < values.length; i++) {
-            if (i >= period) {
-                const outgoing = values[i - period];
-                const previousSumY = sumY;
-                sumY = previousSumY - outgoing + values[i];
-                sumXY = sumXY - (previousSumY - outgoing) + (period - 1) * values[i];
-            }
-            const slope = (period * sumXY - sumX * sumY) / denominator;
-            const intercept = (sumY - slope * sumX) / period;
-            result[i] = intercept + slope * (period - 1);
-        }
-        return result;
-    });
-}
-
 export function calculateDonchianMidpoint(
     highs: number[],
     lows: number[],
@@ -184,22 +93,6 @@ export function calculateZeroLagEma(values: number[], period: number): NullableS
             i < lag ? value : value + (value - values[i - lag])
         );
         return calculateEma(adjusted, period);
-    });
-}
-
-export function calculateHullMovingAverage(values: number[], period: number): NullableSeries {
-    return getCachedSeries(values, `hma:${period}`, () => {
-        const halfPeriod = Math.max(1, Math.round(period / 2));
-        const rootPeriod = Math.max(1, Math.round(Math.sqrt(period)));
-        const halfWma = calculateWeightedMovingAverage(values, halfPeriod);
-        const fullWma = calculateWeightedMovingAverage(values, period);
-        const firstDifferenceIndex = period - 1;
-        const differences = new Array<number>(values.length).fill(0);
-
-        for (let i = firstDifferenceIndex; i < values.length; i++) {
-            differences[i] = 2 * halfWma[i]! - fullWma[i]!;
-        }
-        return calculateWeightedMovingAverage(differences, rootPeriod, firstDifferenceIndex);
     });
 }
 

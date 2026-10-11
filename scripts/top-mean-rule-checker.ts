@@ -67,8 +67,6 @@ const TOP_MEAN_RULE_CANDIDATE_FIELDS = [
     "regime",
 ] as const;
 
-export const TOP_MEAN_RULE_V2_FIELDS = TOP_MEAN_CAUSAL_FEATURE_FIELDS;
-
 const TOP_MEAN_RULE_EVENT_FIELDS = [
     "decisionTimeSec",
     "breadth",
@@ -534,10 +532,6 @@ function validateSnapshotRows(
 
 function outcomeKey(eventId: string, horizonBars: number, direction: string, asset: string): string {
     return `${eventId}|${horizonBars}|${direction}|${asset}`;
-}
-
-export function makeTopMeanOutcomeKey(eventId: string, horizonBars: number, direction: string, asset: string): string {
-    return outcomeKey(eventId, horizonBars, direction, asset);
 }
 
 function validateOutcomeRows(

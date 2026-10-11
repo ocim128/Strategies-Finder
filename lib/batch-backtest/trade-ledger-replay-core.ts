@@ -903,19 +903,6 @@ export function evaluateTradeLedgerRuleWithReport(input: CheckerReportInput): Le
     };
 }
 
-/** Evaluate one rule with server-side parallel random controls. */
-export async function evaluateTradeLedgerRuleWithReportAsync(
-    input: CheckerReportInput,
-    controlRunner: TradeLedgerControlRunner,
-): Promise<LedgerRuleEvaluationWithReport> {
-    const evaluation = await evaluateTradeLedgerRuleAsync(input, controlRunner);
-    return {
-        evaluation,
-        resultInput: evaluation.resultInput,
-        reportLines: buildCheckerReportLines(input, evaluation),
-    };
-}
-
 /** Assemble the legacy stable replay report. */
 export function buildCheckerReport(input: CheckerReportInput): string {
     return evaluateTradeLedgerRuleWithReport(input).reportLines.join("\n");

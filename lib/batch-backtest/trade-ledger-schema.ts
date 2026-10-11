@@ -15,16 +15,9 @@ export const TRADE_LEDGER_VERSION = 3;
 export const TRADE_LEDGER_FEATURE_VERSION = 3;
 /** Ledger versions retained for legacy as-if replay consumers. */
 export const TRADE_LEDGER_SUPPORTED_VERSIONS = [2, 3] as const;
-/** Feature versions accepted by the legacy checker. */
-export const TRADE_LEDGER_SUPPORTED_FEATURE_VERSIONS = [2, 3] as const;
-export const TRADE_LEDGER_DEFAULT_HORIZONS = [24] as const;
 
 /** Fixed feature ATR period — independent of the user's backtest ATR settings. */
 export const TRADE_LEDGER_FEATURE_ATR_PERIOD = 14;
-/** Lookback bars for `feat_return20`. */
-export const TRADE_LEDGER_FEATURE_RETURN_BARS = 20;
-/** `feat_pairWinRatePrior` stays null until this many prior executed trades. */
-export const TRADE_LEDGER_PAIR_WIN_RATE_MIN_PRIOR = 5;
 
 /**
  * Outcome-ish fields a checker rule must NEVER read: realized outcomes, fixed
@@ -166,49 +159,10 @@ export interface TradeLedgerRankRow {
     candidatesAtTime: number;
 }
 
-export interface TradeLedgerPairSuppression {
-    pair: string;
-    signals: number;
-    executed: number;
-    notExecuted: number;
-    suppressionRate: number;
-}
-
 /** User-selected signal-recording bounds; null means open-ended. */
 export interface TradeLedgerWindow {
     fromSec: number | null;
     toSec: number | null;
-}
-
-export interface TradeLedgerSummary {
-    ledgerVersion: number;
-    featureVersion: number;
-    runId: string;
-    startedAt: string;
-    finishedAt: string;
-    cancelled: boolean;
-    ledgerComplete: boolean;
-    failedWrites: number;
-    lastError: string | null;
-    totals: {
-        pairs: number;
-        signals: number;
-        executed: number;
-        notExecuted: number;
-    };
-    suppressionRate: number;
-    rightCensored: number;
-    duplicateSignalsCollapsed: number;
-    ledgerWindow: TradeLedgerWindow;
-    /** W4 pair accounting (see the comment at the construction site). */
-    submittedPairs: number;
-    loadedPairs: number;
-    rowBearingPairs: number;
-    emptyPairs: number;
-    /** Pairs whose rows were dropped by a failed append (audit W2). */
-    failedPairs: string[];
-    perPairSuppression: TradeLedgerPairSuppression[];
-    topSuppressedPairs: TradeLedgerPairSuppression[];
 }
 
 export interface TradeLedgerProvenance {
