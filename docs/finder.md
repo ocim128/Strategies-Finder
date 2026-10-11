@@ -319,9 +319,10 @@ The controls are:
 - `OOS Horizons`: comma-separated fixed forward horizons, normally `1,3,5`.
   A horizon longer than the holdout is measured ongoing: the return is taken
   at the last available candle (mark-to-market) and flagged `ongoing` in
-  results/archives instead of being discarded. Completed horizons remain the
-  reliable basis for cross-holdout comparisons; the holdout analyzer counts
-  ongoing rows per horizon and notes them.
+  results/archives instead of being discarded. The holdout analyzer keeps the
+  main aggregates completed-only — a horizon the sweep has not reached yet
+  shows its ongoing mark-to-market in separate `Ongoing n` / `Ongoing avg`
+  columns instead of duplicating another horizon's numbers.
 - `Forward Horizon Basis` (removed from the UI): every fixed-horizon run
   measures all three price bases in the same pass — `pair` (shown in results),
   `base_only` (BASE long), and `quote_only` (QUOTE short) — because the basis

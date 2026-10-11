@@ -44,7 +44,7 @@ export type {
     AssetOpportunityArchiveHorizonBasis,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
-const REPORT_SCHEMA_VERSION = 12;
+const REPORT_SCHEMA_VERSION = 13;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const HORIZON_BASES = ["pair", "base_only", "quote_only"] as const;
@@ -149,6 +149,9 @@ export interface CandidateHoldoutAnalysis {
         bestPnlPercent: number | null;
         worstPnlPercent: number | null;
         totalSamples: number;
+        ongoingRows: number;
+        ongoingAveragePnlPercent: number | null;
+        ongoingPositiveRatePercent: number | null;
     }>;
 }
 
@@ -168,6 +171,9 @@ export interface HoldoutHorizonAnalysis {
     totalSamples: number;
     /** Observations measured at the last candle because the horizon exceeded the holdout. */
     ongoingRows: number;
+    /** Mark-to-market stats over the ongoing observations, kept out of the completed-horizon aggregates. */
+    ongoingAveragePnlPercent: number | null;
+    ongoingPositiveRatePercent: number | null;
     baselineAveragePnlPercent: number | null;
     baselinePositiveRatePercent: number | null;
     baselineEligibleCandidateCount: number | null;
@@ -613,26 +619,40 @@ function calculateHorizonAnalysis(
     values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }>,
     horizonBars: number,
 ): HoldoutHorizonAnalysis {
-    const totalSamples = values.reduce((sum, value) => sum + value.sampleSize, 0);
-    const unweightedTotal = values.reduce((sum, value) => sum + value.pnlPercent, 0);
-    const weightedTotal = values.reduce((sum, value) => sum + value.pnlPercent * value.sampleSize, 0);
-    const pnlValues = values.map((value) => value.pnlPercent);
-    const positiveRows = values.filter((value) => value.pnlPercent > 0).length;
+    // Aggregates describe COMPLETED horizons only: an ongoing observation is a
+    // mark-to-market at the last candle, so blending it into a horizon bucket
+    // would make every not-yet-reached horizon an identical copy of the
+    // last-candle return. Ongoing observations get their own columns instead.
+    const completed = values.filter((value) => value.ongoing !== true);
+    const ongoing = values.filter((value) => value.ongoing === true);
+    const totalSamples = completed.reduce((sum, value) => sum + value.sampleSize, 0);
+    const unweightedTotal = completed.reduce((sum, value) => sum + value.pnlPercent, 0);
+    const weightedTotal = completed.reduce((sum, value) => sum + value.pnlPercent * value.sampleSize, 0);
+    const pnlValues = completed.map((value) => value.pnlPercent);
+    const positiveRows = completed.filter((value) => value.pnlPercent > 0).length;
+    const ongoingPnlValues = ongoing.map((value) => value.pnlPercent);
+    const ongoingPositiveRows = ongoingPnlValues.filter((value) => value > 0).length;
     return {
         horizonBars,
-        observedRows: values.length,
+        observedRows: completed.length,
         positiveRows,
-        positiveRatePercent: values.length > 0 ? (positiveRows / values.length) * 100 : null,
-        averagePnlPercent: percentOrNull(unweightedTotal / values.length),
+        positiveRatePercent: completed.length > 0 ? (positiveRows / completed.length) * 100 : null,
+        averagePnlPercent: percentOrNull(unweightedTotal / completed.length),
         sampleWeightedAveragePnlPercent: totalSamples > 0 ? percentOrNull(weightedTotal / totalSamples) : null,
         medianPnlPercent: median(pnlValues),
         p10PnlPercent: quantile(pnlValues, 0.10),
         p25PnlPercent: quantile(pnlValues, 0.25),
         standardDeviationPnlPercent: standardDeviation(pnlValues),
-        bestPnlPercent: values.length > 0 ? Math.max(...pnlValues) : null,
-        worstPnlPercent: values.length > 0 ? Math.min(...pnlValues) : null,
+        bestPnlPercent: completed.length > 0 ? Math.max(...pnlValues) : null,
+        worstPnlPercent: completed.length > 0 ? Math.min(...pnlValues) : null,
         totalSamples,
-        ongoingRows: values.filter((value) => value.ongoing === true).length,
+        ongoingRows: ongoing.length,
+        ongoingAveragePnlPercent: ongoing.length > 0
+            ? percentOrNull(ongoingPnlValues.reduce((sum, value) => sum + value, 0) / ongoing.length)
+            : null,
+        ongoingPositiveRatePercent: ongoing.length > 0
+            ? (ongoingPositiveRows / ongoing.length) * 100
+            : null,
         baselineAveragePnlPercent: null,
         baselinePositiveRatePercent: null,
         baselineEligibleCandidateCount: null,
@@ -660,6 +680,9 @@ function calculateCandidateHorizonAnalysis(observations: CandidateObservation[],
         bestPnlPercent: result.bestPnlPercent,
         worstPnlPercent: result.worstPnlPercent,
         totalSamples: result.totalSamples,
+        ongoingRows: result.ongoingRows,
+        ongoingAveragePnlPercent: result.ongoingAveragePnlPercent,
+        ongoingPositiveRatePercent: result.ongoingPositiveRatePercent,
     };
 }
 
@@ -1072,7 +1095,7 @@ function buildSortHorizonAnalyses(
                 const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
                 if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
                 values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
-                contributingHoldouts.add(record.holdoutBars);
+                if (horizon.ongoing !== true) contributingHoldouts.add(record.holdoutBars);
             }
         }
         const result = calculateHorizonAnalysis(values, horizonBarsValue);
@@ -1777,7 +1800,7 @@ export function analyzeAssetOpportunityArchive(
                     "Per-sort all-candidate averages and deltas use holdouts with at least one valid selected-row forward sample.",
                     "Samples count valid selected-row forward observations. Fresh entries use their forward metric; an OPEN EOD row uses continuation from the holdout boundary close in the existing position direction.",
                     ...(ongoingObservationTotal > 0
-                        ? [`${ongoingObservationTotal} forward observations were ongoing: the horizon exceeded the holdout, so the return is measured at the last available candle (mark-to-market), not at the full horizon. Ongoing rows are counted in the aggregates and flagged per row/horizon; prefer completed horizons for cross-holdout comparisons.`]
+                        ? [`${ongoingObservationTotal} forward observations were ongoing: the horizon exceeded the holdout, so the return is measured at the last available candle (mark-to-market), not at the full horizon. Aggregates use completed horizons only; the Ongoing columns report the separate mark-to-market stats for horizons the sweep has not reached yet.`]
                         : []),
                     "OPEN EOD continuation is an evaluation measurement from the boundary close, not a claim that a new signal or order occurred. Coverage shows valid observations over selected top-K rows.",
                     "Older archives without forward metrics for OPEN EOD rows cannot contribute those rows; rerun Finder to archive the unified measurement.",
@@ -2109,7 +2132,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
     lines.push(
         "",
         "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
-        "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Ongoing | Samples",
+        "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Ongoing n | Ongoing avg | Samples (completed)",
     );
     const primarySummaryHorizon = report.sorts.some((sort) => sort.horizons.some((horizon) => horizon.horizonBars === 12))
         ? 12
@@ -2137,6 +2160,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
                 formatPercent(horizon.baselineAveragePnlPercent),
                 formatPercent(delta),
                 String(horizon.ongoingRows),
+                formatPercent(horizon.ongoingAveragePnlPercent),
                 String(horizon.totalSamples),
             ].join(" | "));
         }

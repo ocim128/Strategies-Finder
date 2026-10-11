@@ -35,7 +35,10 @@ runner; a leg that fails to load is logged and its basis is simply absent
 from the per-basis measurements, while missing horizon candles remain
 unavailable per basis. Horizons longer than the holdout measure ongoing at
 the last available candle (pair and both legs; the leg lookups include the
-final pair timestamp) and are flagged `ongoing`. Ordinary symbols keep pair
+final pair timestamp) and are flagged `ongoing`. The holdout analyzer keeps
+its per-horizon aggregates completed-only and reports ongoing observations
+separately (`ongoingRows`, `ongoingAveragePnlPercent`, the `Ongoing n` /
+`Ongoing avg` columns, plus a disclosure note). Ordinary symbols keep pair
 measurement, and next-exit replay does not use the leg basis. Archive rows
 persist `forwardOosPerformanceByBasis` plus a per-basis all-candidate
 baseline; `scripts/analyze-asset-opportunity-holdouts.ts --basis <pair|base_only|quote_only>`

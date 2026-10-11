@@ -290,7 +290,7 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(renderAssetOpportunityHoldoutReport(report)).to.include("Forward horizon basis: pair");
     });
 
-    it("counts ongoing forward observations in aggregates and discloses them", () => {
+    it("keeps ongoing forward observations out of completed-horizon aggregates and reports them separately", () => {
         const records = parseAssetOpportunityArchiveText(block({
             timestamp: "2026-10-11T00:00:00.000Z",
             runId: "run-ongoing",
@@ -320,16 +320,24 @@ describe("Asset Opportunity holdout analysis", () => {
         }), "fixture.txt");
 
         const report = analyzeAssetOpportunityArchive(records, { topK: 2 });
+        // The 36-bar horizon has no completed observations: the main columns
+        // stay empty instead of reporting last-candle mark-to-market.
         const horizon36 = report.sorts[0]!.horizons.find(horizon => horizon.horizonBars === 36)!;
-        expect(horizon36.observedRows).to.equal(2);
-        // Ongoing observations count toward the aggregates...
-        expect(horizon36.averagePnlPercent).to.equal(0);
+        expect(horizon36.observedRows).to.equal(0);
+        expect(horizon36.averagePnlPercent).to.equal(null);
         expect(horizon36.ongoingRows).to.equal(2);
+        expect(horizon36.ongoingAveragePnlPercent).to.equal(0);
+        expect(horizon36.ongoingPositiveRatePercent).to.equal(50);
+        // The 48-bar horizon is completed: only the main columns carry it.
         const horizon48 = report.sorts[0]!.horizons.find(horizon => horizon.horizonBars === 48)!;
+        expect(horizon48.observedRows).to.equal(1);
+        expect(horizon48.averagePnlPercent).to.equal(6);
         expect(horizon48.ongoingRows).to.equal(0);
-        // ...and the report discloses how many were partial windows.
+        expect(horizon48.ongoingAveragePnlPercent).to.equal(null);
+        // The report still discloses how many observations were ongoing.
         expect(report.notes.join("\n")).to.include("2 forward observations were ongoing");
-        expect(renderAssetOpportunityHoldoutReport(report)).to.include("Ongoing | Samples");
+        expect(report.notes.join("\n")).to.include("Aggregates use completed horizons only");
+        expect(renderAssetOpportunityHoldoutReport(report)).to.include("Ongoing n | Ongoing avg | Samples (completed)");
     });
 
     it("parses next-exit archive headers and baseline separately from horizons", () => {
