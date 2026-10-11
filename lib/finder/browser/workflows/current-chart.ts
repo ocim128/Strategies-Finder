@@ -19,7 +19,6 @@ import {
 	sliceFinderDataWindow,
 } from "../../finder-manager-logic";
 import { runCandidateOosPass } from "../../finder-candidate-oos";
-import { finderSortRequiresTradeTimingQuality } from "../../../trade-timing-quality";
 import { buildFallbackDiagnostics } from "../finder-run-diagnostics";
 import type { FinderResultStore } from "../finder-result-store";
 import type { FinderOptions, FinderResult } from "../../../types/finder";
@@ -47,10 +46,6 @@ export async function runCurrentChartFinder(args: CurrentChartWorkflowArgs): Pro
 		return false;
 	}
 	const exitStrategyCandidates = await args.strategies.resolveExitStrategyCandidates(options, selectedStrategies);
-	if (options.mode === "genetic" && finderSortRequiresTradeTimingQuality(options.sortPriority)) {
-		host.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
-		return false;
-	}
 
 	const capitalSettings = backtestService.getCapitalSettings();
 	const settings = backtestService.getBacktestSettings();

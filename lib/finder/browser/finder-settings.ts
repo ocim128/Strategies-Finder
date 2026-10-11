@@ -222,7 +222,7 @@ export function normalizeFinderMetric(value: unknown, fallback: FinderMetric): F
 }
 
 export function normalizeFinderMode(value: unknown): FinderMode {
-	return value === "grid" || value === "genetic" ? value : "random";
+	return value === "grid" ? value : "random";
 }
 
 function normalizeNumber(value: unknown, fallback: number, min: number): number {

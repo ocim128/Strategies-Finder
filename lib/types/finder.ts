@@ -9,7 +9,12 @@ import type {
 } from "../finder/finder-arm-performance-metrics";
 import type { ReplayMode, AssetSwitchArmSummary } from "../batch-backtest/open-score-replay/types";
 
-export type FinderMode = 'default' | 'grid' | 'random' | 'genetic';
+/**
+ * Interactive Finder search mode. Genetic Search was removed from the menu and
+ * moved to the offline `scripts/genetic-hunt.ts` CLI; the interactive surface
+ * is Grid Sweep and Random Search only.
+ */
+export type FinderMode = 'default' | 'grid' | 'random';
 /**
  * Finder execution scope.
  * - `current_chart`: search candidates for the current chart;

@@ -122,6 +122,20 @@ function finderJobLabel(scope: FinderServerJobKind): string {
 		: scope === "arm_performance" ? "Arm Performance" : "Universe Finder";
 }
 
+/**
+ * Outcome of recovering a run whose NDJSON stream failed before a terminal
+ * event. `snapshot` is null when the caller should stop (ownership was lost,
+ * the job is gone, or the caller is not the active run); `fatalError` carries
+ * the server-reported fatal message the caller must throw.
+ */
+export type FinderStreamRecoveryOutcome =
+	| { kind: "terminal"; snapshot: FinderRunStatusSnapshot }
+	| { kind: "fatal"; error: string }
+	/** Stop / a newer run owns the session, or the caller is no longer active. */
+	| { kind: "inactive" }
+	/** No terminal snapshot recovered (missing / connection lost / non-terminal). */
+	| { kind: "unrecoverable" };
+
 export class FinderServerSession {
 	/**
 	 * Active server-run id for the server job currently in flight (or null).
@@ -283,6 +297,36 @@ export class FinderServerSession {
 		} finally {
 			this.releaseAbortController(abortController);
 		}
+	}
+
+	/**
+	 * Shared "the stream died — recover through the status endpoint" scaffold
+	 * used by every server-backed Finder workflow. It owns the one honest
+	 * decision common to all of them:
+	 *   - only the still-active run may recover (`inactive` otherwise, so a
+	 *     stale tab can never adopt a newer run's terminal slice);
+	 *   - a server-reported fatal phase becomes a thrown error at the caller;
+	 *   - a terminal snapshot is returned for the caller's scope-specific
+	 *     adoption;
+	 *   - anything else is `unrecoverable` so the caller can fall back to
+	 *     rethrowing the original stream error.
+	 *
+	 * The scope-specific adoption (which inventory the snapshot populates, how
+	 * results are retained or sorted, which diagnostics are rebuilt) stays in
+	 * each workflow, because that is genuinely different per scope.
+	 */
+	async recoverStreamFailure(
+		runId: string,
+		jobKind: FinderServerJobKind,
+		host: Pick<FinderSessionHost, 'setProgress' | 'setStatus'>,
+	): Promise<FinderStreamRecoveryOutcome> {
+		if (!this.isActive(runId)) return { kind: "inactive" };
+		const snapshot = await this.recoverActiveServerRun(runId, jobKind, host);
+		if (!snapshot) return { kind: "unrecoverable" };
+		if (snapshot.phase === "fatal") {
+			return { kind: "fatal", error: snapshot.error ?? snapshot.summary ?? snapshot.statusText };
+		}
+		return { kind: "terminal", snapshot };
 	}
 
 	/**

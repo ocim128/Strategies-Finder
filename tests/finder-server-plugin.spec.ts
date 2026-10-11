@@ -2289,7 +2289,7 @@ describe("Finder Arm Performance request preflight", () => {
         }
     });
 
-    it("rejects Genetic search and malformed date ranges before resolving strategies or loading data", async () => {
+    it("rejects unsupported search modes and malformed date ranges before resolving strategies or loading data", async () => {
         const base = {
             runId: "arm-preflight-test",
             interval: "4h",
