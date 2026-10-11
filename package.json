@@ -40,18 +40,18 @@
     "bench:data-cache-budget": "esno scripts/bench-data-cache-point-budget.ts"
   },
   "devDependencies": {
-    "@types/chai": "^5.2.1",
-    "@types/node": "^25.0.9",
+    "@types/chai": "^5.2.3",
+    "@types/node": "^25.9.9",
     "chai": "^5.2.0",
     "esbuild": "0.28.1",
     "esno": "^4.8.0",
-    "puppeteer": "24.6.1",
-    "semver": "^7.7.3",
+    "puppeteer": "^24.43.1",
+    "semver": "^7.8.5",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   },
   "dependencies": {
-    "lightweight-charts": "^5.1.0",
-    "undici": "^7.28.0"
+    "lightweight-charts": "^5.2.1",
+    "undici": "^7.30.0"
   }
 }
