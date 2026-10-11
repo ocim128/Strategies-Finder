@@ -22,15 +22,6 @@ import type {
 } from "../../types/finder";
 
 /**
- * Resolve the engine-mode label used by the diagnostics builders.
- */
-export function resolveDiagnosticsEngineMode(options: FinderOptions): string {
-	return options.mode === 'genetic'
-		? 'genetic'
-		: 'typescript';
-}
-
-/**
  * Minimal diagnostics for failure paths. `kind: 'load'` is used when the
  * universe symbols failed to load (richer per-symbol failure detail);
  * `kind: 'run'` covers any other mid-run failure (engine throw, OOS
@@ -77,7 +68,7 @@ export function buildFailureDiagnostics(args: {
 		symbol: state.currentSymbol,
 		interval: state.currentInterval,
 		mode: args.options.mode,
-		engineMode: resolveDiagnosticsEngineMode(args.options),
+		engineMode: 'typescript',
 		inputBars: 0,
 		evaluationBars: 0,
 		selectedStrategies: 0,
@@ -110,11 +101,9 @@ export function buildFallbackDiagnostics(args: {
 	elapsedMs: number;
 	requiresTsEngine: boolean;
 }): FinderDiagnostics {
-	const engineMode = (args.options.mode === 'genetic')
-		? resolveDiagnosticsEngineMode(args.options)
-		: args.requiresTsEngine
-			? 'typescript'
-			: 'unknown';
+	const engineMode = args.requiresTsEngine
+		? 'typescript'
+		: 'unknown';
 	return {
 		runId: `finder-fallback-${Date.now().toString(36)}`,
 		symbol: state.currentSymbol,

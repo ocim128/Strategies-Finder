@@ -218,21 +218,25 @@ async function runArmPerformanceFinderServer(args: {
 		streamError = error;
 	}
 
-	if (streamError !== null && terminal === null && isStillActive()) {
-		const recovered = await session.recoverActiveServerRun(runId, 'arm_performance', host);
-		if (recovered?.terminalArmPerformanceResults) {
+	if (streamError !== null && terminal === null) {
+		const recovered = await session.recoverStreamFailure(runId, 'arm_performance', host);
+		if (recovered.kind === "fatal") {
+			throw new Error(recovered.error);
+		}
+		const snapshot = recovered.kind === "terminal" ? recovered.snapshot : null;
+		if (snapshot?.terminalArmPerformanceResults) {
 			store.adoptArmPerformanceResults(
-				recovered.terminalArmPerformanceResults,
-				recovered.armPerformanceRunContext ?? null,
+				snapshot.terminalArmPerformanceResults,
+				snapshot.armPerformanceRunContext ?? null,
 				true,
 			);
 			host.stashAndResetResort();
 			host.populateResortOptions();
 			host.renderLatestResults();
 			terminal = {
-				ok: recovered.phase === 'done',
-				cancelled: recovered.cancelled,
-				error: recovered.error,
+				ok: snapshot.phase === 'done',
+				cancelled: snapshot.cancelled,
+				error: snapshot.error,
 			};
 			finalized = true;
 		}

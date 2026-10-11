@@ -652,7 +652,7 @@ describe("Finder Exit Alpha", () => {
         expect("exitAlpha" in legacy.results[0]!).to.equal(false);
     });
 
-    it("rejects Exit Alpha for genetic and unsupported scopes before evaluation", async () => {
+    it("rejects Exit Alpha for unsupported scopes before evaluation", async () => {
         const statuses: string[] = [];
         const baseInput = {
             ohlcvData: makeData([100, 101]),
@@ -671,22 +671,6 @@ describe("Finder Exit Alpha", () => {
             isCancelled: () => false,
             onResultsUpdate: () => undefined,
         };
-        await runFinderExecution({ ...baseInput, options: {
-            mode: "genetic",
-            scope: "current_chart",
-            sortPriority: ["exitAlpha"],
-            useAdvancedSort: false,
-            topN: 1,
-            steps: 2,
-            rangePercent: 1,
-            maxRuns: 1,
-            tradeFilterEnabled: false,
-            minTrades: 0,
-            maxTrades: Infinity,
-        } }, callbacks);
-        expect(statuses.at(-1)).to.contain("not supported in genetic");
-
-        statuses.length = 0;
         await runFinderExecution({ ...baseInput, options: {
             mode: "random",
             scope: "asset_opportunity",

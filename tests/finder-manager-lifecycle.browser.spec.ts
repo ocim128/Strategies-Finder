@@ -1712,11 +1712,10 @@ describe("Finder Arm Performance scope controls", () => {
             renderRandomBenchmark: () => {},
             selection: { getVisibleStrategyKeys: () => [] } as any,
         });
-        dom.finderMode.value = "genetic";
+        dom.finderMode.value = "grid";
         dom.finderMode.options = [
             { value: "grid", disabled: false },
             { value: "random", disabled: false },
-            { value: "genetic", disabled: false },
         ];
         dom.finderDataSlice.value = "half_newest";
         dom.finderDataSlice.options = [
@@ -1728,8 +1727,8 @@ describe("Finder Arm Performance scope controls", () => {
         controls.uiState.scope = "arm_performance";
         controls.applyScopeUi();
 
-        expect(dom.finderMode.options[2].disabled).to.equal(true);
-        expect(dom.finderMode.value).to.equal("random");
+        // Arm Performance is not a mode-locked scope: it keeps Grid/Random.
+        expect(dom.finderMode.disabled).to.equal(false);
         expect(dom.finderDataSlice.options[0].disabled).to.equal(false);
         expect(dom.finderDataSlice.options[1].disabled).to.equal(false);
         expect(dom.finderDataSlice.options[2].disabled).to.equal(true);
@@ -1958,10 +1957,10 @@ describe("Finder controls shared form conversion", () => {
         const controls = makeControls(dom);
         dom.finderScope.value = "symbol_universe";
         controls.uiState.scope = "symbol_universe";
-        dom.finderMode.value = "genetic";
+        dom.finderMode.value = "grid";
 
         controls.captureFinderUiState(false);
-        expect(controls.uiState.mode).to.equal("genetic");
+        expect(controls.uiState.mode).to.equal("grid");
         expect(controls.readOptions(stubBacktestSettings).mode).to.equal("random");
     });
 

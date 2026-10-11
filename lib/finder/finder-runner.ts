@@ -19,7 +19,6 @@ import {
 } from "./finder-runner-core";
 import { buildFinderCandidatePlans } from "./finder-candidate-plans";
 import { createSeededRandom } from "../param-math-utils";
-import { finderSortRequiresTradeTimingQuality } from "../trade-timing-quality";
 import { finderSortRequiresExitAlpha } from "./finder-exit-alpha";
 import type { CapitalSettings } from "../types/backtest";
 import type { FinderDiagnostics, FinderOptions, FinderRandomBenchmark, FinderResult } from "../types/finder";
@@ -85,25 +84,6 @@ export async function runFinderExecution(input: FinderRunInput, callbacks: Finde
         callbacks.setStatus("Exit Alpha sorting is supported in Current Chart and Symbol Universe scopes only.");
         callbacks.setProgress(100, "Unsupported Exit Alpha scope");
         return { results: [] };
-    }
-
-    if (options.mode === "genetic") {
-        if (finderSortRequiresExitAlpha(options.sortPriority)) {
-            callbacks.setStatus("Exit Alpha sorting is not supported in genetic mode.");
-            callbacks.setProgress(100, "Unsupported Exit Alpha sort");
-            return { results: [] };
-        }
-        if (finderSortRequiresTradeTimingQuality(options.sortPriority)) {
-            callbacks.setStatus("Entry Score and Exit Score sorting are supported in grid and random modes only.");
-            callbacks.setProgress(100, "Unsupported timing-score sort");
-            return { results: [] };
-        }
-        const { runGeneticFinder } = await import("./finder-runner-genetic");
-        return runGeneticFinder({
-            input,
-            callbacks,
-            capitalSettings,
-        });
     }
 
     const confirmationStrategyKeys = readConfirmationStrategyKeys(settings.confirmationStrategies);

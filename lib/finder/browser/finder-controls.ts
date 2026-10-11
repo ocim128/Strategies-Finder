@@ -48,6 +48,11 @@ import {
 } from "./finder-settings";
 import { readFinderUiState, writeFinderUiState } from "./finder-persistence";
 import {
+	applyBindingToDom,
+	FINDER_CONTROL_BINDINGS,
+	readBindingFromDom,
+} from "./finder-control-registry";
+import {
 	FINDER_SORT_OPTIONS,
 	METRIC_FULL_LABELS,
 	UNIVERSE_METRIC_FULL_LABELS,
@@ -312,53 +317,28 @@ private readUniverseInputs(): {
 applyPersistedUiStateToDom(): void {
 	const dom = this.deps.getDom();
 	dom.finderScope.value = this.uiState.scope;
-	dom.finderSort.value = this.uiState.sortPrimary;
-	dom.finderSortSecondary.value = this.uiState.sortSecondary;
 	dom.finderAdvancedToggle.checked = this.uiState.useAdvancedSort;
 	setVisible(dom.finderSimpleSort, !this.uiState.useAdvancedSort);
 	setVisible(dom.finderSortList, this.uiState.useAdvancedSort);
 	this.applyAdvancedSortStateToDom();
 	dom.finderMode.value = this.uiState.mode;
-	dom.finderDataSlice.value = this.uiState.dataSlice;
-	dom.finderDataRangeFrom.value = this.uiState.dataRangeFrom;
-	dom.finderDataRangeTo.value = this.uiState.dataRangeTo;
-	dom.finderTopN.value = String(this.uiState.topN);
-	dom.finderMaxRuns.value = String(this.uiState.maxRuns);
-	dom.finderRange.value = String(this.uiState.rangePercent);
-	dom.finderSteps.value = String(this.uiState.steps);
-	dom.finderFreezeRiskManagementToggle.checked = this.uiState.freezeRiskManagement;
-	dom.finderExitStrategyOverrideToggle.checked = this.uiState.exitStrategyOverrideEnabled;
-	dom.finderTradesToggle.checked = this.uiState.tradeFilterEnabled;
-	dom.finderTradesMin.value = String(this.uiState.minTrades);
-	dom.finderTradesMax.value = this.uiState.maxTradesText;
-	dom.finderOosValidationToggle.checked = this.uiState.oosValidationEnabled;
-	dom.finderArmPerformanceHorizon.value = String(this.uiState.armPerformanceHorizon);
-	dom.finderArmPerformanceMeasurement.value = this.uiState.armPerformanceMeasurement;
-	dom.finderArmPerformanceRankingSort.value = this.uiState.armPerformanceRankingSort;
-	dom.finderArmPerformanceReplayMode.value = this.uiState.armPerformanceReplayMode;
-	dom.finderArmPerformanceExcludeTopContributor.checked = this.uiState.armPerformanceExcludeTopContributor;
-	dom.finderArmPerformanceEventFilterEnabled.checked = this.uiState.armPerformanceEventFilterEnabled;
-	dom.finderArmPerformanceMinEvents.value = String(this.uiState.armPerformanceMinEvents);
-	dom.finderArmPerformanceMaxEvents.value = this.uiState.armPerformanceMaxEventsText;
-	dom.finderArmPerformanceSelectionCooldownEnabled.checked = this.uiState.armPerformanceSelectionCooldownEnabled;
-	dom.finderArmPerformanceSelectionCooldownBars.value = String(this.uiState.armPerformanceSelectionCooldownBars);
-	this.syncArmPerformanceControls();
 	dom.finderUniverseSymbols.value = this.uiState.universeSymbolsText;
-	dom.finderUniverseMinActiveSymbols.value = String(this.uiState.universeMinActiveSymbols);
-	dom.finderUniverseMinTotalTrades.value = String(this.uiState.universeMinTotalTrades);
-	dom.finderUniverseMinProfitableActiveRatio.value = String(this.uiState.universeMinProfitableActiveRatio);
-	dom.finderAssetCandidatePoolSize.value = String(this.uiState.assetOpportunityCandidatePoolSize);
-	dom.finderAssetMinFreshSupport.value = String(this.uiState.assetOpportunityMinFreshSupport);
-	dom.finderAssetIncludeOpenPositions.checked = this.uiState.assetOpportunityIncludeOpenPositions;
-	dom.finderAssetOosMeasurementMode.value = this.uiState.assetOpportunityOosMeasurementMode;
-	dom.finderAssetOosHorizonBasis.value = this.uiState.assetOpportunityOosHorizonBasis;
-	dom.finderAssetOosIgnoreLastBars.value = String(this.uiState.assetOpportunityOosIgnoreLastBars);
 	dom.finderAssetOosHorizons.value = this.uiState.assetOpportunityOosHorizons;
-	dom.finderAssetEvalWindowMode.value = this.uiState.assetOpportunityEvalWindowMode;
-	dom.finderAssetEvalWindowBars.value = String(this.uiState.assetOpportunityEvalWindowBars);
-	dom.finderAssetOosBatchToggle.checked = this.uiState.assetOpportunityOosBatchEnabled;
 	dom.finderAssetOosBatchStart.value = String(this.uiState.assetOpportunityOosBatchStartBars);
 	dom.finderAssetOosBatchEnd.value = String(this.uiState.assetOpportunityOosBatchEndBars);
+	// Scalar controls restore from the registry so each simple binding has one
+	// declaration instead of a line here plus a read in captureFinderUiState.
+	// Arm Performance controls are written last so the derived enablement sync
+	// runs once against fully restored values.
+	for (const binding of FINDER_CONTROL_BINDINGS) {
+		if (binding.id.startsWith("finderArmPerformance")) continue;
+		applyBindingToDom(binding, dom, this.uiState);
+	}
+	for (const binding of FINDER_CONTROL_BINDINGS) {
+		if (!binding.id.startsWith("finderArmPerformance")) continue;
+		applyBindingToDom(binding, dom, this.uiState);
+	}
+	this.syncArmPerformanceControls();
 	this.syncAssetOosBatchControls();
 	this.updateUniverseSummary();
 }
@@ -675,13 +655,8 @@ applyScopeUi(): void {
 	dom.finderStrategyInvertVisible.disabled = this.deps.selection.getVisibleStrategyKeys().length === 0;
 	dom.finderStrategySelectVisible.disabled = this.deps.selection.getVisibleStrategyKeys().length === 0;
 	modeInput.disabled = modeLockedScope;
-	const geneticOption = Array.from(modeInput.options).find((option) => option.value === "genetic");
-	if (geneticOption) geneticOption.disabled = armPerformanceScope;
 	if (modeLockedScope) {
 		modeInput.value = "random";
-	} else if (armPerformanceScope && modeInput.value === "genetic") {
-		modeInput.value = "random";
-		this.deps.setStatus("Arm Performance supports Grid Sweep and Random Search; Genetic Search was reset to Random Search.");
 	}
 	setVisible("finderBlockBadge", !multiAssetScope && Boolean(state.blockRange));
 	this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
@@ -767,50 +742,23 @@ initFinderSettingsPersistenceUI(): void {
 		this.captureFinderUiState(false);
 		this.persistUiStateDebounced();
 	};
-	[
-		dom.finderSort,
-		dom.finderSortSecondary,
+	// Every scalar control persisted through the registry wires itself here, so
+	// adding a control to FINDER_CONTROL_BINDINGS is enough to make it persist.
+	const registryControls = FINDER_CONTROL_BINDINGS.map((binding) => dom[binding.domKey]);
+	// Non-registry controls: structured containers and pairs whose read policy is
+	// not a plain scalar (the advanced sort toggle, the search mode select, the
+	// validated batch start/end pair, and the OOS horizons blob).
+	const structuredControls = [
 		dom.finderAdvancedToggle,
 		dom.finderMode,
-		dom.finderDataSlice,
-		dom.finderDataRangeFrom,
-		dom.finderDataRangeTo,
-		dom.finderTopN,
-		dom.finderMaxRuns,
-		dom.finderRange,
-		dom.finderSteps,
-		dom.finderFreezeRiskManagementToggle,
-		dom.finderExitStrategyOverrideToggle,
-		dom.finderTradesToggle,
-		dom.finderTradesMin,
-		dom.finderTradesMax,
-		dom.finderOosValidationToggle,
-		dom.finderArmPerformanceMeasurement,
-		dom.finderArmPerformanceRankingSort,
-		dom.finderArmPerformanceReplayMode,
-		dom.finderArmPerformanceHorizon,
-		dom.finderArmPerformanceExcludeTopContributor,
-		dom.finderArmPerformanceEventFilterEnabled,
-		dom.finderArmPerformanceMinEvents,
-		dom.finderArmPerformanceMaxEvents,
-		dom.finderArmPerformanceSelectionCooldownEnabled,
-		dom.finderArmPerformanceSelectionCooldownBars,
-		dom.finderAssetCandidatePoolSize,
-		dom.finderAssetMinFreshSupport,
-		dom.finderAssetIncludeOpenPositions,
-		dom.finderAssetOosMeasurementMode,
-		dom.finderAssetOosHorizonBasis,
-		dom.finderAssetOosIgnoreLastBars,
 		dom.finderAssetOosHorizons,
-		dom.finderAssetEvalWindowMode,
-		dom.finderAssetEvalWindowBars,
-		dom.finderAssetOosBatchToggle,
 		dom.finderAssetOosBatchStart,
 		dom.finderAssetOosBatchEnd,
-	].forEach((element) => {
+	];
+	for (const element of [...registryControls, ...structuredControls]) {
 		element.addEventListener("input", persist);
 		element.addEventListener("change", persist);
-	});
+	}
 	dom.finderArmPerformanceEventFilterEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
 	dom.finderArmPerformanceSelectionCooldownEnabled.addEventListener("change", () => this.syncArmPerformanceControls());
 	dom.finderArmPerformanceReplayMode.addEventListener("change", () => this.syncArmPerformanceControls());
@@ -835,6 +783,14 @@ captureFinderUiState(persist = true): void {
 		.map((item) => item.dataset.value)
 		.filter((metric): metric is FinderMetric => isAdvancedOptionalSortMetric(metric));
 	this.uiState.mode = normalizeFinderMode(dom.finderMode.value);
+	// Registry-owned boolean/text controls read here in one pass. Numeric and
+	// select controls stay explicit below because capture applies rounding and
+	// persistence clamps that differ from the submission boundary — folding them
+	// into the registry's plain read would silently change persisted values.
+	for (const binding of FINDER_CONTROL_BINDINGS) {
+		if (binding.read !== "boolean" && binding.read !== "text") continue;
+		readBindingFromDom(binding, dom, this.uiState);
+	}
 	this.uiState.dataSlice = normalizeFinderDataSlice(dom.finderDataSlice.value);
 	this.uiState.dataRangeFrom = normalizeFinderDateInput(dom.finderDataRangeFrom.value) ?? "";
 	this.uiState.dataRangeTo = normalizeFinderDateInput(dom.finderDataRangeTo.value) ?? "";
@@ -842,26 +798,17 @@ captureFinderUiState(persist = true): void {
 	this.uiState.maxRuns = this.readRoundedInput(dom.finderMaxRuns, DEFAULT_FINDER_UI_STATE.maxRuns, 1);
 	this.uiState.rangePercent = this.readFinderNumberInput(dom.finderRange, DEFAULT_FINDER_UI_STATE.rangePercent, 0);
 	this.uiState.steps = this.readRoundedInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2);
-	this.uiState.freezeRiskManagement = dom.finderFreezeRiskManagementToggle.checked;
-	this.uiState.exitStrategyOverrideEnabled = dom.finderExitStrategyOverrideToggle.checked;
-	this.uiState.tradeFilterEnabled = dom.finderTradesToggle.checked;
 	this.uiState.minTrades = this.readRoundedInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0);
-	this.uiState.maxTradesText = dom.finderTradesMax.value.trim();
-	this.uiState.oosValidationEnabled = dom.finderOosValidationToggle.checked;
 	this.uiState.armPerformanceHorizon = this.readArmPerformanceHorizon();
 	this.uiState.armPerformanceRankingSort = armEnums.rankingSort;
 	this.uiState.armPerformanceMeasurement = armEnums.measurement;
 	this.uiState.armPerformanceReplayMode = armEnums.replayMode;
-	this.uiState.armPerformanceExcludeTopContributor = dom.finderArmPerformanceExcludeTopContributor.checked;
-	this.uiState.armPerformanceEventFilterEnabled = dom.finderArmPerformanceEventFilterEnabled.checked;
 	// Capture-only persistence cap; submission does not clamp this bound.
 	this.uiState.armPerformanceMinEvents = Math.max(1, Math.min(1_000_000, this.readRoundedInput(
 		dom.finderArmPerformanceMinEvents,
 		DEFAULT_FINDER_UI_STATE.armPerformanceMinEvents,
 		1,
 	)));
-	this.uiState.armPerformanceMaxEventsText = dom.finderArmPerformanceMaxEvents.value.trim();
-	this.uiState.armPerformanceSelectionCooldownEnabled = dom.finderArmPerformanceSelectionCooldownEnabled.checked;
 	// Capture-only persistence cap; submission does not clamp this bound.
 	this.uiState.armPerformanceSelectionCooldownBars = Math.max(1, Math.min(10_000, this.readRoundedInput(
 		dom.finderArmPerformanceSelectionCooldownBars,
@@ -870,14 +817,12 @@ captureFinderUiState(persist = true): void {
 	)));
 	this.uiState.assetOpportunityCandidatePoolSize = assetOpportunity.candidatePoolSize;
 	this.uiState.assetOpportunityMinFreshSupport = assetOpportunity.minFreshSupport;
-	this.uiState.assetOpportunityIncludeOpenPositions = assetOpportunity.includeOpenPositions;
 	this.uiState.assetOpportunityOosMeasurementMode = assetOpportunity.oosMeasurementMode;
 	this.uiState.assetOpportunityOosHorizonBasis = assetOpportunity.oosHorizonBasis;
 	this.uiState.assetOpportunityOosIgnoreLastBars = assetOpportunity.oosIgnoreLastBars;
 	this.uiState.assetOpportunityOosHorizons = assetOpportunity.oosHorizons.join(",");
 	this.uiState.assetOpportunityEvalWindowMode = assetOpportunity.evalWindowMode;
 	this.uiState.assetOpportunityEvalWindowBars = assetOpportunity.evalLastBars;
-	this.uiState.assetOpportunityOosBatchEnabled = dom.finderAssetOosBatchToggle.checked;
 	const batchRange = normalizeFinderAssetOosBatchHoldoutRange(
 		dom.finderAssetOosBatchStart.value,
 		dom.finderAssetOosBatchEnd.value,
@@ -937,11 +882,9 @@ resetFinderSettings(): void {
 private updateTimingSortControlState(): void {
 	const dom = this.deps.getDom();
 	const timingSortDisabled = this.isUniverseScope()
-		|| this.isStrategyQualityScope()
-		|| dom.finderMode.value === "genetic";
+		|| this.isStrategyQualityScope();
 	const optionalSortDisabled = this.isUniverseScope()
-		|| this.isStrategyQualityScope()
-		|| dom.finderMode.value === "genetic";
+		|| this.isStrategyQualityScope();
 
 	for (const select of [dom.finderSort, dom.finderSortSecondary]) {
 		for (const option of Array.from(select.options)) {

@@ -27,7 +27,6 @@ import {
     buildFailureDiagnostics,
     buildFallbackDiagnostics,
     buildStrategyQualityDiagnostics,
-    resolveDiagnosticsEngineMode,
 } from "../lib/finder/browser/finder-run-diagnostics";
 import { normalizeFinderUiState } from "../lib/finder/browser/finder-settings";
 import type { FinderArmPerformanceCandidate, FinderResult, FinderUniverseCandidate } from "../lib/types/finder";
@@ -537,9 +536,25 @@ describe("Finder diagnostics builders", () => {
         expect(quality.runs.completed).to.equal(18);
     });
 
-    it("labels genetic runs as genetic and everything else typescript", () => {
-        expect(resolveDiagnosticsEngineMode({ mode: "genetic" } as any)).to.equal("genetic");
-        expect(resolveDiagnosticsEngineMode({ mode: "grid" } as any)).to.equal("typescript");
+    it("labels fallback diagnostics with the TS/unknown engine mode", () => {
+        const ts = buildFallbackDiagnostics({
+            options: { mode: "grid", maxRuns: 1 } as any,
+            results: [],
+            selectedStrategies: [],
+            ohlcvData: [],
+            elapsedMs: 1,
+            requiresTsEngine: true,
+        });
+        expect(ts.engineMode).to.equal("typescript");
+        const unknown = buildFallbackDiagnostics({
+            options: { mode: "random", maxRuns: 1 } as any,
+            results: [],
+            selectedStrategies: [],
+            ohlcvData: [],
+            elapsedMs: 1,
+            requiresTsEngine: false,
+        });
+        expect(unknown.engineMode).to.equal("unknown");
     });
 
     it("bounds Arm fallback diagnostics and excludes score tables", () => {

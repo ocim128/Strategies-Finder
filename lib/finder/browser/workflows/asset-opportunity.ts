@@ -278,28 +278,29 @@ async function runAssetOpportunityFinderServer(args: {
 	}
 
 	if (streamError) {
-		if (isStillActive()) {
-			const recovered = await session.recoverActiveServerRun(runId, 'asset_opportunity', host);
-			if (recovered?.phase === 'fatal') {
-				throw new Error(recovered.error ?? recovered.summary ?? 'Asset Opportunity failed.');
-			}
-			if (recovered?.terminalAssets) {
-				terminalResults = retainSubmittedAssetResults(recovered.terminalAssets);
-				terminalDiagnostics = recovered.diagnostics;
-				assetDiagnostics = recovered.assetDiagnostics ?? (recovered.assetTotals
+		const recovered = await session.recoverStreamFailure(runId, 'asset_opportunity', host);
+		if (recovered.kind === 'fatal') {
+			throw new Error(recovered.error);
+		}
+		if (recovered.kind === 'terminal') {
+			const recoveredSnapshot = recovered.snapshot;
+			if (recoveredSnapshot.terminalAssets) {
+				terminalResults = retainSubmittedAssetResults(recoveredSnapshot.terminalAssets);
+				terminalDiagnostics = recoveredSnapshot.diagnostics;
+				assetDiagnostics = recoveredSnapshot.assetDiagnostics ?? (recoveredSnapshot.assetTotals
 					? {
-						totalAssets: recovered.assetTotals.totalAssets,
-						assetsWithFreshEntry: recovered.assetTotals.assetsWithFreshEntry,
-						assetsWithNoFreshEntry: Math.max(0, recovered.assetTotals.totalAssets - recovered.assetTotals.assetsWithFreshEntry - recovered.assetTotals.failedAssets),
-						selectGradeAssets: recovered.assetTotals.selectGradeAssets,
-						watchGradeAssets: recovered.assetTotals.watchGradeAssets,
-						rejectGradeAssets: recovered.assetTotals.rejectGradeAssets,
+						totalAssets: recoveredSnapshot.assetTotals.totalAssets,
+						assetsWithFreshEntry: recoveredSnapshot.assetTotals.assetsWithFreshEntry,
+						assetsWithNoFreshEntry: Math.max(0, recoveredSnapshot.assetTotals.totalAssets - recoveredSnapshot.assetTotals.assetsWithFreshEntry - recoveredSnapshot.assetTotals.failedAssets),
+						selectGradeAssets: recoveredSnapshot.assetTotals.selectGradeAssets,
+						watchGradeAssets: recoveredSnapshot.assetTotals.watchGradeAssets,
+						rejectGradeAssets: recoveredSnapshot.assetTotals.rejectGradeAssets,
 						failedAssets: [],
-						...(recovered.assetTotals.engineUsage ? { engineUsage: recovered.assetTotals.engineUsage } : {}),
+						...(recoveredSnapshot.assetTotals.engineUsage ? { engineUsage: recoveredSnapshot.assetTotals.engineUsage } : {}),
 					}
 					: null);
-				assetsWithFreshEntry = recovered.assetTotals?.assetsWithFreshEntry ?? terminalResults.length;
-				failedAssets = recovered.assetTotals?.failedAssets ?? 0;
+				assetsWithFreshEntry = recoveredSnapshot.assetTotals?.assetsWithFreshEntry ?? terminalResults.length;
+				failedAssets = recoveredSnapshot.assetTotals?.failedAssets ?? 0;
 				store.adoptAssetOpportunityResults(terminalResults, true, options.topN);
 				host.stashAndResetResort();
 				host.renderLatestResults();
@@ -535,20 +536,21 @@ export async function runAssetOpportunityBatchFinderServer(args: {
 	}
 
 	if (streamError) {
-		if (isStillActive()) {
-			const recovered = await session.recoverActiveServerRun(runId, 'asset_opportunity_batch', host);
-			if (recovered?.phase === 'fatal') {
-				throw new Error(recovered.error ?? recovered.summary ?? 'Asset Opportunity batch failed.');
-			}
-			if (recovered?.terminalAssets) {
-				terminalResults = retainSubmittedAssetResults(recovered.terminalAssets);
-				terminalDiagnostics = recovered.diagnostics;
-				assetDiagnostics = recovered.assetDiagnostics ?? null;
-				assetsWithFreshEntry = recovered.assetDiagnostics?.assetsWithFreshEntry
-					?? recovered.assetTotals?.assetsWithFreshEntry
+		const recovered = await session.recoverStreamFailure(runId, 'asset_opportunity_batch', host);
+		if (recovered.kind === 'fatal') {
+			throw new Error(recovered.error);
+		}
+		if (recovered.kind === 'terminal') {
+			const recoveredSnapshot = recovered.snapshot;
+			if (recoveredSnapshot.terminalAssets) {
+				terminalResults = retainSubmittedAssetResults(recoveredSnapshot.terminalAssets);
+				terminalDiagnostics = recoveredSnapshot.diagnostics;
+				assetDiagnostics = recoveredSnapshot.assetDiagnostics ?? null;
+				assetsWithFreshEntry = recoveredSnapshot.assetDiagnostics?.assetsWithFreshEntry
+					?? recoveredSnapshot.assetTotals?.assetsWithFreshEntry
 					?? terminalResults.length;
-				failedAssets = recovered.assetDiagnostics?.failedAssets.length
-					?? recovered.assetTotals?.failedAssets
+				failedAssets = recoveredSnapshot.assetDiagnostics?.failedAssets.length
+					?? recoveredSnapshot.assetTotals?.failedAssets
 					?? 0;
 				adoptIterationRows(terminalResults, true);
 			} else if (!host.isCancelled()) {

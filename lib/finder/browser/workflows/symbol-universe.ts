@@ -265,19 +265,20 @@ export async function runUniverseFinderServer(args: {
 		streamError = error;
 	}
 
-	if (streamError !== null && terminalCandidates === null && isStillActive()) {
-		const recovered = await session.recoverActiveServerRun(runId, 'symbol_universe', host);
-		if (recovered?.phase === "fatal") {
-			throw new Error(recovered.error ?? recovered.summary ?? recovered.statusText);
+	if (streamError !== null && terminalCandidates === null) {
+		const recovered = await session.recoverStreamFailure(runId, 'symbol_universe', host);
+		if (recovered.kind === "fatal") {
+			throw new Error(recovered.error);
 		}
-		if (recovered?.terminalCandidates) {
-			terminalCandidates = recovered.terminalCandidates;
-			terminalDiagnostics = recovered.diagnostics;
-			loadedSymbols = recovered.totals?.loadedSymbols ?? 0;
-			failedSymbolCount = recovered.totals?.failedSymbols ?? 0;
-			oosRemoved = recovered.totals?.oosRemoved ?? 0;
+		if (recovered.kind === "terminal" && recovered.snapshot.terminalCandidates) {
+			const snapshot = recovered.snapshot;
+			terminalCandidates = snapshot.terminalCandidates ?? null;
+			terminalDiagnostics = snapshot.diagnostics ?? null;
+			loadedSymbols = snapshot.totals?.loadedSymbols ?? 0;
+			failedSymbolCount = snapshot.totals?.failedSymbols ?? 0;
+			oosRemoved = snapshot.totals?.oosRemoved ?? 0;
 			finalized = true;
-			if (isStillActive()) {
+			if (isStillActive() && terminalCandidates) {
 				store.adoptSymbolUniverseResults(terminalCandidates);
 				host.stashAndResetResort();
 				host.populateResortOptions();
