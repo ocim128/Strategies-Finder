@@ -8,6 +8,8 @@
     "typecheck": "tsc --noEmit",
     "typecheck:tests": "tsc -p tsconfig.tests.json",
     "deps:check": "node scripts/check-dependencies.cjs",
+    "worktree:check": "node scripts/check-worktree-links.cjs",
+    "worktree:unlink": "node scripts/check-worktree-links.cjs --unlink",
     "verify": "npm run deps:check && npm run typecheck && npm run typecheck:tests && npm run test",
     "ci": "npm run verify && npm run build:check",
     "validate:changes": "esno scripts/validate-changes.ts",

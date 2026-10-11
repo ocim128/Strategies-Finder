@@ -64,6 +64,13 @@ Use this file as a short task router. Read the guide and tests for the feature y
 
 Feature work installs dependencies from **debug/playground/**, whose lockfile is used by the npm workspace and CI. The lockfile in this directory is for the standalone Vercel deployment. Update the workspace lock when adding a dependency; update this directory's lock only when the Vercel build needs it. See [deployment instructions](DEPLOY_TO_VERCEL.md).
 
+## Git worktrees
+
+- Create worktrees **outside `debug/playground`**. It declares `"workspaces": ["./*"]`, so a worktree under it duplicates this package name and breaks `npm run typecheck` / `npm run test`.
+- A fresh worktree has no `node_modules` (gitignored). Prefer `NODE_PATH=<abs>/debug/playground/node_modules node scripts/run-tests.ts <filter>` over copying or linking dependencies. Link only `node_modules/@types` if a typecheck needs types.
+- **Never run `git worktree remove` while a junction exists inside the worktree.** Git dereferences junctions, so it deletes the main checkout's dependencies instead — silently, with no error and a successful exit code. Run **`npm run worktree:check <path>`** first; it exits non-zero when a link escapes into the main checkout. Then **`npm run worktree:unlink <path>`** to remove the links and verify every target survived, and only then remove the worktree. Full procedure and the restore recipe: [Testing for agent workflows](docs/testing.md#never-run-git-worktree-remove-while-a-junction-is-present).
+- Detect junctions with PowerShell `Get-Item -Force` and its `LinkType` property. Git Bash `ls -la` and `find -type l` do not report Windows junctions reliably.
+
 ## Documentation
 
 Update the feature guide that owns a changed behavior. Keep **README.md** broad, check relative links and file references, and use [docs/README.md](docs/README.md) to find maintained guides.

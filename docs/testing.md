@@ -10,6 +10,61 @@ Browser specs omit CSS during bundling; Vite owns loading feature styles in the 
 
 The runner also treats a streamed TAP `not ok` result as a failure. This covers suite-construction failures that some Node versions report while exiting zero; a successful process exit alone cannot turn those results into PASS. The runner contract spec exercises this with an isolated failing suite and preserved logs.
 
+## Working in a Git worktree
+
+Create worktrees **outside `debug/playground`**. `debug/playground/package.json` declares
+`"workspaces": ["./*"]`, so a worktree placed under it becomes a second package with this app's name
+and `npm run typecheck` / `npm run test` fail on the duplicate workspace name. Prefer a sibling location
+such as `C:/Users/<user>/WorkBuddy/Worktrees/Strategies-Finder/<slug>`.
+
+A fresh worktree has **no `node_modules`** — it is gitignored, so `git worktree add` checks out no
+dependencies. Because deps hoist to `debug/playground/node_modules` (including `esno` and `@types`),
+a bare worktree reports `Cannot find module 'esno/esno.js'`. Wire it up with the narrowest option that
+works:
+
+1. **Preferred — no links.** Run from the worktree with an explicit module path:
+   `NODE_PATH=<abs>/debug/playground/node_modules node scripts/run-tests.ts <filter>`.
+2. **Only if a typecheck needs types**, add a single junction for `@types`:
+   `New-Item -ItemType Junction -Path <wt>/node_modules/@types -Target <abs>/debug/playground/node_modules/@types`.
+3. Junctioning the whole `node_modules` works but is the riskiest option — see the hazard below.
+
+### Never run `git worktree remove` while a junction is present
+
+`git worktree remove` walks the directory tree and **dereferences junctions**, so a junction pointing at
+the main checkout causes it to delete the main checkout's dependencies. Removal order visits the parent
+`node_modules` first, which can also unlink the main checkout's own `node_modules/@types`. The removal
+looks successful and reports no error.
+
+Run the guard instead of inspecting by hand:
+
+```
+node scripts/check-worktree-links.cjs <worktree-path>            # inspect; exit 1 when unsafe
+node scripts/check-worktree-links.cjs <worktree-path> --unlink   # unlink links, verify, then remove
+```
+
+The guard reports every reparse point, flags any that resolve into the main checkout as
+`INTO-MAIN-CHECKOUT`, and with `--unlink` removes only the reparse points and then proves each target
+kept every entry. It exits `0` only when removal is safe, `1` when links block removal, and `2` on a
+usage or path error. Coverage is `tests/worktree-link-guard.spec.ts`.
+
+If you unlink manually instead, follow the same order — the guard exists because each step is easy to
+get wrong:
+
+1. Check for junctions with PowerShell, because Git Bash `ls -la` and `find -type l` do **not** report
+   Windows junctions reliably: `Get-Item -LiteralPath <wt>\node_modules -Force` and inspect `LinkType`.
+2. Record each junction target's contents first (`fingerprintDir` in the guard reports dir/file/link
+   counts; a plain entry count hides a symlinked child because `readdirSync` follows links).
+3. Unlink the junction itself without recursing: `[System.IO.Directory]::Delete($path, $false)`.
+   `Remove-Item -Force` is refused by the sandbox's safe-delete guard, and `cmd /c rmdir` is not
+   available from the PowerShell tool.
+4. Re-verify every junction target still exists **and still has every entry**.
+5. Only then run `git worktree remove <path>`.
+
+A junction created under `node_modules/@types` needs no elevation, unlike a raw `mklink` in an
+elevated shell. Restore recipe if the main checkout's link is lost:
+`New-Item -ItemType Junction -Path <main>/node_modules/@types -Target <abs>/debug/playground/node_modules/@types`,
+then confirm `npm run typecheck` passes.
+
 ## Dependency and compiler checks
 
 `npm run deps:check` resolves each direct dependency from this app, prints its
