@@ -3,6 +3,7 @@ import type {
     AssetOpportunityArchiveRow,
 } from "./archive-parser";
 import type {
+    AssetOpportunityExplorerBasis,
     AssetOpportunityExplorerCatalogRun,
     AssetOpportunityExplorerDetailRow,
     AssetOpportunityExplorerDetailsResponse,
@@ -96,6 +97,24 @@ function maxRankOfRows(rows: AssetOpportunityArchiveRow[]): number {
     return max;
 }
 
+/** Fixed display order for price bases. */
+export const EXPLORER_BASE_ORDER: readonly AssetOpportunityExplorerBasis[] = ["pair", "base_only", "quote_only"];
+
+/** Collect the price bases a run can be viewed on: per-basis map keys plus primary row bases. */
+function availableBasesOf(records: AssetOpportunityArchiveRecord[]): AssetOpportunityExplorerBasis[] {
+    const available = new Set<AssetOpportunityExplorerBasis>();
+    for (const record of records) {
+        for (const row of record.topResults) {
+            for (const key of EXPLORER_BASE_ORDER) {
+                if (row.forwardOosPerformanceByBasis?.[key]) available.add(key);
+            }
+            const primary = row.forwardOosPerformance?.basis;
+            if (primary) available.add(primary);
+        }
+    }
+    return EXPLORER_BASE_ORDER.filter((basis) => available.has(basis));
+}
+
 /** Group records per batch run and summarize catalog metadata. Runs come back newest-first. */
 export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): AssetOpportunityExplorerCatalogRun[] {
     const groups = new Map<string, {
@@ -107,6 +126,7 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
         archiveMaximumRank: number;
         sourceBlockCount: number;
         hasBaselines: boolean;
+        records: AssetOpportunityArchiveRecord[];
     }>();
     for (const record of records) {
         let group = groups.get(record.batchRunId);
@@ -120,6 +140,7 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
                 archiveMaximumRank: 0,
                 sourceBlockCount: 0,
                 hasBaselines: false,
+                records: [],
             };
             groups.set(record.batchRunId, group);
         }
@@ -136,6 +157,7 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
         group.archiveMaximumRank = Math.max(group.archiveMaximumRank, maxRankOfRows(record.topResults));
         group.sourceBlockCount += 1;
         if (record.baseline) group.hasBaselines = true;
+        group.records.push(record);
     }
     return [...groups.entries()]
         .map(([batchRunId, group]) => {
@@ -154,6 +176,7 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
                 archiveMaximumRank: group.archiveMaximumRank,
                 sourceBlockCount: group.sourceBlockCount,
                 hasBaselines: group.hasBaselines,
+                availableBases: availableBasesOf(group.records),
             };
         })
         .sort((left, right) => right.latestTimestamp.localeCompare(left.latestTimestamp)
@@ -184,17 +207,57 @@ function blockBasis(rows: AssetOpportunityArchiveRow[]): "pair" | "base_only" | 
     return basis;
 }
 
+/**
+ * Re-base one block's rows to a single price basis: per-basis map entries win,
+ * legacy single-basis rows contribute only when their stored basis matches, and
+ * rows without the requested basis keep their metadata but lose the forward
+ * outcome — mirroring the holdout analyzer's selection rule.
+ */
+function rebaseRow(
+    row: AssetOpportunityArchiveRow,
+    basis: AssetOpportunityExplorerBasis,
+): AssetOpportunityArchiveRow {
+    const perBasis = row.forwardOosPerformanceByBasis?.[basis];
+    if (perBasis) return { ...row, forwardOosPerformance: perBasis };
+    const legacy = row.forwardOosPerformance;
+    if (legacy && legacy.basis === basis) return row;
+    return { ...row, forwardOosPerformance: null };
+}
+
+/**
+ * Baseline for a re-based block: the per-basis aggregate when present, else the
+ * legacy aggregate only when every forward row in the block measured the
+ * requested basis (the archived aggregate cannot be re-based after the fact).
+ */
+function rebaseBlockBaseline(
+    record: AssetOpportunityArchiveRecord,
+    basis: AssetOpportunityExplorerBasis,
+): AssetOpportunityArchiveRecord["baseline"] {
+    const perBasis = record.baselineByBasis?.[basis];
+    if (perBasis) return perBasis;
+    const legacyConsistent = record.topResults.every((row) =>
+        !row.forwardOosPerformance || row.forwardOosPerformance.basis === basis);
+    return legacyConsistent ? record.baseline : null;
+}
+
 /** Compact one archive record to the block fields the UI needs; drops unobservable horizon entries. */
-export function compactRunRecord(record: AssetOpportunityArchiveRecord): ExplorerViewBlock {
-    const basis = blockBasis(record.topResults);
-    const rows: ExplorerViewBlock["rows"] = [];
+export function compactRunRecord(
+    record: AssetOpportunityArchiveRecord,
+    basis?: AssetOpportunityExplorerBasis,
+): ExplorerViewBlock {
+    const rows: AssetOpportunityArchiveRow[] = basis
+        ? record.topResults.map((row) => rebaseRow(row, basis))
+        : record.topResults;
+    const blockBasisValue = basis ?? blockBasis(rows);
+    const baseline = basis ? rebaseBlockBaseline(record, basis) : record.baseline;
+    const viewRows: ExplorerViewBlock["rows"] = [];
     let archiveRank = 0;
-    for (let index = 0; index < record.topResults.length; index += 1) {
-        const row = record.topResults[index]!;
+    for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index]!;
         if (!row.symbol || !row.strategyId) continue;
         const rank = rankOfRow(row, index);
         archiveRank = Math.max(archiveRank, rank);
-        rows.push({
+        viewRows.push({
             rank,
             symbol: row.symbol,
             strategyId: row.strategyId,
@@ -203,11 +266,25 @@ export function compactRunRecord(record: AssetOpportunityArchiveRecord): Explore
             horizons: compactHorizons(row),
         });
     }
-    rows.sort((left, right) => left.rank - right.rank);
+    viewRows.sort((left, right) => left.rank - right.rank);
     const horizonBars = new Set<number>();
-    for (const horizon of record.baseline?.horizons ?? []) horizonBars.add(horizon.bars);
-    for (const row of record.topResults) {
+    for (const horizon of baseline?.horizons ?? []) horizonBars.add(horizon.bars);
+    for (const row of rows) {
         for (const horizon of row.forwardOosPerformance?.horizons ?? []) horizonBars.add(horizon.bars);
+    }
+    if (basis) {
+        // A basis view keeps the run's full horizon set: a horizon with no
+        // observations on this basis renders as all-missing cells, not as a
+        // "horizon not archived" error.
+        for (const horizon of record.baseline?.horizons ?? []) horizonBars.add(horizon.bars);
+        for (const row of record.topResults) {
+            for (const horizon of row.forwardOosPerformance?.horizons ?? []) horizonBars.add(horizon.bars);
+            for (const horizonBasis of EXPLORER_BASE_ORDER) {
+                for (const horizon of row.forwardOosPerformanceByBasis?.[horizonBasis]?.horizons ?? []) {
+                    horizonBars.add(horizon.bars);
+                }
+            }
+        }
     }
     return {
         holdoutBars: record.holdoutBars,
@@ -215,13 +292,13 @@ export function compactRunRecord(record: AssetOpportunityArchiveRecord): Explore
         timestamp: record.timestamp,
         sourceFile: record.sourceFile,
         measurementMode: record.measurementMode,
-        baselineHorizons: (record.baseline?.horizons ?? []).map((horizon) => ({
+        baselineHorizons: (baseline?.horizons ?? []).map((horizon) => ({
             bars: horizon.bars,
             averagePnlPercent: horizon.averagePnlPercent,
         })),
         horizonBars: [...horizonBars].sort((left, right) => left - right),
-        basis,
-        rows,
+        basis: blockBasisValue,
+        rows: viewRows,
     };
 }
 
@@ -265,12 +342,17 @@ export function buildViewFromCompactBlocks(batchRunId: string, blocks: ExplorerV
 /**
  * Build the compact retained view for one run: filter by run BEFORE dedupe,
  * then keep only blocks and row fields the controls/detail calculations need.
+ * With a basis, every block is re-based to that price series first.
  */
-export function buildExplorerView(records: AssetOpportunityArchiveRecord[], batchRunId: string): ExplorerView {
+export function buildExplorerView(
+    records: AssetOpportunityArchiveRecord[],
+    batchRunId: string,
+    basis?: AssetOpportunityExplorerBasis,
+): ExplorerView {
     const blocksByCell = new Map<string, ExplorerViewBlock>();
     for (const record of records) {
         if (record.batchRunId !== batchRunId) continue;
-        keepLatestCompactBlock(blocksByCell, compactRunRecord(record));
+        keepLatestCompactBlock(blocksByCell, compactRunRecord(record, basis));
     }
     return buildViewFromCompactBlocks(batchRunId, [...blocksByCell.values()]);
 }

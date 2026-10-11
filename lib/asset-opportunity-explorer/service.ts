@@ -16,6 +16,7 @@ import {
     type HeatmapRenderState,
 } from "./renderer";
 import type {
+    AssetOpportunityExplorerBasis,
     AssetOpportunityExplorerCatalogResponse,
     AssetOpportunityExplorerCatalogRun,
     AssetOpportunityExplorerDetailRow,
@@ -67,6 +68,7 @@ export class AssetOpportunityExplorerService {
             this.applyCatalogToControls();
             void this.loadHeatmap();
         });
+        dom.explorerBasisSelect.addEventListener("change", () => { void this.loadHeatmap(); });
         dom.explorerHorizonSelect.addEventListener("change", () => { void this.loadHeatmap(); });
         dom.explorerTopKInput.addEventListener("change", () => { void this.loadHeatmap(); });
         dom.explorerSpacingSelect.addEventListener("change", () => { void this.loadHeatmap(); });
@@ -307,6 +309,7 @@ export class AssetOpportunityExplorerService {
             const preferredHorizon = horizons.includes(12) ? 12 : horizons[horizons.length - 1];
             if (preferredHorizon !== undefined) dom.explorerHorizonSelect.value = String(preferredHorizon);
         }
+        this.applyBasisOptions(selected);
         if (selected && selected.archiveMaximumRank > 0) {
             dom.explorerTopKInput.max = String(selected.archiveMaximumRank);
             const current = Number(dom.explorerTopKInput.value);
@@ -315,6 +318,45 @@ export class AssetOpportunityExplorerService {
         }
         this.renderRunNotice();
         renderMeta(dom, selected, null);
+    }
+
+    /**
+     * Rebuild the basis options from the selected run's available bases. A run
+     * without any basis data (legacy rows) disables the select: its primary
+     * rows are the only view, and the heatmap request omits the parameter.
+     */
+    private applyBasisOptions(selected: AssetOpportunityExplorerCatalogRun | null): void {
+        const dom = this.getDom();
+        const previousBasis = dom.explorerBasisSelect.value;
+        const available = selected?.availableBases ?? [];
+        const order: AssetOpportunityExplorerBasis[] = ["pair", "base_only", "quote_only"];
+        const bases = order.filter((basis) => available.includes(basis));
+        dom.explorerBasisSelect.replaceChildren(...bases.map((basis) => {
+            const option = document.createElement("option");
+            option.value = basis;
+            option.textContent = basis === "pair"
+                ? "Synthetic pair"
+                : basis === "base_only"
+                    ? "BASE long only"
+                    : "QUOTE short only";
+            return option;
+        }));
+        if (bases.length === 0) {
+            dom.explorerBasisSelect.disabled = true;
+            return;
+        }
+        dom.explorerBasisSelect.disabled = false;
+        const preferred = order.find((basis) => bases.includes(basis)) ?? bases[0]!;
+        dom.explorerBasisSelect.value = bases.includes(previousBasis as AssetOpportunityExplorerBasis)
+            ? previousBasis
+            : preferred;
+    }
+
+    /** Selected basis for the heatmap request; null when the run has no basis data. */
+    private selectedBasis(): string | null {
+        const dom = this.getDom();
+        if (dom.explorerBasisSelect.disabled || !dom.explorerBasisSelect.value) return null;
+        return dom.explorerBasisSelect.value;
     }
 
     private renderRunNotice(): void {
@@ -339,6 +381,8 @@ export class AssetOpportunityExplorerService {
             topK: dom.explorerTopKInput.value,
             spacing: dom.explorerSpacingSelect.value,
         });
+        const basis = this.selectedBasis();
+        if (basis) params.set("basis", basis);
         return `/api/asset-opportunity-explorer/heatmap?${params.toString()}`;
     }
 

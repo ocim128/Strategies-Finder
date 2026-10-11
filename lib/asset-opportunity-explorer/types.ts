@@ -14,6 +14,9 @@ export type AssetOpportunityExplorerSpacing = "all" | "horizon";
 
 export type AssetOpportunityExplorerMetric = "actual" | "delta";
 
+/** Fixed-horizon price basis; newer archive rows carry every basis per row. */
+export type AssetOpportunityExplorerBasis = "pair" | "base_only" | "quote_only";
+
 export interface AssetOpportunityExplorerCatalogRun {
     batchRunId: string;
     /** Newest archive export timestamp in the run; export time, not a market date. */
@@ -29,6 +32,8 @@ export interface AssetOpportunityExplorerCatalogRun {
     archiveMaximumRank: number;
     sourceBlockCount: number;
     hasBaselines: boolean;
+    /** Price bases this run can be viewed on, fixed order; enables the basis selector. */
+    availableBases: AssetOpportunityExplorerBasis[];
 }
 
 export interface AssetOpportunityExplorerCatalogResponse {
@@ -64,8 +69,8 @@ export interface AssetOpportunityExplorerHeatmapResponse {
     topK: number;
     spacing: AssetOpportunityExplorerSpacing;
     measurementMode: "fixed_horizon";
-    /** Explicit measurement basis shared by all included rows; null = unknown/legacy. */
-    basis: "pair" | "base_only" | "quote_only" | null;
+    /** Measurement basis this snapshot was re-based to; null = unknown/legacy. */
+    basis: AssetOpportunityExplorerBasis | null;
     /** Column order is descending (older boundary first) and shared by every sort. */
     holdoutBars: number[];
     sorts: string[];

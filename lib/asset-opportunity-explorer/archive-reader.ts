@@ -16,7 +16,7 @@ import {
     type ExplorerView,
     type ExplorerViewBlock,
 } from "./analysis";
-import type { AssetOpportunityExplorerCatalogRun } from "./types";
+import type { AssetOpportunityExplorerBasis, AssetOpportunityExplorerCatalogRun } from "./types";
 
 /** Minimal fs surface for per-file reads; injectable so tests can simulate appends. */
 export interface ArchiveFileIo {
@@ -97,10 +97,11 @@ function catalogForScan(runsById: Map<string, AssetOpportunityExplorerCatalogRun
 function accumulateViewRecord(
     viewBlocks: Map<string, ExplorerViewBlock> | null,
     retainRunId: string | null,
+    basis: AssetOpportunityExplorerBasis | null,
     record: AssetOpportunityArchiveRecord,
 ): void {
     if (!viewBlocks || record.batchRunId !== retainRunId) return;
-    keepLatestCompactBlock(viewBlocks, compactRunRecord(record));
+    keepLatestCompactBlock(viewBlocks, compactRunRecord(record, basis ?? undefined));
 }
 
 /**
@@ -137,6 +138,8 @@ export async function readArchiveFileWithChangeDetection(args: {
 export async function scanAssetOpportunityArchive(args: {
     root: string;
     retainRunId: string | null;
+    /** Price basis for the retained view; null keeps each row's primary basis. */
+    basis?: AssetOpportunityExplorerBasis | null;
     /** Injected filesystem layer (test seam); production reads the real filesystem. */
     io?: ArchiveScanIo;
 }): Promise<AssetOpportunityArchiveScanOutcome> {
@@ -168,7 +171,7 @@ export async function scanAssetOpportunityArchive(args: {
             ...(args.io ? { io: args.io } : {}),
         });
         mergeRunSummaries(runsById, summarizeRunCatalog(records));
-        for (const record of records) accumulateViewRecord(viewBlocks, args.retainRunId, record);
+        for (const record of records) accumulateViewRecord(viewBlocks, args.retainRunId, args.basis ?? null, record);
         // Yield between files so a large scan cannot block the dev server loop.
         await new Promise((resolve) => setImmediate(resolve));
     }

@@ -211,6 +211,35 @@ describe("Asset Opportunity Explorer server", () => {
         expect(again.body.scannedAt).to.equal(body.scannedAt);
     });
 
+    it("re-bases the heatmap to the requested basis and retains views per basis", async () => {
+        root = await createFixtureRoot();
+        setServerRootForTests(root);
+        routes = captureRoutes();
+        const heatmap = "/api/asset-opportunity-explorer/heatmap";
+        const base = await dispatch(routes, heatmap, "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all&basis=base_only");
+        expect(base.status).to.equal(200);
+        expect(base.body.basis).to.equal("base_only");
+        // Cells are per (sort, holdout): holdout 12 averages its two rows.
+        expect(base.body.cells.map((cell: { actual: number | null }) => cell.actual)).to.deep.equal([-3, 3]);
+
+        // The fixture rows measured base_only: the pair view re-bases to empty.
+        const pair = await dispatch(routes, heatmap, "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all&basis=pair");
+        expect(pair.status).to.equal(200);
+        expect(pair.body.basis).to.equal("pair");
+        expect(pair.body.snapshotId).to.not.equal(base.body.snapshotId);
+        expect(pair.body.cells.every((cell: { observedRows: number }) => cell.observedRows === 0)).to.equal(true);
+
+        // Absent parameter keeps the primary rows (legacy pre-basis behavior).
+        const primary = await dispatch(routes, heatmap, "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all");
+        expect(primary.status).to.equal(200);
+        expect(primary.body.basis).to.equal("base_only");
+        expect(primary.body.cells.map((cell: { actual: number | null }) => cell.actual)).to.deep.equal([-3, 3]);
+
+        // The catalog lists the stored basis as the only viewable one.
+        const catalog = await dispatch(routes, "/api/asset-opportunity-explorer/catalog", "?refresh=1");
+        const runA = catalog.body.runs.find((run: { batchRunId: string }) => run.batchRunId === "run-a");
+        expect(runA.availableBases).to.deep.equal(["base_only"]);
+    });
     it("fails the scan with the affected filename instead of serving a partial archive", async () => {
         root = await createFixtureRoot();
         await writeFile(path.join(root, "archive", "asset opportunity", "oos-holdout-60-bars.txt"), "not an archive");
@@ -470,6 +499,7 @@ describe("Asset Opportunity Explorer server", () => {
                 archiveMaximumRank: 2,
                 sourceBlockCount: 1,
                 hasBaselines: false,
+                availableBases: ["base_only"],
             }],
             view: {
                 batchRunId: retainRunId ?? "run-a",
@@ -524,6 +554,7 @@ describe("Asset Opportunity Explorer server", () => {
                 archiveMaximumRank: 2,
                 sourceBlockCount: 1,
                 hasBaselines: false,
+                availableBases: ["base_only"],
             }],
             view: {
                 batchRunId: retainRunId ?? "run-a",

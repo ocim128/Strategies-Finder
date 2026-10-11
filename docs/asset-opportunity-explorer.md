@@ -11,14 +11,16 @@ A read-only heatmap over the existing `archive/asset opportunity` folder. Open i
 
 ## Controls
 
-Run, forward horizon, top-K (bounded by the archived rank limit), actual return (`%`) versus difference from baseline (`pp`), and column spacing. **Refresh** re-reads the archive, bypassing cached metadata and invalidating the retained view; a failed refresh keeps the previous display marked stale.
+Run, **forward basis**, forward horizon, top-K (bounded by the archived rank limit), actual return (`%`) versus difference from baseline (`pp`), and column spacing. **Refresh** re-reads the archive, bypassing cached metadata and invalidating the retained view; a failed refresh keeps the previous display marked stale.
+
+The forward basis selector picks which price series the heatmap shows. New-format rows carry every basis from one sweep (`pair`, `base_only`, `quote_only`); a selector change re-scans the run re-based to that series. Legacy rows without per-basis data contribute only when their stored basis matches, a legacy run without any basis data disables the selector (its primary rows are the only view), and omitting the parameter keeps the pre-basis primary-rows view.
 
 ## Measurement notes and limits
 
 - Holdout offsets are archive export windows in bars — not calendar dates, market decision dates, or independent samples. Windows overlap and nest.
 - The archive keeps a ranked shortlist plus aggregate baselines, not all candidate outcomes. K cannot exceed the archived rank limit and a full-universe distribution cannot be reconstructed.
-- Delta is the selected mean minus the block's all-candidate baseline in percentage points; no baseline means delta is unavailable. It is not a fee-adjusted portfolio simulation.
-- Missing `forwardOosPerformance.basis` (older rows) is labeled unknown; a run mixing explicit bases (`pair`, `base_only`, or `quote_only`) is rejected rather than averaged. `next_exit` runs are analyzed by the holdout-analysis CLI, not this heatmap.
+- Delta is the selected mean minus the block's all-candidate baseline in percentage points; no baseline means delta is unavailable. It is not a fee-adjusted portfolio simulation. With a selected basis, the baseline uses that basis's aggregate when present, and a legacy aggregate only when every row in the block measured that basis.
+- Missing `forwardOosPerformance.basis` (older rows) is labeled unknown; a view mixing explicit bases (`pair`, `base_only`, or `quote_only`) is rejected rather than averaged. `next_exit` runs are analyzed by the holdout-analysis CLI, not this heatmap.
 - Version one analyzes one batch run at a time. This deliberately differs from the CLI's combine-all-runs default, which is preserved.
 
 ## API
@@ -28,7 +30,7 @@ Read-only local routes (loopback-gated like every other local API; the folder is
 | Route | Purpose |
 | --- | --- |
 | `GET /api/asset-opportunity-explorer/catalog` | Per-run metadata; `?refresh=1` bypasses the cached scan and invalidates the retained view. |
-| `GET /api/asset-opportunity-explorer/heatmap` | `batchRunId`, `horizonBars`, `topK`, `spacing` → snapshot id, axes, cells (actual/baseline/delta/counts), measurement metadata, diagnostics. No candidate arrays on the wire. |
+| `GET /api/asset-opportunity-explorer/heatmap` | `batchRunId`, `horizonBars`, `topK`, `spacing`, optional `basis` → snapshot id, axes, cells (actual/baseline/delta/counts), measurement metadata, diagnostics. No candidate arrays on the wire. |
 | `GET /api/asset-opportunity-explorer/details` | `snapshotId`, `sortMetric`, inclusive `holdoutFrom`/`holdoutTo`, `metric`, `offset`, `limit` (default 100, max 500) → full-range summaries, histogram bins, one candidate-row page. An evicted snapshot answers `409` and the UI reloads the view. |
 
 Loading is bounded: matching files are read one at a time (stat → read → stat; an append mid-scan yields a retryable archive-changed error). A file that cannot be parsed fails the whole scan with its filename rather than being skipped, a missing archive folder is an explicit empty state, and any other directory read failure is an actionable error. At most one compact selected-run view and its derived snapshot are retained per process, scans for identical in-flight requests are coalesced, and an older scan completion never overwrites a newer refresh or run selection.

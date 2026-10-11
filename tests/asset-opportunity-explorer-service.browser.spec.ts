@@ -61,6 +61,7 @@ function fakeSelectEl(): any {
 
 const SELECT_IDS = new Set([
     "explorerRunSelect",
+    "explorerBasisSelect",
     "explorerHorizonSelect",
     "explorerMetricSelect",
     "explorerSpacingSelect",
@@ -95,6 +96,7 @@ function fixtureRun() {
         archiveMaximumRank: 10,
         sourceBlockCount: 2,
         hasBaselines: true,
+        availableBases: ["pair", "base_only", "quote_only"],
     };
 }
 
@@ -451,6 +453,36 @@ describe("Asset Opportunity Explorer service", () => {
         }
     });
 
+    it("sends the selected basis and disables the selector for runs without basis data", async () => {
+        responder = (url) => {
+            if (url.includes("catalog")) return { status: 200, body: catalogPayload([fixtureRun()]) };
+            return { status: 200, body: heatmapPayload(`snap-${requestedUrls.filter((candidate) => candidate.includes("heatmap")).length}`) };
+        };
+        const { service, dom } = createService();
+        service.init();
+        await waitFor(() => requestedUrls.some((candidate) => candidate.includes("heatmap")), 2_000, "first heatmap");
+        // The fixture run carries all three bases: the request selects pair by default.
+        expect(requestedUrls.some((candidate) => candidate.includes("basis=pair"))).to.equal(true);
+        expect(dom.explorerBasisSelect.disabled).to.equal(false);
+
+        requestedUrls.length = 0;
+        dom.explorerBasisSelect.value = "quote_only";
+        dom.explorerBasisSelect.listeners.get("change")![0]!();
+        await waitFor(() => requestedUrls.some((candidate) => candidate.includes("basis=quote_only")), 2_000, "basis switch refetch");
+
+        // A legacy run without basis data disables the selector and omits the param.
+        responder = (url) => {
+            if (url.includes("catalog")) {
+                const legacy = { ...fixtureRun(), availableBases: [] };
+                return { status: 200, body: catalogPayload([legacy]) };
+            }
+            return { status: 200, body: heatmapPayload(`snap-${requestedUrls.filter((candidate) => candidate.includes("heatmap")).length}`) };
+        };
+        requestedUrls.length = 0;
+        dom.explorerRefreshBtn.listeners.get("click")![0]!();
+        await waitFor(() => dom.explorerBasisSelect.disabled === true, 2_000, "legacy run disables basis select");
+        expect(requestedUrls.every((candidate) => !candidate.includes("basis="))).to.equal(true);
+    });
     it("still loads details after an in-flight detail request was interrupted", async () => {
         // The promise executor assigns this synchronously, so the release
         // function is always set before any await below.

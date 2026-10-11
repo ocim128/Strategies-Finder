@@ -22,6 +22,7 @@ function archiveRow(args: {
     strategyName?: string;
     candidateFingerprint?: string;
     basis?: string;
+    byBasis?: Record<string, { horizons: Array<{ bars: number; averagePnlPercent: number | null; sampleSize: number }> }>;
 }): Record<string, unknown> {
     return {
         scope: "asset_opportunity",
@@ -41,6 +42,19 @@ function archiveRow(args: {
                 sampleSize: horizon.sampleSize,
             })),
         },
+        ...(args.byBasis === undefined ? {} : {
+            forwardOosPerformanceByBasis: Object.fromEntries(Object.entries(args.byBasis).map(([basis, perf]) => [basis, {
+                ignoreLastBars: 12,
+                basis,
+                horizons: perf.horizons.map((horizon) => ({
+                    bars: horizon.bars,
+                    pnlPercent: horizon.averagePnlPercent,
+                    averagePnlPercent: horizon.averagePnlPercent,
+                    winRatePercent: null,
+                    sampleSize: horizon.sampleSize,
+                })),
+            }])),
+        }),
     };
 }
 
@@ -51,6 +65,7 @@ function block(args: {
     sortMetric: string;
     rows: unknown[];
     baseline?: unknown;
+    baselineByBasis?: Record<string, unknown>;
     measurementMode?: string;
 }): string {
     return [
@@ -61,6 +76,7 @@ function block(args: {
         `Archive sort: ${args.sortMetric}`,
         ...(args.measurementMode === undefined ? [] : [`Forward measurement: ${args.measurementMode}`]),
         ...(args.baseline === undefined ? [] : [`Archive baseline: ${JSON.stringify(args.baseline)}`]),
+        ...(args.baselineByBasis === undefined ? [] : [`Archive baseline by basis: ${JSON.stringify(args.baselineByBasis)}`]),
         "=".repeat(80),
         JSON.stringify(args.rows),
         "=".repeat(80),
@@ -131,6 +147,90 @@ describe("Asset Opportunity Explorer analysis", () => {
         });
         expect(heatmap.basis).to.equal("quote_only");
         expect(heatmap.cells[0]!.actual).to.equal(20);
+    });
+
+    it("re-bases per-basis rows to the requested horizon basis with legacy fallback", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z", runId: "all-bases",
+            holdoutBars: 12, sortMetric: "expectancy",
+            rows: [
+                archiveRow({
+                    rank: 1,
+                    basis: "pair",
+                    horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }],
+                    byBasis: {
+                        pair: { horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }] },
+                        base_only: { horizons: [{ bars: 12, averagePnlPercent: 4, sampleSize: 1 }] },
+                        quote_only: { horizons: [{ bars: 12, averagePnlPercent: 9, sampleSize: 1 }] },
+                    },
+                }),
+                archiveRow({
+                    rank: 2,
+                    basis: "pair",
+                    horizons: [{ bars: 12, averagePnlPercent: 6, sampleSize: 1 }],
+                }),
+                archiveRow({
+                    rank: 3,
+                    basis: "pair",
+                    horizons: [{ bars: 12, averagePnlPercent: 7, sampleSize: 1 }],
+                }),
+            ],
+            baseline: baseline([{ bars: 12, averagePnlPercent: 77 }]),
+            baselineByBasis: {
+                pair: baseline([{ bars: 12, averagePnlPercent: 0.5 }]),
+                base_only: baseline([{ bars: 12, averagePnlPercent: 2.5 }]),
+            },
+        }));
+
+        // The catalog lists every viewable basis in fixed order.
+        const [run] = summarizeRunCatalog(records);
+        expect(run.availableBases).to.deep.equal(["pair", "base_only", "quote_only"]);
+
+        // base_only view: rank 1 reads its per-basis map; ranks 2-3 kept their
+        // metadata but their pair-only measurements drop for this basis.
+        const baseView = buildExplorerView(records, "all-bases", "base_only");
+        expect(baseView.blocks[0]!.basis).to.equal("base_only");
+        const baseRows = Object.fromEntries(baseView.blocks[0]!.rows.map((row) => [row.rank, row.horizons[0]?.averagePnlPercent ?? null]));
+        expect(baseRows).to.deep.equal({ 1: 4, 2: null, 3: null });
+        // Baseline swaps to the per-basis aggregate, not the unscoped 77.
+        expect(baseView.blocks[0]!.baselineHorizons[0]!.averagePnlPercent).to.equal(2.5);
+
+        // The unscoped view keeps the primary (pair) rows and baseline.
+        const primaryView = buildExplorerView(records, "all-bases");
+        const primaryRows = Object.fromEntries(primaryView.blocks[0]!.rows.map((row) => [row.rank, row.horizons[0]?.averagePnlPercent ?? null]));
+        expect(primaryRows).to.deep.equal({ 1: 1, 2: 6, 3: 7 });
+        expect(primaryView.blocks[0]!.baselineHorizons[0]!.averagePnlPercent).to.equal(77);
+
+        // Heatmap on the base_only view reports the selected basis and only
+        // counts the one row that measured it.
+        const heatmap = buildHeatmapSnapshot(baseView, {
+            batchRunId: "all-bases", horizonBars: 12, topK: 3, spacing: "all", snapshotId: "base",
+        });
+        expect(heatmap.basis).to.equal("base_only");
+        expect(heatmap.cells[0]!.actual).to.equal(4);
+        expect(heatmap.cells[0]!.observedRows).to.equal(1);
+    });
+
+    it("re-basing keeps the legacy baseline only when every row measured the requested basis", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z", runId: "legacy-base",
+            holdoutBars: 12, sortMetric: "expectancy",
+            rows: [
+                archiveRow({ rank: 1, basis: "base_only", horizons: [{ bars: 12, averagePnlPercent: 4, sampleSize: 1 }] }),
+                archiveRow({ rank: 2, horizons: [{ bars: 12, averagePnlPercent: 6, sampleSize: 1 }] }),
+            ],
+            baseline: baseline([{ bars: 12, averagePnlPercent: 77 }]),
+        }));
+
+        const [run] = summarizeRunCatalog(records);
+        // Only the stored basis is viewable; unknown-basis rows add nothing.
+        expect(run.availableBases).to.deep.equal(["base_only"]);
+        const view = buildExplorerView(records, "legacy-base", "base_only");
+        // Rank 2 has no stored basis: its forward outcome drops for base_only.
+        const rows = Object.fromEntries(view.blocks[0]!.rows.map((row) => [row.rank, row.horizons.length]));
+        expect(rows).to.deep.equal({ 1: 1, 2: 0 });
+        // The legacy aggregate cannot be re-based → unavailable, never mixed.
+        expect(view.blocks[0]!.baselineHorizons).to.deep.equal([]);
     });
 
     it("deduplicates blocks only after filtering by batch run, keeping the latest timestamp", () => {

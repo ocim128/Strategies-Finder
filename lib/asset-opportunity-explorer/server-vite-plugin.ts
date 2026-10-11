@@ -14,6 +14,7 @@ import {
     type ExplorerView,
 } from "./analysis";
 import type {
+    AssetOpportunityExplorerBasis,
     AssetOpportunityExplorerCatalogResponse,
     AssetOpportunityExplorerHeatmapResponse,
     AssetOpportunityExplorerMetric,
@@ -41,11 +42,12 @@ let serverRoot: string | null = null;
 /** Last completed catalog scan (metadata only). */
 let catalog: AssetOpportunityExplorerCatalogResponse | null = null;
 /** The single retained selected-run view plus the scan generation it came from. */
-let retained: { generation: number; view: ExplorerView } | null = null;
+let retained: { generation: number; view: ExplorerView; basis: AssetOpportunityExplorerBasis | null } | null = null;
 /** The current derived snapshot for the retained view. */
 let snapshot: {
     response: AssetOpportunityExplorerHeatmapResponse;
     batchRunId: string;
+    basis: AssetOpportunityExplorerBasis | null;
     horizonBars: number;
     topK: number;
     spacing: AssetOpportunityExplorerSpacing;
@@ -109,7 +111,7 @@ function requireEnumParam<T extends string>(url: URL, name: string, allowed: rea
  * injectable runner so completion-order tests can substitute the scan.
  */
 function performScan(args: Parameters<typeof scanAssetOpportunityArchive>[0]): Promise<AssetOpportunityArchiveScanOutcome> {
-    const key = `${args.root}\u0000${args.retainRunId ?? "*"}`;
+    const key = `${args.root}\u0000${args.retainRunId ?? "*"}\u0000${args.basis ?? "*"}`;
     if (inFlightScan && inFlightScan.key === key) return inFlightScan.promise;
     const promise = scanRunner(args).finally(() => {
         if (inFlightScan?.promise === promise) inFlightScan = null;
@@ -162,10 +164,10 @@ async function handleCatalogRequest(res: ViteHttpResponse, url: URL): Promise<vo
     }
 }
 
-async function retainViewForRun(batchRunId: string): Promise<ExplorerView | null> {
-    if (retained && retained.view.batchRunId === batchRunId) return retained.view;
+async function retainViewForRun(batchRunId: string, basis: AssetOpportunityExplorerBasis | null): Promise<ExplorerView | null> {
+    if (retained && retained.view.batchRunId === batchRunId && retained.basis === basis) return retained.view;
     const ownership = ++scanOwnership;
-    const outcome = await performScan({ root: requireRoot(), retainRunId: batchRunId });
+    const outcome = await performScan({ root: requireRoot(), retainRunId: batchRunId, ...(basis ? { basis } : {}) });
     if (!outcome.runs.some((run) => run.batchRunId === batchRunId)) {
         throw new HttpStatusError(400, `Unknown batch run: ${batchRunId}. Refresh the catalog.`);
     }
@@ -175,7 +177,7 @@ async function retainViewForRun(batchRunId: string): Promise<ExplorerView | null
         return null;
     }
     catalog = catalogResponseFromScan(outcome);
-    retained = { generation: ownership, view: outcome.view! };
+    retained = { generation: ownership, view: outcome.view!, basis };
     snapshot = null;
     return retained.view;
 }
@@ -186,7 +188,13 @@ async function handleHeatmapRequest(res: ViteHttpResponse, url: URL): Promise<vo
         const horizonBars = requirePositiveIntParam(url, "horizonBars");
         const topK = requirePositiveIntParam(url, "topK");
         const spacing = requireEnumParam<AssetOpportunityExplorerSpacing>(url, "spacing", ["all", "horizon"], "all");
-        const view = await retainViewForRun(batchRunId);
+        const basisParam = url.searchParams.get("basis");
+        // Absent = no re-basing: each row keeps its primary measurement (the
+        // pre-basis view legacy archives need).
+        const basis = basisParam && basisParam.trim()
+            ? requireEnumParam<AssetOpportunityExplorerBasis>(url, "basis", ["pair", "base_only", "quote_only"])
+            : null;
+        const view = await retainViewForRun(batchRunId, basis);
         if (!view) {
             throw new HttpStatusError(409, "A newer explorer selection replaced this scan while it ran; repeat the request.");
         }
@@ -195,6 +203,7 @@ async function handleHeatmapRequest(res: ViteHttpResponse, url: URL): Promise<vo
         }
         if (snapshot
             && snapshot.batchRunId === batchRunId
+            && snapshot.basis === basis
             && snapshot.horizonBars === horizonBars
             && snapshot.topK === topK
             && snapshot.spacing === spacing) {
@@ -206,9 +215,9 @@ async function handleHeatmapRequest(res: ViteHttpResponse, url: URL): Promise<vo
             horizonBars,
             topK,
             spacing,
-            snapshotId: `explorer-${retained!.generation}-${batchRunId}-h${horizonBars}-k${topK}-${spacing}`,
+            snapshotId: `explorer-${retained!.generation}-${batchRunId}-b${basis}-h${horizonBars}-k${topK}-${spacing}`,
         });
-        snapshot = { response, batchRunId, horizonBars, topK, spacing };
+        snapshot = { response, batchRunId, basis, horizonBars, topK, spacing };
         sendJson(res, 200, response);
     } catch (error) {
         rethrowMapped(error);

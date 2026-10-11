@@ -2,6 +2,7 @@ import { getRequiredElement } from "../dom-utils";
 
 export const ASSET_OPPORTUNITY_EXPLORER_REQUIRED_IDS = [
     "explorerRunSelect",
+    "explorerBasisSelect",
     "explorerHorizonSelect",
     "explorerTopKInput",
     "explorerMetricSelect",
@@ -33,6 +34,7 @@ export const ASSET_OPPORTUNITY_EXPLORER_REQUIRED_IDS = [
 export function createAssetOpportunityExplorerDom() {
     return {
         explorerRunSelect: getRequiredElement<HTMLSelectElement>("explorerRunSelect"),
+        explorerBasisSelect: getRequiredElement<HTMLSelectElement>("explorerBasisSelect"),
         explorerHorizonSelect: getRequiredElement<HTMLSelectElement>("explorerHorizonSelect"),
         explorerTopKInput: getRequiredElement<HTMLInputElement>("explorerTopKInput"),
         explorerMetricSelect: getRequiredElement<HTMLSelectElement>("explorerMetricSelect"),
