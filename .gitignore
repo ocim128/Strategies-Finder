@@ -158,6 +158,7 @@ archive/
 !/archive/asset opportunity/analyze-asset-opportunity-holdouts.bat
 !/archive/asset opportunity/analyze-asset-opportunity-holdouts-exclude-100-plus.bat
 !/archive/asset opportunity/analyze-asset-opportunity-holdouts-by-basis.bat
+!/archive/asset opportunity/analyze-asset-opportunity-stability.bat
 .vercel
 .wrangler/
 signals/

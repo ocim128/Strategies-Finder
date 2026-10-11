@@ -22,6 +22,11 @@
  * Caveat: holdout windows overlap (adjacent files share most of their OOS
  * region), so these are stability indicators, not independent-sample p-values.
  *
+ * Pass --basis <pair|base_only|quote_only> to re-base every forward outcome
+ * (per-basis rows; legacy single-basis rows count only when their stored basis
+ * matches). Completed horizons only: ongoing mark-to-market horizons are
+ * excluded from deltas and pool baselines.
+ *
  * Direct usage:
  *   esno scripts/analyze-asset-opportunity-stability.ts \
  *     --archive-dir "archive/asset opportunity" --sample-size 10 --iterations 2000 \
@@ -31,22 +36,30 @@ import fs from "node:fs";
 import path from "node:path";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
+const HORIZON_BASES = ["pair", "base_only", "quote_only"] as const;
 const BLOCK_SEPARATOR = "=".repeat(80);
 const BLOCK_PATTERN = new RegExp(
-    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
+    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive baseline by basis: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
     "gm",
 );
 
 interface ArchiveHorizon {
     bars: number;
     averagePnlPercent?: number | null;
+    /** Mark-to-market at the last candle because the horizon exceeded the holdout. */
+    ongoing?: boolean;
+}
+
+interface ArchiveRowForward {
+    basis?: string;
+    horizons?: Array<{ bars: number; pnlPercent?: number | null; sampleSize?: number | null; ongoing?: boolean }>;
 }
 
 interface ArchiveRow {
     rank?: number;
-    forwardOosPerformance?: {
-        horizons?: Array<{ bars: number; pnlPercent?: number | null; sampleSize?: number | null }>;
-    } | null;
+    forwardOosPerformance?: ArchiveRowForward | null;
+    /** All price bases measured in the same pass; absent on single-basis (older) rows. */
+    forwardOosPerformanceByBasis?: Partial<Record<string, ArchiveRowForward>> | null;
 }
 
 interface ParsedBlock {
@@ -87,10 +100,11 @@ function createRng(seed: number): () => number {
     };
 }
 
-function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
+function parseBlocks(text: string, holdoutBars: number, basis?: string): ParsedBlock[] {
     const blocks: ParsedBlock[] = [];
     for (const match of text.matchAll(BLOCK_PATTERN)) {
         const baselineByHorizon = new Map<number, number>();
+        const baselineByBasis = new Map<string, Map<number, number>>();
         if (match[6]) {
             try {
                 const baseline = JSON.parse(match[6]) as { horizons?: ArchiveHorizon[] };
@@ -103,26 +117,72 @@ function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
                 // Malformed baseline line: leave the map empty; the block is skipped per-cell.
             }
         }
+        if (match[7]) {
+            try {
+                const parsed = JSON.parse(match[7]) as Record<string, { horizons?: ArchiveHorizon[] }>;
+                for (const key of HORIZON_BASES) {
+                    const entry = parsed[key];
+                    if (!entry) continue;
+                    const means = new Map<number, number>();
+                    for (const horizon of entry.horizons ?? []) {
+                        if (typeof horizon.averagePnlPercent === "number") {
+                            means.set(horizon.bars, horizon.averagePnlPercent);
+                        }
+                    }
+                    if (means.size > 0) baselineByBasis.set(key, means);
+                }
+            } catch {
+                // Malformed per-basis baseline line: leave the map empty.
+            }
+        }
         let rows: ArchiveRow[] = [];
         try {
-            rows = JSON.parse(match[8]!) as ArchiveRow[];
+            rows = JSON.parse(match[9]!) as ArchiveRow[];
         } catch {
             continue;
         }
-        blocks.push({
-            timestamp: match[1]!,
-            batchRunId: match[2]!,
-            holdoutBars,
-            sortMetric: match[4]!,
-            measurementMode: match[5] || undefined,
-            baselineByHorizon,
-            rows,
-        });
+        if (basis) {
+            // Re-base every forward outcome to one price basis: per-basis rows
+            // use their entry; legacy single-basis rows count only when their
+            // stored basis matches; the baseline follows the same rule as the
+            // holdout analyzer (per-basis map, else legacy only when every row
+            // in the block measured the requested basis).
+            rows = rows.map((row) => {
+                const perBasis = row.forwardOosPerformanceByBasis?.[basis];
+                if (perBasis) return { ...row, forwardOosPerformance: perBasis };
+                const legacy = row.forwardOosPerformance;
+                if (legacy && legacy.basis === basis) return row;
+                return { ...row, forwardOosPerformance: null };
+            });
+            const perBasisBaseline = baselineByBasis.get(basis);
+            const legacyConsistent = rows.every((row) =>
+                !row.forwardOosPerformance || row.forwardOosPerformance.basis === basis);
+            const effectiveBaseline = perBasisBaseline ?? (legacyConsistent ? baselineByHorizon : new Map<number, number>());
+            blocks.push({
+                timestamp: match[1]!,
+                batchRunId: match[2]!,
+                holdoutBars,
+                sortMetric: match[4]!,
+                measurementMode: match[5] || undefined,
+                baselineByHorizon: effectiveBaseline,
+                rows,
+            });
+        } else {
+            blocks.push({
+                timestamp: match[1]!,
+                batchRunId: match[2]!,
+                holdoutBars,
+                sortMetric: match[4]!,
+                measurementMode: match[5] || undefined,
+                baselineByHorizon,
+                rows,
+            });
+        }
     }
     return blocks;
 }
 
-function loadBlocks(archiveDirectory: string): ParsedBlock[] {
+function loadBlocks(archiveDirectory: string, basis?: string): ParsedBlock[] {
     const files = fs.readdirSync(archiveDirectory)
         .map((file) => file.match(ARCHIVE_FILE_PATTERN))
         .filter((match): match is RegExpMatchArray => match !== null)
@@ -134,6 +194,7 @@ function loadBlocks(archiveDirectory: string): ParsedBlock[] {
     const allBlocks = files.flatMap((entry) => parseBlocks(
         fs.readFileSync(path.join(archiveDirectory, entry.file), "utf8"),
         entry.bars,
+        basis,
     ));
     // Keep only the latest batch run (largest block count wins, then latest timestamp).
     const byRun = new Map<string, { blocks: ParsedBlock[]; latest: string }>();
@@ -198,6 +259,9 @@ function computePoolBaseline(blocks: ParsedBlock[]): Map<number, Map<number, num
                 if (seenCandidateKeys.has(key)) continue;
                 seenCandidateKeys.add(key);
                 for (const horizon of row.forwardOosPerformance?.horizons ?? []) {
+                    // Ongoing horizons are mark-to-market at the last candle;
+                    // they never describe the horizon they are filed under.
+                    if (horizon.ongoing === true) continue;
                     if (typeof horizon.bars === "number" && typeof horizon.pnlPercent === "number" && (horizon.sampleSize ?? 1) > 0) {
                         let values = horizonValues.get(horizon.bars);
                         if (!values) horizonValues.set(horizon.bars, values = []);
@@ -238,7 +302,7 @@ function blockDelta(
     const values: number[] = [];
     for (const row of selected) {
         const horizon = row.forwardOosPerformance?.horizons?.find((entry) => entry.bars === horizonBars);
-        if (horizon && typeof horizon.pnlPercent === "number" && (horizon.sampleSize ?? 1) > 0) {
+        if (horizon && horizon.ongoing !== true && typeof horizon.pnlPercent === "number" && (horizon.sampleSize ?? 1) > 0) {
             values.push(horizon.pnlPercent);
         }
     }
@@ -290,6 +354,11 @@ function formatRate(value: number): string {
 function main(): void {
     const argv = process.argv.slice(2);
     const archiveDirectory = getArgument(argv, "--archive-dir") ?? path.resolve(__dirname, "..", "archive", "asset opportunity");
+    const requestedBasis = getArgument(argv, "--basis");
+    const horizonBasis = HORIZON_BASES.find((basis) => basis === requestedBasis);
+    if (requestedBasis !== undefined && !horizonBasis) {
+        throw new Error(`Invalid --basis "${requestedBasis}". Use one of: ${HORIZON_BASES.join(", ")}.`);
+    }
     const sampleSize = Math.max(1, Math.floor(Number(getArgument(argv, "--sample-size") ?? 10) || 10));
     const iterations = Math.max(1, Math.floor(Number(getArgument(argv, "--iterations") ?? 2000) || 2000));
     const topKList = parseList(getArgument(argv, "--top-k"), [1, 2, 3]);
@@ -303,7 +372,7 @@ function main(): void {
 
     const minHoldoutBars = Math.floor(Number(getArgument(argv, "--min-holdout") ?? 0) || 0);
     const maxHoldoutBars = Math.floor(Number(getArgument(argv, "--max-holdout") ?? Number.POSITIVE_INFINITY) || Number.POSITIVE_INFINITY);
-    let rawBlocks = loadBlocks(archiveDirectory).filter((block) => block.holdoutBars >= minHoldoutBars && block.holdoutBars <= maxHoldoutBars);
+    let rawBlocks = loadBlocks(archiveDirectory, horizonBasis).filter((block) => block.holdoutBars >= minHoldoutBars && block.holdoutBars <= maxHoldoutBars);
 
     // This analyzer's whole methodology is fixed-horizon deltas; next_exit
     // archives carry no forward-horizon rows and no horizon baselines, so fail
@@ -375,6 +444,7 @@ function main(): void {
         iterations,
         seed,
         topKList,
+        horizonBasis: horizonBasis ?? null,
         horizons,
         primaryHorizon,
         cells: [] as Array<Record<string, unknown>>,
@@ -383,6 +453,7 @@ function main(): void {
     lines.push("Asset Opportunity Decision-Rule Stability");
     lines.push("==========================================");
     lines.push(`Batch run: ${blocks[0]?.batchRunId} | files: ${holdoutBarsSet.length} of ${allHoldoutBarsSet.length} (holdouts ${holdoutBarsSet[holdoutBarsSet.length - 1]}..${holdoutBarsSet[0]})`);
+    lines.push(`Forward horizon basis: ${horizonBasis ?? "run default (primary rows)"} | completed horizons only (ongoing mark-to-market rows excluded)`);
     lines.push(`Stride: ${strideBars > 1 ? `${strideBars} bars (non-overlapping windows)` : "1 bar (all holdouts)"} | Friction: ${frictionBps > 0 ? `${frictionBps} bps (${(frictionBps / 100).toFixed(2)}%) — charged to BOTH arms, cancels in deltas` : "0 bps"}`);
     lines.push(`Control: ${control === "random_pool" ? "Unique active candidate pool average" : "Universe all-candidate baseline"}`);
     lines.push(`Bootstrap: ${iterations} shuffles x ${Math.min(sampleSize, holdoutBarsSet.length)} random files (seed ${seed}) | primary horizon: ${primaryHorizon} bars | top-K: ${topKList.join("/")}`);
