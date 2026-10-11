@@ -52,8 +52,6 @@ replay. Admission rules change which trades exist, so per-candidate outcomes
 must not depend on prior accepted-trade history. Archives record
 `replayEligible: false` (with reasons) for:
 
-- **Adaptive take-profit** â€” any `takeProfitMode` other than `fixed`
-  (`adaptive_take_profit:<mode>`).
 - **Partial take-profit** â€” `partialTakeProfitAtR > 0` (an as-if trade can have only
   one exit).
 - **Win-streak stop-loss** â€” `riskWinStreakStopLossEnabled` (depends on prior accepted

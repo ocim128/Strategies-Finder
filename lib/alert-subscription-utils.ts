@@ -97,13 +97,6 @@ export function resolveSubscriptionExecutionBacktestSettings(settings?: Backtest
         ?? EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeEnabled;
     merged.strategyTimeframeMinutes = toFiniteNumber(merged.strategyTimeframeMinutes)
         ?? EFFECTIVE_BACKTEST_DEFAULTS.strategyTimeframeMinutes;
-    merged.takeProfitMfeBootstrapPercentile = Math.max(
-        1,
-        Math.min(
-            99,
-            toFiniteNumber(merged.takeProfitMfeBootstrapPercentile) ?? EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile
-        )
-    );
 
     const initialCapital = toFiniteNumber(raw.initialCapital);
     if (initialCapital !== null) {

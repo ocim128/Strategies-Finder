@@ -8,19 +8,15 @@ import {
     resolveSecureFMethod,
     resolveVolScalingMethod,
 } from "./advanced-sizing-settings";
-import { TAKE_PROFIT_DOM_IDS } from "./take-profit-dom";
-import {
-    DEFAULT_BACKTEST_SETTINGS,
+import { DEFAULT_BACKTEST_SETTINGS,
     resolveExecutionModelValue,
     resolveMarketMode,
     resolveRiskModeValue,
-    resolveTakeProfitModeValue,
     resolveTradeDirection,
     resolveTradeSizingModeValue,
     type BacktestSettingsData,
 } from "./settings-model";
 import { RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS } from "./rust-settings-sanitizer";
-import { resolveTakeProfitMode } from "./take-profit-settings";
 import { resolveEntryTimeFilter } from "./entry-time-filter";
 // Shared pure value parsers: the DOM contract and the raw settings resolver
 // must interpret these values identically, so both call the same owner.
@@ -44,7 +40,6 @@ export type BacktestDomSettingParser =
     | "confirmationMode"
     | "confirmationStrategyParams"
     | "riskMode"
-    | "takeProfitMode"
     | "tradeDirection"
     | "marketMode"
     | "executionModel"
@@ -86,8 +81,6 @@ function inferParser(settingKey: BacktestDomSettingKey): BacktestDomSettingParse
     switch (settingKey) {
         case "riskMode":
             return "riskMode";
-        case "takeProfitMode":
-            return "takeProfitMode";
         case "riskEntryConfirmationMove":
             return "entryConfirmationMove";
         case "entryTimeFilter":
@@ -139,7 +132,7 @@ function inferRustSupport(settingKey: BacktestDomSettingKey): SettingSupportLeve
     if (settingKey === "useRustEngine") {
         return "ui_only";
     }
-    if (settingKey === "tradeDirection" || settingKey === "marketMode" || settingKey === "takeProfitMode") {
+    if (settingKey === "tradeDirection" || settingKey === "marketMode") {
         return "conditional";
     }
     return RUST_UNSUPPORTED_KEY_SET.has(settingKey as keyof BacktestSettings as string)
@@ -207,19 +200,6 @@ const BASE_BACKTEST_DOM_CONTRACTS = [
     createField("trailingAtr"),
     createField("stopLossPercent"),
     createField("takeProfitPercent"),
-    createField("takeProfitMode", {
-        parser: "takeProfitMode",
-        rustSupport: "conditional",
-        readFromSettings: (settings) => resolveTakeProfitModeValue(settings.takeProfitMode, DEFAULT_BACKTEST_SETTINGS),
-    }),
-    createField("takeProfitMfeBootstrapPercentile", { rustSupport: "unsupported" }),
-    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveLookbackTrades, { rustSupport: "unsupported" }),
-    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRecentWindow, { rustSupport: "unsupported" }),
-    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMinMultiplier, { rustSupport: "unsupported" }),
-    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMaxMultiplier, { rustSupport: "unsupported" }),
-    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveGridSteps, { rustSupport: "unsupported" }),
-    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend, { rustSupport: "unsupported" }),
-    createField(TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale, { rustSupport: "unsupported" }),
     createField("stopLossToggle", {
         settingKey: "stopLossEnabled",
         parser: "boolean",
@@ -417,8 +397,6 @@ export function coerceBacktestDomSettingValue(
             return resolveTradeSizingModeValue(value, DEFAULT_BACKTEST_SETTINGS);
         case "riskMode":
             return resolveRiskModeValue(value, DEFAULT_BACKTEST_SETTINGS);
-        case "takeProfitMode":
-            return resolveTakeProfitMode(value);
         case "entryConfirmationMove":
             return resolveEntryConfirmationMove(value, DEFAULT_BACKTEST_SETTINGS.riskEntryConfirmationMove);
         case "tradeDirection":

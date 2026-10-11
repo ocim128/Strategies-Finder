@@ -371,13 +371,13 @@ Each distinction may be useful to research, but maintaining every combination in
 
 ## F15 — Require demonstrated use for every sizing and adaptive-exit model
 
-The backtest types expose nine sizing modes. [`take-profit-settings.ts:15`](../lib/take-profit-settings.ts) accepts fixed plus eight nonfixed take-profit modes. These are implemented features, not dead code.
+The backtest types expose nine sizing modes. [`take-profit-settings.ts`](../lib/take-profit-settings.ts) now accepts only `fixed`; the eight former nonfixed take-profit modes were retired. The sizing modes are implemented features, not dead code.
 
 Examples of ongoing complexity:
 
 - [`optimal-f.ts:47`](../lib/strategies/sizing/optimal-f.ts) searches 100 fractions, and secure-f bootstraps up to 500 samples. State updates can recompute those searches after trades.
 - [`risk-parity.ts:26`](../lib/strategies/sizing/risk-parity.ts) takes one candle series and computes an inverse-risk sizing multiplier. It does not allocate a multi-asset portfolio; its name promises more architecture than its implementation supplies.
-- [`adaptive-take-profit.ts`](../lib/strategies/backtest/adaptive-take-profit.ts) is 535 lines of histories, entry contexts, regime buckets and per-position state, coupled into entry/exit simulation.
+- The former `adaptive-take-profit.ts` (535 lines of histories, entry contexts, regime buckets and per-position state) has been retired along with its eight nonfixed modes; take-profit is now a single static percentage target.
 - Sizing state is also replayed by Monte Carlo; UI, saved settings and backend-support policies add more representations.
 
 Current secure-f example:

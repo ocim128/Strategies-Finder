@@ -613,7 +613,6 @@ class SettingsManager {
 
         // Trigger riskMode change
         dom.riskMode.dispatchEvent(new Event('change', { bubbles: true }));
-        dom.takeProfitMode.dispatchEvent(new Event('change', { bubbles: true }));
         dom.tradeDirection.dispatchEvent(new Event('change', { bubbles: true }));
     }
 }

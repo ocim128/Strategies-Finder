@@ -16,14 +16,6 @@ export interface NormalizedSettings {
     stopLossPercent: number;
     takeProfitPercent: number;
     takeProfitMode: PercentageTakeProfitMode;
-    takeProfitMfeBootstrapPercentile: number;
-    takeProfitAdaptiveLookbackTrades: number;
-    takeProfitAdaptiveRecentWindow: number;
-    takeProfitAdaptiveMinMultiplier: number;
-    takeProfitAdaptiveMaxMultiplier: number;
-    takeProfitAdaptiveGridSteps: number;
-    takeProfitAdaptiveRegimeBlend: number;
-    takeProfitAdaptiveIcScale: number;
     stopLossEnabled: boolean;
     takeProfitEnabled: boolean;
     riskMinHoldBars: number;

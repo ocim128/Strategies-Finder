@@ -95,14 +95,6 @@ export type RandomBenchmarkMeta = {
     rustCandidateCount: number;
 };
 
-type TakeProfitMode = NonNullable<BacktestSettings["takeProfitMode"]>;
-
-type TpParamSpec = {
-    key: keyof BacktestSettings & string;
-    mode?: TakeProfitMode;
-    clamp: (value: number) => number;
-};
-
 export function shouldUseRustCachedMode(
     dataSize: number,
     totalRuns: number,
@@ -182,93 +174,6 @@ function clampAtrPeriod(value: number): number {
     return Math.max(1, Math.round(value));
 }
 
-function usesPercentageTakeProfitMode(
-    settings: BacktestSettings,
-    mode: TakeProfitMode
-): boolean {
-    return settings.riskMode === "percentage"
-        && settings.takeProfitEnabled === true
-        && settings.takeProfitMode === mode;
-}
-
-function clampTakeProfitMfeBootstrapPercentile(value: number): number {
-    return clampPercentValue(value, 1, 99);
-}
-
-const TP_PARAM_SPECS: readonly TpParamSpec[] = [
-    { key: "takeProfitMfeBootstrapPercentile", mode: "mfe_bootstrap", clamp: clampTakeProfitMfeBootstrapPercentile },
-    { key: "takeProfitAdaptiveLookbackTrades", mode: "expectancy_optimal", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveLookbackTrades", mode: "regime_calibrated", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveLookbackTrades", mode: "information_coefficient", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveLookbackTrades", mode: "path_efficiency", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveLookbackTrades", mode: "serial_dependency", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveLookbackTrades", mode: "minimum_surprisal", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveRecentWindow", mode: "serial_dependency", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveMinMultiplier", mode: "edge_weighted", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMinMultiplier", mode: "expectancy_optimal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMinMultiplier", mode: "information_coefficient", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMinMultiplier", mode: "path_efficiency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMinMultiplier", mode: "serial_dependency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMinMultiplier", mode: "minimum_surprisal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMaxMultiplier", mode: "edge_weighted", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMaxMultiplier", mode: "expectancy_optimal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMaxMultiplier", mode: "information_coefficient", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMaxMultiplier", mode: "path_efficiency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMaxMultiplier", mode: "serial_dependency", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveMaxMultiplier", mode: "minimum_surprisal", clamp: (value) => clampPercentValue(value, 0.1, 5) },
-    { key: "takeProfitAdaptiveGridSteps", mode: "expectancy_optimal", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveGridSteps", mode: "regime_calibrated", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveGridSteps", mode: "minimum_surprisal", clamp: clampAtrPeriod },
-    { key: "takeProfitAdaptiveRegimeBlend", mode: "regime_calibrated", clamp: (value) => clampPercentValue(value, 0, 1) },
-    { key: "takeProfitAdaptiveIcScale", mode: "information_coefficient", clamp: (value) => clampPercentValue(value, 0, 2) },
-];
-
-function addBaseParamIfFinite(
-    baseParams: StrategyParams,
-    key: keyof BacktestSettings & string,
-    value: unknown,
-    normalize: (value: number) => number
-): void {
-    if (!Number.isFinite(value)) return;
-    baseParams[key] = normalize(Number(value));
-}
-
-function addModeSpecificTakeProfitSearchParams(baseParams: StrategyParams, settings: BacktestSettings): void {
-    for (const spec of TP_PARAM_SPECS) {
-        if (!spec.mode || !usesPercentageTakeProfitMode(settings, spec.mode)) {
-            continue;
-        }
-        addBaseParamIfFinite(baseParams, spec.key, settings[spec.key], spec.clamp);
-    }
-}
-
-function addBacktestOverrideIfFinite(
-    overrides: Partial<BacktestSettings>,
-    params: StrategyParams,
-    key: keyof BacktestSettings & string,
-    normalize: (value: number) => number
-): boolean {
-    const rawValue = params[key];
-    if (!Number.isFinite(rawValue)) return false;
-    (overrides as Record<string, number | undefined>)[key] = normalize(Number(rawValue));
-    return true;
-}
-
-function applyModeSpecificTakeProfitOverrides(
-    settings: BacktestSettings,
-    params: StrategyParams,
-    backtestOverrides: Partial<BacktestSettings>
-): boolean {
-    let hasOverrides = false;
-    for (const spec of TP_PARAM_SPECS) {
-        if (!spec.mode || !usesPercentageTakeProfitMode(settings, spec.mode)) {
-            continue;
-        }
-        hasOverrides = addBacktestOverrideIfFinite(backtestOverrides, params, spec.key, spec.clamp) || hasOverrides;
-    }
-    return hasOverrides;
-}
-
 function usesAtrRiskSettings(settings: BacktestSettings): boolean {
     if (settings.riskMode !== "simple") {
         return false;
@@ -322,9 +227,7 @@ export function buildFinderSearchBaseParams(
     if (settings.takeProfitEnabled && Number.isFinite(settings.takeProfitPercent)) {
         baseParams.takeProfitPercent = clampPercentValue(Number(settings.takeProfitPercent), 0, 100);
     }
-    addModeSpecificTakeProfitSearchParams(baseParams, settings);
-    return withExitStrategyBaseParams(baseParams, options?.exitStrategyBaseParams);
-}
+    return withExitStrategyBaseParams(baseParams, options?.exitStrategyBaseParams);}
 
 export function normalizeFinderCandidateParams(
     strategy: Strategy,
@@ -429,8 +332,6 @@ export function resolveFinderRiskOverrides(
         hasBacktestOverrides = true;
     }
 
-    hasBacktestOverrides = applyModeSpecificTakeProfitOverrides(settings, params, backtestOverrides) || hasBacktestOverrides;
-
     return hasBacktestOverrides ? { ...settings, ...backtestOverrides } : settings;
 }
 
@@ -484,7 +385,6 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
         return merged;
     }
 
-    const mergedRecord = merged as unknown as Record<string, number | undefined>;
     const usesAtrRisk =
         settings.riskSettingsToggle === true
         && settings.riskMode === "simple";
@@ -499,14 +399,6 @@ export function mergeFinderRiskParamsIntoBacktestSettings<
 
     if (Number.isFinite(params.takeProfitPercent)) {
         merged.takeProfitPercent = Number(params.takeProfitPercent);
-    }
-
-    for (const spec of TP_PARAM_SPECS) {
-        const rawValue = params[spec.key];
-        if (!Number.isFinite(rawValue)) {
-            continue;
-        }
-        mergedRecord[spec.key] = spec.clamp(Number(rawValue));
     }
 
     if (Number.isFinite(params.riskMaxHoldBars)) {

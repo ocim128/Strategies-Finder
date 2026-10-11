@@ -19,25 +19,10 @@ import {
     STOP_LOSS_ONLY_POSITION_EXIT_OPTIONS,
     updatePositionState,
 } from './exit-handlers';
-import {
-    createAdaptiveTakeProfitState,
-    registerAdaptiveTakeProfitPosition,
-    resolveAdaptiveTakeProfitOverrides,
-    updateAdaptiveTakeProfitPosition,
-    updateAdaptiveTakeProfitHistory,
-} from './adaptive-take-profit';
 import { isEntryBarAllowed } from '../../entry-time-filter';
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
 import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
-
-type AdaptiveTakeProfitHistoryUpdate = {
-    position: PositionState;
-    exitPrice: number;
-    exitReason: NonNullable<Trade['exitReason']>;
-    candle: OHLCVData;
-    closedCapital: number;
-};
 
 export { precomputeIndicators };
 
@@ -169,7 +154,6 @@ type EntryBuildContext = {
     advancedSizing: TradeSizingConfig["advancedSizing"];
     smartSizingState: SmartSizingState;
     winStreakRisk: WinStreakRiskState;
-    adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
 };
 
 function buildEntryPosition(
@@ -195,15 +179,6 @@ function buildEntryPosition(
         advancedSizing: context.advancedSizing,
         smartSizingState: context.smartSizingState,
         ...buildPositionRiskOverrides(context.settings, context.winStreakRisk),
-        ...buildPercentageTakeProfitOverrides(
-            context.settings,
-            signalToPositionDirection(signal.type),
-            signal.price,
-            // For next_open, the execution bar's full candle is not yet known at entry.
-            // Use the last closed bar (barIndex - 1) to match position-builder's ATR source.
-            context.settings.executionModel === 'next_open' ? barIndex - 1 : barIndex,
-            context.adaptiveTakeProfitState
-        ),
     });
 }
 
@@ -212,7 +187,6 @@ function registerOpenedPosition(args: {
     positions: PositionState[];
     smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>;
     settings: NormalizedSettings;
-    adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
     barIndex: number;
 }): void {
     const {
@@ -220,7 +194,6 @@ function registerOpenedPosition(args: {
         positions,
         smartSizingPositionState,
         settings,
-        adaptiveTakeProfitState,
         barIndex,
     } = args;
     // Group-anchored max-hold and close-all signal exits are unlimited-overlap
@@ -238,7 +211,6 @@ function registerOpenedPosition(args: {
         position.maxHoldGroupEntryBarIndex = maxHoldGroupEntryBarIndex;
     }
     registerSmartSizingPosition(smartSizingPositionState, position);
-    registerAdaptiveTakeProfitPosition(settings, adaptiveTakeProfitState, position, barIndex);
 }
 
 function openPositionFromSignal(args: {
@@ -249,7 +221,6 @@ function openPositionFromSignal(args: {
     positions: PositionState[];
     smartSizingPositionState: WeakMap<PositionState, SmartSizingPositionState>;
     config: NormalizedSettings;
-    adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>;
     tradeDirection: ReturnType<typeof normalizeTradeDirection>;
 }): { position: PositionState; entryCommission: number } | null {
     const opened = buildEntryPosition(args.entryBuildContext, args.signal, args.barIndex, args.capital);
@@ -260,7 +231,6 @@ function openPositionFromSignal(args: {
         positions: args.positions,
         smartSizingPositionState: args.smartSizingPositionState,
         settings: args.config,
-        adaptiveTakeProfitState: args.adaptiveTakeProfitState,
         barIndex: args.barIndex,
     });
     return {
@@ -516,7 +486,6 @@ function getSinglePositionFinderFastPathBlockers(
     // shared position builder and updated on every full close below, matching
     // the multi-position loop's updateSmartSizingState semantics exactly.
     if (sizingMode !== "percent" && sizingMode !== "fixed" && sizingMode !== "kelly_criterion") blockers.push(`sizing_${sizingMode}`);
-    if (hasActivePercentageTakeProfit(config) && config.takeProfitMode !== "fixed") blockers.push(`take_profit_mode_${config.takeProfitMode}`);
     if (config.trailingAtr !== 0) blockers.push("trailing_atr");
     if (config.partialTakeProfitAtR !== 0) blockers.push("partial_take_profit");
     if (config.breakEvenAtR !== 0) blockers.push("break_even_atr");
@@ -1332,30 +1301,6 @@ function resolveVelocitySizingScore(
     return state.fastProgressHit ? -0.15 : -0.75;
 }
 
-function buildPercentageTakeProfitOverrides(
-    config: NormalizedSettings,
-    positionDirection: 'long' | 'short',
-    entryPrice: number,
-    entryBarIndex: number,
-    adaptiveTakeProfitState: ReturnType<typeof createAdaptiveTakeProfitState>
-) {
-    const resolved = resolveAdaptiveTakeProfitOverrides(
-        config,
-        adaptiveTakeProfitState,
-        positionDirection,
-        entryPrice,
-        entryBarIndex
-    );
-
-    if (!resolved) {
-        return {};
-    }
-
-    return {
-        effectiveTakeProfitPercent: resolved.takeProfitPercent,
-    };
-}
-
 function combineCompactResults(
     data: OHLCVData[],
     initialCapital: number,
@@ -1705,10 +1650,10 @@ type FallbackSimulationAggregate = {
 /**
  * THE shared fallback position simulation behind `runBacktest` and
  * `runBacktestCompact`. One implementation of the duplicated trading-state
- * transitions: pending adaptive exits at the open, `next_open` open-only
+ * transitions: `next_open` open-only
  * exits + signal scan, backward position iteration with close-based exits,
- * signal entries/exits with re-entry and cooldown rules, end-of-bar
- * adaptive-history flushing, and end-of-data liquidation. Exit causality
+ * signal entries/exits with re-entry and cooldown rules, and end-of-data
+ * liquidation. Exit causality
  * (decisions from data at or before the deciding bar) is preserved by the
  * shared exit handler.
  *
@@ -1772,7 +1717,6 @@ function runFallbackPositionSimulation(args: {
     const winStreakRisk = createWinStreakRiskState();
     const smartSizingState = createSmartSizingState(initialCapital);
     const smartSizingPositionState = createSmartSizingPositionState();
-    const adaptiveTakeProfitState = createAdaptiveTakeProfitState(data, config, indicatorSeries, initialCapital);
     const entryBuildContext: EntryBuildContext = {
         initialCapital,
         positionSizePercent,
@@ -1787,19 +1731,6 @@ function runFallbackPositionSimulation(args: {
         advancedSizing,
         smartSizingState,
         winStreakRisk,
-        adaptiveTakeProfitState,
-    };
-    const pendingAdaptiveTakeProfitUpdates: AdaptiveTakeProfitHistoryUpdate[] = [];
-    const pendingAdaptiveTakeProfitExits = new Map<PositionState, NonNullable<Trade['exitReason']>>();
-
-    const queueAdaptiveTakeProfitUpdate = (
-        position: PositionState,
-        exitPrice: number,
-        exitReason: NonNullable<Trade['exitReason']>,
-        candle: OHLCVData,
-        closedCapital: number
-    ) => {
-        pendingAdaptiveTakeProfitUpdates.push({ position, exitPrice, exitReason, candle, closedCapital });
     };
 
     const finalizeClosedPosition = (
@@ -1808,7 +1739,9 @@ function runFallbackPositionSimulation(args: {
         exitPrice: number,
         exitReason: NonNullable<Trade['exitReason']>
     ) => {
-        queueAdaptiveTakeProfitUpdate(position, exitPrice, exitReason, candle, capital);
+        void candle;
+        void exitPrice;
+        void exitReason;
         updateWinStreakRiskState(winStreakRisk, position.realizedPnl);
         updateSmartSizingState(
             smartSizingState,
@@ -1817,40 +1750,6 @@ function runFallbackPositionSimulation(args: {
             sizingMode,
             advancedSizing
         );
-    };
-
-    const flushAdaptiveTakeProfitUpdates = () => {
-        for (let i = 0; i < pendingAdaptiveTakeProfitUpdates.length; i++) {
-            const update = pendingAdaptiveTakeProfitUpdates[i];
-            updateAdaptiveTakeProfitHistory(
-                config,
-                adaptiveTakeProfitState,
-                update.position,
-                update.exitPrice,
-                update.exitReason,
-                update.candle,
-                update.closedCapital
-            );
-        }
-        pendingAdaptiveTakeProfitUpdates.length = 0;
-    };
-
-    const applyAdaptiveTakeProfitAfterBar = (pos: PositionState, candle: OHLCVData, barIndex: number) => {
-        const adaptiveExit = updateAdaptiveTakeProfitPosition(config, adaptiveTakeProfitState, pos, candle, barIndex);
-        if (!adaptiveExit) {
-            return;
-        }
-
-        if (adaptiveExit.deferExecutionToNextBarOpen) {
-            pendingAdaptiveTakeProfitExits.set(pos, adaptiveExit.exitReason);
-            return;
-        }
-
-        const exitPrice = applySlippage(adaptiveExit.exitPrice, exitSideForDirection(pos.direction), slippageRate);
-        const { fullyClosed } = recordExit(pos, candle, exitPrice, pos.size, adaptiveExit.exitReason);
-        if (fullyClosed) {
-            finalizeClosedPosition(pos, candle, exitPrice, adaptiveExit.exitReason);
-        }
     };
 
     const recordExit = (
@@ -1891,7 +1790,6 @@ function runFallbackPositionSimulation(args: {
         if (pos.size <= 0) {
             const idx = positions.indexOf(pos);
             if (idx >= 0) positions.splice(idx, 1);
-            pendingAdaptiveTakeProfitExits.delete(pos);
             if (isEntryCooldownEnabled(config)) {
                 signalExitReentryCooldownUntilBarIndex = armSignalExitReentryCooldown(currentBarIndex, config.riskCooldownBars);
             }
@@ -1913,7 +1811,6 @@ function runFallbackPositionSimulation(args: {
         }
         if (!fullyClosed) {
             updatePositionState(candle, pos, config, indicatorSeries.atr[barIndex]);
-            applyAdaptiveTakeProfitAfterBar(pos, candle, barIndex);
         }
     };
 
@@ -1949,7 +1846,6 @@ function runFallbackPositionSimulation(args: {
             positions,
             smartSizingPositionState,
             config,
-            adaptiveTakeProfitState,
             tradeDirection,
         });
         if (opened) {
@@ -2011,7 +1907,7 @@ function runFallbackPositionSimulation(args: {
         barIterations += 1;
         assertBacktestLoopBound(barIterations, data.length + 1, "fallback bar scan");
         currentBarIndex = i;
-        if (omitEquityCurve && positions.length === 0 && pendingAdaptiveTakeProfitExits.size === 0) {
+        if (omitEquityCurve && positions.length === 0) {
             const nextSignalBarIndex = preparedSignalBarIndexes[signalIdx];
             if (nextSignalBarIndex === undefined) {
                 if (equityOut && outputs.fillEquityOnSkip) {
@@ -2029,19 +1925,6 @@ function runFallbackPositionSimulation(args: {
         }
         diagnostics && diagnostics.counts.barsScanned++;
         const candle = data[i]!;
-
-        for (let p = positions.length - 1; p >= 0; p--) {
-            const pos = positions[p]!;
-            const pendingReason = pendingAdaptiveTakeProfitExits.get(pos);
-            if (!pendingReason) continue;
-
-            pendingAdaptiveTakeProfitExits.delete(pos);
-            const exitPrice = applySlippage(candle.open, exitSideForDirection(pos.direction), slippageRate);
-            const { fullyClosed } = recordExit(pos, candle, exitPrice, pos.size, pendingReason);
-            if (fullyClosed) {
-                finalizeClosedPosition(pos, candle, exitPrice, pendingReason);
-            }
-        }
 
         if (config.executionModel === 'next_open') {
             for (let p = positions.length - 1; p >= 0; p--) {
@@ -2158,7 +2041,6 @@ function runFallbackPositionSimulation(args: {
             }
             if (!fullyClosed) {
                 updatePositionState(candle, pos, config, indicatorSeries.atr[i]!);
-                applyAdaptiveTakeProfitAfterBar(pos, candle, i);
             }
         }
 
@@ -2237,8 +2119,6 @@ function runFallbackPositionSimulation(args: {
                 }
             }
         }
-
-        flushAdaptiveTakeProfitUpdates();
 
         if (diagnostics && positions.length > 0) {
             diagnostics.counts.barsWithPosition++;

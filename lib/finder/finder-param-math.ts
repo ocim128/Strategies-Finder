@@ -52,18 +52,6 @@ export function computeParamRange(
     if (key === "stopLossPercent") {
         min = Math.max(0, min);
         max = Math.min(15, max);
-    } else if (key === "takeProfitMfeBootstrapPercentile") {
-        min = Math.max(1, min);
-        max = Math.min(99, max);
-    } else if (key === "takeProfitAdaptiveMinMultiplier" || key === "takeProfitAdaptiveMaxMultiplier") {
-        min = Math.max(0.1, min);
-        max = Math.min(5, max);
-    } else if (key === "takeProfitAdaptiveRegimeBlend") {
-        min = Math.max(0, min);
-        max = Math.min(1, max);
-    } else if (key === "takeProfitAdaptiveIcScale") {
-        min = Math.max(0, min);
-        max = Math.min(2, max);
     } else if (key === "takeProfitPercent") {
         min = Math.max(0, min);
         max = Math.min(100, max);
@@ -92,14 +80,6 @@ export function normalizeParamValue(
         next = Math.min(2, Math.max(0, Math.round(next)));
     } else if (options.includeFinderExtraBounds && key === "midpointBars") {
         next = Math.min(6, Math.max(1, Math.round(next)));
-    } else if (key === "takeProfitMfeBootstrapPercentile") {
-        next = Math.min(99, Math.max(1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitAdaptiveMinMultiplier" || key === "takeProfitAdaptiveMaxMultiplier") {
-        next = Math.min(5, Math.max(0.1, Number(next.toFixed(2))));
-    } else if (key === "takeProfitAdaptiveRegimeBlend") {
-        next = Math.min(1, Math.max(0, Number(next.toFixed(3))));
-    } else if (key === "takeProfitAdaptiveIcScale") {
-        next = Math.min(2, Math.max(0, Number(next.toFixed(3))));
     } else if (options.includeFinderExtraBounds && (key === "crossThreshold" || key === "minRangePct")) {
         next = Math.min(0.05, Math.max(0, Number(next.toFixed(4))));
     } else if (periodLike) {
@@ -126,22 +106,12 @@ export function normalizeParamValue(
         Number.isInteger(defaultValue) &&
         !percentLike &&
         key !== "stopLossPercent" &&
-        key !== "takeProfitPercent" &&
-        key !== "takeProfitMfeBootstrapPercentile" &&
-        key !== "takeProfitAdaptiveMinMultiplier" &&
-        key !== "takeProfitAdaptiveMaxMultiplier" &&
-        key !== "takeProfitAdaptiveRegimeBlend" &&
-        key !== "takeProfitAdaptiveIcScale"
+        key !== "takeProfitPercent"
     ) {
         next = Math.round(next);
     } else if (
         key === "stopLossPercent" ||
-        key === "takeProfitPercent" ||
-        key === "takeProfitMfeBootstrapPercentile" ||
-        key === "takeProfitAdaptiveMinMultiplier" ||
-        key === "takeProfitAdaptiveMaxMultiplier" ||
-        key === "takeProfitAdaptiveRegimeBlend" ||
-        key === "takeProfitAdaptiveIcScale"
+        key === "takeProfitPercent"
     ) {
         next = Number(next.toFixed(2));
     } else if (!Number.isInteger(defaultValue)) {

@@ -128,7 +128,7 @@ without improving the measured end-to-end workload.
 scans candles, manages positions, builds trade history and an equity curve, and
 calculates metrics. It supports the broad settings model, including execution
 timing, slippage, multiple positions, hold/cooldown controls,
-adaptive take profit, confirmation logic, and TypeScript smart sizing.
+confirmation logic, and TypeScript smart sizing.
 
 The executor also performs work around the simulation that is not part of the
 Rust contract:

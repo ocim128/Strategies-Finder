@@ -392,28 +392,6 @@ describe('Backtesting Engine - fallback characterization (full vs compact)', () 
         expect(compact.trades).to.deep.equal(full.trades);
     });
 
-    it('runs the fallback for adaptive take-profit and matches retained trades exactly', () => {
-        const data = makeData(60);
-        const signals = buyEveryNSignal(data, 5);
-        const settings = {
-            executionModel: 'signal_close' as const,
-            riskMode: 'percentage' as const,
-            takeProfitEnabled: true,
-            takeProfitPercent: 5,
-            takeProfitMode: 'mfe_bootstrap' as const,
-            maxOpenTrades: 1,
-        };
-
-        const full = runBacktest(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FALLBACK_OPTIONS });
-        const compact = runBacktestCompact(data, signals, 10000, 100, 0, settings, undefined, undefined, { ...FINDER_FALLBACK_OPTIONS });
-
-        assertFallbackUsed(full);
-        assertFallbackUsed(compact);
-        expect(full.totalTrades).to.be.greaterThan(0);
-        assertMetricsParity(full, compact, { netProfit: 1e-6, sharpeRatio: 1e-9 });
-        expect(compact.trades).to.deep.equal(full.trades);
-    });
-
     it('matches the full entry-time filter through the compact fast path', () => {
         const data = makeData(60).map((bar, index) => ({ ...bar, time: (1700000000 + index * 3600) as Time }));
         const signals = buyEveryNSignal(data, 5);

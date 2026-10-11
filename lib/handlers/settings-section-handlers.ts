@@ -49,14 +49,6 @@ function setSectionVisibility(section: HTMLElement | null, visible: boolean): vo
     section.classList.toggle('is-hidden', !visible);
 }
 
-function setInteractiveSectionState(section: HTMLElement | null, enabled: boolean): void {
-    if (!section) return;
-    setSectionVisibility(section, enabled);
-    setDisabledState(section.querySelectorAll<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>('input, select, textarea'), enabled);
-    setGroupDisabledState(section.querySelectorAll<HTMLElement>('.param-group'), enabled);
-}
-
-
 export function setupSettingsSections(dom: UiEventHandlersDom): void {
     const sectionFeatureBindings = {
         riskSettingsToggle: {
@@ -87,24 +79,12 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
     });
 
     const riskModeSelect = dom.riskMode;
-    const takeProfitModeSelect = dom.takeProfitMode;
     const riskSimpleAdvanced = dom.riskSimpleAdvanced;
     const riskPercentage = dom.riskPercentage;
 
     const riskPercentageGroups = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('.param-group')) : [];
     const riskPercentageInputs = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLInputElement>('input')) : [];
     const riskPercentageSelects = riskPercentage ? Array.from(riskPercentage.querySelectorAll<HTMLSelectElement>('select')) : [];
-    const takeProfitFields = riskPercentage
-        ? Array.from(riskPercentage.querySelectorAll<HTMLElement>('[data-tp-modes]'))
-        : [];
-    const applyTakeProfitMode = () => {
-        const mode = takeProfitModeSelect.value;
-        takeProfitFields.forEach((field) => {
-            const enabled = riskModeSelect.value === 'percentage'
-                && field.dataset.tpModes!.split(' ').includes(mode);
-            setInteractiveSectionState(field, enabled);
-        });
-    };
 
     const applyRiskMode = () => {
         const mode = riskModeSelect.value;
@@ -120,12 +100,9 @@ export function setupSettingsSections(dom: UiEventHandlersDom): void {
         setGroupDisabledState(riskPercentageGroups, isPercentage);
         setDisabledState(riskPercentageInputs, isPercentage);
         setDisabledState(riskPercentageSelects, isPercentage);
-
-        applyTakeProfitMode();
     };
 
     riskModeSelect.addEventListener('change', applyRiskMode);
-    takeProfitModeSelect.addEventListener('change', applyTakeProfitMode);
     applyRiskMode();
 
     const confirmationStrategiesInput = dom.confirmationStrategies;

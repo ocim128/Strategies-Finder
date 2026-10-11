@@ -3,7 +3,7 @@ import { BacktestSettings, OHLCVData, Signal, Time, TradeDirection } from '../..
 import { NormalizedSettings, MAX_OPEN_TRADES_UNLIMITED } from '../../types/backtest';
 import { toTimeKey } from '../../time-key';
 import { parseTimeToUnixSeconds } from '../../time-normalization';
-import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from '../../take-profit-settings';
+import { resolveTakeProfitMode } from '../../take-profit-settings';
 import { resolveEntryTimeFilter } from '../../entry-time-filter';
 
 export function toNumberOr(value: number | undefined, fallback: number): number {
@@ -58,14 +58,6 @@ export function normalizeBacktestSettings(settings?: BacktestSettings): Normaliz
         stopLossPercent: Math.max(0, toNumberOr(settings?.stopLossPercent, 0)),
         takeProfitPercent: Math.max(0, toNumberOr(settings?.takeProfitPercent, 0)),
         takeProfitMode: resolveTakeProfitMode(settings?.takeProfitMode),
-        takeProfitMfeBootstrapPercentile: clamp(toNumberOr(settings?.takeProfitMfeBootstrapPercentile, 60), 1, 99),
-        takeProfitAdaptiveLookbackTrades: Math.max(5, Math.round(toNumberOr(settings?.takeProfitAdaptiveLookbackTrades, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveLookbackTrades))),
-        takeProfitAdaptiveRecentWindow: Math.max(3, Math.round(toNumberOr(settings?.takeProfitAdaptiveRecentWindow, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRecentWindow))),
-        takeProfitAdaptiveMinMultiplier: Math.max(0.1, toNumberOr(settings?.takeProfitAdaptiveMinMultiplier, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMinMultiplier)),
-        takeProfitAdaptiveMaxMultiplier: Math.max(0.2, toNumberOr(settings?.takeProfitAdaptiveMaxMultiplier, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMaxMultiplier)),
-        takeProfitAdaptiveGridSteps: Math.max(3, Math.round(toNumberOr(settings?.takeProfitAdaptiveGridSteps, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveGridSteps))),
-        takeProfitAdaptiveRegimeBlend: clamp(toNumberOr(settings?.takeProfitAdaptiveRegimeBlend, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRegimeBlend), 0, 1),
-        takeProfitAdaptiveIcScale: clamp(toNumberOr(settings?.takeProfitAdaptiveIcScale, ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveIcScale), 0, 2),
         stopLossEnabled: settings?.stopLossEnabled ?? false,
         takeProfitEnabled: settings?.takeProfitEnabled ?? false,
         riskMinHoldBars: Math.max(0, Math.round(toNumberOr(settings?.riskMinHoldBars, 0))),

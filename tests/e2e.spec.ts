@@ -240,41 +240,14 @@ const verifySimplifiedSettings = async (page: Page): Promise<void> => {
         const saved = manager.getBacktestSettings();
         const risk = document.querySelector<HTMLDetailsElement>('[data-section="risk"]')!;
         risk.open = true;
-        const cases: Record<string, string[]> = {
-            fixed: [], mfe_bootstrap: ['MfeBootstrapPercentile'],
-            edge_weighted: ['AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier'],
-            expectancy_optimal: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier', 'AdaptiveGridSteps'],
-            regime_calibrated: ['AdaptiveLookbackTrades', 'AdaptiveGridSteps', 'AdaptiveRegimeBlend'],
-            information_coefficient: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier', 'AdaptiveIcScale'],
-            path_efficiency: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier'],
-            serial_dependency: ['AdaptiveLookbackTrades', 'AdaptiveRecentWindow', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier'],
-            minimum_surprisal: ['AdaptiveLookbackTrades', 'AdaptiveMinMultiplier', 'AdaptiveMaxMultiplier', 'AdaptiveGridSteps'],
-        };
         try {
-            for (const [mode, fields] of Object.entries(cases)) {
-                manager.applyBacktestSettings({ ...saved, riskSettingsToggle: true, riskMode: 'percentage',
-                    takeProfitMode: mode, takeProfitAdaptiveLookbackTrades: 53, takeProfitAdaptiveMinMultiplier: 0.85 });
-                for (const control of document.querySelectorAll<HTMLInputElement>('[data-tp-modes] input')) {
-                    const expected = fields.includes(control.id.replace('takeProfit', ''));
-                    if (control.disabled === expected || Boolean(control.getClientRects().length) !== expected) {
-                        throw new Error(`${mode}: incorrect visibility/enabled state for ${control.id}`);
-                    }
-                }
-                if (manager.getBacktestSettings().takeProfitAdaptiveLookbackTrades !== 53
-                    || manager.getBacktestSettings().takeProfitAdaptiveMinMultiplier !== 0.85) {
-                    throw new Error(`${mode}: shared fields were lost on restore`);
-                }
+            manager.applyBacktestSettings({ ...saved, riskSettingsToggle: true, riskMode: 'percentage', takeProfitMode: 'fixed' });
+            const select = document.getElementById('takeProfitMode') as HTMLSelectElement;
+            if (select.options.length !== 1 || select.options[0].value !== 'fixed') {
+                throw new Error('takeProfitMode must only offer Fixed %');
             }
-            manager.applyBacktestSettings({ ...saved, riskSettingsToggle: true, riskMode: 'percentage', takeProfitMode: 'expectancy_optimal' });
-            const control = document.getElementById('takeProfitAdaptiveLookbackTrades') as HTMLInputElement;
-            control.value = '61';
-            control.dispatchEvent(new Event('input', { bubbles: true }));
-            (document.getElementById('takeProfitMode') as HTMLSelectElement).value = 'serial_dependency';
-            document.getElementById('takeProfitMode')!.dispatchEvent(new Event('change', { bubbles: true }));
-            if (control.value !== '61' || control.disabled) throw new Error('Changing mode lost the canonical edit');
-            manager.applyBacktestSettings({ ...saved, riskMode: 'simple' });
-            if (Array.from(document.querySelectorAll<HTMLInputElement>('[data-tp-modes] input')).some(input => !input.disabled)) {
-                throw new Error('ATR mode left adaptive percentage inputs enabled');
+            if (document.querySelectorAll('[data-tp-modes]').length !== 0) {
+                throw new Error('adaptive take-profit controls should be removed');
             }
         } finally {
             manager.applyBacktestSettings(saved);
@@ -294,9 +267,7 @@ const verifySimplifiedSettings = async (page: Page): Promise<void> => {
     }, riskOpen);
     await page.click('[data-section="risk"] > summary .section-toggle');
     await page.waitForFunction(() => document.getElementById('settingsSaveStatus')!.dataset.state === 'saved');
-    const persisted = await page.evaluate(() => JSON.parse(localStorage.getItem('playground_app_settings')!).data.backtestSettings);
-    if (persisted.takeProfitAdaptiveLookbackTrades === 61) throw new Error('Restoration failed to replace the edited adaptive value');
-    console.log('Canonical take-profit modes, editing, restore, autosave and native disclosures passed.');
+    console.log('Canonical take-profit mode, restore, autosave and native disclosures passed.');
 };
 
 const verifySettingsPerformanceFeedback = async (page: Page): Promise<void> => {

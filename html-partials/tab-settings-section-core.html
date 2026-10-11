@@ -212,23 +212,6 @@
                 <div class="risk-percentage is-hidden" id="riskPercentage">
                     <div class="param-row">
                         <div class="param-group">
-                            <label class="param-label">Take Profit Mode</label>
-                            <select class="param-input" id="takeProfitMode">
-                                <option value="fixed" selected>Fixed %</option>
-                                <option value="mfe_bootstrap">MFE Bootstrap %</option>
-                                <option value="edge_weighted">Edge-Weighted</option>
-                                <option value="expectancy_optimal">Expectancy-Optimal</option>
-                                <option value="regime_calibrated">Regime-Calibrated</option>
-                                <option value="information_coefficient">Information Coefficient</option>
-                                <option value="path_efficiency">Path Efficiency</option>
-                                <option value="serial_dependency">Serial Dependency</option>
-                                <option value="minimum_surprisal">Minimum Surprisal</option>
-                            </select>
-                            <div class="param-hint">`fixed` is static. `mfe_bootstrap` is non-causal. The adaptive modes use entry context or rolling closed-trade history to find where the TP edge concentrates.</div>
-                        </div>
-                    </div>
-                    <div class="param-row">
-                        <div class="param-group">
                             <div class="param-row-header">
                                 <label class="param-label">Stop Loss (%)</label>
                                 <label class="section-toggle section-toggle--sm" aria-label="Toggle stop loss">
@@ -242,7 +225,7 @@
                         </div>
                         <div class="param-group">
                             <div class="param-row-header">
-                                <label class="param-label">Base Take Profit (%)</label>
+                                <label class="param-label">Take Profit (%)</label>
                                 <label class="section-toggle section-toggle--sm"
                                     aria-label="Toggle take profit">
                                     <input type="checkbox" id="takeProfitToggle">
@@ -251,54 +234,9 @@
                             </div>
                             <input type="number" class="param-input" id="takeProfitPercent" value="10" min="0.1"
                                 max="100" step="0.1">
-                            <div class="param-hint">`fixed` uses this directly. `mfe_bootstrap` uses it as the fallback when the dataset cannot produce a percentile target.</div>
+                            <div class="param-hint">Static percentage target. Measured against the entry fill price.</div>
                         </div>
                     </div>
-                    <div class="param-row is-hidden" data-tp-modes="mfe_bootstrap">
-                        <div class="param-group">
-                            <label class="param-label">MFE Percentile</label>
-                            <input type="number" class="param-input" id="takeProfitMfeBootstrapPercentile" value="60" min="1"
-                                max="99" step="1">
-                            <div class="param-hint">Uses percentile of the full dataset's MFE distribution as TP%. Higher = more aggressive. NON-CAUSAL: uses future data for target estimation.</div>
-                        </div>
-                    </div>
-                    <div class="param-row">
-                        <div class="param-group is-hidden" data-tp-modes="expectancy_optimal regime_calibrated information_coefficient path_efficiency serial_dependency minimum_surprisal">
-                            <label class="param-label" for="takeProfitAdaptiveLookbackTrades">Lookback Trades</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveLookbackTrades" value="40" min="5" step="1">
-                        </div>
-                        <div class="param-group is-hidden" data-tp-modes="serial_dependency">
-                            <label class="param-label" for="takeProfitAdaptiveRecentWindow">Recent Window</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveRecentWindow" value="12" min="3" step="1">
-                        </div>
-                        <div class="param-group is-hidden" data-tp-modes="edge_weighted expectancy_optimal information_coefficient path_efficiency serial_dependency minimum_surprisal">
-                            <label class="param-label" for="takeProfitAdaptiveMinMultiplier">Min TP Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveMinMultiplier" value="0.75" min="0.1" max="5" step="0.05">
-                        </div>
-                        <div class="param-group is-hidden" data-tp-modes="edge_weighted expectancy_optimal information_coefficient path_efficiency serial_dependency minimum_surprisal">
-                            <label class="param-label" for="takeProfitAdaptiveMaxMultiplier">Max TP Multiplier</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveMaxMultiplier" value="1.5" min="0.1" max="5" step="0.05">
-                        </div>
-                        <div class="param-group is-hidden" data-tp-modes="expectancy_optimal regime_calibrated minimum_surprisal">
-                            <label class="param-label" for="takeProfitAdaptiveGridSteps">Grid Steps</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveGridSteps" value="7" min="3" max="25" step="1">
-                        </div>
-                        <div class="param-group is-hidden" data-tp-modes="regime_calibrated">
-                            <label class="param-label" for="takeProfitAdaptiveRegimeBlend">Regime Blend</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveRegimeBlend" value="0.6" min="0" max="1" step="0.05">
-                        </div>
-                        <div class="param-group is-hidden" data-tp-modes="information_coefficient">
-                            <label class="param-label" for="takeProfitAdaptiveIcScale">IC Scale</label>
-                            <input type="number" class="param-input" id="takeProfitAdaptiveIcScale" value="0.5" min="0" max="2" step="0.05">
-                        </div>
-                    </div>
-                    <div class="param-hint is-hidden" data-tp-modes="edge_weighted">Scales the base TP by current entry quality, signal strength, and regime alignment on the signal bar.</div>
-                    <div class="param-hint is-hidden" data-tp-modes="expectancy_optimal">Searches a TP grid around the base target and selects the candidate with the best geometric growth on rolling closed trades.</div>
-                    <div class="param-hint is-hidden" data-tp-modes="regime_calibrated">Blends the global TP optimum with the current regime's historical TP optimum. Higher = more regime-specific.</div>
-                    <div class="param-hint is-hidden" data-tp-modes="information_coefficient">Uses correlation between entry quality and realized MFE to widen or tighten the target.</div>
-                    <div class="param-hint is-hidden" data-tp-modes="path_efficiency">Measures how cleanly winners reach profit. Cleaner paths earn wider TP, messy winners tighten it.</div>
-                    <div class="param-hint is-hidden" data-tp-modes="serial_dependency">Compares recent vs. rolling hit-rate behavior. Hot streaks widen TP, cold streaks tighten it.</div>
-                    <div class="param-hint is-hidden" data-tp-modes="minimum_surprisal">Chooses the TP that best matches observed hit/miss outcomes given the entry-quality distribution, minimizing outcome surprisal.</div>
                 </div>
             </div>
         </div>

@@ -58,11 +58,6 @@ export function getTypescriptEngineRequirementReasons(
         && (settings.riskEntryConfirmationPercent ?? 0) > 0
         && (settings.riskEntryConfirmationBars ?? 0) > 0;
     const usesEntryTimeFilter = settings.entryTimeFilterEnabled === true;
-    const usesAdaptivePercentageTakeProfit =
-        settings.riskMode === 'percentage'
-        && settings.takeProfitEnabled === true
-        && settings.takeProfitMode !== undefined
-        && settings.takeProfitMode !== 'fixed';
 
     const usesMultiPosition = (settings.maxOpenTrades ?? 1) > 1;
 
@@ -93,9 +88,7 @@ export function getTypescriptEngineRequirementReasons(
     if (usesRiskCooldown && !hasRustCapability(capabilities, RUST_RISK_COOLDOWN_CAPABILITY)) {
         if (!reasons.includes('rust_capability_missing')) reasons.push('rust_capability_missing');
     }
-    if (usesAdaptivePercentageTakeProfit) reasons.push('adaptive take profit is enabled');
-    if (usesMultiPosition) reasons.push('multiple open positions are enabled');
-    if (usesDisableSignalExits) reasons.push('signal exits are disabled');
+    if (usesMultiPosition) reasons.push('multiple open positions are enabled');    if (usesDisableSignalExits) reasons.push('signal exits are disabled');
     if (usesSlippage) reasons.push('slippage is enabled');
     return reasons;
 }
@@ -134,14 +127,6 @@ export const RUST_UNSUPPORTED_BACKTEST_SETTING_KEYS = [
     "exitStrategyOverrideEnabled",
     "exitStrategyKey",
     "exitStrategyParams",
-    "takeProfitMfeBootstrapPercentile",
-    "takeProfitAdaptiveLookbackTrades",
-    "takeProfitAdaptiveRecentWindow",
-    "takeProfitAdaptiveMinMultiplier",
-    "takeProfitAdaptiveMaxMultiplier",
-    "takeProfitAdaptiveGridSteps",
-    "takeProfitAdaptiveRegimeBlend",
-    "takeProfitAdaptiveIcScale",
     "invertSignals",
     "flipAfterConsecutiveLosses",
     "flipCooldownTrades",

@@ -671,7 +671,7 @@ describe("trade ledger checker report (replay)", () => {
         mkdirSync(ineligibleDir, { recursive: true });
         writeFileSync(path.join(ineligibleDir, "provenance.json"), JSON.stringify({
             ...eligibleProvenance,
-            replay: { ...eligibleProvenance.replay, replayEligible: false, replayBlockers: ["adaptive_take_profit:mfe_bootstrap"] },
+            replay: { ...eligibleProvenance.replay, replayEligible: false, replayBlockers: ["risk_entry_confirmation"] },
         }));
         writeFileSync(path.join(ineligibleDir, "ledger.jsonl"), "");
         let message = "";
@@ -681,7 +681,7 @@ describe("trade ledger checker report (replay)", () => {
             message = error instanceof Error ? error.message : String(error);
         }
         expect(message).to.contain("not eligible");
-        expect(message).to.contain("adaptive_take_profit");
+        expect(message).to.contain("risk_entry_confirmation");
         rmSync(ineligibleDir, { recursive: true, force: true });
     });
 

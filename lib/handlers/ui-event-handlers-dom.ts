@@ -5,7 +5,6 @@ import {
     type RequiredDomElementMap,
 } from "../dom-utils";
 import { ADVANCED_SIZING_DOM_IDS } from "../advanced-sizing-dom";
-import { TAKE_PROFIT_DOM_IDS } from "../take-profit-dom";
 
 const UI_EVENT_HANDLER_DOM_IDS = {
     symbolSelector: "symbolSelector",
@@ -28,14 +27,6 @@ const UI_EVENT_HANDLER_DOM_IDS = {
     riskSettingsToggle: "riskSettingsToggle",
     riskSettings: "riskSettings",
     riskMode: "riskMode",
-    takeProfitMode: "takeProfitMode",
-    takeProfitAdaptiveLookbackTrades: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveLookbackTrades,
-    takeProfitAdaptiveRecentWindow: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRecentWindow,
-    takeProfitAdaptiveMinMultiplier: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMinMultiplier,
-    takeProfitAdaptiveMaxMultiplier: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveMaxMultiplier,
-    takeProfitAdaptiveGridSteps: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveGridSteps,
-    takeProfitAdaptiveRegimeBlend: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveRegimeBlend,
-    takeProfitAdaptiveIcScale: TAKE_PROFIT_DOM_IDS.takeProfitAdaptiveIcScale,
     tradeDirection: "tradeDirection",
     confirmationStrategiesToggle: "confirmationStrategiesToggle",
     confirmationStrategiesSettings: "confirmationStrategiesSettings",
@@ -95,14 +86,6 @@ type UiEventTypedControls = {
     copyBacktestEndpoint: HTMLButtonElement;
     riskSettingsToggle: HTMLInputElement;
     riskMode: HTMLSelectElement;
-    takeProfitMode: HTMLSelectElement;
-    takeProfitAdaptiveLookbackTrades: HTMLInputElement;
-    takeProfitAdaptiveRecentWindow: HTMLInputElement;
-    takeProfitAdaptiveMinMultiplier: HTMLInputElement;
-    takeProfitAdaptiveMaxMultiplier: HTMLInputElement;
-    takeProfitAdaptiveGridSteps: HTMLInputElement;
-    takeProfitAdaptiveRegimeBlend: HTMLInputElement;
-    takeProfitAdaptiveIcScale: HTMLInputElement;
     tradeDirection: HTMLSelectElement;
     confirmationStrategiesToggle: HTMLInputElement;
     confirmationStrategies: HTMLInputElement;

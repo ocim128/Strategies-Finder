@@ -398,7 +398,6 @@ describe('Backtest settings compatibility', () => {
             riskMode: 'percentage',
             stopLossToggle: true,
             takeProfitToggle: 1,
-            takeProfitMfeBootstrapPercentile: 120,
             riskWinStreakStopLossToggle: true,
             riskWinStreakStopLossAfterWins: 0.2,
             riskWinStreakStopLossPercent: -5,
@@ -407,7 +406,6 @@ describe('Backtest settings compatibility', () => {
 
         expect(resolved.stopLossEnabled).to.equal(true);
         expect(resolved.takeProfitEnabled).to.equal(true);
-        expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(99);
         expect(resolved.riskWinStreakStopLossEnabled).to.equal(false);
         expect(resolved.riskWinStreakStopLossAfterWins).to.equal(3);
         expect(resolved.riskWinStreakStopLossPercent).to.equal(0);
@@ -451,57 +449,16 @@ describe('Backtest settings compatibility', () => {
         expect(resolved.executionModel).to.equal('next_close');
     });
 
-    it('preserves MFE bootstrap take-profit settings for subscription execution settings', () => {
+    it('normalizes removed take-profit modes back to fixed mode', () => {
         const resolved = resolveSubscriptionExecutionBacktestSettings({
             riskMode: 'percentage',
             takeProfitEnabled: true,
             takeProfitPercent: 8,
             takeProfitMode: 'mfe_bootstrap',
-            takeProfitMfeBootstrapPercentile: 73,
         } as unknown as BacktestSettings);
 
-        expect(resolved.takeProfitMode).to.equal('mfe_bootstrap');
-        expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(73);
-    });
-
-    it('preserves new adaptive TP modes and clamps their shared settings', () => {
-        const resolved = resolveBacktestSettingsFromRaw({
-            riskSettingsToggle: true,
-            riskMode: 'percentage',
-            takeProfitToggle: true,
-            takeProfitPercent: 8,
-            takeProfitMode: 'information_coefficient',
-            takeProfitAdaptiveLookbackTrades: 2,
-            takeProfitAdaptiveRecentWindow: 1,
-            takeProfitAdaptiveMinMultiplier: 0.01,
-            takeProfitAdaptiveMaxMultiplier: 7,
-            takeProfitAdaptiveGridSteps: 1,
-            takeProfitAdaptiveRegimeBlend: 2,
-            takeProfitAdaptiveIcScale: -1,
-        } as unknown as BacktestSettings);
-
-        expect(resolved.takeProfitMode).to.equal('information_coefficient');
-        expect(resolved.takeProfitAdaptiveLookbackTrades).to.equal(5);
-        expect(resolved.takeProfitAdaptiveRecentWindow).to.equal(3);
-        expect(resolved.takeProfitAdaptiveMinMultiplier).to.equal(0.1);
-        expect(resolved.takeProfitAdaptiveMaxMultiplier).to.equal(7);
-        expect(resolved.takeProfitAdaptiveGridSteps).to.equal(3);
-        expect(resolved.takeProfitAdaptiveRegimeBlend).to.equal(1);
-        expect(resolved.takeProfitAdaptiveIcScale).to.equal(0);
-    });
-
-    it('requires TS engine for new adaptive take-profit modes', () => {
-        expect(requiresTypescriptEngine({
-            riskMode: 'percentage',
-            takeProfitEnabled: true,
-            takeProfitMode: 'edge_weighted',
-        })).to.equal(true);
-
-        expect(requiresTypescriptEngine({
-            riskMode: 'percentage',
-            takeProfitEnabled: true,
-            takeProfitMode: 'minimum_surprisal',
-        })).to.equal(true);
+        expect(resolved.takeProfitMode).to.equal('fixed');
+        expect(resolved.takeProfitPercent).to.equal(8);
     });
 
     it('normalizes deleted percentage TP modes back to fixed mode', () => {
@@ -539,7 +496,7 @@ describe('Backtest settings compatibility', () => {
         });
 
         expect(normalized.takeProfitMode).to.equal('fixed');
-        expect(normalized.takeProfitMfeBootstrapPercentile).to.equal(73);
+        expect('takeProfitMfeBootstrapPercentile' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
         expect('takeProfitVelocityFastBars' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
         expect('takeProfitVelocitySlowBars' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
         expect('takeProfitVelocityProgressPercent' in (normalized as unknown as Record<string, unknown>)).to.equal(false);
@@ -716,14 +673,6 @@ describe('Backtest settings compatibility', () => {
             trailingAtr: 0,
             stopLossPercent: 4.5,
             takeProfitPercent: 12,
-            takeProfitMfeBootstrapPercentile: 60,
-            takeProfitAdaptiveLookbackTrades: 40,
-            takeProfitAdaptiveRecentWindow: 12,
-            takeProfitAdaptiveMinMultiplier: 0.75,
-            takeProfitAdaptiveMaxMultiplier: 1.5,
-            takeProfitAdaptiveGridSteps: 7,
-            takeProfitAdaptiveRegimeBlend: 0.6,
-            takeProfitAdaptiveIcScale: 0.5,
             riskMinHoldBars: 8,
             riskMaxHoldBars: 0,
             riskCooldownBars: 0,
@@ -851,14 +800,6 @@ describe('Backtest settings compatibility', () => {
             trailingAtr: 0,
             stopLossPercent: 0,
             takeProfitPercent: 0,
-            takeProfitMfeBootstrapPercentile: 60,
-            takeProfitAdaptiveLookbackTrades: 40,
-            takeProfitAdaptiveRecentWindow: 12,
-            takeProfitAdaptiveMinMultiplier: 0.75,
-            takeProfitAdaptiveMaxMultiplier: 1.5,
-            takeProfitAdaptiveGridSteps: 7,
-            takeProfitAdaptiveRegimeBlend: 0.6,
-            takeProfitAdaptiveIcScale: 0.5,
             riskMinHoldBars: 0,
             riskMaxHoldBars: 0,
             riskCooldownBars: 0,
@@ -932,14 +873,6 @@ describe('Backtest settings compatibility', () => {
             trailingAtr: 2,
             stopLossPercent: 0,
             takeProfitPercent: 0,
-            takeProfitMfeBootstrapPercentile: 60,
-            takeProfitAdaptiveLookbackTrades: 40,
-            takeProfitAdaptiveRecentWindow: 12,
-            takeProfitAdaptiveMinMultiplier: 0.75,
-            takeProfitAdaptiveMaxMultiplier: 1.5,
-            takeProfitAdaptiveGridSteps: 7,
-            takeProfitAdaptiveRegimeBlend: 0.6,
-            takeProfitAdaptiveIcScale: 0.5,
             riskMinHoldBars: 1,
             riskMaxHoldBars: 10.4,
             riskCooldownBars: 5,
@@ -997,12 +930,10 @@ describe('Backtest settings compatibility', () => {
             riskSettingsToggle: true,
             riskMode: 'percentage',
             takeProfitToggle: true,
-            takeProfitMfeBootstrapPercentile: 120,
             maxOpenTrades: 3,
             riskCooldownBars: 0.2,
             riskEntryConfirmationPercent: 150,
         } as unknown as BacktestSettings);
-        expect(resolved.takeProfitMfeBootstrapPercentile).to.equal(99);
         expect(resolved.maxOpenTrades).to.equal(3);
         expect(resolved.riskCooldownBars).to.equal(0);
         expect(resolved.riskEntryConfirmationPercent).to.equal(100);

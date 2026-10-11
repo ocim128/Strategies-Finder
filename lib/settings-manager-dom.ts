@@ -4,7 +4,6 @@ export const SETTINGS_MANAGER_REQUIRED_IDS = [
     "strategySelect",
     "settingsTab",
     "riskMode",
-    "takeProfitMode",
     "tradeDirection",
 ] as const;
 
@@ -13,7 +12,6 @@ export function createSettingsManagerDom() {
         strategySelect: getRequiredElement<HTMLSelectElement>("strategySelect"),
         settingsTab: getRequiredElement("settingsTab"),
         riskMode: getRequiredElement("riskMode"),
-        takeProfitMode: getRequiredElement("takeProfitMode"),
         tradeDirection: getRequiredElement("tradeDirection"),
     };
 }

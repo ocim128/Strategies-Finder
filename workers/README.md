@@ -60,7 +60,7 @@ It deduplicates signals in D1, so the same entry is only produced once.
 Notes:
 - Send at least `MIN_CLOSED_CANDLES` closed candles per call. The code fallback is `200`; `wrangler.toml` currently sets `120`.
 - `time` can be unix seconds, unix milliseconds, ISO string, or business-day object.
-- Subscription `backtestSettings` normalize the percentage take-profit mode through `resolveTakeProfitMode` (`lib/take-profit-settings.ts`): unknown values fall back to `fixed`, and the adaptive percentage modes (`mfe_bootstrap`, `edge_weighted`, `expectancy_optimal`, `regime_calibrated`, `information_coefficient`, `path_efficiency`, `serial_dependency`, `minimum_surprisal`) are accepted.
+- Subscription `backtestSettings` normalize the percentage take-profit mode through `resolveTakeProfitMode` (`lib/take-profit-settings.ts`): every value resolves to `fixed`, the only supported mode.
 
 ## Automatic Scheduled Runs (new candle only)
 

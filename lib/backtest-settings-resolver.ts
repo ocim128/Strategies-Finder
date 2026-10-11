@@ -14,7 +14,7 @@ import {
     toBooleanLike,
     toFiniteNumber,
 } from "./settings-parse-utils";
-import { ADAPTIVE_TAKE_PROFIT_DEFAULTS, resolveTakeProfitMode } from "./take-profit-settings";
+import { resolveTakeProfitMode } from "./take-profit-settings";
 import { DEFAULT_ENTRY_TIME_FILTER, resolveEntryTimeFilter } from "./entry-time-filter";
 
 export const CAPITAL_DEFAULTS = Object.freeze({
@@ -38,14 +38,6 @@ export const EFFECTIVE_BACKTEST_DEFAULTS = Object.freeze({
     stopLossPercent: 5,
     takeProfitPercent: 10,
     takeProfitMode: "fixed" as NonNullable<BacktestSettings["takeProfitMode"]>,
-    takeProfitMfeBootstrapPercentile: 60,
-    takeProfitAdaptiveLookbackTrades: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveLookbackTrades,
-    takeProfitAdaptiveRecentWindow: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRecentWindow,
-    takeProfitAdaptiveMinMultiplier: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMinMultiplier,
-    takeProfitAdaptiveMaxMultiplier: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveMaxMultiplier,
-    takeProfitAdaptiveGridSteps: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveGridSteps,
-    takeProfitAdaptiveRegimeBlend: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveRegimeBlend,
-    takeProfitAdaptiveIcScale: ADAPTIVE_TAKE_PROFIT_DEFAULTS.takeProfitAdaptiveIcScale,
     stopLossEnabled: true,
     takeProfitEnabled: true,
     riskMinHoldBars: 10,
@@ -436,30 +428,6 @@ export function resolveBacktestSettingsFromRaw(
         takeProfitPercent: usePercentRisk
             ? readNumber(raw, "takeProfitPercent", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitPercent)
             : 0,
-        takeProfitMfeBootstrapPercentile: usePercentRisk
-            ? Math.max(1, Math.min(99, readNumber(raw, "takeProfitMfeBootstrapPercentile", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitMfeBootstrapPercentile,
-        takeProfitAdaptiveLookbackTrades: usePercentRisk
-            ? Math.max(5, Math.round(readNumber(raw, "takeProfitAdaptiveLookbackTrades", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveLookbackTrades)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveLookbackTrades,
-        takeProfitAdaptiveRecentWindow: usePercentRisk
-            ? Math.max(3, Math.round(readNumber(raw, "takeProfitAdaptiveRecentWindow", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRecentWindow)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRecentWindow,
-        takeProfitAdaptiveMinMultiplier: usePercentRisk
-            ? Math.max(0.1, readNumber(raw, "takeProfitAdaptiveMinMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMinMultiplier))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMinMultiplier,
-        takeProfitAdaptiveMaxMultiplier: usePercentRisk
-            ? Math.max(0.2, readNumber(raw, "takeProfitAdaptiveMaxMultiplier", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMaxMultiplier))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveMaxMultiplier,
-        takeProfitAdaptiveGridSteps: usePercentRisk
-            ? Math.max(3, Math.round(readNumber(raw, "takeProfitAdaptiveGridSteps", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveGridSteps)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveGridSteps,
-        takeProfitAdaptiveRegimeBlend: usePercentRisk
-            ? Math.max(0, Math.min(1, readNumber(raw, "takeProfitAdaptiveRegimeBlend", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRegimeBlend)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveRegimeBlend,
-        takeProfitAdaptiveIcScale: usePercentRisk
-            ? Math.max(0, Math.min(2, readNumber(raw, "takeProfitAdaptiveIcScale", EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveIcScale)))
-            : EFFECTIVE_BACKTEST_DEFAULTS.takeProfitAdaptiveIcScale,
         riskMinHoldBars: riskEnabled
             ? Math.max(1, Math.round(readNumber(raw, "riskMinHoldBars", EFFECTIVE_BACKTEST_DEFAULTS.riskMinHoldBars)))
             : 0,
