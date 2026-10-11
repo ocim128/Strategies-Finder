@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
     buildAssetOpportunityCandidateFingerprint,
     buildAssetOpportunityForwardOosBaseline,
+    buildAssetOpportunityForwardOosBaselinesByBasis,
     buildAssetOpportunityNextExitOosBaseline,
     buildAssetOpportunityMetadataPayload,
     buildAssetOpportunityPerformancePayload,
@@ -353,6 +354,88 @@ describe("Asset Opportunity metadata payload serializer", () => {
             observedResults: 2,
             totalSamples: 2,
         }]);
+    });
+
+    it("merges per-basis forward measurements into the archive row", () => {
+        const pairMetrics = {
+            ignoreLastBars: 5,
+            basis: "pair" as const,
+            horizons: [
+                { bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 },
+            ],
+        };
+        const quoteMetrics = {
+            ignoreLastBars: 5,
+            basis: "quote_only" as const,
+            horizons: [
+                { bars: 1, pnlPercent: -3, averagePnlPercent: -3, winRatePercent: 0, sampleSize: 1 },
+            ],
+        };
+        const baseContinuation = {
+            ignoreLastBars: 5,
+            basis: "base_only" as const,
+            horizons: [
+                { bars: 1, pnlPercent: 2, averagePnlPercent: 2, winRatePercent: 100, sampleSize: 1 },
+            ],
+        };
+        const payload = buildAssetOpportunityPerformancePayload({
+            result: makeAssetResult({
+                oosHorizonMetrics: pairMetrics,
+                oosHorizonMetricsByBasis: { pair: pairMetrics, quote_only: quoteMetrics },
+                activePositionContinuationMetricsByBasis: { base_only: baseContinuation },
+            }),
+            rank: 1,
+        });
+        // Fresh-entry metrics win per basis; OPEN continuation fills the gap.
+        expect(payload.forwardOosPerformanceByBasis).to.deep.equal({
+            pair: pairMetrics,
+            quote_only: quoteMetrics,
+            base_only: baseContinuation,
+        });
+
+        // Single-basis results keep the row shape unchanged for old consumers.
+        const legacy = buildAssetOpportunityPerformancePayload({ result: makeAssetResult(), rank: 1 });
+        expect(Object.prototype.hasOwnProperty.call(legacy, "forwardOosPerformanceByBasis")).to.equal(false);
+    });
+
+    it("builds per-basis baselines from the same-pass measurements", () => {
+        const quoteMetrics = (pnlPercent: number, sampleSize: number) => ({
+            ignoreLastBars: 5,
+            basis: "quote_only" as const,
+            horizons: [
+                { bars: 1, pnlPercent, averagePnlPercent: pnlPercent, winRatePercent: pnlPercent > 0 ? 100 : 0, sampleSize },
+            ],
+        });
+        const results = [
+            makeAssetResult({
+                oosHorizonMetricsByBasis: {
+                    pair: { ignoreLastBars: 5, basis: "pair", horizons: [{ bars: 1, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 }] },
+                    quote_only: quoteMetrics(-3, 1),
+                },
+            }),
+            makeAssetResult({
+                symbol: "ETHUSDT",
+                oosHorizonMetricsByBasis: {
+                    quote_only: quoteMetrics(6, 2),
+                },
+            }),
+        ];
+        const baseline = buildAssetOpportunityForwardOosBaseline(results, "quote_only");
+        expect(baseline.eligibleCandidateCount).to.equal(2);
+        expect(baseline.horizons).to.deep.equal([{
+            bars: 1,
+            averagePnlPercent: 1.5,
+            sampleWeightedAveragePnlPercent: ( -3 * 1 + 6 * 2 ) / 3,
+            positiveResults: 1,
+            observedResults: 2,
+            totalSamples: 3,
+        }]);
+        const byBasis = buildAssetOpportunityForwardOosBaselinesByBasis(results);
+        expect([...Object.keys(byBasis ?? {})].sort()).to.deep.equal(["pair", "quote_only"]);
+        expect(byBasis?.quote_only).to.deep.equal(baseline);
+
+        // No per-basis data keeps the unscoped baseline only.
+        expect(buildAssetOpportunityForwardOosBaselinesByBasis([makeAssetResult()])).to.equal(null);
     });
 
     it("keeps next-exit archive metrics separate from fixed horizons", () => {

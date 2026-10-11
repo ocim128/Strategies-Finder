@@ -11,6 +11,9 @@
  *
  * The CLI combines all batch runs by default. Pass --batch-run-id <id> to
  * analyze one run; repeated holdout/sort blocks keep only the latest archive.
+ * Pass --basis <pair|base_only|quote_only> to re-base every forward outcome to
+ * one fixed-horizon price basis (rows captured all bases in one pass; legacy
+ * single-basis rows contribute only when their stored basis matches).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -28,6 +31,7 @@ import type {
     ArchiveHorizon,
     AssetOpportunityArchiveRecord,
     AssetOpportunityArchiveRow,
+    AssetOpportunityArchiveHorizonBasis,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
 // Parser/record types live in the shared leaf module now; the public names are
@@ -37,11 +41,13 @@ export type {
     ArchiveHorizon,
     AssetOpportunityArchiveRecord,
     AssetOpportunityArchiveRow,
+    AssetOpportunityArchiveHorizonBasis,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
-const REPORT_SCHEMA_VERSION = 10;
+const REPORT_SCHEMA_VERSION = 12;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
+const HORIZON_BASES = ["pair", "base_only", "quote_only"] as const;
 const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
     netProfit: "netProfit",
     netProfitPercent: "netProfitPercent",
@@ -160,6 +166,8 @@ export interface HoldoutHorizonAnalysis {
     bestPnlPercent: number | null;
     worstPnlPercent: number | null;
     totalSamples: number;
+    /** Observations measured at the last candle because the horizon exceeded the holdout. */
+    ongoingRows: number;
     baselineAveragePnlPercent: number | null;
     baselinePositiveRatePercent: number | null;
     baselineEligibleCandidateCount: number | null;
@@ -348,6 +356,8 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     selectedBlockCount: number;
     analyzedBlockCount: number;
     measurementMode: "fixed_horizon" | "next_exit";
+    /** Price basis every forward outcome was re-based to; present only with --basis. */
+    horizonBasis?: AssetOpportunityArchiveHorizonBasis;
     gainExclusion?: { thresholdPercent: number; excludedObservations: number };
     excludedRedundantSortMetrics: string[];
     topK: number;
@@ -394,7 +404,75 @@ interface AnalyzeOptions {
     batchRunId?: string;
     includeAllBatchRuns?: boolean;
     topK?: number;
+    /** Report every forward outcome for one price basis instead of the run's selected basis. */
+    horizonBasis?: AssetOpportunityArchiveHorizonBasis;
     generatedAt?: string;
+}
+
+interface HorizonBasisSelectionCounts {
+    rowsFromPerBasisMap: number;
+    rowsFromLegacyMatch: number;
+    rowsWithoutBasis: number;
+    baselinesFromPerBasisMap: number;
+    baselinesFromLegacyMatch: number;
+    baselinesDropped: number;
+}
+
+/**
+ * Rewire each selected row's unified forward outcome (and each record's
+ * baseline) to one price basis so every downstream aggregation stays
+ * basis-consistent. Rows carrying the per-basis map use its entry; legacy
+ * single-basis rows contribute only when their stored basis matches. A legacy
+ * baseline is kept only when every forward row in the record measured the
+ * requested basis — the archived aggregate cannot be re-based after the fact.
+ */
+export function selectForwardOosBasis(
+    records: AssetOpportunityArchiveRecord[],
+    basis: AssetOpportunityArchiveHorizonBasis,
+): { records: AssetOpportunityArchiveRecord[]; counts: HorizonBasisSelectionCounts } {
+    const counts: HorizonBasisSelectionCounts = {
+        rowsFromPerBasisMap: 0,
+        rowsFromLegacyMatch: 0,
+        rowsWithoutBasis: 0,
+        baselinesFromPerBasisMap: 0,
+        baselinesFromLegacyMatch: 0,
+        baselinesDropped: 0,
+    };
+    const rewired = records.map((record) => {
+        const topResults = record.topResults.map((row) => {
+            const perBasis = row.forwardOosPerformanceByBasis?.[basis];
+            if (perBasis) {
+                counts.rowsFromPerBasisMap += 1;
+                return row.forwardOosPerformance === perBasis
+                    ? row
+                    : { ...row, forwardOosPerformance: perBasis };
+            }
+            const legacy = row.forwardOosPerformance;
+            if (legacy && legacy.basis === basis) {
+                counts.rowsFromLegacyMatch += 1;
+                return row;
+            }
+            counts.rowsWithoutBasis += 1;
+            return row.forwardOosPerformance ? { ...row, forwardOosPerformance: null } : row;
+        });
+        let baseline = record.baseline;
+        const perBasisBaseline = record.baselineByBasis?.[basis];
+        if (perBasisBaseline) {
+            counts.baselinesFromPerBasisMap += 1;
+            baseline = perBasisBaseline;
+        } else if (baseline) {
+            const basisConsistent = record.topResults.every((row) =>
+                !row.forwardOosPerformance || row.forwardOosPerformance.basis === basis);
+            if (basisConsistent) {
+                counts.baselinesFromLegacyMatch += 1;
+            } else {
+                baseline = null;
+                counts.baselinesDropped += 1;
+            }
+        }
+        return { ...record, topResults, baseline };
+    });
+    return { records: rewired, counts };
 }
 
 interface BatchRunSelection {
@@ -531,7 +609,10 @@ function percentOrNull(value: number): number | null {
     return Number.isFinite(value) ? value : null;
 }
 
-function calculateHorizonAnalysis(values: Array<{ pnlPercent: number; sampleSize: number }>, horizonBars: number): HoldoutHorizonAnalysis {
+function calculateHorizonAnalysis(
+    values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }>,
+    horizonBars: number,
+): HoldoutHorizonAnalysis {
     const totalSamples = values.reduce((sum, value) => sum + value.sampleSize, 0);
     const unweightedTotal = values.reduce((sum, value) => sum + value.pnlPercent, 0);
     const weightedTotal = values.reduce((sum, value) => sum + value.pnlPercent * value.sampleSize, 0);
@@ -551,6 +632,7 @@ function calculateHorizonAnalysis(values: Array<{ pnlPercent: number; sampleSize
         bestPnlPercent: values.length > 0 ? Math.max(...pnlValues) : null,
         worstPnlPercent: values.length > 0 ? Math.min(...pnlValues) : null,
         totalSamples,
+        ongoingRows: values.filter((value) => value.ongoing === true).length,
         baselineAveragePnlPercent: null,
         baselinePositiveRatePercent: null,
         baselineEligibleCandidateCount: null,
@@ -558,11 +640,11 @@ function calculateHorizonAnalysis(values: Array<{ pnlPercent: number; sampleSize
 }
 
 function calculateCandidateHorizonAnalysis(observations: CandidateObservation[], horizonBars: number): CandidateHoldoutAnalysis["horizons"][string] {
-    const values: Array<{ pnlPercent: number; sampleSize: number }> = [];
+    const values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }> = [];
     for (const observation of observations) {
         const horizon = observation.horizons.find((candidate) => candidate.bars === horizonBars);
         if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
-        values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize });
+        values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
     }
     const result = calculateHorizonAnalysis(values, horizonBars);
     return {
@@ -662,12 +744,14 @@ function candidateKeyForRow(row: AssetOpportunityArchiveRow): string {
 }
 
 function compareCandidates(left: CandidateHoldoutAnalysis, right: CandidateHoldoutAnalysis, horizonBars: number): number {
-    const leftHorizon = left.horizons[String(horizonBars)]!;
-    const rightHorizon = right.horizons[String(horizonBars)]!;
+    // A basis filter can drop every forward outcome, leaving no horizon keys;
+    // missing horizons sort by coverage alone instead of crashing.
+    const leftHorizon = left.horizons[String(horizonBars)];
+    const rightHorizon = right.horizons[String(horizonBars)];
     return right.holdoutCount - left.holdoutCount
-        || (rightHorizon.positiveRatePercent ?? -1) - (leftHorizon.positiveRatePercent ?? -1)
-        || (rightHorizon.sampleWeightedAveragePnlPercent ?? Number.NEGATIVE_INFINITY)
-            - (leftHorizon.sampleWeightedAveragePnlPercent ?? Number.NEGATIVE_INFINITY)
+        || (rightHorizon?.positiveRatePercent ?? -1) - (leftHorizon?.positiveRatePercent ?? -1)
+        || (rightHorizon?.sampleWeightedAveragePnlPercent ?? Number.NEGATIVE_INFINITY)
+            - (leftHorizon?.sampleWeightedAveragePnlPercent ?? Number.NEGATIVE_INFINITY)
         || left.candidateKey.localeCompare(right.candidateKey);
 }
 
@@ -980,14 +1064,14 @@ function buildSortHorizonAnalyses(
     matchBaseline: boolean,
 ): HoldoutHorizonAnalysis[] {
     return horizonBars.map((horizonBarsValue) => {
-        const values: Array<{ pnlPercent: number; sampleSize: number }> = [];
+        const values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }> = [];
         const contributingHoldouts = new Set<number>();
         for (const record of records) {
             const selected = record.topResults.slice(0, topK);
             for (const row of selected) {
                 const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
                 if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
-                values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize });
+                values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
                 contributingHoldouts.add(record.holdoutBars);
             }
         }
@@ -1305,7 +1389,7 @@ function buildStrategyPerformance(
         occurrences: number;
         holdoutBars: Set<number>;
         sortMetrics: Set<string>;
-        values: Map<number, Array<{ pnlPercent: number; sampleSize: number }>>;
+        values: Map<number, Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }>>;
     }>();
     for (const { record, row } of archiveRows(records, topK)) {
         if (!row.strategyId) continue;
@@ -1322,7 +1406,7 @@ function buildStrategyPerformance(
         for (const horizon of row.forwardOosPerformance?.horizons ?? []) {
             if (horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
             const values = group.values.get(horizon.bars) ?? [];
-            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize });
+            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
             group.values.set(horizon.bars, values);
         }
         groups.set(row.strategyId, group);
@@ -1355,12 +1439,12 @@ function buildArchiveHorizonAnalyses(
     excludedStrategyId?: string,
 ): HoldoutHorizonAnalysis[] {
     return horizonBars.map((horizonBarsValue) => {
-        const values: Array<{ pnlPercent: number; sampleSize: number }> = [];
+        const values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }> = [];
         for (const { row } of archiveRows(records, topK)) {
             if (excludedStrategyId && row.strategyId === excludedStrategyId) continue;
             const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
             if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
-            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize });
+            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
         }
         return calculateHorizonAnalysis(values, horizonBarsValue);
     });
@@ -1437,7 +1521,7 @@ function buildSignalCandleHourPerformance(
         occurrences: number;
         holdoutBars: Set<number>;
         strategyIds: Set<string>;
-        values: Map<number, Array<{ pnlPercent: number; sampleSize: number }>>;
+        values: Map<number, Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }>>;
     }>();
     for (const { record, row } of archiveRows(records, topK)) {
         const hour = row[field];
@@ -1454,7 +1538,7 @@ function buildSignalCandleHourPerformance(
         for (const horizon of row.forwardOosPerformance?.horizons ?? []) {
             if (horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
             const values = group.values.get(horizon.bars) ?? [];
-            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize });
+            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
             group.values.set(horizon.bars, values);
         }
         groups.set(hour, group);
@@ -1517,6 +1601,23 @@ export function analyzeAssetOpportunityArchive(
         throw new Error(`Selected batch runs contain mixed forward measurement modes: ${[...measurementModes].sort().join(", ")}`);
     }
     const measurementMode = measurementModes.has("next_exit") ? "next_exit" : "fixed_horizon";
+    // Re-base every forward outcome to one price basis before any aggregation
+    // (including gain exclusion, which trims forwardOosPerformance) so all
+    // downstream analysis stays basis-consistent.
+    const horizonBasisSelection = options.horizonBasis && measurementMode === "fixed_horizon"
+        ? selectForwardOosBasis(selected.records, options.horizonBasis)
+        : null;
+    if (horizonBasisSelection) selected.records = horizonBasisSelection.records;
+    const horizonBasisNotes: string[] = options.horizonBasis && measurementMode === "next_exit"
+        ? [`--basis ${options.horizonBasis} has no effect on next-exit archives: next-exit outcomes replay the pair trade and are basis-independent.`]
+        : horizonBasisSelection
+            ? [
+                `Forward horizon basis filter: ${options.horizonBasis}. ${horizonBasisSelection.counts.rowsFromPerBasisMap} row outcomes came from per-basis maps, ${horizonBasisSelection.counts.rowsFromLegacyMatch} from legacy single-basis rows, ${horizonBasisSelection.counts.rowsWithoutBasis} selected rows had no ${options.horizonBasis} measurement and contribute only selection metadata.`,
+                ...(horizonBasisSelection.counts.baselinesDropped > 0
+                    ? [`${horizonBasisSelection.counts.baselinesDropped} archive blocks could not be re-based to ${options.horizonBasis}; their all-candidate baseline comparisons are unavailable in this report.`]
+                    : []),
+            ]
+            : [];
     const topK = Math.max(1, Math.floor(options.topK ?? DEFAULT_TOP_K));
     const availableSortMetrics = new Set(selected.records.map((record) => record.sortMetric));
     const excludedRedundantSortMetrics = availableSortMetrics.has("netProfit") && availableSortMetrics.has("netProfitPercent")
@@ -1593,6 +1694,8 @@ export function analyzeAssetOpportunityArchive(
         : [];
     const horizonBars = [...new Set(sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)))]
         .sort((left, right) => left - right);
+    const ongoingObservationTotal = sorts.reduce((total, sort) => total
+        + sort.horizons.reduce((sum, horizon) => sum + horizon.ongoingRows, 0), 0);
     const strategyPerformance = measurementMode === "fixed_horizon"
         ? buildStrategyPerformance(analysisRecords, topK, horizonBars)
         : [];
@@ -1626,6 +1729,7 @@ export function analyzeAssetOpportunityArchive(
         selectedBlockCount: selected.records.length,
         analyzedBlockCount: analysisRecords.length,
         measurementMode,
+        ...(options.horizonBasis ? { horizonBasis: options.horizonBasis } : {}),
         ...(options.excludeGains100 ? { gainExclusion: { thresholdPercent: 100, excludedObservations } } : {}),
         excludedRedundantSortMetrics,
         topK,
@@ -1652,6 +1756,7 @@ export function analyzeAssetOpportunityArchive(
                 "Fixed-horizon exclusions apply independently per row/horizon; other horizons and historical selection metadata remain intact. Next-exit exclusions remove outcomes from the original top K before aggregation.",
                 "All-candidate baseline and deltas are unavailable in this variant: archived aggregate baselines cannot be filtered without individual candidate outcomes.",
             ] : []),
+            ...horizonBasisNotes,
             "Forward OOS metrics are descriptive evidence, not a trading rule or probability.",
             "Holdout values are overlapping/nested windows and must not be treated as independent experiments.",
             ...(selected.batchRunIds.length > 1
@@ -1671,6 +1776,9 @@ export function analyzeAssetOpportunityArchive(
                 ? [
                     "Per-sort all-candidate averages and deltas use holdouts with at least one valid selected-row forward sample.",
                     "Samples count valid selected-row forward observations. Fresh entries use their forward metric; an OPEN EOD row uses continuation from the holdout boundary close in the existing position direction.",
+                    ...(ongoingObservationTotal > 0
+                        ? [`${ongoingObservationTotal} forward observations were ongoing: the horizon exceeded the holdout, so the return is measured at the last available candle (mark-to-market), not at the full horizon. Ongoing rows are counted in the aggregates and flagged per row/horizon; prefer completed horizons for cross-holdout comparisons.`]
+                        : []),
                     "OPEN EOD continuation is an evaluation measurement from the boundary close, not a claim that a new signal or order occurred. Coverage shows valid observations over selected top-K rows.",
                     "Older archives without forward metrics for OPEN EOD rows cannot contribute those rows; rerun Finder to archive the unified measurement.",
                 ]
@@ -1977,6 +2085,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         `Holdout windows: ${formatHoldoutWindows(report.holdoutBars)}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
         `Forward measurement: ${report.measurementMode}`,
+        ...(report.horizonBasis ? [`Forward horizon basis: ${report.horizonBasis}`] : []),
         ...(report.gainExclusion ? [
             `Gain exclusion: >= +${report.gainExclusion.thresholdPercent}% (excluded ${report.gainExclusion.excludedObservations} top-K observations across analyzed sort blocks; no replacements)`,
         ] : []),
@@ -2000,7 +2109,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
     lines.push(
         "",
         "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
-        "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Samples",
+        "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Ongoing | Samples",
     );
     const primarySummaryHorizon = report.sorts.some((sort) => sort.horizons.some((horizon) => horizon.horizonBars === 12))
         ? 12
@@ -2027,6 +2136,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
                 formatPercent(horizon.worstPnlPercent),
                 formatPercent(horizon.baselineAveragePnlPercent),
                 formatPercent(delta),
+                String(horizon.ongoingRows),
                 String(horizon.totalSamples),
             ].join(" | "));
         }
@@ -2207,6 +2317,13 @@ function main(): void {
     const topKValue = Number(getArgument(process.argv.slice(2), "--top-k") ?? DEFAULT_TOP_K);
     const topK = Number.isInteger(topKValue) && topKValue > 0 ? topKValue : DEFAULT_TOP_K;
     const outputPrefix = path.resolve(getArgument(process.argv.slice(2), "--output-prefix") ?? path.join(archiveDirectory, "holdout-analysis"));
+    const requestedBasis = getArgument(process.argv.slice(2), "--basis");
+    const horizonBasis = HORIZON_BASES.find((basis) => basis === requestedBasis);
+    if (requestedBasis !== undefined && !horizonBasis) {
+        console.error(`[asset-opportunity-holdouts] Invalid --basis "${requestedBasis}". Use one of: ${HORIZON_BASES.join(", ")}.`);
+        process.exitCode = 1;
+        return;
+    }
     try {
         const records = readAssetOpportunityArchive(archiveDirectory);
         const report = analyzeAssetOpportunityArchive(records, {
@@ -2214,6 +2331,7 @@ function main(): void {
             batchRunId: requestedBatchRunId,
             includeAllBatchRuns: requestedBatchRunId === undefined,
             topK,
+            ...(horizonBasis ? { horizonBasis } : {}),
             excludeGains100: process.argv.includes("--exclude-gains-100"),
         });
         const renderedReport = renderAssetOpportunityHoldoutReport(report);

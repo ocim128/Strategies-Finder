@@ -12,7 +12,6 @@ import {
 	DEFAULT_FINDER_ASSET_OOS_HORIZONS,
 	normalizeFinderAssetEvalLastBars,
 	normalizeFinderAssetEvalWindowMode,
-	normalizeFinderAssetOosHorizonBasis,
 	normalizeFinderAssetOosBatchHoldoutRange,
 	normalizeFinderAssetOosMeasurementMode,
 	normalizeFinderAssetOosHorizons,
@@ -66,7 +65,6 @@ export type FinderPersistedUiState = {
 	assetOpportunityMinFreshSupport: number;
 	assetOpportunityIncludeOpenPositions: boolean;
 	assetOpportunityOosMeasurementMode: "fixed_horizon" | "next_exit";
-	assetOpportunityOosHorizonBasis: "pair" | "base_only" | "quote_only";
 	assetOpportunityOosIgnoreLastBars: number;
 	assetOpportunityOosHorizons: string;
 	assetOpportunityEvalWindowMode: "fixed" | "range_bar";
@@ -122,7 +120,6 @@ export const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	assetOpportunityMinFreshSupport: 2,
 	assetOpportunityIncludeOpenPositions: false,
 	assetOpportunityOosMeasurementMode: "fixed_horizon",
-	assetOpportunityOosHorizonBasis: "pair",
 	assetOpportunityOosIgnoreLastBars: 0,
 	assetOpportunityOosHorizons: DEFAULT_FINDER_ASSET_OOS_HORIZONS.join(","),
 	assetOpportunityEvalWindowMode: "fixed",
@@ -295,10 +292,7 @@ export function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		: DEFAULT_FINDER_UI_STATE.assetOpportunityMinFreshSupport;
 	const assetOpportunityOosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
 		source.assetOpportunityOosMeasurementMode,
-	);
-	const assetOpportunityOosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
-		source.assetOpportunityOosHorizonBasis,
-	);
+	);;
 	const assetOpportunityOosIgnoreLastBars = normalizeFinderAssetOosIgnoreLastBars(
 		source.assetOpportunityOosIgnoreLastBars,
 	);
@@ -359,7 +353,6 @@ export function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		assetOpportunityMinFreshSupport,
 		assetOpportunityIncludeOpenPositions: source.assetOpportunityIncludeOpenPositions === true,
 		assetOpportunityOosMeasurementMode,
-		assetOpportunityOosHorizonBasis,
 		assetOpportunityOosIgnoreLastBars,
 		assetOpportunityOosHorizons,
 		assetOpportunityEvalWindowMode,

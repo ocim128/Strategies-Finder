@@ -1831,7 +1831,6 @@ describe("Finder controls shared form conversion", () => {
         dom.finderAssetMinFreshSupport.value = "0";
         dom.finderAssetIncludeOpenPositions.checked = true;
         dom.finderAssetOosMeasurementMode.value = "next_exit";
-        dom.finderAssetOosHorizonBasis.value = "quote_only";
         dom.finderAssetOosIgnoreLastBars.value = "7";
         dom.finderAssetEvalWindowMode.value = "range_bar";
         dom.finderAssetEvalWindowBars.value = "120";
@@ -1842,7 +1841,6 @@ describe("Finder controls shared form conversion", () => {
         expect(controls.uiState.assetOpportunityMinFreshSupport).to.equal(1);
         expect(controls.uiState.assetOpportunityIncludeOpenPositions).to.equal(true);
         expect(controls.uiState.assetOpportunityOosMeasurementMode).to.equal("next_exit");
-        expect(controls.uiState.assetOpportunityOosHorizonBasis).to.equal("quote_only");
         expect(controls.uiState.assetOpportunityOosIgnoreLastBars).to.equal(7);
         expect(controls.uiState.assetOpportunityEvalWindowMode).to.equal("range_bar");
         expect(controls.uiState.assetOpportunityEvalWindowBars).to.equal(120);
@@ -1856,7 +1854,6 @@ describe("Finder controls shared form conversion", () => {
             minFreshSupport: 1,
             includeOpenPositions: true,
             oosMeasurementMode: "next_exit",
-            oosHorizonBasis: "quote_only",
             oosIgnoreLastBars: 7,
             evalLastBars: 120,
             evalWindowMode: "range_bar",

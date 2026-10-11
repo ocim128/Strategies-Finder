@@ -122,13 +122,13 @@ import {
     normalizeFinderAssetEvalLastBars,
     normalizeFinderAssetEvalWindowMode,
     normalizeFinderAssetOosBatchHoldoutRange,
-    normalizeFinderAssetOosHorizonBasis,
     normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
 } from "../finder-asset-opportunity-oos";
 import {
     buildAssetOpportunityForwardOosBaseline,
+    buildAssetOpportunityForwardOosBaselinesByBasis,
     buildAssetOpportunityNextExitOosBaseline,
     buildAssetOpportunityPerformancePayload,
 } from "../finder-asset-opportunity-metadata";
@@ -1983,7 +1983,6 @@ export async function processFinderAssetOpportunityBatchRun(
             minFreshSupport: input.minFreshSupport,
             includeOpenPositions: input.options.assetOpportunity?.includeOpenPositions === true,
             oosMeasurementMode: input.options.assetOpportunity?.oosMeasurementMode,
-            oosHorizonBasis: input.options.assetOpportunity?.oosHorizonBasis,
             oosHorizons: input.options.assetOpportunity?.oosHorizons,
             oosIgnoreLastBars: holdoutBars,
             evalLastBars: input.options.assetOpportunity?.evalLastBars,
@@ -2054,6 +2053,9 @@ export async function processFinderAssetOpportunityBatchRun(
         const baseline = measurementMode === "fixed_horizon"
             ? buildAssetOpportunityForwardOosBaseline(iteration.results)
             : null;
+        const baselineByBasis = measurementMode === "fixed_horizon"
+            ? buildAssetOpportunityForwardOosBaselinesByBasis(iteration.results)
+            : null;
         const nextExitBaseline = measurementMode === "next_exit"
             ? buildAssetOpportunityNextExitOosBaseline(iteration.results)
             : null;
@@ -2077,6 +2079,7 @@ export async function processFinderAssetOpportunityBatchRun(
                     sortMetric,
                     topResults,
                     baseline,
+                    baselineByBasis,
                     measurementMode,
                     nextExitBaseline,
                 };
@@ -2580,9 +2583,6 @@ async function prepareAssetOpportunityRunPayload(
                     includeOpenPositions: parsedOptions.assetOpportunity.includeOpenPositions === true,
                     oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(
                         parsedOptions.assetOpportunity.oosMeasurementMode,
-                    ),
-                    oosHorizonBasis: normalizeFinderAssetOosHorizonBasis(
-                        parsedOptions.assetOpportunity.oosHorizonBasis,
                     ),
                     oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(
                         parsedOptions.assetOpportunity.oosIgnoreLastBars,

@@ -30,6 +30,8 @@ export interface ArchiveHorizon {
     bars: number;
     averagePnlPercent: number | null;
     sampleSize: number;
+    /** Measured at the last available candle because the horizon exceeded the holdout. */
+    ongoing?: boolean;
 }
 
 export interface ArchiveHorizonPerformance {
@@ -55,6 +57,8 @@ export interface AssetOpportunityArchiveRow {
     totalTradesCappedValue?: number | null;
     strategyCoverageCount?: number | null;
     forwardOosPerformance?: ArchiveHorizonPerformance | null;
+    /** Per-basis forward measurements captured in the same pass; absent on single-basis (older) rows. */
+    forwardOosPerformanceByBasis?: Partial<Record<AssetOpportunityArchiveHorizonBasis, ArchiveHorizonPerformance>> | null;
     nextExitOosPerformance?: {
         ignoreLastBars?: number;
         status?: "exited" | "censored" | "unavailable";
@@ -74,6 +78,8 @@ export interface AssetOpportunityArchiveRecord {
     measurementMode?: string;
     topResults: AssetOpportunityArchiveRow[];
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    /** All-result baseline per price basis; absent on single-basis (older) blocks. */
+    baselineByBasis?: Partial<Record<AssetOpportunityArchiveHorizonBasis, AssetOpportunityForwardOosBaseline>> | null;
     nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
 }
 
@@ -212,7 +218,12 @@ function parseArchiveHorizonPerformance(value: unknown): ArchiveHorizonPerforman
             if (bars === null || (averagePnlPercent === null && horizon.averagePnlPercent !== null)) {
                 return [];
             }
-            return [{ bars, averagePnlPercent, sampleSize }];
+            return [{
+                bars,
+                averagePnlPercent,
+                sampleSize,
+                ...(horizon.ongoing === true ? { ongoing: true } : {}),
+            }];
         })
         : [];
     return {
@@ -222,6 +233,17 @@ function parseArchiveHorizonPerformance(value: unknown): ArchiveHorizonPerforman
         basis: value.basis === "pair" || value.basis === "base_only" || value.basis === "quote_only" ? value.basis : undefined,
         horizons,
     };
+}
+
+/** Parse the per-basis forward map; unknown basis keys and unusable entries are dropped. */
+function parseArchiveForwardOosByBasis(value: unknown): AssetOpportunityArchiveRow["forwardOosPerformanceByBasis"] {
+    if (!isRecord(value)) return undefined;
+    const parsed: NonNullable<AssetOpportunityArchiveRow["forwardOosPerformanceByBasis"]> = {};
+    for (const basis of ["pair", "base_only", "quote_only"] as const) {
+        const entry = parseArchiveHorizonPerformance(value[basis]);
+        if (entry) parsed[basis] = entry;
+    }
+    return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
 function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityArchiveRow[] {
@@ -234,6 +256,7 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
         }
         const forwardOosPerformance = parseArchiveHorizonPerformance(row.forwardOosPerformance)
             ?? parseArchiveHorizonPerformance(row.activePositionContinuationPerformance);
+        const forwardOosPerformanceByBasis = parseArchiveForwardOosByBasis(row.forwardOosPerformanceByBasis);
         const nextExit = row.nextExitOosPerformance;
         let nextExitOosPerformance: AssetOpportunityArchiveRow["nextExitOosPerformance"] = null;
         if (isRecord(nextExit)) {
@@ -291,6 +314,7 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
                 ? null
                 : asFiniteNumber(row.strategyCoverageCount),
             forwardOosPerformance,
+            ...(forwardOosPerformanceByBasis ? { forwardOosPerformanceByBasis } : {}),
             nextExitOosPerformance,
         };
     });
@@ -300,7 +324,7 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
 export function parseAssetOpportunityArchiveText(text: string, sourceFile = "archive file"): AssetOpportunityArchiveRecord[] {
     const normalized = text.replace(/\r\n?/g, "\n").trimEnd();
     const blockPattern = new RegExp(
-        `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
+        `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive baseline by basis: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
         "gm",
     );
     const records: AssetOpportunityArchiveRecord[] = [];
@@ -311,10 +335,20 @@ export function parseAssetOpportunityArchiveText(text: string, sourceFile = "arc
         }
         let parsedRows: unknown;
         try {
-            parsedRows = JSON.parse(match[8]!);
+            parsedRows = JSON.parse(match[9]!);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             throw new Error(`Invalid JSON in ${sourceFile}: ${detail}`);
+        }
+        let baselineByBasis: AssetOpportunityArchiveRecord["baselineByBasis"];
+        if (match[7]) {
+            const parsedMap = JSON.parse(match[7]) as Record<string, unknown>;
+            const map: NonNullable<AssetOpportunityArchiveRecord["baselineByBasis"]> = {};
+            for (const basis of ["pair", "base_only", "quote_only"] as const) {
+                const baseline = parseArchiveBaseline(parsedMap[basis], sourceFile);
+                if (baseline) map[basis] = baseline;
+            }
+            baselineByBasis = Object.keys(map).length > 0 ? map : undefined;
         }
         records.push({
             sourceFile,
@@ -325,7 +359,8 @@ export function parseAssetOpportunityArchiveText(text: string, sourceFile = "arc
             measurementMode: match[5] || undefined,
             topResults: parseArchiveRows(parsedRows, sourceFile),
             baseline: match[6] ? parseArchiveBaseline(JSON.parse(match[6]), sourceFile) : null,
-            nextExitBaseline: match[7] ? parseNextExitBaseline(JSON.parse(match[7]), sourceFile) : null,
+            ...(baselineByBasis ? { baselineByBasis } : {}),
+            nextExitBaseline: match[8] ? parseNextExitBaseline(JSON.parse(match[8]), sourceFile) : null,
         });
     }
     if (records.length === 0 && normalized.length > 0) {

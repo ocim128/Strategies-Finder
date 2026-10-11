@@ -2445,7 +2445,6 @@ describe("Asset Opportunity base-only OOS base caching", () => {
                     candidatePoolSize: 1,
                     minFreshSupport: 1,
                     oosMeasurementMode: "fixed_horizon" as const,
-                    oosHorizonBasis: "base_only" as const,
                     oosIgnoreLastBars: ignoreLastBars,
                     oosHorizons: [1, 2, 3],
                 },
@@ -2513,7 +2512,6 @@ describe("Asset Opportunity quote-only OOS quote caching", () => {
                     candidatePoolSize: 1,
                     minFreshSupport: 1,
                     oosMeasurementMode: "fixed_horizon" as const,
-                    oosHorizonBasis: "quote_only" as const,
                     oosIgnoreLastBars: ignoreLastBars,
                     oosHorizons: [1, 2, 3],
                 },
@@ -2540,8 +2538,10 @@ describe("Asset Opportunity quote-only OOS quote caching", () => {
             );
             expect(output.results).to.have.length(2);
             for (const result of output.results) {
-                expect(result.oosHorizonMetrics?.basis).to.equal("quote_only");
-                expect(result.oosHorizonMetrics?.horizons[0]?.pnlPercent)
+                expect(result.oosHorizonMetrics?.basis).to.equal("pair");
+                const quoteMetrics = result.oosHorizonMetricsByBasis?.quote_only;
+                expect(quoteMetrics?.basis).to.equal("quote_only");
+                expect(quoteMetrics?.horizons[0]?.pnlPercent)
                     .to.be.closeTo(-100 / (137 - iterationIndex), 1e-9);
             }
         }

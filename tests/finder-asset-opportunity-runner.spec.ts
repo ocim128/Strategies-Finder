@@ -901,7 +901,9 @@ describe("Asset Opportunity runner", () => {
             horizons: [
                 { bars: 1, pnlPercent: 10, averagePnlPercent: 10, winRatePercent: 100, sampleSize: 1 },
                 { bars: 3, pnlPercent: -5, averagePnlPercent: -5, winRatePercent: 0, sampleSize: 1 },
-                { bars: 5, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
+                // Horizon 5 exceeds the 4-bar holdout: measured ongoing at the
+                // last available candle (close 96 vs the 100 boundary entry).
+                { bars: 5, pnlPercent: -4, averagePnlPercent: -4, winRatePercent: 0, sampleSize: 1, ongoing: true },
             ],
         });
         expect(output.outcomes[0]!.diagnostics?.slicedHistoricalBars).to.equal(5);
@@ -943,7 +945,6 @@ describe("Asset Opportunity runner", () => {
                         minFreshSupport: 1,
                         oosIgnoreLastBars: 2,
                         oosHorizons: [1, 3, 5],
-                        oosHorizonBasis: basis,
                     },
                 }),
                 settings: { ...settings, executionModel, tradeDirection },
@@ -966,8 +967,13 @@ describe("Asset Opportunity runner", () => {
             expect(output.results[0]!.signalAgeBars).to.equal(1);
             const expectedPnl = executionModel === "next_close" ? 0
                 : basis === "base_only" ? -50 : basis === "quote_only" ? 75 : tradeDirection === "short" ? 40 : -40;
-            expect(output.results[0]!.oosHorizonMetrics?.basis).to.equal(basis);
-            const horizon = output.results[0]!.oosHorizonMetrics!.horizons[0]!;
+            // The pair basis is always primary; leg bases live in the map.
+            expect(output.results[0]!.oosHorizonMetrics?.basis).to.equal("pair");
+            const basisMetrics = basis === "pair"
+                ? output.results[0]!.oosHorizonMetrics
+                : output.results[0]!.oosHorizonMetricsByBasis?.[basis];
+            expect(basisMetrics?.basis).to.equal(basis);
+            const horizon = basisMetrics!.horizons[0]!;
             expect(horizon.bars).to.equal(1);
             expect(horizon.pnlPercent).to.be.closeTo(expectedPnl, 1e-9);
             expect(horizon.averagePnlPercent).to.be.closeTo(expectedPnl, 1e-9);
@@ -996,7 +1002,7 @@ describe("Asset Opportunity runner", () => {
                     options: makeOptions({ assetOpportunity: {
                         symbols: ["QUOTE_BOUNDARY"], candidatePoolSize: 1, minFreshSupport: 1,
                         includeOpenPositions: active, oosIgnoreLastBars: 3,
-                        oosHorizons: [1, 2, 3], oosHorizonBasis: "quote_only",
+                        oosHorizons: [1, 2, 3],
                     } }),
                     settings: { ...settings, tradeDirection },
                     selectedStrategy: { key: "quote_boundary", name: strategy.name, strategy },
@@ -1007,12 +1013,96 @@ describe("Asset Opportunity runner", () => {
                 expect(output.results).to.have.length(1);
                 const result = output.results[0]!;
                 expect(result.freshStatus).to.equal(active ? "active" : "fresh");
-                const metrics = active ? result.activePositionContinuationMetrics : result.oosHorizonMetrics;
+                const metrics = active
+                    ? result.activePositionContinuationMetricsByBasis?.quote_only
+                    : result.oosHorizonMetricsByBasis?.quote_only;
                 expect(metrics?.basis).to.equal("quote_only");
                 expect(metrics?.horizons.map(h => h.pnlPercent)).to.deep.equal([20, -20, null]);
                 expect(metrics?.horizons.map(h => h.sampleSize)).to.deep.equal([1, 1, 0]);
             }
         }
+    });
+
+    it("measures every horizon basis in one pass and keeps the selected basis primary", async () => {
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 150, 180, 190, 200]);
+        // BASE rises faster than the pair; QUOTE falls and lacks the last
+        // timestamp so its third horizon stays unavailable instead of
+        // borrowing a pair close.
+        const baseCandles = makeCandles([100, 100, 100, 100, 100, 100, 160, 200, 240, 320]);
+        const quoteCandles = makeCandles([100, 100, 100, 100, 100, 100, 100, 80, 120]);
+        const strategy: Strategy = {
+            name: "AllBasisBoundary", description: "fresh boundary buy",
+            defaultParams: {}, paramLabels: {},
+            execute(data) {
+                const candle = data[data.length - 1];
+                return candle ? [{ time: candle.time, price: candle.close, type: "buy" as const }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({ assetOpportunity: {
+                symbols: ["ALL_BASIS"], candidatePoolSize: 1, minFreshSupport: 1,
+                oosIgnoreLastBars: 3, oosHorizons: [1, 2, 3],
+            } }),
+            settings: { ...settings, tradeDirection: "long" },
+            selectedStrategy: { key: "all_basis_boundary", name: strategy.name, strategy },
+            assets: [{ symbol: "ALL_BASIS", data: candles,
+                oosBaseCandlesByTime: new Map(baseCandles.map(bar => [Number(bar.time), bar])),
+                oosQuoteCandlesByTime: new Map(quoteCandles.map(bar => [Number(bar.time), bar])) }],
+            runIsSearch: makeRetainingStubIsSearch(),
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        const result = output.results[0]!;
+        expect(result.freshStatus).to.equal("fresh");
+        const pairPnl = (close: number) => ((close - 150) / 150) * 100;
+        // The pair basis is always the primary field shown in the UI.
+        expect(result.oosHorizonMetrics?.basis).to.equal("pair");
+        expect(result.oosHorizonMetrics?.horizons.map(h => h.pnlPercent)).to.deep.equal([
+            pairPnl(180), pairPnl(190), pairPnl(200),
+        ]);
+        // All three bases measured in the same pass.
+        expect([...Object.keys(result.oosHorizonMetricsByBasis ?? {})].sort())
+            .to.deep.equal(["base_only", "pair", "quote_only"]);
+        const basePnl = (close: number) => ((close - 160) / 160) * 100;
+        const quotePnl = (close: number) => -((close - 100) / 100) * 100;
+        const pnlByBasis = Object.fromEntries(Object.entries(result.oosHorizonMetricsByBasis ?? {})
+            .map(([basis, metrics]) => [basis, metrics?.horizons.map(horizon => horizon.pnlPercent)]));
+        // Pair follows the winner's long direction from the boundary close;
+        // base forces long and quote forces short from their own leg prices.
+        expect(pnlByBasis).to.deep.equal({
+            pair: [pairPnl(180), pairPnl(190), pairPnl(200)],
+            base_only: [basePnl(200), basePnl(240), basePnl(320)],
+            quote_only: [quotePnl(80), quotePnl(120), null],
+        });
+    });
+
+    it("falls back to the pair basis when a selected leg has no candles", async () => {
+        const candles = makeCandles([100, 101, 102, 103, 104, 105, 150, 180, 190, 200]);
+        const strategy: Strategy = {
+            name: "NoLegsBoundary", description: "fresh boundary buy",
+            defaultParams: {}, paramLabels: {},
+            execute(data) {
+                const candle = data[data.length - 1];
+                return candle ? [{ time: candle.time, price: candle.close, type: "buy" as const }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({ assetOpportunity: {
+                symbols: ["NO_LEGS"], candidatePoolSize: 1, minFreshSupport: 1,
+                oosIgnoreLastBars: 3, oosHorizons: [1],
+            } }),
+            settings: { ...settings, tradeDirection: "long" },
+            selectedStrategy: { key: "no_legs", name: strategy.name, strategy },
+            assets: [{ symbol: "NO_LEGS", data: candles }],
+            runIsSearch: makeRetainingStubIsSearch(),
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        const result = output.results[0]!;
+        // No leg data: only the pair basis is measured and shown.
+        expect(result.oosHorizonMetrics?.basis).to.equal("pair");
+        expect(Object.keys(result.oosHorizonMetricsByBasis ?? {})).to.deep.equal(["pair"]);
+        expect(result.oosHorizonMetrics?.horizons[0]?.pnlPercent).to.equal(((180 - 150) / 150) * 100);
     });
 
     it("replays the winner through the engine and reports its next configured exit", async () => {

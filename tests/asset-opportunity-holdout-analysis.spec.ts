@@ -17,6 +17,7 @@ function block(args: {
     sortMetric: string;
     rows: unknown[];
     baseline?: unknown;
+    baselineByBasis?: unknown;
     measurementMode?: string;
     nextExitBaseline?: unknown;
 }): string {
@@ -28,6 +29,7 @@ function block(args: {
         `Archive sort: ${args.sortMetric}`,
         ...(args.measurementMode === undefined ? [] : [`Forward measurement: ${args.measurementMode}`]),
         ...(args.baseline === undefined ? [] : [`Archive baseline: ${JSON.stringify(args.baseline)}`]),
+        ...(args.baselineByBasis === undefined ? [] : [`Archive baseline by basis: ${JSON.stringify(args.baselineByBasis)}`]),
         ...(args.nextExitBaseline === undefined ? [] : [`Next-exit archive baseline: ${JSON.stringify(args.nextExitBaseline)}`]),
         "=".repeat(80),
         JSON.stringify(args.rows),
@@ -144,6 +146,190 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(records[0]!.topResults[0]!.candidateFingerprint).to.equal("fp-1");
         expect(records[0]!.baseline?.eligibleCandidateCount).to.equal(25);
         expect(records[0]!.baseline?.horizons[0]!.averagePnlPercent).to.equal(0.5);
+    });
+
+    it("parses per-basis forward maps and the per-basis baseline header", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z",
+            runId: "run-all-bases",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [{
+                ...row(1, 4, 1),
+                forwardOosPerformanceByBasis: {
+                    pair: { ignoreLastBars: 12, basis: "pair", horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }] },
+                    base_only: { ignoreLastBars: 12, basis: "base_only", horizons: [{ bars: 12, averagePnlPercent: 2, sampleSize: 1 }] },
+                    quote_only: { ignoreLastBars: 12, basis: "quote_only", horizons: [{ bars: 12, averagePnlPercent: 3, sampleSize: 1, ongoing: true }] },
+                },
+            }],
+            baseline: { eligibleCandidateCount: 9, horizons: [] },
+            baselineByBasis: {
+                pair: { eligibleCandidateCount: 9, horizons: [{ bars: 12, averagePnlPercent: 0.5, sampleWeightedAveragePnlPercent: 0.5, positiveResults: 5, observedResults: 9, totalSamples: 9 }] },
+                base_only: { eligibleCandidateCount: 9, horizons: [{ bars: 12, averagePnlPercent: 1.5, sampleWeightedAveragePnlPercent: 1.5, positiveResults: 6, observedResults: 9, totalSamples: 9 }] },
+            },
+        }), "fixture.txt");
+
+        expect(records[0]!.baselineByBasis?.pair?.horizons[0]!.averagePnlPercent).to.equal(0.5);
+        expect(records[0]!.baselineByBasis?.base_only?.horizons[0]!.averagePnlPercent).to.equal(1.5);
+        expect(records[0]!.baselineByBasis?.quote_only).to.equal(undefined);
+        const byBasis = records[0]!.topResults[0]!.forwardOosPerformanceByBasis;
+        expect(byBasis?.pair?.horizons?.[0]!.averagePnlPercent).to.equal(1);
+        expect(byBasis?.base_only?.horizons?.[0]!.averagePnlPercent).to.equal(2);
+        expect(byBasis?.quote_only?.horizons?.[0]!.averagePnlPercent).to.equal(3);
+        expect(byBasis?.quote_only?.horizons?.[0]!.ongoing).to.equal(true);
+        expect(byBasis?.pair?.horizons?.[0]!.ongoing).to.equal(undefined);
+    });
+
+    it("re-bases every forward outcome and baseline to the requested horizon basis", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z",
+            runId: "run-all-bases",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [
+                {
+                    ...row(1, 999, 1),
+                    forwardOosPerformance: {
+                        ignoreLastBars: 12,
+                        basis: "base_only",
+                        horizons: [{ bars: 12, pnlPercent: 4, averagePnlPercent: 4, winRatePercent: 100, sampleSize: 1 }],
+                    },
+                    forwardOosPerformanceByBasis: {
+                        pair: { ignoreLastBars: 12, basis: "pair", horizons: [{ bars: 12, pnlPercent: 1, averagePnlPercent: 1, winRatePercent: 100, sampleSize: 1 }] },
+                        base_only: { ignoreLastBars: 12, basis: "base_only", horizons: [{ bars: 12, pnlPercent: 4, averagePnlPercent: 4, winRatePercent: 100, sampleSize: 1 }] },
+                    },
+                },
+                {
+                    ...row(2, 2, 1),
+                    forwardOosPerformance: {
+                        ignoreLastBars: 12,
+                        basis: "pair",
+                        horizons: [{ bars: 12, pnlPercent: 2, averagePnlPercent: 2, winRatePercent: 100, sampleSize: 1 }],
+                    },
+                },
+            ],
+            baseline: { eligibleCandidateCount: 5, horizons: [{ bars: 12, averagePnlPercent: 77, sampleWeightedAveragePnlPercent: 77, positiveResults: 5, observedResults: 5, totalSamples: 5 }] },
+            baselineByBasis: {
+                pair: { eligibleCandidateCount: 5, horizons: [{ bars: 12, averagePnlPercent: 0.25, sampleWeightedAveragePnlPercent: 0.25, positiveResults: 1, observedResults: 5, totalSamples: 5 }] },
+            },
+        }), "fixture.txt");
+
+        const report = analyzeAssetOpportunityArchive(records, { topK: 2, horizonBasis: "pair" });
+        expect(report.horizonBasis).to.equal("pair");
+        const horizon = report.sorts[0]!.horizons.find(h => h.horizonBars === 12)!;
+        // Rank 1 contributes its per-basis pair outcome (1); rank 2 keeps its
+        // legacy pair-labeled row (2).
+        expect(horizon.observedRows).to.equal(2);
+        expect(horizon.averagePnlPercent).to.equal(1.5);
+        // The baseline swaps to the per-basis aggregate, not the primary (77).
+        expect(horizon.baselineAveragePnlPercent).to.equal(0.25);
+        expect(renderAssetOpportunityHoldoutReport(report)).to.include("Forward horizon basis: pair");
+        expect(report.notes.join("\n"))
+            .to.include("Forward horizon basis filter: pair")
+            .and.to.include("1 row outcomes came from per-basis maps")
+            .and.to.include("1 from legacy single-basis rows");
+    });
+
+    it("drops rows and baselines that lack the requested horizon basis", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z",
+            runId: "run-base-only",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [
+                {
+                    ...row(1, 4, 1),
+                    forwardOosPerformance: {
+                        ignoreLastBars: 12,
+                        basis: "base_only",
+                        horizons: [{ bars: 12, pnlPercent: 4, averagePnlPercent: 4, winRatePercent: 100, sampleSize: 1 }],
+                    },
+                },
+                row(2, 6, 1),
+            ],
+            baseline: { eligibleCandidateCount: 2, horizons: [{ bars: 12, averagePnlPercent: 77, sampleWeightedAveragePnlPercent: 77, positiveResults: 2, observedResults: 2, totalSamples: 2 }] },
+        }), "fixture.txt");
+
+        const report = analyzeAssetOpportunityArchive(records, { topK: 2, horizonBasis: "base_only" });
+        const horizon = report.sorts[0]!.horizons.find(h => h.horizonBars === 12)!;
+        expect(horizon.observedRows).to.equal(1);
+        expect(horizon.averagePnlPercent).to.equal(4);
+        // The legacy aggregate cannot be re-based → unavailable, never mixed.
+        expect(horizon.baselineAveragePnlPercent).to.equal(null);
+        expect(report.baselineAvailable).to.equal(false);
+        expect(report.notes.join("\n"))
+            .to.include("1 selected rows had no base_only measurement")
+            .and.to.include("could not be re-based to base_only");
+    });
+
+    it("renders a basis report without crashing when no row measures that basis", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z",
+            runId: "run-base-only",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [
+                {
+                    ...row(1, 4, 1),
+                    forwardOosPerformance: {
+                        ignoreLastBars: 12,
+                        basis: "base_only",
+                        horizons: [{ bars: 12, pnlPercent: 4, averagePnlPercent: 4, winRatePercent: 100, sampleSize: 1 }],
+                    },
+                },
+                row(2, 6, 1),
+            ],
+        }), "fixture.txt");
+
+        // Every forward outcome is dropped, leaving no horizon keys anywhere;
+        // candidate ranking and the rendered report must survive that.
+        const report = analyzeAssetOpportunityArchive(records, { topK: 2, horizonBasis: "pair" });
+        expect(report.horizonBasis).to.equal("pair");
+        expect(report.sorts[0]!.horizons).to.deep.equal([]);
+        expect(report.sorts[0]!.candidates.length).to.be.greaterThan(0);
+        expect(renderAssetOpportunityHoldoutReport(report)).to.include("Forward horizon basis: pair");
+    });
+
+    it("counts ongoing forward observations in aggregates and discloses them", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z",
+            runId: "run-ongoing",
+            holdoutBars: 5,
+            sortMetric: "expectancy",
+            rows: [
+                {
+                    ...row(1, 4, 1),
+                    forwardOosPerformance: {
+                        ignoreLastBars: 5,
+                        horizons: [
+                            { bars: 36, pnlPercent: 2, averagePnlPercent: 2, winRatePercent: 100, sampleSize: 1, ongoing: true },
+                            { bars: 48, pnlPercent: 6, averagePnlPercent: 6, winRatePercent: 100, sampleSize: 1 },
+                        ],
+                    },
+                },
+                {
+                    ...row(2, -2, 1),
+                    forwardOosPerformance: {
+                        ignoreLastBars: 5,
+                        horizons: [
+                            { bars: 36, pnlPercent: -2, averagePnlPercent: -2, winRatePercent: 0, sampleSize: 1, ongoing: true },
+                        ],
+                    },
+                },
+            ],
+        }), "fixture.txt");
+
+        const report = analyzeAssetOpportunityArchive(records, { topK: 2 });
+        const horizon36 = report.sorts[0]!.horizons.find(horizon => horizon.horizonBars === 36)!;
+        expect(horizon36.observedRows).to.equal(2);
+        // Ongoing observations count toward the aggregates...
+        expect(horizon36.averagePnlPercent).to.equal(0);
+        expect(horizon36.ongoingRows).to.equal(2);
+        const horizon48 = report.sorts[0]!.horizons.find(horizon => horizon.horizonBars === 48)!;
+        expect(horizon48.ongoingRows).to.equal(0);
+        // ...and the report discloses how many were partial windows.
+        expect(report.notes.join("\n")).to.include("2 forward observations were ongoing");
+        expect(renderAssetOpportunityHoldoutReport(report)).to.include("Ongoing | Samples");
     });
 
     it("parses next-exit archive headers and baseline separately from horizons", () => {

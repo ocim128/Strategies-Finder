@@ -25,12 +25,22 @@ remain authoritative. TOP_MEAN Arm Performance children still make one replay
 pass; the standalone coordinator's annual delta-index cache is not retained
 between Finder candidates.
 
-Asset Opportunity fixed-horizon `oosHorizonBasis` accepts `pair` (default),
-`base_only` (BASE long), and `quote_only` (QUOTE short). Single and batch runs
-load the selected synthetic leg through the run-scoped dataset cache and align
-entry/horizon candles by normalized pair timestamps. Only needed leg candles
-reach the runner; missing horizon candles remain unavailable. Ordinary symbols
-keep pair measurement, and next-exit replay does not use the leg basis.
+Asset Opportunity fixed-horizon forward measurement runs all three price
+bases in one pass: `pair` (the primary field shown in results), `base_only`
+(BASE long), and `quote_only` (QUOTE short) — the basis never affects
+candidate search, so there is no run-time selection. Batch runs load both
+synthetic legs through the run-scoped dataset cache and align entry/horizon
+candles by normalized pair timestamps. Only needed leg candles reach the
+runner; a leg that fails to load is logged and its basis is simply absent
+from the per-basis measurements, while missing horizon candles remain
+unavailable per basis. Horizons longer than the holdout measure ongoing at
+the last available candle (pair and both legs; the leg lookups include the
+final pair timestamp) and are flagged `ongoing`. Ordinary symbols keep pair
+measurement, and next-exit replay does not use the leg basis. Archive rows
+persist `forwardOosPerformanceByBasis` plus a per-basis all-candidate
+baseline; `scripts/analyze-asset-opportunity-holdouts.ts --basis <pair|base_only|quote_only>`
+re-bases the whole report to one basis and falls back to legacy single-basis
+rows only when their stored basis matches.
 
 ## Arm Performance
 

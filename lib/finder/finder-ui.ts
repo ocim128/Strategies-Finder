@@ -1107,7 +1107,9 @@ export class FinderUI {
             const sample = document.createElement("span");
             sample.className = "finder-asset-horizon-sample";
             sample.textContent = horizon.sampleSize > 0
-                ? `${formatNullablePercentPoints(horizon.winRatePercent, 1)} ${isActivePositionContinuation ? "positive" : "win"} · n=${horizon.sampleSize}`
+                ? horizon.ongoing === true
+                    ? `ongoing · n=${horizon.sampleSize}`
+                    : `${formatNullablePercentPoints(horizon.winRatePercent, 1)} ${isActivePositionContinuation ? "positive" : "win"} · n=${horizon.sampleSize}`
                 : "No data";
             cell.appendChild(sample);
             horizons.appendChild(cell);

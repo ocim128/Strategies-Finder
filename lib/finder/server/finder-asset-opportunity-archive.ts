@@ -1,6 +1,7 @@
 import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { formatCapturedConfiguration } from "../finder-config-capture";
+import type { FinderAssetOosHorizonBasis } from "../finder-asset-opportunity-oos";
 import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportunity-metrics";
 import type {
     AssetOpportunityForwardOosBaseline,
@@ -55,6 +56,8 @@ export interface AssetOpportunityArchiveBlock {
     topResults: unknown;
     /** All-result baseline captured before the top-N slice, when available. */
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    /** All-result baseline per price basis, present when rows carry per-basis forward measurements. */
+    baselineByBasis?: Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityForwardOosBaseline>> | null;
     measurementMode?: "fixed_horizon" | "next_exit";
     nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
 }
@@ -298,6 +301,7 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         `Archive sort: ${block.sortMetric ?? "run_default"}`,
         ...(block.measurementMode ? [`Forward measurement: ${block.measurementMode}`] : []),
         ...(block.baseline ? [`Archive baseline: ${JSON.stringify(block.baseline)}`] : []),
+        ...(block.baselineByBasis ? [`Archive baseline by basis: ${JSON.stringify(block.baselineByBasis)}`] : []),
         ...(block.nextExitBaseline ? [`Next-exit archive baseline: ${JSON.stringify(block.nextExitBaseline)}`] : []),
         separator,
         JSON.stringify(block.topResults),
@@ -326,6 +330,7 @@ export interface AppendAssetOpportunityArchiveBlockArgs {
     sortMetric?: FinderAssetOpportunityResortMetric | null;
     topResults: unknown;
     baseline?: AssetOpportunityForwardOosBaseline | null;
+    baselineByBasis?: Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityForwardOosBaseline>> | null;
     measurementMode?: "fixed_horizon" | "next_exit";
     nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
     /** Optional deterministic timestamp for tests. */
@@ -374,6 +379,7 @@ export async function appendAssetOpportunityArchiveBlocks(
             sortMetric: block.sortMetric ?? null,
             topResults: block.topResults,
             baseline: block.baseline,
+            baselineByBasis: block.baselineByBasis,
             measurementMode: block.measurementMode,
             nextExitBaseline: block.nextExitBaseline,
         });
@@ -407,6 +413,7 @@ export async function appendAssetOpportunityArchiveBlock(
             sortMetric: args.sortMetric,
             topResults: args.topResults,
             baseline: args.baseline,
+            baselineByBasis: args.baselineByBasis,
             measurementMode: args.measurementMode,
             nextExitBaseline: args.nextExitBaseline,
             timestamp: args.timestamp,

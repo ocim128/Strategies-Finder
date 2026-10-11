@@ -271,6 +271,53 @@ describe("Asset Opportunity archive writer", () => {
         expect(text).to.contain(`Next-exit archive baseline: ${JSON.stringify(baseline)}`);
     });
 
+    it("serializes the per-basis baseline between the unscoped baseline and the top results", () => {
+        const baselineByBasis = {
+            pair: {
+                eligibleCandidateCount: 3,
+                horizons: [{
+                    bars: 2,
+                    averagePnlPercent: 0.25,
+                    sampleWeightedAveragePnlPercent: 0.25,
+                    positiveResults: 2,
+                    observedResults: 3,
+                    totalSamples: 3,
+                }],
+            },
+            base_only: {
+                eligibleCandidateCount: 3,
+                horizons: [{
+                    bars: 2,
+                    averagePnlPercent: 1.5,
+                    sampleWeightedAveragePnlPercent: 1.5,
+                    positiveResults: 3,
+                    observedResults: 3,
+                    totalSamples: 3,
+                }],
+            },
+        };
+        const text = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 2,
+            sortMetric: "expectancy",
+            baselineByBasis,
+            topResults: [{ rank: 1 }],
+        });
+        expect(text).to.contain(`Archive baseline by basis: ${JSON.stringify(baselineByBasis)}`);
+        expect(text.indexOf("Archive baseline by basis:")).to.be.greaterThan(text.indexOf("Archive sort:"));
+        expect(text.lastIndexOf("\n[")).to.be.greaterThan(text.indexOf("Archive baseline by basis:"));
+
+        const withoutBasis = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 2,
+            sortMetric: "expectancy",
+            topResults: [{ rank: 1 }],
+        });
+        expect(withoutBasis).to.not.contain("Archive baseline by basis:");
+    });
+
     it("appends one run-config block per batch run to config.txt and never overwrites", async () => {
         const root = mkdtempSync(path.join(tmpdir(), "finder-archive-"));
         try {

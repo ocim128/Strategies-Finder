@@ -58,7 +58,6 @@ export type FinderBoundStateKey =
 	| "assetOpportunityMinFreshSupport"
 	| "assetOpportunityIncludeOpenPositions"
 	| "assetOpportunityOosMeasurementMode"
-	| "assetOpportunityOosHorizonBasis"
 	| "assetOpportunityOosIgnoreLastBars"
 	| "assetOpportunityEvalWindowMode"
 	| "assetOpportunityEvalWindowBars"
@@ -126,7 +125,6 @@ export const FINDER_CONTROL_BINDINGS: readonly FinderControlBinding[] = [
 	{ domKey: "finderAssetMinFreshSupport", stateKey: "assetOpportunityMinFreshSupport", read: "number", min: 1, id: "finderAssetMinFreshSupport" },
 	{ domKey: "finderAssetIncludeOpenPositions", stateKey: "assetOpportunityIncludeOpenPositions", read: "boolean", id: "finderAssetIncludeOpenPositions" },
 	{ domKey: "finderAssetOosMeasurementMode", stateKey: "assetOpportunityOosMeasurementMode", read: "select", id: "finderAssetOosMeasurementMode" },
-	{ domKey: "finderAssetOosHorizonBasis", stateKey: "assetOpportunityOosHorizonBasis", read: "select", id: "finderAssetOosHorizonBasis" },
 	{ domKey: "finderAssetOosIgnoreLastBars", stateKey: "assetOpportunityOosIgnoreLastBars", read: "number", min: 0, id: "finderAssetOosIgnoreLastBars" },
 	{ domKey: "finderAssetEvalWindowMode", stateKey: "assetOpportunityEvalWindowMode", read: "select", id: "finderAssetEvalWindowMode" },
 	{ domKey: "finderAssetEvalWindowBars", stateKey: "assetOpportunityEvalWindowBars", read: "number", min: 0, id: "finderAssetEvalWindowBars" },

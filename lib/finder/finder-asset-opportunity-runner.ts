@@ -103,9 +103,10 @@ import {
 import {
     calculateFinderAssetOosNextExitMetrics,
     calculateFinderAssetOosSignalMetrics,
+    type FinderAssetOosHorizonBasis,
+    type FinderAssetOosMetrics,
     type FinderAssetOosNextExitUnavailableReason,
     resolveFinderAssetEvalWindowBars,
-    normalizeFinderAssetOosHorizonBasis,
     normalizeFinderAssetOosMeasurementMode,
     normalizeFinderAssetOosHorizons,
     normalizeFinderAssetOosIgnoreLastBars,
@@ -1150,9 +1151,6 @@ async function searchOneAsset(args: {
     const oosMeasurementMode = normalizeFinderAssetOosMeasurementMode(
         input.options.assetOpportunity?.oosMeasurementMode,
     );
-    const oosHorizonBasis = normalizeFinderAssetOosHorizonBasis(
-        input.options.assetOpportunity?.oosHorizonBasis,
-    );
     const includeOpenPositions = input.options.assetOpportunity?.includeOpenPositions === true;
     const needsExecutableFreshRecheck = oosMeasurementMode === "next_exit";
     const oosHorizons = normalizeFinderAssetOosHorizons(input.options.assetOpportunity?.oosHorizons);
@@ -1961,91 +1959,119 @@ async function searchOneAsset(args: {
             : {}),
         priorTupleRecurrenceCount: 0,
     };
-    if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
-        const winnerFresh = freshEvaluations[winnerIndex];
-        const firstHiddenBar = fixedOosBars[0];
-        const boundaryCandle = visibleValidationData[visibleValidationData.length - 1];
-        const legCandlesByTime = oosHorizonBasis === "base_only"
-            ? asset.oosBaseCandlesByTime
-            : oosHorizonBasis === "quote_only"
-                ? asset.oosQuoteCandlesByTime
-                : undefined;
-        const entryPrice = legCandlesByTime && winnerFresh
-            ? resolveLegOosEntryPrice({
-                horizonCandlesByTime: legCandlesByTime,
-                boundaryTime: boundaryCandle?.time ?? null,
-                fillTiming: winnerFresh.fillTiming,
-                firstHiddenTime: firstHiddenBar?.time ?? null,
-            })
-            // Selection has observed the boundary close. Never backdate this
-            // measurement to a fresh signal's earlier visible-bar fill.
-            : executionModel === "signal_close"
-                ? boundaryCandle?.close ?? Number.NaN
-                : executionModel === "next_open"
-                    ? firstHiddenBar?.open ?? Number.NaN
-                    : firstHiddenBar?.close ?? Number.NaN;
-        if (winnerFresh?.freshStatus === "fresh"
-            && winnerCandidate
-            && winnerFresh.direction
-            && Number.isFinite(entryPrice)) {
-            diagnostics.oosEvaluations += 1;
-            diagnostics.fixedHorizonEvaluations += 1;
-            const oosHorizonMetrics = calculateFinderAssetOosSignalMetrics({
+    // Fixed-horizon forward measurement per price basis. The candidate search
+    // above never reads the horizon basis, so pair/base/quote are measured
+    // together in one pass; the pair basis stays the primary field (what the
+    // UI displays) and the leg bases ride along in the ByBasis maps for
+    // archive analysis. A basis whose leg candles are missing is simply absent
+    // from the map; pair is always measurable from the pair series.
+    const measureOosHorizonsByBasis = (
+        resolveEntryPrice: (
+            basis: FinderAssetOosHorizonBasis,
+            legCandlesByTime: ReadonlyMap<number, OHLCVData> | undefined,
+        ) => number,
+        resolveDirection: (
+            basis: FinderAssetOosHorizonBasis,
+            legCandlesByTime: ReadonlyMap<number, OHLCVData> | undefined,
+        ) => "long" | "short",
+    ): Partial<Record<FinderAssetOosHorizonBasis, FinderAssetOosMetrics>> => {
+        const metricsByBasis: Partial<Record<FinderAssetOosHorizonBasis, FinderAssetOosMetrics>> = {};
+        for (const basis of ["pair", "base_only", "quote_only"] as const) {
+            const legCandlesByTime = basis === "base_only"
+                ? asset.oosBaseCandlesByTime
+                : basis === "quote_only"
+                    ? asset.oosQuoteCandlesByTime
+                    : undefined;
+            const entryPrice = resolveEntryPrice(basis, legCandlesByTime);
+            if (!Number.isFinite(entryPrice)) continue;
+            metricsByBasis[basis] = calculateFinderAssetOosSignalMetrics({
                 candles: fullClosed,
                 ...(legCandlesByTime ? { horizonCandlesByTime: legCandlesByTime } : {}),
                 signalIndex: fixedOosSignalIndex,
                 entryPrice,
-                direction: legCandlesByTime
-                    ? oosHorizonBasis === "quote_only" ? "short" : "long"
-                    : winnerFresh.direction,
+                direction: resolveDirection(basis, legCandlesByTime),
                 ignoreLastBars: oosIgnoreLastBars,
                 horizons: oosHorizons,
-                basis: legCandlesByTime ? oosHorizonBasis : "pair",
+                basis,
             });
-            finalResult = {
-                ...finalResult,
-                oosHorizonMetrics,
-            };
+        }
+        return metricsByBasis;
+    };
+    if (fixedOosBars.length > 0 && oosMeasurementMode === "fixed_horizon") {
+        const winnerFresh = freshEvaluations[winnerIndex];
+        const firstHiddenBar = fixedOosBars[0];
+        const boundaryCandle = visibleValidationData[visibleValidationData.length - 1];
+        const winnerDirection = winnerFresh?.direction;
+        if (winnerFresh?.freshStatus === "fresh"
+            && winnerCandidate
+            && winnerDirection) {
+            const metricsByBasis = measureOosHorizonsByBasis(
+                (basis, legCandlesByTime) => legCandlesByTime && winnerFresh
+                    ? resolveLegOosEntryPrice({
+                        horizonCandlesByTime: legCandlesByTime,
+                        boundaryTime: boundaryCandle?.time ?? null,
+                        fillTiming: winnerFresh.fillTiming,
+                        firstHiddenTime: firstHiddenBar?.time ?? null,
+                    })
+                    // Selection has observed the boundary close. Never backdate this
+                    // measurement to a fresh signal's earlier visible-bar fill.
+                    : basis === "pair"
+                        ? executionModel === "signal_close"
+                            ? boundaryCandle?.close ?? Number.NaN
+                            : executionModel === "next_open"
+                                ? firstHiddenBar?.open ?? Number.NaN
+                                : firstHiddenBar?.close ?? Number.NaN
+                        : Number.NaN,
+                (basis, legCandlesByTime) => legCandlesByTime
+                    ? basis === "quote_only" ? "short" : "long"
+                    : winnerDirection,
+            );
+            // The UI shows the pair basis; per-basis views come from the
+            // archive analyzer (--basis), not from a run-time selection.
+            const oosHorizonMetrics = metricsByBasis.pair;
+            if (oosHorizonMetrics) {
+                diagnostics.oosEvaluations += 1;
+                diagnostics.fixedHorizonEvaluations += 1;
+                finalResult = {
+                    ...finalResult,
+                    oosHorizonMetrics,
+                    oosHorizonMetricsByBasis: metricsByBasis,
+                };
+            }
         }
     }
     if (fixedOosBars.length > 0) {
         const winnerFresh = freshEvaluations[winnerIndex];
         const boundaryCandle = visibleValidationData[visibleValidationData.length - 1];
-        const legCandlesByTime = oosHorizonBasis === "base_only"
-            ? asset.oosBaseCandlesByTime
-            : oosHorizonBasis === "quote_only"
-                ? asset.oosQuoteCandlesByTime
-                : undefined;
+        const winnerDirection = winnerFresh?.direction;
         const boundaryTimeSec = boundaryCandle
             ? parseTimeToUnixSeconds(boundaryCandle.time)
             : null;
-        const legBoundaryCandle = legCandlesByTime && boundaryTimeSec !== null
-            ? legCandlesByTime.get(boundaryTimeSec)
-            : undefined;
-        const entryPrice = legCandlesByTime
-            ? legBoundaryCandle?.close ?? Number.NaN
-            : boundaryCandle?.close ?? Number.NaN;
         if (winnerFresh?.freshStatus === "active"
             && winnerFresh.isOpen
-            && winnerFresh.direction
-            && Number.isFinite(entryPrice)) {
-            diagnostics.oosEvaluations += 1;
-            diagnostics.fixedHorizonEvaluations += 1;
-            finalResult = {
-                ...finalResult,
-                activePositionContinuationMetrics: calculateFinderAssetOosSignalMetrics({
-                    candles: fullClosed,
-                    ...(legCandlesByTime ? { horizonCandlesByTime: legCandlesByTime } : {}),
-                    signalIndex: fixedOosSignalIndex,
-                    entryPrice,
-                    direction: legCandlesByTime
-                        ? oosHorizonBasis === "quote_only" ? "short" : "long"
-                        : winnerFresh.direction,
-                    ignoreLastBars: oosIgnoreLastBars,
-                    horizons: oosHorizons,
-                    basis: legCandlesByTime ? oosHorizonBasis : "pair",
-                }),
-            };
+            && winnerDirection) {
+            const metricsByBasis = measureOosHorizonsByBasis(
+                (_basis, legCandlesByTime) => {
+                    if (!legCandlesByTime) return boundaryCandle?.close ?? Number.NaN;
+                    const legBoundaryCandle = boundaryTimeSec !== null
+                        ? legCandlesByTime.get(boundaryTimeSec)
+                        : undefined;
+                    return legBoundaryCandle?.close ?? Number.NaN;
+                },
+                (basis, legCandlesByTime) => legCandlesByTime
+                    ? basis === "quote_only" ? "short" : "long"
+                    : winnerDirection,
+            );
+            const activePositionContinuationMetrics = metricsByBasis.pair;
+            if (activePositionContinuationMetrics) {
+                diagnostics.oosEvaluations += 1;
+                diagnostics.fixedHorizonEvaluations += 1;
+                finalResult = {
+                    ...finalResult,
+                    activePositionContinuationMetrics,
+                    activePositionContinuationMetricsByBasis: metricsByBasis,
+                };
+            }
         }
     }
     if (fixedOosBars.length > 0 && oosMeasurementMode === "next_exit") {

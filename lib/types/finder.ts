@@ -105,8 +105,6 @@ export interface FinderAssetOpportunityOptions {
     includeOpenPositions?: boolean;
     /** Forward OOS measurement; omitted/invalid values use fixed horizons. */
     oosMeasurementMode?: "fixed_horizon" | "next_exit";
-    /** Fixed-horizon price basis; base_only measures BASE long; quote_only measures QUOTE short, ignoring the other leg. */
-    oosHorizonBasis?: "pair" | "base_only" | "quote_only";
     /** Number of historical bars reserved for fixed-horizon OOS measurement. */
     oosIgnoreLastBars?: number;
     /** Configured IS cap after trimming the OOS holdout; 0/undefined means all bars. */
@@ -534,8 +532,12 @@ export interface FinderAssetOpportunityResult {
     oosVerdict?: FinderOosVerdict;
     /** Fixed-horizon forward PnL measured from a fresh entry inside the reserved OOS holdout. */
     oosHorizonMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
+    /** Same fresh-entry measurement for every price basis computed in one pass; `oosHorizonMetrics` stays the UI-selected basis. */
+    oosHorizonMetricsByBasis?: Partial<Record<import('../finder/finder-asset-opportunity-oos').FinderAssetOosHorizonBasis, import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics>>;
     /** Forward price continuation from the OOS boundary for an already-open position; separate from fresh-entry validation. */
     activePositionContinuationMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics;
+    /** Same open-position continuation for every price basis computed in one pass. */
+    activePositionContinuationMetricsByBasis?: Partial<Record<import('../finder/finder-asset-opportunity-oos').FinderAssetOosHorizonBasis, import('../finder/finder-asset-opportunity-oos').FinderAssetOosMetrics>>;
     /** First configured exit after the fresh boundary entry, when selected. */
     oosNextExitMetrics?: import('../finder/finder-asset-opportunity-oos').FinderAssetOosNextExitMetrics;
     /** Distinct selected strategy libraries with a fresh entry for this symbol. */

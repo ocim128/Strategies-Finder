@@ -125,6 +125,51 @@ describe("Asset Opportunity fixed-horizon OOS metrics", () => {
         expect(metrics.horizons).to.deep.equal([
             { bars: 1, pnlPercent: 10, averagePnlPercent: 10, winRatePercent: 100, sampleSize: 1 },
             { bars: 3, pnlPercent: -5, averagePnlPercent: -5, winRatePercent: 0, sampleSize: 1 },
+            // Horizon 5 exceeds the 4-bar holdout: measured ongoing at the
+            // last available candle (close 95) instead of discarded.
+            { bars: 5, pnlPercent: -5, averagePnlPercent: -5, winRatePercent: 0, sampleSize: 1, ongoing: true },
+        ]);
+    });
+
+    it("keeps horizons unavailable when no forward candle exists after the signal", () => {
+        const candles = makeCandles([100, 101, 102]);
+        const metrics = calculateFinderAssetOosSignalMetrics({
+            candles,
+            signalIndex: 2,
+            entryPrice: 102,
+            direction: "long",
+            ignoreLastBars: 0,
+            horizons: [1, 3, 5],
+        });
+
+        // The signal sits on the last candle: no forward candle exists, so
+        // nothing is measured and nothing is marked ongoing.
+        expect(metrics.horizons).to.deep.equal([
+            { bars: 1, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
+            { bars: 3, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
+            { bars: 5, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
+        ]);
+    });
+
+    it("leaves leg-basis horizons unavailable when the leg lacks those timestamps", () => {
+        const candles = makeCandles([100, 101, 102, 100, 110, 90, 95]);
+        const legCandles = makeCandles([100, 100, 100, 100, 100]); // only through index 4
+        const metrics = calculateFinderAssetOosSignalMetrics({
+            candles,
+            horizonCandlesByTime: new Map(legCandles.map((bar) => [Number(bar.time), bar])),
+            signalIndex: 3,
+            entryPrice: 100,
+            direction: "long",
+            ignoreLastBars: 4,
+            horizons: [1, 3, 5],
+        });
+
+        // Horizon 1 resolves in the leg map; horizons 3 and 5 need the pair's
+        // later timestamps (index 6, including the ongoing fallback target),
+        // which the short leg map lacks, so they stay unavailable.
+        expect(metrics.horizons).to.deep.equal([
+            { bars: 1, pnlPercent: 0, averagePnlPercent: 0, winRatePercent: 0, sampleSize: 1 },
+            { bars: 3, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
             { bars: 5, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
         ]);
     });

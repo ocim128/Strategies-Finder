@@ -3,6 +3,13 @@ import type { BacktestResult } from "../types/strategies";
 import { fnv1a64Hex } from "../batch-backtest/max-active-research-contract";
 import { stableStringify } from "../json-utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import type {
+    FinderAssetOosHorizonBasis,
+    FinderAssetOosMetrics,
+} from "./finder-asset-opportunity-oos";
+
+/** All price bases the fixed-horizon pass can measure; keys absent when that basis had no usable data. */
+export type AssetOpportunityForwardOosByBasis = Partial<Record<FinderAssetOosHorizonBasis, FinderAssetOosMetrics>>;
 
 const ASIA_JAKARTA_TIMEZONE = "Asia/Jakarta";
 
@@ -176,6 +183,12 @@ export interface AssetOpportunityPerformancePayload {
     } | null;
     /** OPEN EOD rows store boundary-close continuation here so archive ranking uses one forward outcome field. */
     forwardOosPerformance: FinderAssetOpportunityResult["oosHorizonMetrics"] | null;
+    /**
+     * All price bases measured in the same pass (fresh entry preferred, OPEN
+     * continuation as fallback per basis); absent on rows that measured only
+     * the selected basis, which keeps single-basis archives parseable.
+     */
+    forwardOosPerformanceByBasis?: AssetOpportunityForwardOosByBasis;
     nextExitOosPerformance: FinderAssetOpportunityResult["oosNextExitMetrics"] | null;
 }
 
@@ -291,6 +304,26 @@ function selectAssetOpportunityPerformanceMetrics(
     };
 }
 
+/**
+ * Per-basis merge of the two fixed-horizon measurement surfaces: fresh-entry
+ * metrics preferred per basis, OPEN-position continuation as that basis's
+ * fallback — mirroring the single `forwardOosPerformance` field. Returns
+ * undefined when no per-basis measurement exists (single-basis/legacy rows).
+ */
+export function mergeForwardOosByBasis(
+    result: FinderAssetOpportunityResult,
+): AssetOpportunityForwardOosByBasis | undefined {
+    const byBasis: AssetOpportunityForwardOosByBasis = {};
+    for (const [basis, metrics] of Object.entries(result.oosHorizonMetricsByBasis ?? {})) {
+        if (metrics) byBasis[basis as FinderAssetOosHorizonBasis] = metrics;
+    }
+    for (const [basis, metrics] of Object.entries(result.activePositionContinuationMetricsByBasis ?? {})) {
+        const key = basis as FinderAssetOosHorizonBasis;
+        if (metrics && !byBasis[key]) byBasis[key] = metrics;
+    }
+    return Object.keys(byBasis).length > 0 ? byBasis : undefined;
+}
+
 /** Build the compact performance-only payload used by automatic archive blocks. */
 export function buildAssetOpportunityPerformancePayload(args: {
     result: FinderAssetOpportunityResult;
@@ -298,6 +331,7 @@ export function buildAssetOpportunityPerformancePayload(args: {
 }): AssetOpportunityPerformancePayload {
     const { result, rank } = args;
     const hours = signalCandleHours(result.latestSignalTime);
+    const forwardOosPerformanceByBasis = mergeForwardOosByBasis(result);
     return {
         scope: "asset_opportunity",
         rank,
@@ -323,6 +357,7 @@ export function buildAssetOpportunityPerformancePayload(args: {
         forwardOosPerformance: result.oosHorizonMetrics
             ?? result.activePositionContinuationMetrics
             ?? null,
+        ...(forwardOosPerformanceByBasis ? { forwardOosPerformanceByBasis } : {}),
         nextExitOosPerformance: result.oosNextExitMetrics ?? null,
     };
 }
@@ -330,7 +365,14 @@ export function buildAssetOpportunityPerformancePayload(args: {
 /** Build an all-result baseline before the archive's top-N sort slice. */
 export function buildAssetOpportunityForwardOosBaseline(
     results: FinderAssetOpportunityResult[],
+    basis?: FinderAssetOosHorizonBasis,
 ): AssetOpportunityForwardOosBaseline {
+    // With a basis, aggregate that basis's measurements so baseline deltas
+    // never compare a selected top-K basis outcome against a mixed-basis pool.
+    const metricsFor = (result: FinderAssetOpportunityResult): FinderAssetOosMetrics | null | undefined =>
+        basis
+            ? result.oosHorizonMetricsByBasis?.[basis] ?? result.activePositionContinuationMetricsByBasis?.[basis]
+            : result.oosHorizonMetrics ?? result.activePositionContinuationMetrics;
     const aggregates = new Map<number, {
         sum: number;
         weightedSum: number;
@@ -339,7 +381,7 @@ export function buildAssetOpportunityForwardOosBaseline(
         totalSamples: number;
     }>();
     for (const result of results) {
-        for (const horizon of (result.oosHorizonMetrics ?? result.activePositionContinuationMetrics)?.horizons ?? []) {
+        for (const horizon of metricsFor(result)?.horizons ?? []) {
             const averagePnlPercent = horizon.averagePnlPercent;
             if (averagePnlPercent === null || !Number.isFinite(averagePnlPercent) || horizon.sampleSize < 1) continue;
             const aggregate = aggregates.get(horizon.bars) ?? {
@@ -374,6 +416,22 @@ export function buildAssetOpportunityForwardOosBaseline(
                 totalSamples: aggregate.totalSamples,
             })),
     };
+}
+
+/**
+ * Per-basis all-result baselines for one iteration, built only for bases with
+ * at least one measurement; null when no per-basis data exists (single-basis
+ * runs and older results keep using the unscoped baseline).
+ */
+export function buildAssetOpportunityForwardOosBaselinesByBasis(
+    results: FinderAssetOpportunityResult[],
+): Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityForwardOosBaseline>> | null {
+    const byBasis: Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityForwardOosBaseline>> = {};
+    for (const basis of ["pair", "base_only", "quote_only"] as const) {
+        if (!results.some((result) => mergeForwardOosByBasis(result)?.[basis])) continue;
+        byBasis[basis] = buildAssetOpportunityForwardOosBaseline(results, basis);
+    }
+    return Object.keys(byBasis).length > 0 ? byBasis : null;
 }
 
 export function buildAssetOpportunityNextExitOosBaseline(

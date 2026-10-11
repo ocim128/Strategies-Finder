@@ -27,7 +27,6 @@ import {
 import {
 	normalizeFinderAssetEvalLastBars,
 	normalizeFinderAssetEvalWindowMode,
-	normalizeFinderAssetOosHorizonBasis,
 	normalizeFinderAssetOosBatchHoldoutRange,
 	normalizeFinderAssetOosMeasurementMode,
 	normalizeFinderAssetOosHorizons,
@@ -256,7 +255,6 @@ private readAssetOpportunityInputs(): {
 	minFreshSupport: number;
 	includeOpenPositions: boolean;
 	oosMeasurementMode: FinderPersistedUiState["assetOpportunityOosMeasurementMode"];
-	oosHorizonBasis: FinderPersistedUiState["assetOpportunityOosHorizonBasis"];
 	oosIgnoreLastBars: number;
 	evalLastBars: number;
 	evalWindowMode: FinderPersistedUiState["assetOpportunityEvalWindowMode"];
@@ -276,7 +274,6 @@ private readAssetOpportunityInputs(): {
 		))),
 		includeOpenPositions: dom.finderAssetIncludeOpenPositions.checked,
 		oosMeasurementMode: normalizeFinderAssetOosMeasurementMode(dom.finderAssetOosMeasurementMode.value),
-		oosHorizonBasis: normalizeFinderAssetOosHorizonBasis(dom.finderAssetOosHorizonBasis.value),
 		oosIgnoreLastBars: normalizeFinderAssetOosIgnoreLastBars(this.readFinderNumberInput(
 			dom.finderAssetOosIgnoreLastBars,
 			DEFAULT_FINDER_UI_STATE.assetOpportunityOosIgnoreLastBars,
@@ -818,7 +815,6 @@ captureFinderUiState(persist = true): void {
 	this.uiState.assetOpportunityCandidatePoolSize = assetOpportunity.candidatePoolSize;
 	this.uiState.assetOpportunityMinFreshSupport = assetOpportunity.minFreshSupport;
 	this.uiState.assetOpportunityOosMeasurementMode = assetOpportunity.oosMeasurementMode;
-	this.uiState.assetOpportunityOosHorizonBasis = assetOpportunity.oosHorizonBasis;
 	this.uiState.assetOpportunityOosIgnoreLastBars = assetOpportunity.oosIgnoreLastBars;
 	this.uiState.assetOpportunityOosHorizons = assetOpportunity.oosHorizons.join(",");
 	this.uiState.assetOpportunityEvalWindowMode = assetOpportunity.evalWindowMode;
@@ -853,8 +849,6 @@ private syncAssetOosBatchControls(): void {
 	dom.finderAssetOosIgnoreLastBars.closest(".param-group")?.classList.toggle("is-disabled", batchEnabled);
 	dom.finderAssetOosHorizons.disabled = nextExitEnabled;
 	dom.finderAssetOosHorizons.closest(".param-group")?.classList.toggle("is-disabled", nextExitEnabled);
-	dom.finderAssetOosHorizonBasis.disabled = nextExitEnabled;
-	dom.finderAssetOosHorizonBasis.closest(".param-group")?.classList.toggle("is-disabled", nextExitEnabled);
 	const holdoutLabel = dom.finderAssetOosIgnoreLastBars.closest(".param-group")?.querySelector("label");
 	if (holdoutLabel) holdoutLabel.textContent = nextExitEnabled ? "OOS Max Wait Bars" : "OOS Holdout Bars";
 }
@@ -1024,7 +1018,6 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 			minFreshSupport: assetOpportunity.minFreshSupport,
 			includeOpenPositions: assetOpportunity.includeOpenPositions,
 			oosMeasurementMode: assetOpportunity.oosMeasurementMode,
-			oosHorizonBasis: assetOpportunity.oosHorizonBasis,
 			oosIgnoreLastBars: assetOpportunity.oosIgnoreLastBars,
 			evalLastBars: assetOpportunity.evalLastBars,
 			evalWindowMode: assetOpportunity.evalWindowMode,

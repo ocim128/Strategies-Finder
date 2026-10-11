@@ -14,6 +14,12 @@ export interface FinderAssetOosHorizonMetric {
     averagePnlPercent: number | null;
     winRatePercent: number | null;
     sampleSize: number;
+    /**
+     * True when the horizon exceeded the holdout, so the return is measured at
+     * the last available candle (mark-to-market) instead of the full horizon.
+     * Absent on completed-horizon measurements.
+     */
+    ongoing?: boolean;
 }
 
 export interface FinderAssetOosMetrics {
@@ -102,12 +108,20 @@ function buildHorizonMetrics(args: {
     horizons: readonly number[];
 }): FinderAssetOosHorizonMetric[] {
     const normalizedHorizons = normalizeFinderAssetOosHorizons(args.horizons);
+    // A horizon longer than the holdout has no target candle yet, but the
+    // position is still live: measure the ongoing mark-to-market at the last
+    // available candle instead of discarding the observation. The flag keeps
+    // partial windows distinguishable from completed horizons downstream.
+    const lastIndex = args.candles.length - 1;
+    const lastCandle = lastIndex > args.signalIndex ? args.candles[lastIndex] : undefined;
     return normalizedHorizons.map((bars) => {
         const targetCandle = args.candles[args.signalIndex + bars];
-        const targetTime = targetCandle ? parseTimeToUnixSeconds(targetCandle.time) : null;
+        const ongoing = targetCandle === undefined && lastCandle !== undefined;
+        const resolvedCandle = targetCandle ?? lastCandle;
+        const targetTime = resolvedCandle ? parseTimeToUnixSeconds(resolvedCandle.time) : null;
         const targetClose = args.horizonCandlesByTime
             ? (targetTime === null ? undefined : args.horizonCandlesByTime.get(targetTime)?.close)
-            : targetCandle?.close;
+            : resolvedCandle?.close;
         const directionFactor = args.direction === "short" ? -1 : 1;
         const pnlPercent = typeof targetClose === "number"
             && Number.isFinite(targetClose)
@@ -115,12 +129,14 @@ function buildHorizonMetrics(args: {
             && args.entryPrice > 0
             ? directionFactor * ((targetClose - args.entryPrice) / args.entryPrice) * 100
             : Number.NaN;
+        const measured = Number.isFinite(pnlPercent);
         return {
             bars,
-            pnlPercent: Number.isFinite(pnlPercent) ? pnlPercent : null,
-            averagePnlPercent: Number.isFinite(pnlPercent) ? pnlPercent : null,
-            winRatePercent: Number.isFinite(pnlPercent) ? (pnlPercent > 0 ? 100 : 0) : null,
-            sampleSize: Number.isFinite(pnlPercent) ? 1 : 0,
+            pnlPercent: measured ? pnlPercent : null,
+            averagePnlPercent: measured ? pnlPercent : null,
+            winRatePercent: measured ? (pnlPercent > 0 ? 100 : 0) : null,
+            sampleSize: measured ? 1 : 0,
+            ...(ongoing && measured ? { ongoing: true } : {}),
         };
     });
 }
