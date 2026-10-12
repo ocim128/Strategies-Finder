@@ -106,6 +106,28 @@ function heatCanvasSize(
     };
 }
 
+/**
+ * Cell lookup memoized per response. drawHeatmapBase reads every grid cell and
+ * the readout reads one per hover; a linear find per lookup made both
+ * O(cells²) on large archives (hundreds of sorts × holdouts rebuild the base
+ * on every resize tick). Responses are immutable once built, so the WeakMap
+ * index stays valid and evicted snapshots remain garbage-collectable.
+ */
+const cellIndexCache = new WeakMap<
+    AssetOpportunityExplorerHeatmapResponse,
+    Map<string, AssetOpportunityExplorerHeatmapCell>
+>();
+
+function cellIndexOf(heatmap: AssetOpportunityExplorerHeatmapResponse): Map<string, AssetOpportunityExplorerHeatmapCell> {
+    let index = cellIndexCache.get(heatmap);
+    if (!index) {
+        index = new Map(heatmap.cells.map((cell) =>
+            [`${cell.sortMetric}\u0000${cell.holdoutBars}`, cell] as [string, AssetOpportunityExplorerHeatmapCell]));
+        cellIndexCache.set(heatmap, index);
+    }
+    return index;
+}
+
 function cellByPosition(
     heatmap: AssetOpportunityExplorerHeatmapResponse,
     rowIndex: number,
@@ -114,7 +136,7 @@ function cellByPosition(
     const sortMetric = heatmap.sorts[rowIndex];
     const holdoutBars = heatmap.holdoutBars[colIndex];
     if (sortMetric === undefined || holdoutBars === undefined) return undefined;
-    return heatmap.cells.find((cell) => cell.sortMetric === sortMetric && cell.holdoutBars === holdoutBars);
+    return cellIndexOf(heatmap).get(`${sortMetric}\u0000${holdoutBars}`);
 }
 
 function formatValue(value: number | null, unit: "%" | "pp"): string {

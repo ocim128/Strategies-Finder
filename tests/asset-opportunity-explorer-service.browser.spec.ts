@@ -277,13 +277,35 @@ describe("Asset Opportunity Explorer service", () => {
             head: { appendChild: () => undefined },
         };
         (globalThis as any).window = { addEventListener: () => undefined };
-        (globalThis as any).fetch = (url: string) => {
+        (globalThis as any).fetch = (url: string, init?: { signal?: AbortSignal }) => {
             requestedUrls.push(String(url));
-            return Promise.resolve(responder(String(url))).then((outcome) => ({
-                ok: outcome.status === 200,
-                status: outcome.status,
-                json: () => Promise.resolve(outcome.body),
+            const outcome = Promise.resolve(responder(String(url))).then((result) => ({
+                ok: result.status === 200,
+                status: result.status,
+                json: () => Promise.resolve(result.body),
             }));
+            // Honor the real AbortSignal so per-channel abort behavior is
+            // observable: an aborted request rejects instead of resolving late.
+            const signal = init?.signal;
+            if (!signal) return outcome;
+            return new Promise((resolve, reject) => {
+                const onAbort = () => reject(new DOMException("The operation was aborted.", "AbortError"));
+                if (signal.aborted) {
+                    onAbort();
+                    return;
+                }
+                signal.addEventListener("abort", onAbort, { once: true });
+                outcome.then(
+                    (value) => {
+                        signal.removeEventListener("abort", onAbort);
+                        resolve(value);
+                    },
+                    (error) => {
+                        signal.removeEventListener("abort", onAbort);
+                        reject(error);
+                    },
+                );
+            });
         };
     });
 
@@ -359,6 +381,65 @@ describe("Asset Opportunity Explorer service", () => {
         await waitFor(() => (service as any).heatmap?.snapshotId === "snap-2", 2_000, "newest snapshot retained");
         // The obsolete snap-1 response must never overwrite the newer snapshot.
         expect((service as any).heatmap.snapshotId).to.equal("snap-2");
+    });
+
+    it("a detail request must not abort an in-flight heatmap load", async () => {
+        // Regression: the shared AbortController let a detail fetch cancel a
+        // heatmap load; the aborted load was swallowed as quiet and the status
+        // stayed "Loading heatmap…" until the next control change.
+        let releaseHeatmap!: () => void;
+        const heatmapGate = new Promise<void>((resolve) => { releaseHeatmap = resolve; });
+        responder = (url) => {
+            if (url.includes("catalog")) return { status: 200, body: catalogPayload([fixtureRun()]) };
+            if (url.includes("heatmap")) {
+                const heatmapRequests = requestedUrls.filter((candidate) => candidate.includes("heatmap")).length;
+                // The second heatmap load hangs until released; only a
+                // same-channel abort could settle it early.
+                return heatmapRequests === 2
+                    ? heatmapGate.then(() => ({ status: 200, body: heatmapPayload("snap-2") }))
+                    : { status: 200, body: heatmapPayload(`snap-${heatmapRequests}`) };
+            }
+            if (url.includes("details")) return detailsResponderFor(url);
+            return { status: 404, body: {} };
+        };
+        const { service, dom } = createService();
+        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "initial heatmap loaded");
+        // The stale canvas stays interactive while the replacement loads.
+        dom.explorerHorizonSelect.listeners.get("change")![0]!();
+        await waitFor(() => requestedUrls.filter((candidate) => candidate.includes("heatmap")).length === 2, 2_000, "second heatmap in flight");
+        (service as any).selectRange("expectancy", 12, 24);
+        await waitFor(() => requestedUrls.some((candidate) => candidate.includes("details")), 2_000, "detail requested while heatmap loads");
+        releaseHeatmap();
+        await waitFor(
+            () => (service as any).heatmap?.snapshotId === "snap-2",
+            2_000,
+            "heatmap completed despite the interleaved detail request",
+        );
+        expect(dom.explorerStatus.textContent).to.contain("Heatmap loaded");
+        expect(dom.explorerStatus.textContent).to.not.contain("Loading heatmap");
+    });
+
+    it("reloads the heatmap when a detail response reports an evicted snapshot (409)", async () => {
+        responder = (url) => {
+            if (url.includes("catalog")) return { status: 200, body: catalogPayload([fixtureRun()]) };
+            if (url.includes("heatmap")) {
+                const heatmapRequests = requestedUrls.filter((candidate) => candidate.includes("heatmap")).length;
+                return { status: 200, body: heatmapPayload(`snap-${heatmapRequests}`) };
+            }
+            if (url.includes("details")) {
+                return { status: 409, body: { error: "The heatmap snapshot is no longer retained; reload the explorer view." } };
+            }
+            return { status: 404, body: {} };
+        };
+        const { service, dom } = createService();
+        await waitFor(() => dom.explorerStatus.textContent.includes("Heatmap loaded"), 2_000, "initial heatmap loaded");
+        const heatmapCount = requestedUrls.filter((candidate) => candidate.includes("heatmap")).length;
+        (service as any).selectRange("expectancy", 12, 24);
+        // Recovery keys on the HTTP status: any 409 wording must trigger the
+        // view reload.
+        await waitFor(() => requestedUrls.filter((candidate) => candidate.includes("heatmap")).length === heatmapCount + 1, 2_000, "heatmap auto-reloaded");
+        await waitFor(() => (service as any).heatmap?.snapshotId === `snap-${heatmapCount + 1}`, 2_000, "replacement heatmap rendered");
+        expect(dom.explorerStatus.textContent).to.contain("Heatmap loaded");
     });
 
     it("renders range detail for a selection and discards mismatched snapshot payloads", async () => {

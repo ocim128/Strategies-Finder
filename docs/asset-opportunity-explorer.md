@@ -33,13 +33,13 @@ Read-only local routes (loopback-gated like every other local API; the folder is
 | `GET /api/asset-opportunity-explorer/heatmap` | `batchRunId`, `horizonBars`, `topK`, `spacing`, optional `basis` → snapshot id, axes, cells (actual/baseline/delta/counts), measurement metadata, diagnostics. No candidate arrays on the wire. |
 | `GET /api/asset-opportunity-explorer/details` | `snapshotId`, `sortMetric`, inclusive `holdoutFrom`/`holdoutTo`, `metric`, `offset`, `limit` (default 100, max 500) → full-range summaries, histogram bins, one candidate-row page. An evicted snapshot answers `409` and the UI reloads the view. |
 
-Loading is bounded: matching files are read one at a time (stat → read → stat; an append mid-scan yields a retryable archive-changed error). A file that cannot be parsed fails the whole scan with its filename rather than being skipped, a missing archive folder is an explicit empty state, and any other directory read failure is an actionable error. At most one compact selected-run view and its derived snapshot are retained per process, scans for identical in-flight requests are coalesced, and an older scan completion never overwrites a newer refresh or run selection.
+Loading is bounded: matching files are read one at a time (stat → read → stat; an append mid-scan yields a retryable archive-changed error). A file that cannot be parsed fails the whole scan with its filename rather than being skipped, a missing archive folder is an explicit empty state, and any other directory read failure is an actionable error. A small most-recently-used set of compact selected-run views (up to three, per batch run and basis) plus the derived heatmap snapshot are retained per process, so repeat run and basis switches avoid re-scanning the archive; Refresh clears them, scans for identical in-flight requests are coalesced, and an older scan completion never overwrites a newer refresh or run selection. Each completed scan logs its duration, file count, and selection to the debug logger (`explorer.scan_complete`).
 
 ## Files
 
 - `lib/asset-opportunity-explorer/`: `archive-parser.ts` (shared parser extracted from the CLI script), `analysis.ts` (cell/range calculations), `types.ts` (wire shapes), `archive-reader.ts` (bounded scan), `server-vite-plugin.ts` (routes), `dom.ts` / `service.ts` / `renderer.ts` (UI).
 - `styles/asset-opportunity-explorer.css`: lazy-loaded styles.
 - `html-partials/tab-asset-opportunity-explorer.html`: tab partial, lazily injected.
-- Tests: `tests/asset-opportunity-explorer-analysis.spec.ts`, `tests/asset-opportunity-explorer-server.spec.ts`, `tests/asset-opportunity-explorer-service.spec.ts`.
+- Tests: `tests/asset-opportunity-explorer-analysis.spec.ts`, `tests/asset-opportunity-explorer-server.spec.ts`, `tests/asset-opportunity-explorer-service.browser.spec.ts`, `tests/asset-opportunity-explorer-renderer.spec.ts`.
 
 The CLI report pipeline (`scripts/analyze-asset-opportunity-holdouts.ts`) keeps its behavior and public exports; the parser lives in the shared leaf module and the script re-exports it.

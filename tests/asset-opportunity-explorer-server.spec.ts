@@ -23,6 +23,7 @@ const {
     resetForTests,
     getSnapshotForTests,
     getRetainedViewForTests,
+    getRetainedViewCountForTests,
     getCatalogForTests,
 } = __testInternals;
 
@@ -336,6 +337,51 @@ describe("Asset Opportunity Explorer server", () => {
         expect(getSnapshotForTests()?.response.topK).to.equal(1);
     });
 
+    it("serves repeat run and basis switches from the retained-view cache without re-scanning", async () => {
+        root = await createFixtureRoot();
+        setServerRootForTests(root);
+        routes = captureRoutes();
+        let scanCount = 0;
+        setScanRunnerForTests((args) => {
+            scanCount += 1;
+            return scanAssetOpportunityArchive(args);
+        });
+        const heatmap = "/api/asset-opportunity-explorer/heatmap";
+        await dispatch(routes, heatmap, "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all");
+        expect(scanCount).to.equal(1);
+        // Identical params reuse the snapshot; neither request re-scans.
+        await dispatch(routes, heatmap, "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all");
+        expect(scanCount).to.equal(1);
+        // A different basis misses once, then toggling back must be a cache
+        // hit — a basis flip is a core interaction and must never re-scan.
+        await dispatch(routes, heatmap, "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all&basis=pair");
+        expect(scanCount).to.equal(2);
+        await dispatch(routes, heatmap, "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all");
+        expect(scanCount).to.equal(2);
+        expect(getRetainedViewCountForTests()).to.equal(2);
+    });
+
+    it("refresh clears the retained-view cache so later selections re-scan", async () => {
+        root = await createFixtureRoot();
+        setServerRootForTests(root);
+        routes = captureRoutes();
+        let scanCount = 0;
+        setScanRunnerForTests((args) => {
+            // Count only retained-view scans; the refresh's metadata-only
+            // catalog scan is not a view-cache miss.
+            if (args.retainRunId) scanCount += 1;
+            return scanAssetOpportunityArchive(args);
+        });
+        await dispatch(routes, "/api/asset-opportunity-explorer/heatmap", "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all");
+        expect(scanCount).to.equal(1);
+        await dispatch(routes, "/api/asset-opportunity-explorer/catalog", "?refresh=1");
+        expect(getRetainedViewCountForTests()).to.equal(0);
+        expect(getSnapshotForTests()).to.equal(null);
+        // The archive may have changed on disk, so the selection must re-scan.
+        await dispatch(routes, "/api/asset-opportunity-explorer/heatmap", "?batchRunId=run-a&horizonBars=6&topK=2&spacing=all");
+        expect(scanCount).to.equal(2);
+    });
+
     it("serves detail pages that reconcile with full-range counts and bounded pages", async () => {
         root = await createFixtureRoot();
         setServerRootForTests(root);
@@ -448,6 +494,42 @@ describe("Asset Opportunity Explorer server", () => {
         expect(outcome.runs.map((run) => run.batchRunId)).to.deep.equal(["run-next-exit", "run-a"]);
         const metadataOnly = await scanAssetOpportunityArchive({ root, retainRunId: null });
         expect(metadataOnly.view).to.equal(null);
+    });
+
+    it("unions available bases when a run spans files with different bases", async () => {
+        root = await mkdtemp(path.join(tmpdir(), "asset-opportunity-explorer-bases-"));
+        const archiveDir = path.join(root, "archive", "asset opportunity");
+        await mkdir(archiveDir, { recursive: true });
+        const rowWithBasis = (basis: string): Record<string, unknown> => ({
+            scope: "asset_opportunity",
+            rank: 1,
+            symbol: "AAA",
+            strategyId: "strategy_a",
+            candidateFingerprint: "fp-1",
+            forwardOosPerformance: { basis, horizons: [{ bars: 6, averagePnlPercent: 1, sampleSize: 1 }] },
+            forwardOosPerformanceByBasis: {
+                [basis]: { basis, horizons: [{ bars: 6, averagePnlPercent: 1, sampleSize: 1 }] },
+            },
+        });
+        await writeFile(path.join(archiveDir, "oos-holdout-12-bars.txt"), block({
+            timestamp: "2026-09-25T01:00:00.000Z",
+            runId: "run-split",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [rowWithBasis("pair")],
+        }));
+        await writeFile(path.join(archiveDir, "oos-holdout-24-bars.txt"), block({
+            timestamp: "2026-09-25T02:00:00.000Z",
+            runId: "run-split",
+            holdoutBars: 24,
+            sortMetric: "expectancy",
+            rows: [rowWithBasis("base_only")],
+        }));
+        const outcome = await scanAssetOpportunityArchive({ root, retainRunId: null });
+        const run = outcome.runs.find((candidate) => candidate.batchRunId === "run-split");
+        // Each file's summary sees only its own basis; the merged run must
+        // report the union or the basis selector hides viewable series.
+        expect(run?.availableBases).to.deep.equal(["pair", "base_only"]);
     });
 
     it("treats a missing archive directory as empty but other directory failures as errors", async () => {

@@ -101,21 +101,22 @@ function maxRankOfRows(rows: AssetOpportunityArchiveRow[]): number {
 export const EXPLORER_BASE_ORDER: readonly AssetOpportunityExplorerBasis[] = ["pair", "base_only", "quote_only"];
 
 /** Collect the price bases a run can be viewed on: per-basis map keys plus primary row bases. */
-function availableBasesOf(records: AssetOpportunityArchiveRecord[]): AssetOpportunityExplorerBasis[] {
-    const available = new Set<AssetOpportunityExplorerBasis>();
-    for (const record of records) {
-        for (const row of record.topResults) {
-            for (const key of EXPLORER_BASE_ORDER) {
-                if (row.forwardOosPerformanceByBasis?.[key]) available.add(key);
-            }
-            const primary = row.forwardOosPerformance?.basis;
-            if (primary) available.add(primary);
-        }
+function collectRowBases(
+    available: Set<AssetOpportunityExplorerBasis>,
+    row: AssetOpportunityArchiveRow,
+): void {
+    for (const key of EXPLORER_BASE_ORDER) {
+        if (row.forwardOosPerformanceByBasis?.[key]) available.add(key);
     }
-    return EXPLORER_BASE_ORDER.filter((basis) => available.has(basis));
+    const primary = row.forwardOosPerformance?.basis;
+    if (primary) available.add(primary);
 }
 
-/** Group records per batch run and summarize catalog metadata. Runs come back newest-first. */
+/**
+ * Group records per batch run and summarize catalog metadata. Runs come back
+ * newest-first. Bases accumulate into a Set so the raw records never need to be
+ * retained for the summary — the scanner releases them right after this call.
+ */
 export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): AssetOpportunityExplorerCatalogRun[] {
     const groups = new Map<string, {
         latestTimestamp: string;
@@ -126,7 +127,7 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
         archiveMaximumRank: number;
         sourceBlockCount: number;
         hasBaselines: boolean;
-        records: AssetOpportunityArchiveRecord[];
+        availableBases: Set<AssetOpportunityExplorerBasis>;
     }>();
     for (const record of records) {
         let group = groups.get(record.batchRunId);
@@ -140,7 +141,7 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
                 archiveMaximumRank: 0,
                 sourceBlockCount: 0,
                 hasBaselines: false,
-                records: [],
+                availableBases: new Set(),
             };
             groups.set(record.batchRunId, group);
         }
@@ -153,11 +154,11 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
         for (const horizon of record.baseline?.horizons ?? []) group.horizons.add(horizon.bars);
         for (const row of record.topResults) {
             for (const horizon of row.forwardOosPerformance?.horizons ?? []) group.horizons.add(horizon.bars);
+            collectRowBases(group.availableBases, row);
         }
         group.archiveMaximumRank = Math.max(group.archiveMaximumRank, maxRankOfRows(record.topResults));
         group.sourceBlockCount += 1;
         if (record.baseline) group.hasBaselines = true;
-        group.records.push(record);
     }
     return [...groups.entries()]
         .map(([batchRunId, group]) => {
@@ -176,7 +177,7 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
                 archiveMaximumRank: group.archiveMaximumRank,
                 sourceBlockCount: group.sourceBlockCount,
                 hasBaselines: group.hasBaselines,
-                availableBases: availableBasesOf(group.records),
+                availableBases: EXPLORER_BASE_ORDER.filter((basis) => group.availableBases.has(basis)),
             };
         })
         .sort((left, right) => right.latestTimestamp.localeCompare(left.latestTimestamp)

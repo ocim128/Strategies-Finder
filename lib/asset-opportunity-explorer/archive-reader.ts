@@ -8,6 +8,7 @@ import {
     type AssetOpportunityArchiveRecord,
 } from "./archive-parser";
 import {
+    EXPLORER_BASE_ORDER,
     ExplorerAnalysisError,
     buildViewFromCompactBlocks,
     compactRunRecord,
@@ -85,6 +86,9 @@ function mergeRunSummaries(
         existing.archiveMaximumRank = Math.max(existing.archiveMaximumRank, run.archiveMaximumRank);
         existing.sourceBlockCount += run.sourceBlockCount;
         existing.hasBaselines = existing.hasBaselines || run.hasBaselines;
+        // A run spans holdout files; a basis visible in any of them is viewable.
+        existing.availableBases = EXPLORER_BASE_ORDER.filter((basis) =>
+            existing.availableBases.includes(basis) || run.availableBases.includes(basis));
         existing.support = existing.support === run.support ? existing.support : "mixed_modes";
     }
 }

@@ -1,4 +1,5 @@
 import type { Plugin } from "vite";
+import { debugLogger } from "../debug-logger";
 import {
     HttpStatusError,
     registerLocalJsonRoute,
@@ -25,10 +26,12 @@ import type {
  * Read-only local API over the existing `archive/asset opportunity` folder for
  * the Opportunity Explorer heatmap and its evidence panel.
  *
- * One compact selected-run view plus its derived heatmap snapshot are retained
- * per process; Refresh re-scans and invalidates both. No archive writes, no
- * worker pool, no durable jobs, no persistent cache. Sources are referenced by
- * archive filename only — no filesystem path is ever accepted from a client.
+ * A small most-recently-used set of compact selected-run views (per batch run
+ * and basis) plus the derived heatmap snapshot are retained per process, so
+ * run and basis switches avoid re-scanning the archive; Refresh clears them.
+ * No archive writes, no worker pool, no durable jobs, no persistent cache.
+ * Sources are referenced by archive filename only — no filesystem path is ever
+ * accepted from a client.
  *
  * Bundle-safe for Vite's CJS configuration build: imports only leaf modules
  * (vite-http-utils + feature-local leaves); no `finder-manager`, chart, or UI
@@ -38,14 +41,25 @@ import type {
 export const EXPLORER_DETAILS_PAGE_DEFAULT = 100;
 export const EXPLORER_DETAILS_PAGE_MAX = 500;
 
+/** Retained compact views. One view is on the order of tens of MB at worst, so the cap stays small. */
+const MAX_RETAINED_VIEWS = 3;
+
 let serverRoot: string | null = null;
 /** Last completed catalog scan (metadata only). */
 let catalog: AssetOpportunityExplorerCatalogResponse | null = null;
-/** The single retained selected-run view plus the scan generation it came from. */
-let retained: { generation: number; view: ExplorerView; basis: AssetOpportunityExplorerBasis | null } | null = null;
-/** The current derived snapshot for the retained view. */
+/**
+ * Compact selected-run views, keyed `batchRunId\u0000basis`, in
+ * most-recently-used order (Map insertion order; hits are re-inserted). A scan
+ * for an uncached selection takes seconds over a full archive, so repeat
+ * switches between a few runs/bases must not re-enter it.
+ */
+const retainedViews = new Map<string, { generation: number; view: ExplorerView }>();
+/** The current derived snapshot for one of the retained views. */
 let snapshot: {
     response: AssetOpportunityExplorerHeatmapResponse;
+    /** The view the snapshot was derived from; details serve from it directly. */
+    view: ExplorerView;
+    generation: number;
     batchRunId: string;
     basis: AssetOpportunityExplorerBasis | null;
     horizonBars: number;
@@ -61,6 +75,10 @@ let inFlightScan: { key: string; promise: Promise<AssetOpportunityArchiveScanOut
  */
 let scanOwnership = 0;
 let scanRunner: typeof scanAssetOpportunityArchive = scanAssetOpportunityArchive;
+
+function retainedViewKey(batchRunId: string, basis: AssetOpportunityExplorerBasis | null): string {
+    return `${batchRunId}\u0000${basis ?? "*"}`;
+}
 
 function requireRoot(): string {
     return serverRoot ?? process.cwd();
@@ -113,9 +131,22 @@ function requireEnumParam<T extends string>(url: URL, name: string, allowed: rea
 function performScan(args: Parameters<typeof scanAssetOpportunityArchive>[0]): Promise<AssetOpportunityArchiveScanOutcome> {
     const key = `${args.root}\u0000${args.retainRunId ?? "*"}\u0000${args.basis ?? "*"}`;
     if (inFlightScan && inFlightScan.key === key) return inFlightScan.promise;
-    const promise = scanRunner(args).finally(() => {
-        if (inFlightScan?.promise === promise) inFlightScan = null;
-    });
+    const startedAt = Date.now();
+    const promise = scanRunner(args)
+        .then((outcome) => {
+            // A scan reads the whole archive (hundreds of MB at scale); the
+            // duration line is the only way to tell a slow scan from a stuck one.
+            debugLogger.info("explorer.scan_complete", {
+                durationMs: Date.now() - startedAt,
+                fileCount: outcome.fileCount,
+                retainRunId: args.retainRunId,
+                basis: args.basis ?? null,
+            });
+            return outcome;
+        })
+        .finally(() => {
+            if (inFlightScan?.promise === promise) inFlightScan = null;
+        });
     inFlightScan = { key, promise };
     return promise;
 }
@@ -150,11 +181,11 @@ async function handleCatalogRequest(res: ViteHttpResponse, url: URL): Promise<vo
         const response = catalogResponseFromScan(outcome);
         if (ownership === scanOwnership) {
             // Only the newest scan publishes: a refresh invalidates the
-            // retained view and snapshot, and an older completion must never
+            // retained views and snapshot, and an older completion must never
             // clobber a newer run selection's state.
             catalog = response;
             if (refresh) {
-                retained = null;
+                retainedViews.clear();
                 snapshot = null;
             }
         }
@@ -164,8 +195,18 @@ async function handleCatalogRequest(res: ViteHttpResponse, url: URL): Promise<vo
     }
 }
 
-async function retainViewForRun(batchRunId: string, basis: AssetOpportunityExplorerBasis | null): Promise<ExplorerView | null> {
-    if (retained && retained.view.batchRunId === batchRunId && retained.basis === basis) return retained.view;
+async function retainViewForRun(
+    batchRunId: string,
+    basis: AssetOpportunityExplorerBasis | null,
+): Promise<{ generation: number; view: ExplorerView } | null> {
+    const key = retainedViewKey(batchRunId, basis);
+    const cached = retainedViews.get(key);
+    if (cached) {
+        // Re-insert to refresh recency so the most-used views survive eviction.
+        retainedViews.delete(key);
+        retainedViews.set(key, cached);
+        return cached;
+    }
     const ownership = ++scanOwnership;
     const outcome = await performScan({ root: requireRoot(), retainRunId: batchRunId, ...(basis ? { basis } : {}) });
     if (!outcome.runs.some((run) => run.batchRunId === batchRunId)) {
@@ -177,9 +218,15 @@ async function retainViewForRun(batchRunId: string, basis: AssetOpportunityExplo
         return null;
     }
     catalog = catalogResponseFromScan(outcome);
-    retained = { generation: ownership, view: outcome.view!, basis };
+    const entry = { generation: ownership, view: outcome.view! };
+    retainedViews.set(key, entry);
+    while (retainedViews.size > MAX_RETAINED_VIEWS) {
+        const oldest = retainedViews.keys().next();
+        if (oldest.done) break;
+        retainedViews.delete(oldest.value);
+    }
     snapshot = null;
-    return retained.view;
+    return entry;
 }
 
 async function handleHeatmapRequest(res: ViteHttpResponse, url: URL): Promise<void> {
@@ -194,10 +241,11 @@ async function handleHeatmapRequest(res: ViteHttpResponse, url: URL): Promise<vo
         const basis = basisParam && basisParam.trim()
             ? requireEnumParam<AssetOpportunityExplorerBasis>(url, "basis", ["pair", "base_only", "quote_only"])
             : null;
-        const view = await retainViewForRun(batchRunId, basis);
-        if (!view) {
+        const entry = await retainViewForRun(batchRunId, basis);
+        if (!entry) {
             throw new HttpStatusError(409, "A newer explorer selection replaced this scan while it ran; repeat the request.");
         }
+        const view = entry.view;
         if (view.archiveMaximumRank > 0 && topK > view.archiveMaximumRank) {
             throw new HttpStatusError(400, `topK ${topK} exceeds the archived rank limit ${view.archiveMaximumRank} for run "${batchRunId}"; the archive shortlist has no ranks beyond it.`);
         }
@@ -215,9 +263,18 @@ async function handleHeatmapRequest(res: ViteHttpResponse, url: URL): Promise<vo
             horizonBars,
             topK,
             spacing,
-            snapshotId: `explorer-${retained!.generation}-${batchRunId}-b${basis}-h${horizonBars}-k${topK}-${spacing}`,
+            snapshotId: `explorer-${entry.generation}-${batchRunId}-b${basis}-h${horizonBars}-k${topK}-${spacing}`,
         });
-        snapshot = { response, batchRunId, basis, horizonBars, topK, spacing };
+        snapshot = {
+            response,
+            view,
+            generation: entry.generation,
+            batchRunId,
+            basis,
+            horizonBars,
+            topK,
+            spacing,
+        };
         sendJson(res, 200, response);
     } catch (error) {
         rethrowMapped(error);
@@ -242,7 +299,7 @@ function handleDetailsRequest(res: ViteHttpResponse, url: URL): void {
         }
         const response = buildRangeDetails({
             snapshotId,
-            view: retained!.view,
+            view: snapshot.view,
             columns: snapshot.response.holdoutBars,
             topK: snapshot.response.topK,
             horizonBars,
@@ -301,7 +358,7 @@ export const __testInternals = {
     resetForTests(): void {
         serverRoot = null;
         catalog = null;
-        retained = null;
+        retainedViews.clear();
         snapshot = null;
         scanOwnership = 0;
         inFlightScan = null;
@@ -309,6 +366,15 @@ export const __testInternals = {
     },
     getCatalogForTests(): AssetOpportunityExplorerCatalogResponse | null { return catalog; },
     getSnapshotForTests(): typeof snapshot { return snapshot; },
-    getRetainedGenerationForTests(): number | null { return retained?.generation ?? null; },
-    getRetainedViewForTests(): ExplorerView | null { return retained?.view ?? null; },
+    /** The most-recently-used retained view; hits refresh recency. */
+    getRetainedGenerationForTests(): number | null {
+        const entries = [...retainedViews.values()];
+        return entries[entries.length - 1]?.generation ?? null;
+    },
+    getRetainedViewForTests(): ExplorerView | null {
+        const entries = [...retainedViews.values()];
+        return entries[entries.length - 1]?.view ?? null;
+    },
+    /** Number of distinct retained views (run, basis) pairs. */
+    getRetainedViewCountForTests(): number { return retainedViews.size; },
 };

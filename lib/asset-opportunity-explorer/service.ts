@@ -28,15 +28,30 @@ import type {
 /**
  * Browser coordination for the Opportunity Explorer. Read-only over the local
  * API: one catalog request, one heatmap snapshot at a time, paged evidence
- * details. Obsolete responses are dropped via a request generation plus an
- * AbortController; detail renders additionally verify the snapshot identity so
- * an evicted snapshot can never repaint the panel. Selection state lives in
- * service-local memory only — no persisted preferences are introduced.
+ * details. Obsolete responses are dropped via a request generation plus
+ * per-channel AbortControllers (view requests vs detail requests, so a detail
+ * fetch can never cancel an in-flight heatmap load); detail renders
+ * additionally verify the snapshot identity so an evicted snapshot can never
+ * repaint the panel. Selection state lives in service-local memory only — no
+ * persisted preferences are introduced.
  */
 
 const LOCAL_SERVER_HINT = "The Opportunity Explorer reads the local archive through the Vite server. Start the local dev/preview server (npm run dev) and reload.";
 
 const EXPLORER_DETAILS_PAGE_SIZE = 100;
+
+type ExplorerRequestChannel = "view" | "detail";
+
+/** Fetch failure carrying the HTTP status; recovery keys on the status, never on message text. */
+class ExplorerRequestError extends Error {
+    constructor(
+        public readonly status: number,
+        message: string,
+    ) {
+        super(message);
+        this.name = "ExplorerRequestError";
+    }
+}
 
 export class AssetOpportunityExplorerService {
     private dom: AssetOpportunityExplorerDom | null = null;
@@ -52,7 +67,8 @@ export class AssetOpportunityExplorerService {
     /** Ownership token for detail requests; independent of the heatmap generation. */
     private detailGeneration = 0;
     private requestGeneration = 0;
-    private abortController: AbortController | null = null;
+    /** View (catalog/heatmap) and detail requests abort independently. */
+    private abortControllers: Record<ExplorerRequestChannel, AbortController | null> = { view: null, detail: null };
     private dragAnchor: (CellRef & { moved: boolean }) | null = null;
     private readonly renderFrame = coalesceAnimationFrame(() => this.redrawHeatmap());
 
@@ -91,13 +107,19 @@ export class AssetOpportunityExplorerService {
         });
         canvas.addEventListener("pointermove", (event) => {
             const cell = this.cellFromEvent(event);
-            const changed = JSON.stringify(cell) !== JSON.stringify(this.hover);
+            // Field comparison: this fires at pointer-event rate, so per-event
+            // JSON serialization (and an O(cells) readout lookup when the cell
+            // has not changed) would run continuously while hovering.
+            const changed = cell?.rowIndex !== this.hover?.rowIndex || cell?.colIndex !== this.hover?.colIndex;
             this.hover = cell;
             if (this.dragAnchor && cell && cell.rowIndex === this.dragAnchor.rowIndex
                 && cell.colIndex !== this.dragAnchor.colIndex) {
                 this.dragAnchor.moved = true;
             }
-            if (cell) this.updateReadout(cell);
+            if (changed) {
+                if (cell) this.updateReadout(cell);
+                else dom.explorerHeatmapReadout.textContent = "";
+            }
             if (changed || (cell && this.dragAnchor?.moved)) this.renderFrame.schedule();
         });
         canvas.addEventListener("pointerleave", () => {
@@ -184,10 +206,13 @@ export class AssetOpportunityExplorerService {
         dom.explorerStatus.dataset.tone = tone;
     }
 
-    private async fetchJson<T>(url: string): Promise<T> {
-        if (this.abortController) this.abortController.abort();
+    private async fetchJson<T>(url: string, channel: ExplorerRequestChannel): Promise<T> {
+        // Only a newer request on the same channel aborts an in-flight one; a
+        // detail fetch must never cancel a heatmap load (that left the view
+        // stuck in "Loading heatmap…" with the abort swallowed as quiet).
+        this.abortControllers[channel]?.abort();
         const abortController = new AbortController();
-        this.abortController = abortController;
+        this.abortControllers[channel] = abortController;
         try {
             const response = await fetch(url, { cache: "no-store", signal: abortController.signal });
             if (!response.ok) {
@@ -198,11 +223,11 @@ export class AssetOpportunityExplorerService {
                 } catch {
                     // keep the default status message
                 }
-                throw new Error(message);
+                throw new ExplorerRequestError(response.status, message);
             }
             return await response.json() as T;
         } finally {
-            if (this.abortController === abortController) this.abortController = null;
+            if (this.abortControllers[channel] === abortController) this.abortControllers[channel] = null;
         }
     }
 
@@ -222,6 +247,7 @@ export class AssetOpportunityExplorerService {
         try {
             const payload = await this.fetchJson<AssetOpportunityExplorerCatalogResponse>(
                 `/api/asset-opportunity-explorer/catalog${refresh ? "?refresh=1" : ""}`,
+                "view",
             );
             if (!this.isCurrent(generation)) return;
             this.catalog = payload;
@@ -406,7 +432,7 @@ export class AssetOpportunityExplorerService {
         this.focus = null;
         this.hideDetail();
         try {
-            const payload = await this.fetchJson<AssetOpportunityExplorerHeatmapResponse>(this.heatmapUrl());
+            const payload = await this.fetchJson<AssetOpportunityExplorerHeatmapResponse>(this.heatmapUrl(), "view");
             if (!this.isCurrent(generation)) return;
             this.heatmap = payload;
             this.metric = dom.explorerMetricSelect.value as AssetOpportunityExplorerMetric;
@@ -543,7 +569,7 @@ export class AssetOpportunityExplorerService {
         dom.explorerDetailLoadOlderBtn.disabled = true;
         this.setDetailStatus(offset === 0 ? "Loading range detail…" : "Loading older rows…");
         try {
-            const payload = await this.fetchJson<AssetOpportunityExplorerDetailsResponse>(url);
+            const payload = await this.fetchJson<AssetOpportunityExplorerDetailsResponse>(url, "detail");
             if (this.detailGeneration !== detailToken) return;
             // Full selection-key check: the response must still describe the
             // current snapshot, sort, bounds, metric, and page to render.
@@ -573,12 +599,13 @@ export class AssetOpportunityExplorerService {
         } catch (error) {
             if (AssetOpportunityExplorerService.isAbort(error)) return;
             if (this.detailGeneration !== detailToken) return;
-            const message = error instanceof Error ? error.message : String(error);
-            if (message.includes("no longer retained") || message.includes("409")) {
+            // Recovery keys on the HTTP status, not on server message wording.
+            if (error instanceof ExplorerRequestError && error.status === 409) {
                 this.setDetailStatus("The heatmap snapshot was replaced on the server; reloading the view…");
                 void this.loadHeatmap();
                 return;
             }
+            const message = error instanceof Error ? error.message : String(error);
             this.setDetailStatus(`Detail unavailable: ${message}`);
         } finally {
             if (this.detailGeneration === detailToken) {
