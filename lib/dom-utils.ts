@@ -72,3 +72,16 @@ export function setVisible(target: string | HTMLElement | null | undefined, visi
     }
 }
 
+/**
+ * Web storage accessors for runtimes without the API (workers, private
+ * browsing, embedded contexts); callers still wrap reads/writes in try/catch.
+ */
+export function getLocalStorage(): Storage | null {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+}
+
+export function getSessionStorage(): Storage | null {
+    return typeof sessionStorage === 'undefined' ? null : sessionStorage;
+}
+
+

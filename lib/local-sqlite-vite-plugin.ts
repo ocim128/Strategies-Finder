@@ -49,14 +49,10 @@ function parseSqliteLimit(raw: string | null): number {
 
 export { isAllowedLocalRequest as isTrustedLocalRequest } from "./local-route-authorization";
 
-function toUnixSeconds(value: unknown): number | null {
-    return parseTimeToUnixSeconds(value);
-}
-
 function normalizeSqliteCandle(raw: unknown): SqliteCandleRow | null {
     if (!raw || typeof raw !== 'object') return null;
     const value = raw as Record<string, unknown>;
-    const time = toUnixSeconds(value.time ?? value.timestamp ?? value.t ?? value.openTime);
+    const time = parseTimeToUnixSeconds(value.time ?? value.timestamp ?? value.t ?? value.openTime);
     const open = Number(value.open ?? value.o);
     const high = Number(value.high ?? value.h);
     const low = Number(value.low ?? value.l);

@@ -14,6 +14,7 @@ import {
     type TradeLedgerProvenance,
     type TradeLedgerRow,
 } from "./trade-ledger-schema";
+import { nowMs } from "../perf-clock";
 
 /** IS slice = first fraction of the folder's GLOBAL calendar time range. */
 export const TRADE_LEDGER_IS_FRACTION = 0.6;
@@ -608,7 +609,7 @@ function replayRuleForEvaluation(
         maxOpenTrades: input.replay.maxOpenTrades,
         cooldownBars: input.replay.cooldownBars,
     };
-    const ruleReplayStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const ruleReplayStartedAt = nowMs();
     const pairResults: ReplayPairResult[] = [];
     for (const [pair, pairRows] of prepared.pairs) {
         pairResults.push(replayPair(pair, pairRows, input.rule, replayParams, input.replay.shift, prepared.ruleRows, true));
@@ -621,7 +622,7 @@ function replayRuleForEvaluation(
         admitted: pairResults.flatMap((result) => result.trades),
         rightCensored: total - candidates.length,
         replayParams,
-        ruleReplayMs: (typeof performance !== "undefined" ? performance.now() : Date.now()) - ruleReplayStartedAt,
+        ruleReplayMs: nowMs() - ruleReplayStartedAt,
     };
 }
 
@@ -772,9 +773,9 @@ function runControlReplaySync(
 export function evaluateTradeLedgerRule(input: CheckerReportInput): LedgerRuleEvaluation {
     const prepared = preparedForEvaluation(input);
     const base = replayRuleForEvaluation(input, prepared);
-    const controlStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const controlStartedAt = nowMs();
     const controls = runControlReplaySync(input, base, prepared);
-    const controlReplayMs = (typeof performance !== "undefined" ? performance.now() : Date.now()) - controlStartedAt;
+    const controlReplayMs = nowMs() - controlStartedAt;
     return buildLedgerRuleEvaluation(input, base, controls.results, controlReplayMs, controls.calibrationReplays, controls.candidateVisits);
 }
 
@@ -787,7 +788,7 @@ export async function evaluateTradeLedgerRuleAsync(
     const base = replayRuleForEvaluation(input, prepared);
     const controlRuns = input.controlRuns ?? TRADE_LEDGER_CONTROL_RUNS;
     const controlSeed = input.controlSeed ?? TRADE_LEDGER_CONTROL_SEED;
-    const controlStartedAt = typeof performance !== "undefined" ? performance.now() : Date.now();
+    const controlStartedAt = nowMs();
     let calibratedP = 0;
     let calibrationReplays = 0;
     if (controlRuns > 0) {
@@ -821,7 +822,7 @@ export async function evaluateTradeLedgerRuleAsync(
         input,
         base,
         results,
-        (typeof performance !== "undefined" ? performance.now() : Date.now()) - controlStartedAt,
+        nowMs() - controlStartedAt,
         calibrationReplays,
         prepared.controlRows.length * results.length,
     );

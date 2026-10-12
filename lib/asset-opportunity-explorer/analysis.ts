@@ -1,3 +1,4 @@
+import { medianOrNull } from "../statistics-utils";
 import type {
     AssetOpportunityArchiveRecord,
     AssetOpportunityArchiveRow,
@@ -420,15 +421,6 @@ export interface SnapshotParams {
     snapshotId: string;
 }
 
-function medianOf(values: number[]): number | null {
-    if (values.length === 0) return null;
-    const sorted = [...values].sort((left, right) => left - right);
-    const middle = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0
-        ? (sorted[middle - 1]! + sorted[middle]!) / 2
-        : sorted[middle]!;
-}
-
 /** Shared lookup key for one (sortMetric, holdoutBars) cell in a block map. */
 function blockCellKey(sortMetric: string, holdoutBars: number): string {
     return `${sortMetric}|${holdoutBars}`;
@@ -608,7 +600,7 @@ export function buildRangeDetails(params: RangeDetailParams): AssetOpportunityEx
     const mean = observedHoldouts > 0
         ? finiteCellValues.reduce((sum, value) => sum + value, 0) / observedHoldouts
         : null;
-    const median = medianOf(finiteCellValues);
+    const median = medianOrNull(finiteCellValues);
     const histogramBins: Array<{ from: number; to: number; count: number }> = [];
     if (observedHoldouts > 0) {
         const min = Math.min(...finiteCellValues);

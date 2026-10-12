@@ -1,9 +1,7 @@
+import { getLocalStorage } from './dom-utils';
+
 const COLLAPSED_KEY = 'livePositionsCollapsed';
 const ENABLED_KEY = 'livePositionsEnabled';
-
-function getLocalStorage(): Storage | null {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-}
 
 function readStorageValue(key: string): string | null {
     try {

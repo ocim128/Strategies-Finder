@@ -1,13 +1,7 @@
+import { getLocalStorage, getSessionStorage } from './dom-utils';
+
 const WORKER_URL_KEY = 'alert_worker_url';
 const WORKER_TOKEN_KEY = 'alert_worker_token';
-
-function getLocalStorage(): Storage | null {
-    return typeof localStorage === 'undefined' ? null : localStorage;
-}
-
-function getSessionStorage(): Storage | null {
-    return typeof sessionStorage === 'undefined' ? null : sessionStorage;
-}
 
 export function readAlertWorkerUrl(): string {
     try {

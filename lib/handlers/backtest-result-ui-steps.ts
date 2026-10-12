@@ -1,4 +1,5 @@
 import { debugLogger } from "../debug-logger";
+import { nowMs } from "../perf-clock";
 
 type BacktestResultUiStep = {
     step: string;
@@ -6,10 +7,6 @@ type BacktestResultUiStep = {
 };
 
 const SLOW_UI_STEP_THRESHOLD_MS = 16;
-
-function nowMs(): number {
-    return typeof performance !== "undefined" ? performance.now() : Date.now();
-}
 
 export function logBacktestResultUiFailure(step: string, error: unknown): void {
     debugLogger.warn("backtest.result_ui_step_failed", {

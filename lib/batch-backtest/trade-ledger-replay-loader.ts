@@ -8,6 +8,7 @@
 import { existsSync, readFileSync, statSync, createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import path from "node:path";
+import { nowMs } from "../perf-clock";
 import {
     TRADE_LEDGER_SUPPORTED_VERSIONS,
     type TradeLedgerProvenance,
@@ -46,10 +47,6 @@ export interface LedgerReplayProgress {
 }
 
 const JSONL_PROGRESS_INTERVAL = 250_000;
-
-function nowMs(): number {
-    return typeof performance !== "undefined" ? performance.now() : Date.now();
-}
 
 function emptyJsonlDiagnostics(bytesRead = 0): LedgerJsonlDiagnostics {
     return { streamWallMs: 0, jsonParseMs: 0, rowsParsed: 0, bytesRead, readResidualMs: 0, consumeMs: 0 };

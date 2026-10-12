@@ -20,10 +20,9 @@ export function snapValueToStepRange(range: StepRange, value: number): number {
     const span = range.max - range.min;
     const maxIndex = Math.max(0, Math.round(span / range.step));
     const relativeIndex = (value - range.min) / range.step;
-    const snappedIndex = Math.max(0, Math.min(maxIndex, Math.round(relativeIndex)));
+    const snappedIndex = clamp(Math.round(relativeIndex), 0, maxIndex);
     const snappedValue = range.min + snappedIndex * range.step;
-    const clampedValue = Math.max(range.min, Math.min(range.max, snappedValue));
-    return roundRangeValue(clampedValue);
+    return roundRangeValue(clamp(snappedValue, range.min, range.max));
 }
 
 export function createSeededRandom(seed: number = 42): () => number {

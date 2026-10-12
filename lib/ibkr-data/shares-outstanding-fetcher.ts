@@ -39,7 +39,7 @@ import { dirname, resolve } from "node:path";
 import { debugLogger } from "../debug-logger";
 import { createFetchTimeoutSignal } from "../dataProviders/fetch-helpers";
 import { HttpStatusError } from "../vite-http-utils";
-import { abortableDelay, getAlpacaIpv4Dispatcher, parseRetryAfterMs, type AlpacaConfig } from "./alpaca-fetcher";
+import { abortableDelay, buildAlpacaHeaders, getAlpacaIpv4Dispatcher, parseRetryAfterMs, type AlpacaConfig } from "./alpaca-fetcher";
 
 /** SEC EDGAR bulk ticker→CIK map (keyless). */
 export const EDGAR_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
@@ -436,19 +436,6 @@ export function buildAlpacaSplitsUrl(
     });
     if (args.pageToken) params.set("page_token", args.pageToken);
     return `${config.host}${ALPACA_CORPORATE_ACTIONS_PATH}?${params.toString()}`;
-}
-
-/**
- * Constructs the Alpaca auth header. NOT exported — the header carries
- * credentials and must not leak into logs, URLs, or payloads. Mirrors
- * alpaca-fetcher's private `buildAlpacaHeaders`.
- */
-function buildAlpacaHeaders(config: Pick<AlpacaConfig, "apiKey" | "apiSecret">): Record<string, string> {
-    return {
-        Accept: "application/json",
-        "APCA-API-KEY-ID": config.apiKey,
-        "APCA-API-SECRET-KEY": config.apiSecret,
-    };
 }
 
 /**

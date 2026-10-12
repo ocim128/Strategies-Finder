@@ -18,8 +18,8 @@
  *  - Credentials are read ONLY from `process.env.ALPACA_API_KEY` /
  *    `ALPACA_API_SECRET`. They never leave the process: not in catalog JSON,
  *    not in CSV, not in NDJSON events, not in debug logs.
- *  - The auth header is constructed in `buildAlpacaHeaders` (not exported) and
- *    is only present on the outbound `fetch`. No public function returns it.
+ *  - The auth header is constructed by `buildAlpacaHeaders` and is only
+ *    present on the outbound `fetch`. No public function returns it.
  *  - URLs in logs omit query-string secrets (Alpaca's auth is header-based,
  *    but we keep the discipline anyway).
  */
@@ -218,10 +218,11 @@ export function buildAlpacaBarsUrl(
 }
 
 /**
- * Constructs the auth header. NOT exported — the header carries credentials
- * and must not leak into logs, URLs, or response payloads.
+ * Constructs the auth header shared by both Alpaca fetchers. The header
+ * carries credentials and must not leak into logs, URLs, or response
+ * payloads; it is only present on the outbound `fetch`.
  */
-function buildAlpacaHeaders(config: Pick<AlpacaConfig, "apiKey" | "apiSecret">): Record<string, string> {
+export function buildAlpacaHeaders(config: Pick<AlpacaConfig, "apiKey" | "apiSecret">): Record<string, string> {
     return {
         Accept: "application/json",
         "APCA-API-KEY-ID": config.apiKey,

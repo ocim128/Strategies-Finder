@@ -36,12 +36,8 @@ function normalizeInterval(interval: string): string {
     return interval.trim().toLowerCase();
 }
 
-function toUnixSeconds(value: unknown): number | null {
-    return parseTimeToUnixSeconds(value);
-}
-
 function toStoreRow(candle: OHLCVData): { time: number; open: number; high: number; low: number; close: number; volume: number } | null {
-    const time = toUnixSeconds(candle.time);
+    const time = parseTimeToUnixSeconds(candle.time);
     const open = Number(candle.open);
     const high = Number(candle.high);
     const low = Number(candle.low);
@@ -76,7 +72,7 @@ function parseJsonCandleRows(rows: unknown[]): OHLCVData[] {
     for (const row of rows) {
         if (!row || typeof row !== 'object') continue;
         const value = row as Record<string, unknown>;
-        const parsedTime = toUnixSeconds(value.time);
+        const parsedTime = parseTimeToUnixSeconds(value.time);
         const open = Number(value.open);
         const high = Number(value.high);
         const low = Number(value.low);

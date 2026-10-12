@@ -4,7 +4,6 @@ import type {
     Signal,
     Strategy,
     StrategyParams,
-    Time,
     Trade,
 } from "./types/strategies";
 import { getLoadedBuiltInStrategy } from "./strategies/built-in-catalog";
@@ -149,10 +148,6 @@ function toTargetPercent(entryPrice: number, targetPrice: number | null | undefi
     return Math.abs(((targetPrice - entryPrice) / entryPrice) * 100);
 }
 
-function toUnixSeconds(value: Time): number | null {
-    return parseTimeToUnixSeconds(value);
-}
-
 function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest): CapitalSettings {
     const rawBacktestSettings = request.backtestSettings as Record<string, unknown> | undefined;
     const rawCapitalSettings = request.capitalSettings as Record<string, unknown> | undefined;
@@ -281,7 +276,7 @@ function pickLatestExecutedEntryTrade(trades: Trade[]): { trade: Trade; entryTim
     let latest: { trade: Trade; entryTimeSec: number } | null = null;
 
     for (const trade of trades) {
-        const entryTimeSec = toUnixSeconds(trade.entryTime);
+        const entryTimeSec = parseTimeToUnixSeconds(trade.entryTime);
         if (entryTimeSec === null) continue;
 
         if (
@@ -309,7 +304,7 @@ function findPreparedSignalForTradeEntry(
 
     for (const signal of preparedEntrySignals) {
         if (signal.type !== expectedType) continue;
-        const signalTimeSec = toUnixSeconds(signal.time);
+        const signalTimeSec = parseTimeToUnixSeconds(signal.time);
         if (signalTimeSec !== entryTimeSec) continue;
 
         if (fallbackByTimeAndType === null) {
@@ -337,7 +332,7 @@ function findSourceSignalForTradeEntry(
     const totalLeadBars = getExecutionShift(normalizedSettings);
     const preparedIndex = Number.isFinite(preparedSignal.barIndex)
         ? Math.trunc(preparedSignal.barIndex as number)
-        : candles.findIndex((bar) => toUnixSeconds(bar.time) === toUnixSeconds(preparedSignal.time));
+        : candles.findIndex((bar) => parseTimeToUnixSeconds(bar.time) === parseTimeToUnixSeconds(preparedSignal.time));
 
     if (preparedIndex < totalLeadBars || preparedIndex >= candles.length) {
         return null;
@@ -345,7 +340,7 @@ function findSourceSignalForTradeEntry(
 
     const sourceIndex = preparedIndex - totalLeadBars;
     const sourceTime = candles[sourceIndex]?.time;
-    const sourceTimeSec = sourceTime !== undefined ? toUnixSeconds(sourceTime) : null;
+    const sourceTimeSec = sourceTime !== undefined ? parseTimeToUnixSeconds(sourceTime) : null;
     if (sourceTime === undefined || sourceTimeSec === null) {
         return null;
     }
@@ -361,7 +356,7 @@ function findSourceSignalForTradeEntry(
 
     for (const signal of rawEntrySignals) {
         if (signal.type !== expectedType) continue;
-        const rawSignalTimeSec = toUnixSeconds(signal.time);
+        const rawSignalTimeSec = parseTimeToUnixSeconds(signal.time);
         if (rawSignalTimeSec !== sourceTimeSec) continue;
 
         const candidate: Signal = {
@@ -550,13 +545,13 @@ export function evaluateLatestEntrySignalFromPreparedSignals(
         price: latestTrade.entryPrice,
     };
 
-    const signalTimeSec = toUnixSeconds(latestSignal.time) ?? entryTimeSec;
+    const signalTimeSec = parseTimeToUnixSeconds(latestSignal.time) ?? entryTimeSec;
     let signalIndex: number | undefined;
     if (Number.isFinite(latestSignal.barIndex)) {
         signalIndex = Math.trunc(latestSignal.barIndex as number);
     } else {
         for (let idx = request.candles.length - 1; idx >= 0; idx--) {
-            const sec = toUnixSeconds(request.candles[idx].time);
+            const sec = parseTimeToUnixSeconds(request.candles[idx].time);
             if (sec === signalTimeSec) {
                 signalIndex = idx;
                 break;
@@ -665,7 +660,7 @@ function deriveExecutedExit(args: {
 
     const positionExits = args.trades.filter((trade) =>
         trade.type === direction
-        && toUnixSeconds(trade.entryTime) === entryTimeSec
+        && parseTimeToUnixSeconds(trade.entryTime) === entryTimeSec
     );
     if (positionExits.length === 0) return null;
     // The selected position never fully closed while any part of it was
@@ -675,7 +670,7 @@ function deriveExecutedExit(args: {
     // Exit records for one position are appended in processing (id) order,
     // so the last one is the final closure of the remaining size.
     const finalExit = positionExits[positionExits.length - 1]!;
-    const exitTimeSec = toUnixSeconds(finalExit.exitTime);
+    const exitTimeSec = parseTimeToUnixSeconds(finalExit.exitTime);
     if (exitTimeSec === null) return null;
 
     // Recover the source-signal time of the selected entry through the same
@@ -695,7 +690,7 @@ function deriveExecutedExit(args: {
         direction,
         args.settings
     );
-    const sourceSignalTimeSec = matchedSource ? toUnixSeconds(matchedSource.time) : null;
+    const sourceSignalTimeSec = matchedSource ? parseTimeToUnixSeconds(matchedSource.time) : null;
 
     return {
         direction,
@@ -714,8 +709,8 @@ function compressTradeWindows(trades: Trade[]): Array<[number, number | null, 1 
     const recent = trades.length > TRADE_WINDOWS_CAP ? trades.slice(trades.length - TRADE_WINDOWS_CAP) : trades;
     const out: Array<[number, number | null, 1 | -1]> = [];
     for (const trade of recent) {
-        const entrySec = toUnixSeconds(trade.entryTime);
-        const exitSec = trade.exitReason === "end_of_data" ? null : toUnixSeconds(trade.exitTime);
+        const entrySec = parseTimeToUnixSeconds(trade.entryTime);
+        const exitSec = trade.exitReason === "end_of_data" ? null : parseTimeToUnixSeconds(trade.exitTime);
         if (entrySec === null) continue;
         out.push([entrySec, exitSec, trade.type === "long" ? 1 : -1]);
     }

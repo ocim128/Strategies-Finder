@@ -1,6 +1,5 @@
-import type { BacktestResult, OHLCVData, Time, Trade } from '../../types/index';
-import { toTimeKey } from '../../time-key';
-import { getTimeIndex } from './backtest-utils';
+import type { BacktestResult, OHLCVData, Trade } from '../../types/index';
+import { getTimeIndex, timeKey } from './backtest-utils';
 
 // ============================================================================
 // Types
@@ -454,10 +453,6 @@ export function computeEdgeStatistics(
 // ============================================================================
 // Math Helpers
 // ============================================================================
-
-function timeKey(time: Time): string {
-    return toTimeKey(time);
-}
 
 function round4(v: number): number {
     return Math.round(v * 10000) / 10000;

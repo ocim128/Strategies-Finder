@@ -283,8 +283,7 @@ export function normalizeStoredBacktestSettings(raw: unknown): BacktestSettingsD
             continue;
         }
 
-        const resolvedKey = key;
-        const resolvedValue = (resolved as Record<string, unknown>)[resolvedKey as string];
+        const resolvedValue = (resolved as Record<string, unknown>)[key as string];
         if (resolvedValue === undefined) {
             continue;
         }

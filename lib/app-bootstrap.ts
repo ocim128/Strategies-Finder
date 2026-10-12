@@ -10,6 +10,7 @@ import { dataManager } from "./data-manager";
 import { uiManager } from "./ui-manager";
 import { backtestService } from "./backtest-service";
 import { debugLogger } from "./debug-logger";
+import { nowMs } from "./perf-clock";
 import { settingsManager } from "./settings-manager";
 import { injectLayout } from "./layout-manager";
 import { setupGlobalErrorHandlers } from "./handlers/global-error-handlers";
@@ -108,10 +109,6 @@ async function hideScannerPanel(): Promise<void> {
 
 function logScannerLoadError(error: unknown): void {
     debugLogger.error("scanner.load_failed", { error: error instanceof Error ? error.message : String(error) });
-}
-
-function nowMs(): number {
-    return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 function roundedDurationMs(startedAt: number): number {

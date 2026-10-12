@@ -28,6 +28,7 @@ import {
     ARCHIVE_FILE_PATTERN,
     parseAssetOpportunityArchiveText,
 } from "../lib/asset-opportunity-explorer/archive-parser";
+import { medianOrNull } from "../lib/statistics-utils";
 import type {
     ArchiveHorizon,
     AssetOpportunityArchiveRecord,
@@ -586,15 +587,6 @@ function selectBatchRun(
     };
 }
 
-function median(values: number[]): number | null {
-    if (values.length === 0) return null;
-    const sorted = [...values].sort((left, right) => left - right);
-    const middle = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0
-        ? (sorted[middle - 1]! + sorted[middle]!) / 2
-        : sorted[middle]!;
-}
-
 function quantile(values: number[], probability: number): number | null {
     if (values.length === 0) return null;
     const sorted = [...values].sort((left, right) => left - right);
@@ -640,7 +632,7 @@ function calculateHorizonAnalysis(
         positiveRatePercent: completed.length > 0 ? (positiveRows / completed.length) * 100 : null,
         averagePnlPercent: percentOrNull(unweightedTotal / completed.length),
         sampleWeightedAveragePnlPercent: totalSamples > 0 ? percentOrNull(weightedTotal / totalSamples) : null,
-        medianPnlPercent: median(pnlValues),
+        medianPnlPercent: medianOrNull(pnlValues),
         p10PnlPercent: quantile(pnlValues, 0.10),
         p25PnlPercent: quantile(pnlValues, 0.25),
         standardDeviationPnlPercent: standardDeviation(pnlValues),
@@ -734,7 +726,7 @@ function buildCandidateAnalysis(
         topRankRatePercent: observations.length > 0
             ? (observations.filter((observation) => observation.rank <= 3).length / observations.length) * 100
             : 0,
-        medianRank: median(ranks) ?? 0,
+        medianRank: medianOrNull(ranks) ?? 0,
         worstRank: Math.max(...ranks),
         longestContiguousHoldoutRun: longestContiguousRun(observations.map((observation) => observation.holdoutBars)),
         allHorizonCompleteWindows: completeHorizonObservations.length,
@@ -811,7 +803,7 @@ function buildBaselineHorizonAnalysis(
         positiveRatePercent: pnlValues.length > 0 ? (positiveHoldouts / pnlValues.length) * 100 : null,
         averagePnlPercent: pnlValues.length > 0 ? pnlValues.reduce((sum, value) => sum + value, 0) / pnlValues.length : null,
         sampleWeightedAveragePnlPercent: totalSamples > 0 ? weightedSum / totalSamples : null,
-        medianPnlPercent: median(pnlValues),
+        medianPnlPercent: medianOrNull(pnlValues),
         p10PnlPercent: quantile(pnlValues, 0.10),
         worstPnlPercent: pnlValues.length > 0 ? Math.min(...pnlValues) : null,
         averageEligibleCandidateCount: values.length > 0
@@ -876,7 +868,7 @@ function calculateNextExitAnalysis(rows: AssetOpportunityArchiveRow[]): NextExit
         averagePnlPercent: pnlValues.length > 0
             ? pnlValues.reduce((sum, value) => sum + value, 0) / pnlValues.length
             : null,
-        medianPnlPercent: median(pnlValues),
+        medianPnlPercent: medianOrNull(pnlValues),
         p10PnlPercent: quantile(pnlValues, 0.10),
         worstPnlPercent: pnlValues.length > 0 ? Math.min(...pnlValues) : null,
         averageBarsHeld: barsHeldValues.length > 0
@@ -1258,7 +1250,7 @@ function buildCrossSortAgreement(
                 : 0,
             appearances: candidate.appearances,
             topRankAppearances: candidate.topRankAppearances,
-            medianRank: median(candidate.ranks) ?? 0,
+            medianRank: medianOrNull(candidate.ranks) ?? 0,
         }))
         .sort((left, right) => right.holdoutBars.length - left.holdoutBars.length
             || right.sortMetrics.length - left.sortMetrics.length
