@@ -527,6 +527,26 @@ async function validateCandidate(
     };
 }
 
+/**
+ * The fitness view of one representative validation: OOS net/Sharpe, the
+ * drawdown-normalized stability score, and the train→test drop. Shared by the
+ * hunts[0] and winner entries of the verified-symbol report. A fresh object
+ * per call keeps the two entries independently mutable, as the duplicated
+ * literals were.
+ */
+function buildFitnessView(validation: CandidateValidation, robustnessScore: string) {
+    return {
+        score: validation.score,
+        netProfitPercent: validation.walkForward.testNetProfitPercent,
+        sharpeRatio: validation.walkForward.testSharpeRatio,
+        stability: 1 / (1 + (validation.stability.worstMaxDrawdownPercent / 25)),
+        maxDrawdownPercent: validation.stability.worstMaxDrawdownPercent,
+        totalTrades: validation.walkForward.testTotalTrades,
+        drift: Number.isFinite(validation.walkForward.dropPercent) ? Math.abs(validation.walkForward.dropPercent) / 100 : 1,
+        robustnessScore,
+    };
+}
+
 export async function runVerification(options: VerifyAlphaCliOptions): Promise<void> {
     if (!fs.existsSync(options.inputFile)) {
         throw new Error(`[VerifyAlpha] Input report not found: ${options.inputFile}`);
@@ -641,30 +661,12 @@ export async function runVerification(options: VerifyAlphaCliOptions): Promise<v
             hunts: [
                 {
                     strategyKey: v.strategyKey,
-                    fitness: {
-                        score: v.score,
-                        netProfitPercent: v.walkForward.testNetProfitPercent,
-                        sharpeRatio: v.walkForward.testSharpeRatio,
-                        stability: 1 / (1 + (v.stability.worstMaxDrawdownPercent / 25)),
-                        maxDrawdownPercent: v.stability.worstMaxDrawdownPercent,
-                        totalTrades: v.walkForward.testTotalTrades,
-                        drift: Number.isFinite(v.walkForward.dropPercent) ? Math.abs(v.walkForward.dropPercent) / 100 : 1,
-                        robustnessScore: item.robustnessScore,
-                    },
+                    fitness: buildFitnessView(v, item.robustnessScore),
                 },
             ],
             winner: {
                 strategyKey: v.strategyKey,
-                fitness: {
-                    score: v.score,
-                    netProfitPercent: v.walkForward.testNetProfitPercent,
-                    sharpeRatio: v.walkForward.testSharpeRatio,
-                    stability: 1 / (1 + (v.stability.worstMaxDrawdownPercent / 25)),
-                    maxDrawdownPercent: v.stability.worstMaxDrawdownPercent,
-                    totalTrades: v.walkForward.testTotalTrades,
-                    drift: Number.isFinite(v.walkForward.dropPercent) ? Math.abs(v.walkForward.dropPercent) / 100 : 1,
-                    robustnessScore: item.robustnessScore,
-                },
+                fitness: buildFitnessView(v, item.robustnessScore),
             },
         };
     });
