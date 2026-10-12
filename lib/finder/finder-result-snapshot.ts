@@ -20,6 +20,7 @@ import {
     FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
     type FinderArmPerformanceArm,
 } from "./finder-arm-performance-metrics";
+import { compactOptionalOpportunityDiagnostics } from "./finder-asset-opportunity-metadata";
 
 export const FINDER_RESULT_SNAPSHOT_LIMIT = 25;
 const FINDER_UNIVERSE_SYMBOL_SNAPSHOT_LIMIT = 200;
@@ -188,16 +189,7 @@ function compactAssetOpportunityResult(result: FinderAssetOpportunityResult): Fi
                 oosNextExitMetrics: { ...result.oosNextExitMetrics },
             }
             : {}),
-        ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
-        ...(result.priorTupleRecurrenceCount !== undefined ? { priorTupleRecurrenceCount: result.priorTupleRecurrenceCount } : {}),
-        ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
-        ...(result.barrierExitShare !== undefined ? { barrierExitShare: result.barrierExitShare } : {}),
-        ...(result.entryHourConcentration !== undefined ? { entryHourConcentration: result.entryHourConcentration } : {}),
-        ...(result.tradeGapUniformity !== undefined ? { tradeGapUniformity: result.tradeGapUniformity } : {}),
-        ...(result.topDecileProfitShare !== undefined ? { topDecileProfitShare: result.topDecileProfitShare } : {}),
-        ...(result.winnerLoserHoldGapBars !== undefined ? { winnerLoserHoldGapBars: result.winnerLoserHoldGapBars } : {}),
-        ...(result.entryPriceRegimeMembership !== undefined ? { entryPriceRegimeMembership: result.entryPriceRegimeMembership } : {}),
-        ...(result.equityPathLinearity !== undefined ? { equityPathLinearity: result.equityPathLinearity } : {}),
+        ...compactOptionalOpportunityDiagnostics(result),
         support: { ...result.support },
         grade: result.grade,
     };

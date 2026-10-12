@@ -1,6 +1,6 @@
 import { expect } from 'chai';
 import { describe, it } from 'node:test';
-import { createSeededRandom, roundRangeValue, snapValueToStepRange } from '../lib/param-math-utils';
+import { clamp, createSeededRandom, roundRangeValue, snapValueToStepRange } from '../lib/param-math-utils';
 
 /**
  * Shared numeric helpers for parameter ranges and deterministic sweeps. The
@@ -48,6 +48,24 @@ describe('param-math-utils: snapValueToStepRange', () => {
         const degenerate = { min: 5, max: 5, step: 1 };
         expect(snapValueToStepRange(degenerate, 3)).to.equal(5);
         expect(snapValueToStepRange(degenerate, 9)).to.equal(5);
+    });
+});
+
+describe('param-math-utils: clamp', () => {
+    it('returns the value unchanged when inside [min, max]', () => {
+        expect(clamp(5, 0, 10)).to.equal(5);
+        expect(clamp(0, 0, 10)).to.equal(0);
+        expect(clamp(10, 0, 10)).to.equal(10);
+    });
+
+    it('clamps below the minimum and above the maximum', () => {
+        expect(clamp(-3, 0, 10)).to.equal(0);
+        expect(clamp(15, 0, 10)).to.equal(10);
+    });
+
+    it('collapses a degenerate range (min === max) onto that value', () => {
+        expect(clamp(3, 2, 2)).to.equal(2);
+        expect(clamp(9, 2, 2)).to.equal(2);
     });
 });
 

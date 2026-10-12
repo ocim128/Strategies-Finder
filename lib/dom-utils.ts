@@ -30,6 +30,24 @@ export function getRequiredDomElements<TIds extends Record<string, string>>(
 }
 
 /**
+ * Build an <option> fragment (value=key, label=name, title=description) for
+ * the strategy dropdowns; callers pass the result to replaceChildren().
+ */
+export function buildStrategyOptions(
+    strategies: ReadonlyArray<{ key: string; name: string; description: string }>
+): DocumentFragment {
+    const fragment = document.createDocumentFragment();
+    for (const { key, name, description } of strategies) {
+        const option = document.createElement('option');
+        option.value = key;
+        option.textContent = name;
+        option.title = description;
+        fragment.appendChild(option);
+    }
+    return fragment;
+}
+
+/**
  * Set text content of an element and optionally apply a class.
  */
 export function updateTextContent(id: string, text: string, className?: string) {

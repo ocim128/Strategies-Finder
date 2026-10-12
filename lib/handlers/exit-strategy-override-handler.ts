@@ -4,6 +4,7 @@ import type { Strategy, StrategyParams } from "../types/strategies";
 import { exitStrategyParamManager } from "../param-manager";
 import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
 import { parseInputNumber } from "../dom-input-readers";
+import { buildStrategyOptions } from "../dom-utils";
 import { debugLogger } from "../debug-logger";
 import { uiManager } from "../ui-manager";
 
@@ -45,15 +46,7 @@ export function setupExitStrategyOverride(dom: UiEventHandlersDom): void {
             : (strategies[0]?.key ?? "");
 
         if (signature !== strategyDropdownSignature) {
-            const fragment = document.createDocumentFragment();
-            strategies.forEach(({ key, name, description }) => {
-                const option = document.createElement('option');
-                option.value = key;
-                option.textContent = name;
-                option.title = description;
-                fragment.appendChild(option);
-            });
-            keySelect.replaceChildren(fragment);
+            keySelect.replaceChildren(buildStrategyOptions(strategies));
             strategyDropdownSignature = signature;
         }
 

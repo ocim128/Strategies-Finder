@@ -171,6 +171,31 @@ export interface BacktestResult {
     exitControlDiagnostics?: BacktestExitControlDiagnostics;
 }
 
+/**
+ * The scalar performance-metric projection of {@link BacktestResult}: every
+ * numeric summary field, with the nested payload arrays (trades, equityCurve)
+ * and optional analytics intentionally excluded so wire/archive rows stay
+ * small. Shared by the batch stream rows, the asset-opportunity archive rows,
+ * and Finder's pair-neutral metrics.
+ */
+export type BacktestScalarMetrics = Pick<
+    BacktestResult,
+    | "netProfit"
+    | "netProfitPercent"
+    | "winRate"
+    | "expectancy"
+    | "avgTrade"
+    | "profitFactor"
+    | "maxDrawdown"
+    | "maxDrawdownPercent"
+    | "totalTrades"
+    | "winningTrades"
+    | "losingTrades"
+    | "avgWin"
+    | "avgLoss"
+    | "sharpeRatio"
+>;
+
 export interface TradeTimingEntryHorizon {
     bars: number;
     score: number | null;

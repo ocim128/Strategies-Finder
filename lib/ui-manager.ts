@@ -3,7 +3,7 @@ import type { OHLCVData, BacktestResult, Trade } from "./strategies/index";
 import { state } from "./state";
 import { setCurrentStrategyKey } from "./state-actions";
 import { strategyRegistry, getStrategyList, loadBuiltInStrategyByKey } from "../strategyRegistry";
-import { getOptionalElement, getRequiredElement } from "./dom-utils";
+import { buildStrategyOptions, getOptionalElement, getRequiredElement } from "./dom-utils";
 import { resultsRenderer } from "./renderers/resultsRenderer";
 import { tradesRenderer } from "./renderers/tradesRenderer";
 import { paramManager } from "./param-manager";
@@ -258,15 +258,7 @@ export class UIManager {
                 : strategySelect.value;
 
         if (signature !== this.strategyDropdownSignature) {
-            const fragment = document.createDocumentFragment();
-            strategies.forEach(({ key, name, description }) => {
-                const option = document.createElement('option');
-                option.value = key;
-                option.textContent = name;
-                option.title = description;
-                fragment.appendChild(option);
-            });
-            strategySelect.replaceChildren(fragment);
+            strategySelect.replaceChildren(buildStrategyOptions(strategies));
             this.strategyDropdownSignature = signature;
         }
 

@@ -14,6 +14,7 @@ import { getSyntheticPairMetadata, setSyntheticPairMetadata } from "./synthetic-
 import { isIbkrSymbol } from "./local-daily-datasets";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { buildCandle } from "./candle-cache";
 import { parseIntervalSeconds } from "./interval-utils";
 import { queryDataMiningDom, type DataMiningDom } from "./data-mining-dom";
 import { buildSyntheticPairFromLegs, deriveSyntheticSymbol, ensureNormalizedLegBars, isSyntheticSymbol, pickSourceInterval, resolveSyntheticAvailableIntervals, resolveSyntheticSourceBars } from "../scripts/lib/synthetic-pair";
@@ -1030,7 +1031,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
             const low = Number(row[3]);
             const close = Number(row[4]);
             const volume = row.length > 5 ? Number(row[5]) : 0;
-            return this.buildBar(time, open, high, low, close, volume);
+            return buildCandle(time, open, high, low, close, volume);
         }
 
         if (this.isRecord(row)) {
@@ -1048,7 +1049,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
             const close = Number(row.close ?? row.c);
             const volume = Number(row.volume ?? row.v ?? 0);
             const time = this.normalizeTime(timeRaw ?? row.datetime);
-            return this.buildBar(time, open, high, low, close, volume);
+            return buildCandle(time, open, high, low, close, volume);
         }
 
         return null;
@@ -1056,29 +1057,6 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
 
     private normalizeTime(value: unknown): number | null {
         return parseTimeToUnixSeconds(value);
-    }
-
-    private buildBar(
-        time: number | null,
-        open: number,
-        high: number,
-        low: number,
-        close: number,
-        volume: number
-    ): OHLCVData | null {
-        if (!Number.isFinite(time) || time === null) return null;
-        if (!Number.isFinite(open) || !Number.isFinite(high) || !Number.isFinite(low) || !Number.isFinite(close)) {
-            return null;
-        }
-
-        return {
-            time: time as Time,
-            open,
-            high,
-            low,
-            close,
-            volume: Number.isFinite(volume) ? volume : 0,
-        };
     }
 
     private toggleImportButton(disabled: boolean): void {

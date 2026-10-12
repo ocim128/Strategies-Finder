@@ -1,4 +1,5 @@
 import { mean, sampleStdDev } from "../statistics-utils";
+import { clamp } from "../param-math-utils";
 import type { ParameterRange, WalkForwardResult, WalkForwardWindow } from "./walk-forward";
 
 const EPSILON = 1e-9;
@@ -77,10 +78,6 @@ type RegressionSummary = {
     correlation: number;
     rSquared: number;
 };
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
 
 function calculateRegression(values: readonly number[]): RegressionSummary {
     if (values.length < 2) {

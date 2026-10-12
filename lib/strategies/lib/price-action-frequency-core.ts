@@ -1,4 +1,5 @@
 ﻿import { OHLCVData } from "../../types/strategies";
+import { clamp } from "../../param-math-utils";
 
 type NullableSeries = (number | null)[];
 
@@ -27,10 +28,6 @@ export interface PriceActionBarMetrics {
 	bodyHigh: number;
 	bodyLow: number;
 	bodyMid: number;
-}
-
-function clamp(value: number, min: number, max: number): number {
-	return Math.max(min, Math.min(max, value));
 }
 
 export function computePriceActionBarMetrics(bar: OHLCVData): PriceActionBarMetrics {

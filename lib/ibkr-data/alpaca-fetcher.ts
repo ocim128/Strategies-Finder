@@ -449,14 +449,21 @@ function mapAlpacaStatusToHttpStatus(status: number): number {
     return 502;
 }
 
-function parseRetryAfterMs(value: string | null): number | null {
+/**
+ * Parses a `Retry-After` header value (seconds) into a millisecond delay.
+ */
+export function parseRetryAfterMs(value: string | null): number | null {
     if (!value) return null;
     const seconds = Number(value);
     if (Number.isFinite(seconds) && seconds >= 0) return Math.floor(seconds * 1000);
     return null;
 }
 
-function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+/**
+ * Abortable sleep: resolves after `ms` unless `signal` aborts first, in which
+ * case it rejects with the abort reason.
+ */
+export function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
     if (ms <= 0) return Promise.resolve();
     if (signal?.aborted) {
         return Promise.reject((signal as AbortSignal & { reason?: unknown }).reason ?? new Error("Aborted"));

@@ -1,6 +1,7 @@
 import type { AdvancedPerformanceAnalytics, Time } from "../types/strategies";
 import { timeToNumber } from "./backtest/backtest-utils";
 import { mean, median, percentileSorted, sampleStdDev } from "../statistics-utils";
+import { clamp } from "../param-math-utils";
 
 export const SHARPE_MIN_SAMPLES = 5;
 const SHARPE_MIN_STD_DEV = 1e-4;
@@ -29,10 +30,6 @@ type EquitySharpeSamplePlan = {
 };
 
 const equitySharpeSamplePlanCache = new WeakMap<object, Map<number, EquitySharpeSamplePlan>>();
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
 
 function toEpochMilliseconds(time: Time): number | null {
     const numeric = timeToNumber(time);

@@ -39,7 +39,7 @@ import { dirname, resolve } from "node:path";
 import { debugLogger } from "../debug-logger";
 import { createFetchTimeoutSignal } from "../dataProviders/fetch-helpers";
 import { HttpStatusError } from "../vite-http-utils";
-import { getAlpacaIpv4Dispatcher, type AlpacaConfig } from "./alpaca-fetcher";
+import { abortableDelay, getAlpacaIpv4Dispatcher, parseRetryAfterMs, type AlpacaConfig } from "./alpaca-fetcher";
 
 /** SEC EDGAR bulk ticker→CIK map (keyless). */
 export const EDGAR_COMPANY_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json";
@@ -277,39 +277,9 @@ export function lookupSharesForDate(facts: SharesFactPoint[], dateKey: string): 
     return shares;
 }
 
-/**
- * Abortable sleep: resolves after `ms` unless `signal` aborts first, in which
- * case it rejects with the abort reason. Mirrors alpaca-fetcher's private
- * helper.
- */
-function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
-    if (ms <= 0) return Promise.resolve();
-    if (signal?.aborted) {
-        return Promise.reject((signal as AbortSignal & { reason?: unknown }).reason ?? new Error("Aborted"));
-    }
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-            signal?.removeEventListener("abort", onAbort);
-            resolve();
-        }, ms);
-        const onAbort = () => {
-            clearTimeout(timer);
-            reject((signal as AbortSignal & { reason?: unknown })?.reason ?? new Error("Aborted"));
-        };
-        signal?.addEventListener("abort", onAbort, { once: true });
-    });
-}
-
 function isTimeoutSignalError(error: unknown): boolean {
     if (!error || typeof error !== "object") return false;
     return (error as { name?: string }).name === "TimeoutError";
-}
-
-function parseRetryAfterMs(value: string | null): number | null {
-    if (!value) return null;
-    const seconds = Number(value);
-    if (Number.isFinite(seconds) && seconds >= 0) return Math.floor(seconds * 1000);
-    return null;
 }
 
 /**

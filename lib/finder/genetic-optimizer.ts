@@ -22,6 +22,7 @@ import {
     serializeParams,
     validateParams,
 } from "./finder-param-math";
+import { clamp } from "../param-math-utils";
 
 interface ParamSpec {
     key: string;
@@ -119,10 +120,6 @@ function gaussian(rand: () => number): number {
     while (u === 0) u = rand();
     while (v === 0) v = rand();
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
-}
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
 }
 
 function buildParamSpecs(defaultParams: StrategyParams, rangePercent: number): ParamSpec[] {

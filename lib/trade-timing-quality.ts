@@ -1,6 +1,7 @@
 import { getTimeIndex } from "./strategies/backtest/backtest-utils";
 import { timeKey } from "./strategies/index";
 import { medianOrNull } from "./statistics-utils";
+import { clamp } from "./param-math-utils";
 import type {
     BacktestResult,
     OHLCVData,
@@ -418,10 +419,6 @@ function directionalMovePct(referencePrice: number, price: number, isLong: boole
 
 function isFinitePositive(value: number): boolean {
     return Number.isFinite(value) && value > 0;
-}
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
 }
 
 function round2(value: number): number {

@@ -1,9 +1,8 @@
 import type { OHLCVData } from "../../types/strategies";
 import { parseTimeToUnixSeconds } from "../../time-normalization";
+import { clamp } from "../../param-math-utils";
 
-export function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
+export { clamp };
 
 export function average(values: readonly number[]): number {
     if (values.length === 0) return 0;

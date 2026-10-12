@@ -1,26 +1,11 @@
 import type { CapitalSettings } from "../types/backtest";
-import type { BacktestResult, Trade } from "../types/strategies";
+import type { BacktestScalarMetrics, BacktestResult, Trade } from "../types/strategies";
 import { calculateSharpeRatioFromReturns, estimatePeriodsPerYear } from "../strategies/performance-metrics";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
 
 /** Metrics used by Finder for synthetic ratios so BASE/QUOTE and QUOTE/BASE
  * are scored on the same multiplicative return scale. */
-export type FinderPairNeutralMetrics = Pick<BacktestResult,
-    | "netProfit"
-    | "netProfitPercent"
-    | "winRate"
-    | "expectancy"
-    | "avgTrade"
-    | "profitFactor"
-    | "maxDrawdown"
-    | "maxDrawdownPercent"
-    | "totalTrades"
-    | "winningTrades"
-    | "losingTrades"
-    | "avgWin"
-    | "avgLoss"
-    | "sharpeRatio"
->;
+export type FinderPairNeutralMetrics = BacktestScalarMetrics;
 
 export const FINDER_PAIR_NEUTRAL_METRIC_BASIS = "pair_neutral_log" as const;
 

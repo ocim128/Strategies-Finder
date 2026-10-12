@@ -5,14 +5,13 @@ import { toTimeKey } from '../../time-key';
 import { parseTimeToUnixSeconds } from '../../time-normalization';
 import { resolveTakeProfitMode } from '../../take-profit-settings';
 import { resolveEntryTimeFilter } from '../../entry-time-filter';
+import { clamp } from '../../param-math-utils';
 
 export function toNumberOr(value: number | undefined, fallback: number): number {
     return Number.isFinite(value) ? value! : fallback;
 }
 
-export function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
+export { clamp };
 
 function hasActiveChartTakeProfitOrStopLoss(config: Pick<NormalizedSettings,
     'riskMode'

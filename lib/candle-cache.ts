@@ -183,7 +183,12 @@ function normalizeTime(raw: unknown): number | null {
     return parseTimeToUnixSeconds(raw);
 }
 
-function buildCandle(
+/**
+ * Validate raw numeric candle fields and build an OHLCVData, rejecting
+ * non-finite prices and null times; non-finite volume becomes 0. Shared by
+ * the candle-cache and data-mining ingestion paths.
+ */
+export function buildCandle(
     time: number | null,
     open: number,
     high: number,

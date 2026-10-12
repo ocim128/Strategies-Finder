@@ -1,5 +1,7 @@
 import type { StrategyParams } from "../types/strategies";
-export { createSeededRandom } from "../param-math-utils";
+import { clamp, createSeededRandom } from "../param-math-utils";
+
+export { createSeededRandom };
 
 type ParamRangeOptions = {
     includeFinderExtraBounds?: boolean;
@@ -10,10 +12,6 @@ type ParamNormalizationOptions = {
     max?: number;
     includeFinderExtraBounds?: boolean;
 };
-
-function clamp(value: number, min: number, max: number): number {
-    return Math.max(min, Math.min(max, value));
-}
 
 export function isToggleParam(key: string, value: number): boolean {
     return /^use[A-Z]/.test(key) && (value === 0 || value === 1);

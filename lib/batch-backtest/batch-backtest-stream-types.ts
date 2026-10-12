@@ -36,7 +36,7 @@ import type { MaxActiveResearchRegistrationV1 } from "./max-active-research-cont
 import { computeBuyAndHoldPct, computeOpenTradeAssetScores } from "./batch-row-scalars";
 import { computeOpenPosition } from "./batch-open-positions";
 import { formatYearlyPnl, groupTradesByExitYear } from "./batch-yearly-pnl";
-import type { BacktestResult } from "../types/strategies";
+import type { BacktestResult, BacktestScalarMetrics } from "../types/strategies";
 
 /**
  * Explicit scalar-only projection of {@link BacktestResult} for Batch transport.
@@ -46,23 +46,7 @@ import type { BacktestResult } from "../types/strategies";
  * tradeTimingQuality, equityCurve, trades, …) are intentionally omitted so a
  * future engine option cannot silently reintroduce multi-MB payloads.
  */
-export type BatchScalarBacktestResult = Pick<
-    BacktestResult,
-    | "netProfit"
-    | "netProfitPercent"
-    | "winRate"
-    | "expectancy"
-    | "avgTrade"
-    | "profitFactor"
-    | "maxDrawdown"
-    | "maxDrawdownPercent"
-    | "totalTrades"
-    | "winningTrades"
-    | "losingTrades"
-    | "avgWin"
-    | "avgLoss"
-    | "sharpeRatio"
-> & {
+export type BatchScalarBacktestResult = BacktestScalarMetrics & {
     trades: [];
     equityCurve: [];
 };

@@ -1,5 +1,5 @@
 import type { FinderAssetOpportunityResult } from "../types/finder";
-import type { BacktestResult } from "../types/strategies";
+import type { BacktestResult, BacktestScalarMetrics } from "../types/strategies";
 import { fnv1a64Hex } from "../batch-backtest/max-active-research-contract";
 import { stableStringify } from "../json-utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
@@ -76,6 +76,27 @@ export interface AssetOpportunityMetadataPayload {
     } | null;
 }
 
+/**
+ * Optional diagnostic metrics carried on `FinderAssetOpportunityResult`. The
+ * archive metadata payload and the snapshot compaction both embed these
+ * (omitting undefined entries, in this exact key order), so they are built
+ * here once to keep the two wire shapes from drifting apart.
+ */
+export function compactOptionalOpportunityDiagnostics(result: FinderAssetOpportunityResult) {
+    return {
+        ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
+        ...(result.priorTupleRecurrenceCount !== undefined ? { priorTupleRecurrenceCount: result.priorTupleRecurrenceCount } : {}),
+        ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
+        ...(result.barrierExitShare !== undefined ? { barrierExitShare: result.barrierExitShare } : {}),
+        ...(result.entryHourConcentration !== undefined ? { entryHourConcentration: result.entryHourConcentration } : {}),
+        ...(result.tradeGapUniformity !== undefined ? { tradeGapUniformity: result.tradeGapUniformity } : {}),
+        ...(result.topDecileProfitShare !== undefined ? { topDecileProfitShare: result.topDecileProfitShare } : {}),
+        ...(result.winnerLoserHoldGapBars !== undefined ? { winnerLoserHoldGapBars: result.winnerLoserHoldGapBars } : {}),
+        ...(result.entryPriceRegimeMembership !== undefined ? { entryPriceRegimeMembership: result.entryPriceRegimeMembership } : {}),
+        ...(result.equityPathLinearity !== undefined ? { equityPathLinearity: result.equityPathLinearity } : {}),
+    };
+}
+
 export function buildAssetOpportunityMetadataPayload(args: {
     result: FinderAssetOpportunityResult;
     rank: number;
@@ -101,16 +122,7 @@ export function buildAssetOpportunityMetadataPayload(args: {
         totalCandidatesEvaluated: result.totalCandidatesEvaluated,
         selectionMetrics: result.selectionResult,
         ...(result.eodOpenTradePnl !== undefined ? { eodOpenTradePnl: result.eodOpenTradePnl } : {}),
-        ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
-        ...(result.priorTupleRecurrenceCount !== undefined ? { priorTupleRecurrenceCount: result.priorTupleRecurrenceCount } : {}),
-        ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
-        ...(result.barrierExitShare !== undefined ? { barrierExitShare: result.barrierExitShare } : {}),
-        ...(result.entryHourConcentration !== undefined ? { entryHourConcentration: result.entryHourConcentration } : {}),
-        ...(result.tradeGapUniformity !== undefined ? { tradeGapUniformity: result.tradeGapUniformity } : {}),
-        ...(result.topDecileProfitShare !== undefined ? { topDecileProfitShare: result.topDecileProfitShare } : {}),
-        ...(result.winnerLoserHoldGapBars !== undefined ? { winnerLoserHoldGapBars: result.winnerLoserHoldGapBars } : {}),
-        ...(result.entryPriceRegimeMembership !== undefined ? { entryPriceRegimeMembership: result.entryPriceRegimeMembership } : {}),
-        ...(result.equityPathLinearity !== undefined ? { equityPathLinearity: result.equityPathLinearity } : {}),
+        ...compactOptionalOpportunityDiagnostics(result),
         support: result.support,
         grade: result.grade,
         oos: result.oosResult && result.oosVerdict
@@ -130,22 +142,7 @@ export function buildAssetOpportunityMetadataPayload(args: {
 }
 
 /** Performance-only row used by the automatic server-side archive. */
-export type AssetOpportunityPerformanceMetrics = Pick<BacktestResult,
-    | "netProfit"
-    | "netProfitPercent"
-    | "winRate"
-    | "expectancy"
-    | "avgTrade"
-    | "profitFactor"
-    | "maxDrawdown"
-    | "maxDrawdownPercent"
-    | "totalTrades"
-    | "winningTrades"
-    | "losingTrades"
-    | "avgWin"
-    | "avgLoss"
-    | "sharpeRatio"
-> & {
+export type AssetOpportunityPerformanceMetrics = BacktestScalarMetrics & {
     /** Optional for compatibility with archives written before this sort. */
     medianBarsToTp?: number | null;
     priorTupleRecurrenceCount?: number | null;
