@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-echo === Asset Opportunity holdout analysis - pick a basis, report, repick ===
+echo === Asset Opportunity holdout analysis - pick a mode, basis, report, repick ===
 
 for %%I in ("%~dp0.") do set "ARCHIVE_DIR=%%~fI"
 for %%I in ("%~dp0..\..") do set "REPO_ROOT=%%~fI"
@@ -14,6 +14,19 @@ if not exist "%ESNO%" (
         exit /b 1
     )
     set "ESNO=esno.cmd"
+)
+
+:ask_mode
+set "MODE_CHOICE="
+set "MODE="
+set /p "MODE_CHOICE=Calculation mode [1=fixed horizon per boundary (overlapping windows), 2=hold-until-change rank-1 (non-overlapping), Enter/Q=quit]: "
+if not defined MODE_CHOICE exit /b 0
+if /i "%MODE_CHOICE%"=="Q" exit /b 0
+if "%MODE_CHOICE%"=="1" set "MODE=fixed_horizon"
+if "%MODE_CHOICE%"=="2" set "MODE=hold_until_change"
+if not defined MODE (
+    echo Please enter 1, 2, or Q.
+    goto ask_mode
 )
 
 :ask_basis
@@ -31,6 +44,11 @@ if not defined BASIS (
 )
 
 :ask_top_k
+rem Hold-until-change follows the rank-1 pick only, so top-K is not requested.
+if "%MODE%"=="hold_until_change" (
+    set "TOP_K=1"
+    goto run_analysis
+)
 set "TOP_K="
 set /p "TOP_K=Enter cumulative top-K size, no larger than Finder Top N (1 = rank 1 only; 3 = ranks 1-3 pooled): "
 if not defined TOP_K (
@@ -47,15 +65,19 @@ if not defined NON_ZERO (
     goto ask_top_k
 )
 
+:run_analysis
 set "OUTPUT_PREFIX=%ARCHIVE_DIR%\holdout-analysis-%BASIS%-top-%TOP_K%"
+if "%MODE%"=="hold_until_change" set "OUTPUT_PREFIX=%OUTPUT_PREFIX%-hold-until-change"
 rem New archive rows carry all three bases from one sweep; --basis re-bases the
 rem report. Legacy single-basis rows count only when their stored basis matches.
 rem Pass --batch-run-id <id> in extra arguments to restrict to one run.
+rem Mode 1 aggregates every boundary (overlapping forward windows); mode 2 holds
+rem each rank-1 asset until the rank-1 pick changes and measures it once.
 rem Replace the previous report on screen: only the newest pass stays visible.
 cls
-echo Basis: %BASIS% - top-K: %TOP_K%
+echo Mode: %MODE% - Basis: %BASIS% - top-K: %TOP_K%
 echo Analyzing archive, please wait...
-call "%ESNO%" "%REPO_ROOT%\scripts\analyze-asset-opportunity-holdouts.ts" --archive-dir "%ARCHIVE_DIR%" --top-k "%TOP_K%" --basis "%BASIS%" --output-prefix "%OUTPUT_PREFIX%" %*
+call "%ESNO%" "%REPO_ROOT%\scripts\analyze-asset-opportunity-holdouts.ts" --archive-dir "%ARCHIVE_DIR%" --top-k "%TOP_K%" --basis "%BASIS%" --mode "%MODE%" --output-prefix "%OUTPUT_PREFIX%" %*
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if "%EXIT_CODE%"=="0" (
@@ -69,4 +91,4 @@ if "%EXIT_CODE%"=="0" (
 )
 
 echo.
-goto ask_basis
+goto ask_mode

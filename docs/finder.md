@@ -331,7 +331,23 @@ The controls are:
   execution-model entry timing; missing leg horizon timestamps are unavailable.
   Ordinary symbols retain pair measurement only. Analyze a per-basis view with
   `archive/asset opportunity/analyze-asset-opportunity-holdouts-by-basis.bat`
-  or the analyzer's `--basis <pair|base_only|quote_only>` flag.
+  or the analyzer's `--basis <pair|base_only|quote_only>` flag. The bat asks
+  for the calculation mode first: `1` keeps the default per-boundary
+  fixed-horizon aggregation whose forward windows overlap, `2` switches the
+  summary to non-overlapping rank-1 hold-until-change tenures (`--mode
+  hold_until_change`) — the bat skips the top-K prompt in this mode because
+  only the rank-1 pick is measured. Each leader is entered the first boundary
+  it takes rank 1 and held until the rank-1 pick changes to a different
+  symbol. The
+  printed summary shows only the entry→exit hold return; when the archive
+  stores the 1-bar horizon (set `OOS Horizons` to include 1, for example
+  `1, 36, 96`) it is chained from consecutive 1-bar returns. Each 1-bar value
+  is measured from the run's entry price, so under next-open entry the chain
+  omits the close→open gaps between bars: short holds are near exact, longer
+  tenures that span session gaps are approximate, and the chain is exact only
+  under signal_close entry. Without the 1-bar horizon the summary reports
+  that entry→exit cannot be chained (per-horizon tenure outcomes stay in the
+  JSON).
 - `Eval Window Bars`: limit the historical search to the last N bars before
   any holdout gap; `0` means all available bars.
 - `Batch OOS Holdout`: run an inclusive holdout range and append archive blocks

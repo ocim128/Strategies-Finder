@@ -37,11 +37,11 @@ function block(args: {
     ].join("\n");
 }
 
-function row(rank: number, pnl: number, sampleSize: number): Record<string, unknown> {
+function row(rank: number, pnl: number, sampleSize: number, symbol = "PAIR•"): Record<string, unknown> {
     return {
         scope: "asset_opportunity",
         rank,
-        symbol: "PAIR•",
+        symbol,
         strategyId: "strategy_a",
         strategyName: "Strategy A",
         forwardOosPerformance: {
@@ -754,6 +754,321 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(report.signalCandleHourPerformance.utc.map((hour) => hour.hour)).to.deep.equal([10, 11]);
         expect(renderAssetOpportunityHoldoutReport(report)).to.contain("OOS COUNTERFACTUAL");
         expect(renderAssetOpportunityHoldoutReport(report)).to.contain("SIGNAL CANDLE HOUR — UTC");
+    });
+
+    it("builds non-overlapping rank-1 tenures in hold-until-change mode", () => {
+        const holdoutRow = (rank: number, symbol: string, pnl12: number, pnl36: number, ongoing36 = false) => ({
+            ...row(rank, pnl12, 1, symbol),
+            forwardOosPerformance: {
+                ignoreLastBars: 12,
+                horizons: [
+                    { bars: 12, averagePnlPercent: pnl12, sampleSize: 1 },
+                    { bars: 36, averagePnlPercent: pnl36, sampleSize: 1, ...(ongoing36 ? { ongoing: true } : {}) },
+                ],
+            },
+        });
+        const baseline = {
+            eligibleCandidateCount: 2,
+            horizons: [
+                { bars: 12, averagePnlPercent: 0.5, sampleWeightedAveragePnlPercent: 0.5, positiveResults: 1, observedResults: 2, totalSamples: 2 },
+                { bars: 36, averagePnlPercent: 0.25, sampleWeightedAveragePnlPercent: 0.25, positiveResults: 1, observedResults: 2, totalSamples: 2 },
+            ],
+        };
+        // Chronological order is DESCENDING holdout bars: A leads twice, then B,
+        // then A again. The last tenure stays open.
+        const records = [15, 14, 13, 12].flatMap((holdoutBars, index) => {
+            const rankOne = [
+                holdoutRow(1, "AAA•", 4, 2),
+                holdoutRow(1, "AAA•", 6, 5),
+                holdoutRow(1, "BBB•", -2, 6),
+                holdoutRow(1, "AAA•", 1, 3, true),
+            ][index]!;
+            return parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-11T00:00:00.000Z",
+                runId: "run-hold",
+                holdoutBars,
+                sortMetric: "winRate",
+                rows: [rankOne, holdoutRow(2, "OTHER•", 9, 9)],
+                baseline,
+            }), "fixture.txt");
+        });
+
+        const report = analyzeAssetOpportunityArchive(records, { topK: 2, calculationMode: "hold_until_change" });
+        expect(report.calculationMode).to.equal("hold_until_change");
+        const sort = report.sorts[0]!;
+        expect(sort.holdUntilChange?.tenures.map((tenure) => ({
+            symbol: tenure.symbol,
+            entry: tenure.entryHoldoutBars,
+            exit: tenure.exitHoldoutBars,
+            steps: tenure.tenureSteps,
+            pnl12: tenure.horizons["12"]?.averagePnlPercent ?? null,
+        }))).to.deep.equal([
+            { symbol: "AAA•", entry: 15, exit: 13, steps: 2, pnl12: 4 },
+            { symbol: "BBB•", entry: 13, exit: 12, steps: 1, pnl12: -2 },
+            { symbol: "AAA•", entry: 12, exit: null, steps: 1, pnl12: 1 },
+        ]);
+        // The 12-bar horizon sees one trade per tenure, not one per boundary:
+        // entry PnLs 4, -2, 1 with the pooled all-candidate baseline.
+        const horizon12 = sort.holdUntilChange!.horizons.find((horizon) => horizon.horizonBars === 12)!;
+        expect(horizon12.observedRows).to.equal(3);
+        expect(horizon12.positiveRows).to.equal(2);
+        expect(horizon12.averagePnlPercent).to.equal(1);
+        expect(horizon12.medianPnlPercent).to.equal(1);
+        expect(horizon12.worstPnlPercent).to.equal(-2);
+        expect(horizon12.baselineAveragePnlPercent).to.equal(0.5);
+        // The 36-bar horizon separates the ongoing entry from completed trades.
+        const horizon36 = sort.holdUntilChange!.horizons.find((horizon) => horizon.horizonBars === 36)!;
+        expect(horizon36.observedRows).to.equal(2);
+        expect(horizon36.averagePnlPercent).to.equal(4);
+        expect(horizon36.ongoingRows).to.equal(1);
+        expect(horizon36.ongoingAveragePnlPercent).to.equal(3);
+        // Fixed-horizon rows still aggregate every boundary (8 rank<=2 rows).
+        expect(sort.horizons.find((horizon) => horizon.horizonBars === 12)!.observedRows).to.equal(8);
+
+        const text = renderAssetOpportunityHoldoutReport(report);
+        expect(text).to.contain("Calculation mode: hold_until_change (non-overlapping rank-1 leader tenures)");
+        expect(text).to.contain("HOLD-UNTIL-CHANGE OOS SUMMARY");
+        expect(text).to.contain("Positive trades | Average PnL");
+        expect(text).to.contain("HOLD-UNTIL-CHANGE LEADER PATH");
+        expect(text).to.not.contain("FORWARD OOS SUMMARY");
+        // No 1-bar horizon in this archive: no exact hold return anywhere.
+        expect(report.sorts[0]!.holdUntilChange!.tenures.every((tenure) => tenure.holdReturnPercent === null)).to.equal(true);
+        expect(report.sorts[0]!.holdUntilChange!.hold).to.equal(undefined);
+        // The path header advertises the column, but the summary says why it is empty.
+        expect(text).to.contain("Hold PnL (entry→exit)");
+        expect(text).to.contain("no usable 1-bar horizon");
+        expect(text).to.not.contain("| entry→exit |");
+
+        // Default mode keeps the original overlapping summary.
+        const fixedReport = analyzeAssetOpportunityArchive(records, { topK: 2 });
+        expect(fixedReport.calculationMode).to.equal("fixed_horizon");
+        expect(fixedReport.sorts[0]!.holdUntilChange).to.equal(undefined);
+        const fixedText = renderAssetOpportunityHoldoutReport(fixedReport);
+        expect(fixedText).to.contain("FORWARD OOS SUMMARY");
+        expect(fixedText).to.not.contain("HOLD-UNTIL-CHANGE");
+    });
+
+    it("keeps a hold-until-change tenure open across strategy changes and empty boundaries", () => {
+        const records = [
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-11T00:00:00.000Z",
+                runId: "run-hold",
+                holdoutBars: 14,
+                sortMetric: "winRate",
+                rows: [{ ...row(1, 5, 1, "AAA•"), strategyId: "strategy_one", strategyName: "Strategy One" }],
+            }), "fixture.txt"),
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-11T00:00:01.000Z",
+                runId: "run-hold",
+                holdoutBars: 13,
+                sortMetric: "winRate",
+                rows: [{ ...row(1, 4, 1, "AAA•"), strategyId: "strategy_two", strategyName: "Strategy Two" }],
+            }), "fixture.txt"),
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-11T00:00:02.000Z",
+                runId: "run-hold",
+                holdoutBars: 12,
+                sortMetric: "winRate",
+                rows: [],
+            }), "fixture.txt"),
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-11T00:00:03.000Z",
+                runId: "run-hold",
+                holdoutBars: 11,
+                sortMetric: "winRate",
+                rows: [row(1, -1, 1, "BBB•")],
+            }), "fixture.txt"),
+        ];
+
+        const report = analyzeAssetOpportunityArchive(records, { topK: 3, calculationMode: "hold_until_change" });
+        const tenures = report.sorts[0]!.holdUntilChange!.tenures;
+        expect(tenures.map((tenure) => ({
+            symbol: tenure.symbol,
+            strategyId: tenure.strategyId,
+            entry: tenure.entryHoldoutBars,
+            exit: tenure.exitHoldoutBars,
+            steps: tenure.tenureSteps,
+        }))).to.deep.equal([
+            // Same symbol with a different strategy does not close the tenure,
+            // and a boundary without a usable rank-1 keeps it open.
+            { symbol: "AAA•", strategyId: "strategy_one", entry: 14, exit: 11, steps: 3 },
+            { symbol: "BBB•", strategyId: "strategy_a", entry: 11, exit: null, steps: 1 },
+        ]);
+        const horizon12 = report.sorts[0]!.holdUntilChange!.horizons.find((horizon) => horizon.horizonBars === 12)!;
+        expect(horizon12.observedRows).to.equal(2);
+        expect(horizon12.averagePnlPercent).to.equal(2);
+    });
+
+    it("chains 1-bar horizons into the exact entry-to-exit hold return when the archive stores them", () => {
+        const holdoutRow = (rank: number, symbol: string, horizons: Array<Record<string, unknown>>) => ({
+            ...row(rank, 0, 1, symbol),
+            forwardOosPerformance: { ignoreLastBars: 12, horizons },
+        });
+        const bars = (averagePnlPercent: number, ongoing = false) => (
+            { bars: 1, averagePnlPercent, sampleSize: 1, ...(ongoing ? { ongoing: true } : {}) }
+        );
+        // Chronological order is DESCENDING holdout bars: A leads two consecutive
+        // boundaries, then B takes over and stays held at the sweep end.
+        const records = [
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:00.000Z",
+                runId: "run-chain",
+                holdoutBars: 13,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "AAA•", [bars(2), { bars: 36, averagePnlPercent: 10, sampleSize: 1 }])],
+            }), "fixture.txt"),
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:01.000Z",
+                runId: "run-chain",
+                holdoutBars: 12,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "AAA•", [bars(-1), { bars: 36, averagePnlPercent: 20, sampleSize: 1 }])],
+            }), "fixture.txt"),
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:02.000Z",
+                runId: "run-chain",
+                holdoutBars: 11,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "BBB•", [bars(1, true), { bars: 36, averagePnlPercent: -5, sampleSize: 1 }])],
+            }), "fixture.txt"),
+        ];
+
+        const report = analyzeAssetOpportunityArchive(records, { calculationMode: "hold_until_change" });
+        const tenures = report.sorts[0]!.holdUntilChange!.tenures;
+        expect(tenures.map((tenure) => ({
+            symbol: tenure.symbol,
+            steps: tenure.tenureSteps,
+            exit: tenure.exitHoldoutBars,
+            holdType: typeof tenure.holdReturnPercent,
+            holdOngoing: tenure.holdReturnOngoing === true,
+        }))).to.deep.equal([
+            // (1.02 * 0.99 - 1) compounded over the two held boundaries.
+            { symbol: "AAA•", steps: 2, exit: 11, holdType: "number", holdOngoing: false },
+            // Still held: the last 1-bar step is mark-to-market (ongoing).
+            { symbol: "BBB•", steps: 1, exit: null, holdType: "number", holdOngoing: true },
+        ]);
+        expect(tenures[0]!.holdReturnPercent).to.be.closeTo(0.98, 1e-9);
+        expect(tenures[1]!.holdReturnPercent).to.be.closeTo(1, 1e-9);
+
+        // The hold aggregation keeps the open tenure in the Ongoing columns.
+        const hold = report.sorts[0]!.holdUntilChange!.hold!;
+        expect(hold.observedRows).to.equal(1);
+        expect(hold.averagePnlPercent).to.be.closeTo(0.98, 1e-9);
+        expect(hold.ongoingRows).to.equal(1);
+        expect(hold.ongoingAveragePnlPercent).to.be.closeTo(1, 1e-9);
+
+        const text = renderAssetOpportunityHoldoutReport(report);
+        expect(text).to.contain("BEST TO WORST BY ENTRY→EXIT AVG PNL");
+        // The printed summary shows only the entry→exit row for the sort.
+        expect(text).to.contain("winRate | 1/1 | 0.98%");
+        expect(text).to.not.contain("entry→exit |");
+        expect(text).to.contain("Hold PnL (entry→exit)");
+        expect(text).to.contain("chain the archive's 1-bar horizon");
+    });
+
+    it("marks hold chains unusable when a tenure step is missing", () => {
+        const holdoutRow = (rank: number, symbol: string, oneBar: number | null) => ({
+            ...row(rank, 0, 1, symbol),
+            forwardOosPerformance: {
+                ignoreLastBars: 12,
+                horizons: oneBar === null
+                    ? [{ bars: 36, averagePnlPercent: 3, sampleSize: 1 }]
+                    : [{ bars: 1, averagePnlPercent: oneBar, sampleSize: 1 }],
+            },
+        });
+        const records = [
+            // 15: A enters (1-bar +2). 14: A continues but its 1-bar value is
+            // missing, so the chain loses a measured step.
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:00.000Z",
+                runId: "run-gap",
+                holdoutBars: 15,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "AAA•", 2)],
+            }), "fixture.txt"),
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:01.000Z",
+                runId: "run-gap",
+                holdoutBars: 14,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "AAA•", null)],
+            }), "fixture.txt"),
+            // 13: B appears — a tenure starting after the break chains cleanly.
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:02.000Z",
+                runId: "run-gap",
+                holdoutBars: 13,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "BBB•", 1)],
+            }), "fixture.txt"),
+        ];
+
+        const report = analyzeAssetOpportunityArchive(records, { calculationMode: "hold_until_change" });
+        const tenures = report.sorts[0]!.holdUntilChange!.tenures;
+        // A's tenure lost a measured bar; B's fresh tenure holds one measured step.
+        expect(tenures[0]!.holdReturnPercent).to.equal(null);
+        expect(tenures[1]!.holdReturnPercent).to.be.closeTo(1, 1e-9);
+        // Only B's tenure feeds the hold aggregation, and it is still held (ongoing).
+        const hold = report.sorts[0]!.holdUntilChange!.hold!;
+        expect(hold.observedRows).to.equal(0);
+        expect(hold.ongoingRows).to.equal(1);
+    });
+
+    it("breaks the outgoing tenure when the leader changes across a boundary gap", () => {
+        const holdoutRow = (rank: number, symbol: string, oneBar: number) => ({
+            ...row(rank, 0, 1, symbol),
+            forwardOosPerformance: {
+                ignoreLastBars: 12,
+                horizons: [{ bars: 1, averagePnlPercent: oneBar, sampleSize: 1 }],
+            },
+        });
+        // 14: AAA enters (+2). Boundary 13 is missing from the sweep. 12: BBB
+        // is rank 1 — AAA's hold spans the unmeasured bar 13, so its chain is
+        // unusable even though the change itself happened on a present boundary.
+        const records = [
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:00.000Z",
+                runId: "run-change-gap",
+                holdoutBars: 14,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "AAA•", 2)],
+            }), "fixture.txt"),
+            ...parseAssetOpportunityArchiveText(block({
+                timestamp: "2026-10-12T00:00:01.000Z",
+                runId: "run-change-gap",
+                holdoutBars: 12,
+                sortMetric: "winRate",
+                rows: [holdoutRow(1, "BBB•", 1)],
+            }), "fixture.txt"),
+        ];
+
+        const report = analyzeAssetOpportunityArchive(records, { calculationMode: "hold_until_change" });
+        const tenures = report.sorts[0]!.holdUntilChange!.tenures;
+        // AAA's exit is at 12 and bar 13 was never measured: the truncated
+        // 1-bar product must not be published as a complete entry→exit return.
+        expect(tenures[0]!.symbol).to.equal("AAA•");
+        expect(tenures[0]!.exitHoldoutBars).to.equal(12);
+        expect(tenures[0]!.holdReturnPercent).to.equal(null);
+        // BBB starts fresh at the boundary where it appeared.
+        expect(tenures[1]!.holdReturnPercent).to.be.closeTo(1, 1e-9);
+        expect(tenures[1]!.holdReturnOngoing).to.equal(true);
+    });
+
+    it("rejects hold-until-change mode on next-exit archives", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-11T00:00:00.000Z",
+            runId: "run-next-exit",
+            holdoutBars: 5,
+            sortMetric: "expectancy",
+            measurementMode: "next_exit",
+            rows: [{
+                ...row(1, 0, 0),
+                forwardOosPerformance: null,
+                nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "take_profit" },
+            }],
+        }));
+        expect(() => analyzeAssetOpportunityArchive(records, { calculationMode: "hold_until_change" }))
+            .to.throw(/hold_until_change requires fixed-horizon archives/);
     });
 
     it("does not analyze matching files inside archive subfolders", () => {

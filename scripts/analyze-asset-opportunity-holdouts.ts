@@ -14,6 +14,13 @@
  * Pass --basis <pair|base_only|quote_only> to re-base every forward outcome to
  * one fixed-horizon price basis (rows captured all bases in one pass; legacy
  * single-basis rows contribute only when their stored basis matches).
+ *
+ * Pass --mode hold_until_change to aggregate NON-overlapping rank-1 leader
+ * tenures instead of every overlapping boundary: the rank-1 asset is entered
+ * the first boundary it appears and held until the rank-1 pick changes to a
+ * different symbol, and each tenure is measured once from its entry boundary's
+ * stored forward horizon PnL. Default --mode fixed_horizon keeps the original
+ * per-boundary (overlapping) aggregation.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -47,10 +54,13 @@ export type {
     AssetOpportunityArchiveHorizonBasis,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
-const REPORT_SCHEMA_VERSION = 13;
+const REPORT_SCHEMA_VERSION = 14;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const HORIZON_BASES = ["pair", "base_only", "quote_only"] as const;
+/** How the forward OOS summary aggregates archived outcomes. */
+export type HoldoutCalculationMode = "fixed_horizon" | "hold_until_change";
+const CALCULATION_MODES: readonly HoldoutCalculationMode[] = ["fixed_horizon", "hold_until_change"];
 const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
     netProfit: "netProfit",
     netProfitPercent: "netProfitPercent",
@@ -189,6 +199,47 @@ export interface SortHoldoutAnalysis {
     candidateCount: number;
     horizons: HoldoutHorizonAnalysis[];
     candidates: CandidateHoldoutAnalysis[];
+    /** Present only with calculation mode hold_until_change. */
+    holdUntilChange?: HoldUntilChangeSortAnalysis;
+}
+
+/**
+ * One non-overlapping rank-1 hold in hold_until_change mode: the symbol entered
+ * when it first took rank 1 and held until a different symbol took rank 1 (a
+ * strategy change on the same symbol does not close the tenure). The forward
+ * outcomes are frozen at the ENTRY boundary; the archive stores no raw fills,
+ * so the mark-to-market path between boundaries is not reconstructible.
+ */
+export interface HoldUntilChangeTenure {
+    symbol: string;
+    strategyId: string;
+    strategyName: string;
+    entryHoldoutBars: number;
+    /** Boundary where the rank-1 pick changed away from this symbol; null = still held at the newest boundary. */
+    exitHoldoutBars: number | null;
+    /** Number of consecutive boundaries (sweep steps) the symbol stayed rank 1. */
+    tenureSteps: number;
+    /** Valid entry-boundary forward outcomes keyed by horizon bars. */
+    horizons: Record<string, { averagePnlPercent: number; sampleSize: number; ongoing?: boolean }>;
+    /**
+     * Entry→exit hold return chained from the archive's 1-bar horizon across
+     * the tenure's consecutive boundaries. Under next_open/next_close entry
+     * each 1-bar value is the held bar's open→close move, so the chain omits
+     * the close→open gaps between bars and is approximate whenever a tenure
+     * spans a session gap; it is exact under signal_close entry. Null when the
+     * archive stores no 1-bar horizon or a tenure step is missing or gapped.
+     */
+    holdReturnPercent: number | null;
+    /** The chain ends at the sweep's last boundary (still held) or on an ongoing 1-bar step. */
+    holdReturnOngoing?: boolean;
+}
+
+export interface HoldUntilChangeSortAnalysis {
+    tenures: HoldUntilChangeTenure[];
+    /** Tenure-entry outcomes aggregated per horizon, with the pooled all-candidate baseline. */
+    horizons: HoldoutHorizonAnalysis[];
+    /** Exact entry→exit hold returns aggregated over tenures; absent without the 1-bar horizon. */
+    hold?: HoldoutHorizonAnalysis;
 }
 
 export interface CrossSortCandidateAnalysis {
@@ -365,6 +416,8 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     selectedBlockCount: number;
     analyzedBlockCount: number;
     measurementMode: "fixed_horizon" | "next_exit";
+    /** How the forward OOS summary aggregates outcomes (default fixed_horizon). */
+    calculationMode: HoldoutCalculationMode;
     /** Price basis every forward outcome was re-based to; present only with --basis. */
     horizonBasis?: AssetOpportunityArchiveHorizonBasis;
     gainExclusion?: { thresholdPercent: number; excludedObservations: number };
@@ -415,6 +468,8 @@ interface AnalyzeOptions {
     topK?: number;
     /** Report every forward outcome for one price basis instead of the run's selected basis. */
     horizonBasis?: AssetOpportunityArchiveHorizonBasis;
+    /** Aggregate the forward OOS summary over non-overlapping rank-1 tenures instead of every boundary. */
+    calculationMode?: HoldoutCalculationMode;
     generatedAt?: string;
 }
 
@@ -1183,6 +1238,154 @@ function buildSortAnalysis(
     };
 }
 
+/**
+ * Chronological rank-1 leader tenures for one archive sort (hold_until_change
+ * mode). The sweep's signal bar moves forward as the reserved OOS tail shrinks,
+ * so chronological order is DESCENDING holdoutBars — the same convention as
+ * scripts/analyze-asset-opportunity-rotation.ts. The position is entered the
+ * first boundary a symbol takes rank 1 and held while rank 1 stays that symbol;
+ * when a different symbol takes rank 1 the tenure closes at that boundary and
+ * the next one opens there. Boundaries without a usable rank-1 row extend the
+ * current tenure instead of closing it.
+ */
+function buildHoldUntilChangeTenures(records: AssetOpportunityArchiveRecord[]): HoldUntilChangeTenure[] {
+    const ordered = [...records].sort((left, right) => right.holdoutBars - left.holdoutBars);
+    interface ChainState {
+        tenure: HoldUntilChangeTenure;
+        symbol: string;
+        product: number;
+        broken: boolean;
+        ongoing: boolean;
+    }
+    // Multiply the rank-1 row's 1-bar horizon into the chain; one missing step
+    // makes the whole tenure chain unusable (an approximate product would
+    // silently skip real price movement).
+    const chainOneBar = (state: ChainState, row: AssetOpportunityArchiveRow): void => {
+        const oneBar = row.forwardOosPerformance?.horizons?.find((horizon) => horizon.bars === 1);
+        if (!oneBar || oneBar.sampleSize < 1 || oneBar.averagePnlPercent === null) {
+            state.broken = true;
+            return;
+        }
+        state.product *= 1 + oneBar.averagePnlPercent / 100;
+        if (oneBar.ongoing === true) state.ongoing = true;
+    };
+    const finalize = (state: ChainState): void => {
+        state.tenure.holdReturnPercent = state.broken ? null : (state.product - 1) * 100;
+        if (state.ongoing) state.tenure.holdReturnOngoing = true;
+    };
+    const tenures: HoldUntilChangeTenure[] = [];
+    let current: ChainState | null = null;
+    let previousHoldoutBars: number | null = null;
+    for (const record of ordered) {
+        const consecutive = previousHoldoutBars !== null && previousHoldoutBars - record.holdoutBars === 1;
+        previousHoldoutBars = record.holdoutBars;
+        let rankOne: AssetOpportunityArchiveRow | null = null;
+        for (const row of record.topResults) {
+            if (!row.symbol) continue;
+            if (!rankOne || (row.rank ?? Number.MAX_SAFE_INTEGER) < (rankOne.rank ?? Number.MAX_SAFE_INTEGER)) rankOne = row;
+        }
+        if (!rankOne?.symbol) {
+            // No usable rank-1 this boundary: keep holding, but the chain loses
+            // its step, so the exact hold return is no longer computable.
+            if (current) {
+                current.tenure.tenureSteps += 1;
+                current.broken = true;
+            }
+            continue;
+        }
+        if (current && current.symbol === rankOne.symbol) {
+            current.tenure.tenureSteps += 1;
+            if (consecutive) chainOneBar(current, rankOne);
+            else current.broken = true;
+            continue;
+        }
+        if (current) {
+            current.tenure.exitHoldoutBars = record.holdoutBars;
+            // A gap before the rotation means the outgoing hold spans bars that
+            // were never measured — the truncated product must not be published.
+            if (!consecutive) current.broken = true;
+            finalize(current);
+        }
+        const horizons: HoldUntilChangeTenure["horizons"] = {};
+        for (const horizon of rankOne.forwardOosPerformance?.horizons ?? []) {
+            if (horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
+            horizons[String(horizon.bars)] = {
+                averagePnlPercent: horizon.averagePnlPercent,
+                sampleSize: horizon.sampleSize,
+                ...(horizon.ongoing === true ? { ongoing: true } : {}),
+            };
+        }
+        const tenure: HoldUntilChangeTenure = {
+            symbol: rankOne.symbol,
+            strategyId: rankOne.strategyId ?? "unknown",
+            strategyName: rankOne.strategyName ?? rankOne.strategyId ?? "unknown",
+            entryHoldoutBars: record.holdoutBars,
+            exitHoldoutBars: null,
+            tenureSteps: 1,
+            horizons,
+            holdReturnPercent: null,
+        };
+        const state: ChainState = { tenure, symbol: rankOne.symbol, product: 1, broken: false, ongoing: false };
+        chainOneBar(state, rankOne);
+        tenures.push(tenure);
+        current = state;
+    }
+    if (current) {
+        finalize(current);
+        // Still held at the newest boundary: mark-to-market, not a realized change.
+        current.tenure.holdReturnOngoing = true;
+    }
+    return tenures;
+}
+
+/**
+ * Aggregate the entry→exit hold returns (horizonBars 0 marks this as the hold
+ * aggregation, not a fixed horizon). Open tenures are mark-to-market and land
+ * in the Ongoing columns instead of the completed aggregates. See
+ * HoldUntilChangeTenure.holdReturnPercent for the chain's gap caveat.
+ */
+function buildHoldUntilChangeHoldAnalysis(tenures: HoldUntilChangeTenure[]): HoldoutHorizonAnalysis | null {
+    const values = tenures.flatMap((tenure) => tenure.holdReturnPercent === null
+        ? []
+        : [{ pnlPercent: tenure.holdReturnPercent, sampleSize: 1, ongoing: tenure.holdReturnOngoing === true }]);
+    if (values.length === 0) return null;
+    return calculateHorizonAnalysis(values, 0);
+}
+
+/**
+ * Per-horizon aggregation of one sort's tenure-entry outcomes. Unlike the
+ * fixed-horizon rows, each tenure contributes once (non-overlapping by
+ * construction) and the all-candidate comparison uses the archived baseline
+ * pooled over EVERY holdout: a tenure spans many boundaries, so the
+ * matched-holdout subset used by fixed-horizon rows is not defined here.
+ */
+function buildHoldUntilChangeHorizonAnalyses(
+    records: AssetOpportunityArchiveRecord[],
+    tenures: HoldUntilChangeTenure[],
+): HoldoutHorizonAnalysis[] {
+    const horizonSet = new Set<number>();
+    for (const record of records) {
+        for (const horizon of record.baseline?.horizons ?? []) horizonSet.add(horizon.bars);
+    }
+    for (const tenure of tenures) {
+        for (const bars of Object.keys(tenure.horizons)) horizonSet.add(Number(bars));
+    }
+    return [...horizonSet].sort((left, right) => left - right).map((horizonBars) => {
+        const values = tenures.flatMap((tenure) => {
+            const horizon = tenure.horizons[String(horizonBars)];
+            return horizon
+                ? [{ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true }]
+                : [];
+        });
+        const result = calculateHorizonAnalysis(values, horizonBars);
+        const baseline = buildBaselineHorizonAnalysis(records, horizonBars);
+        result.baselineAveragePnlPercent = baseline?.averagePnlPercent ?? null;
+        result.baselinePositiveRatePercent = baseline?.positiveRatePercent ?? null;
+        result.baselineEligibleCandidateCount = baseline?.averageEligibleCandidateCount ?? null;
+        return result;
+    });
+}
+
 interface CrossSortAccumulator {
     candidateKey: string;
     symbol: string;
@@ -1618,6 +1821,10 @@ export function analyzeAssetOpportunityArchive(
         throw new Error(`Selected batch runs contain mixed forward measurement modes: ${[...measurementModes].sort().join(", ")}`);
     }
     const measurementMode = measurementModes.has("next_exit") ? "next_exit" : "fixed_horizon";
+    const calculationMode: HoldoutCalculationMode = options.calculationMode ?? "fixed_horizon";
+    if (calculationMode === "hold_until_change" && measurementMode !== "fixed_horizon") {
+        throw new Error("hold_until_change requires fixed-horizon archives; the selected batch runs measure next-exit outcomes instead.");
+    }
     // Re-base every forward outcome to one price basis before any aggregation
     // (including gain exclusion, which trims forwardOosPerformance) so all
     // downstream analysis stays basis-consistent.
@@ -1697,6 +1904,19 @@ export function analyzeAssetOpportunityArchive(
             .sort((left, right) => left[0]!.sortMetric.localeCompare(right[0]!.sortMetric))
             .map((sortRecords) => buildSortAnalysis(sortRecords, topK, holdoutBars.length))
         : [];
+    if (calculationMode === "hold_until_change") {
+        for (const sort of sorts) {
+            const sortRecords = recordsBySort.get(sort.sortMetric) ?? [];
+            const tenures = buildHoldUntilChangeTenures(sortRecords);
+            const hold = buildHoldUntilChangeHoldAnalysis(tenures);
+            sort.holdUntilChange = {
+                tenures,
+                horizons: buildHoldUntilChangeHorizonAnalyses(sortRecords, tenures),
+                ...(hold ? { hold } : {}),
+            };
+        }
+    }
+    const anyChainedHold = sorts.some((sort) => sort.holdUntilChange?.tenures.some((tenure) => tenure.holdReturnPercent !== null) === true);
     const nextExitSorts: NextExitSortAnalysis[] = measurementMode === "next_exit"
         ? [...recordsBySort.values()]
             .sort((left, right) => left[0]!.sortMetric.localeCompare(right[0]!.sortMetric))
@@ -1746,6 +1966,7 @@ export function analyzeAssetOpportunityArchive(
         selectedBlockCount: selected.records.length,
         analyzedBlockCount: analysisRecords.length,
         measurementMode,
+        calculationMode,
         ...(options.horizonBasis ? { horizonBasis: options.horizonBasis } : {}),
         ...(options.excludeGains100 ? { gainExclusion: { thresholdPercent: 100, excludedObservations } } : {}),
         excludedRedundantSortMetrics,
@@ -1774,6 +1995,14 @@ export function analyzeAssetOpportunityArchive(
                 "All-candidate baseline and deltas are unavailable in this variant: archived aggregate baselines cannot be filtered without individual candidate outcomes.",
             ] : []),
             ...horizonBasisNotes,
+            ...(calculationMode === "hold_until_change" ? [
+                "Hold-until-change mode: each sort is walked chronologically (descending holdout bars); the rank-1 asset is entered the first boundary it appears and held until the rank-1 pick changes to a different symbol, so a leader held for N boundaries contributes once instead of N overlapping times. Requested top-K is ignored; only rank-1 rows are measured.",
+                "The printed summary shows only the entry→exit hold return; per-horizon tenure-entry outcomes stay in the JSON under sorts[].holdUntilChange.horizons. Without the 1-bar horizon in the archive the hold return cannot be chained, and switching costs are not applied.",
+                ...(anyChainedHold ? [
+                    "entry→exit returns chain the archive's 1-bar horizon across the held boundaries. The 1-bar value is measured from the run's entry price (first hidden bar), so under next-open/next-close entry the chain omits each close→open gap between bars: short holds are close to exact, but a tenure spanning a session gap (roughly every 13 bars on 30m charts) is approximate. The chain itself is exact under signal_close entry.",
+                ] : []),
+                "Sections other than the hold-until-change summary and leader path remain per-boundary overlapping fixed-horizon diagnostics.",
+            ] : []),
             "Forward OOS metrics are descriptive evidence, not a trading rule or probability.",
             "Holdout values are overlapping/nested windows and must not be treated as independent experiments.",
             ...(selected.batchRunIds.length > 1
@@ -1791,7 +2020,9 @@ export function analyzeAssetOpportunityArchive(
                     : "The all-candidate baseline is unavailable because older archive blocks contain only top-N rows.",
             ...(measurementMode === "fixed_horizon"
                 ? [
-                    "Per-sort all-candidate averages and deltas use holdouts with at least one valid selected-row forward sample.",
+                    ...(calculationMode === "fixed_horizon"
+                        ? ["Per-sort all-candidate averages and deltas use holdouts with at least one valid selected-row forward sample."]
+                        : []),
                     "Samples count valid selected-row forward observations. Fresh entries use their forward metric; an OPEN EOD row uses continuation from the holdout boundary close in the existing position direction.",
                     ...(ongoingObservationTotal > 0
                         ? [`${ongoingObservationTotal} forward observations were ongoing: the horizon exceeded the holdout, so the return is measured at the last available candle (mark-to-market), not at the full horizon. Aggregates use completed horizons only; the Ongoing columns report the separate mark-to-market stats for horizons the sweep has not reached yet.`]
@@ -2117,6 +2348,9 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         `Holdout windows: ${formatHoldoutWindows(report.holdoutBars)}`,
         `Archive blocks analyzed: ${report.analyzedBlockCount} of ${report.selectedBlockCount} selected (${report.sourceBlockCount} source)`,
         `Forward measurement: ${report.measurementMode}`,
+        ...(report.calculationMode === "hold_until_change"
+            ? ["Calculation mode: hold_until_change (non-overlapping rank-1 leader tenures)"]
+            : []),
         ...(report.horizonBasis ? [`Forward horizon basis: ${report.horizonBasis}`] : []),
         ...(report.gainExclusion ? [
             `Gain exclusion: >= +${report.gainExclusion.thresholdPercent}% (excluded ${report.gainExclusion.excludedObservations} top-K observations across analyzed sort blocks; no replacements)`,
@@ -2138,40 +2372,107 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         "QUESTIONS ANSWERED BY THIS REPORT",
         ...report.questionsAnswered.map((question, index) => `${index + 1}. ${question}`),
     ];
-    lines.push(
-        "",
-        "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
-        "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Ongoing n | Ongoing avg | Samples (completed)",
-    );
-    const primarySummaryHorizon = report.sorts.some((sort) => sort.horizons.some((horizon) => horizon.horizonBars === 12))
+    const holdUntilChangeMode = report.calculationMode === "hold_until_change";
+    const holdStepStats = (sort: SortHoldoutAnalysis): { average: number | null; longest: number | null } => {
+        const tenures = sort.holdUntilChange?.tenures ?? [];
+        return {
+            average: tenures.length > 0
+                ? tenures.reduce((sum, tenure) => sum + tenure.tenureSteps, 0) / tenures.length
+                : null,
+            longest: tenures.length > 0 ? Math.max(...tenures.map((tenure) => tenure.tenureSteps)) : null,
+        };
+    };
+    const mode1HorizonBars = [...new Set(report.sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)))]
+        .sort((left, right) => left - right);
+    // Horizon 1 exists as the chaining step for hold-until-change, not as a
+    // strategy horizon: keep it out of primary-horizon selection when longer
+    // horizons are present.
+    const primarySummaryHorizon = mode1HorizonBars.includes(12)
         ? 12
-        : report.sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)).sort((left, right) => left - right)[0] ?? 0;
-    const orderedSorts = [...report.sorts].sort((left, right) => {
-        return (analysisHorizonValue(right, primarySummaryHorizon) ?? Number.NEGATIVE_INFINITY)
-            - (analysisHorizonValue(left, primarySummaryHorizon) ?? Number.NEGATIVE_INFINITY)
-            || (right.horizons.find((horizon) => horizon.horizonBars === primarySummaryHorizon)?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
-                - (left.horizons.find((horizon) => horizon.horizonBars === primarySummaryHorizon)?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
-            || left.sortMetric.localeCompare(right.sortMetric);
-    });
-    for (const sort of orderedSorts) {
-        for (const horizon of sort.horizons) {
-            const delta = horizon.averagePnlPercent !== null && horizon.baselineAveragePnlPercent !== null
-                ? horizon.averagePnlPercent - horizon.baselineAveragePnlPercent
-                : null;
+        : mode1HorizonBars.filter((bars) => bars > 1)[0] ?? mode1HorizonBars[0] ?? 0;
+    const orderedSorts = holdUntilChangeMode
+        ? [...report.sorts].sort((left, right) => {
+            return (right.holdUntilChange?.hold?.averagePnlPercent ?? Number.NEGATIVE_INFINITY)
+                - (left.holdUntilChange?.hold?.averagePnlPercent ?? Number.NEGATIVE_INFINITY)
+                || (right.holdUntilChange?.hold?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
+                    - (left.holdUntilChange?.hold?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
+                || left.sortMetric.localeCompare(right.sortMetric);
+        })
+        : [...report.sorts].sort((left, right) => {
+            return (analysisHorizonValue(right, primarySummaryHorizon) ?? Number.NEGATIVE_INFINITY)
+                - (analysisHorizonValue(left, primarySummaryHorizon) ?? Number.NEGATIVE_INFINITY)
+                || (right.horizons.find((horizon) => horizon.horizonBars === primarySummaryHorizon)?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
+                    - (left.horizons.find((horizon) => horizon.horizonBars === primarySummaryHorizon)?.positiveRatePercent ?? Number.NEGATIVE_INFINITY)
+                || left.sortMetric.localeCompare(right.sortMetric);
+        });
+    if (holdUntilChangeMode) {
+        lines.push(
+            "",
+            "HOLD-UNTIL-CHANGE OOS SUMMARY — BEST TO WORST BY ENTRY→EXIT AVG PNL",
+            "Sort | Positive trades | Average PnL | Median PnL | P10 PnL | Worst PnL | Ongoing n | Ongoing avg | Avg hold steps | Longest hold | Samples (completed)",
+        );
+        const holdSorts = orderedSorts.filter((sort) => sort.holdUntilChange?.hold);
+        if (holdSorts.length === 0) {
+            lines.push("Unavailable: the archive has no usable 1-bar horizon, so entry→exit holds cannot be chained. Set OOS Horizons to include 1 and rerun the sweep.");
+        }
+        for (const sort of holdSorts) {
+            const holdAnalysis = sort.holdUntilChange!.hold!;
+            const steps = holdStepStats(sort);
             lines.push([
                 sort.sortMetric,
-                `${horizon.horizonBars} bars`,
-                `${horizon.positiveRows}/${horizon.observedRows}`,
-                formatPercent(horizon.averagePnlPercent),
-                formatPercent(horizon.medianPnlPercent),
-                formatPercent(horizon.p10PnlPercent),
-                formatPercent(horizon.worstPnlPercent),
-                formatPercent(horizon.baselineAveragePnlPercent),
-                formatPercent(delta),
-                String(horizon.ongoingRows),
-                formatPercent(horizon.ongoingAveragePnlPercent),
-                String(horizon.totalSamples),
+                `${holdAnalysis.positiveRows}/${holdAnalysis.observedRows}`,
+                formatPercent(holdAnalysis.averagePnlPercent),
+                formatPercent(holdAnalysis.medianPnlPercent),
+                formatPercent(holdAnalysis.p10PnlPercent),
+                formatPercent(holdAnalysis.worstPnlPercent),
+                String(holdAnalysis.ongoingRows),
+                formatPercent(holdAnalysis.ongoingAveragePnlPercent),
+                formatNumber(steps.average),
+                String(steps.longest),
+                String(holdAnalysis.totalSamples),
             ].join(" | "));
+        }
+        lines.push("", "HOLD-UNTIL-CHANGE LEADER PATH (chronological; entry holdout descending = forward in time)");
+        lines.push("Sort | Leader | Strategy | Entry holdout | Exit holdout | Steps | Hold PnL (entry→exit)");
+        for (const sort of orderedSorts) {
+            for (const tenure of sort.holdUntilChange?.tenures ?? []) {
+                lines.push([
+                    sort.sortMetric,
+                    tenure.symbol,
+                    tenure.strategyId,
+                    String(tenure.entryHoldoutBars),
+                    tenure.exitHoldoutBars === null ? "held" : String(tenure.exitHoldoutBars),
+                    String(tenure.tenureSteps),
+                    formatPercent(tenure.holdReturnPercent),
+                ].join(" | "));
+            }
+        }
+    } else {
+        lines.push(
+            "",
+            "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
+            "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Ongoing n | Ongoing avg | Samples (completed)",
+        );
+        for (const sort of orderedSorts) {
+            for (const horizon of sort.horizons) {
+                const delta = horizon.averagePnlPercent !== null && horizon.baselineAveragePnlPercent !== null
+                    ? horizon.averagePnlPercent - horizon.baselineAveragePnlPercent
+                    : null;
+                lines.push([
+                    sort.sortMetric,
+                    `${horizon.horizonBars} bars`,
+                    `${horizon.positiveRows}/${horizon.observedRows}`,
+                    formatPercent(horizon.averagePnlPercent),
+                    formatPercent(horizon.medianPnlPercent),
+                    formatPercent(horizon.p10PnlPercent),
+                    formatPercent(horizon.worstPnlPercent),
+                    formatPercent(horizon.baselineAveragePnlPercent),
+                    formatPercent(delta),
+                    String(horizon.ongoingRows),
+                    formatPercent(horizon.ongoingAveragePnlPercent),
+                    String(horizon.totalSamples),
+                ].join(" | "));
+            }
         }
     }
     const horizonColumns = [...new Set(report.sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)))].sort((left, right) => left - right).slice(0, 3);
@@ -2308,7 +2609,7 @@ export function colorizeAssetOpportunityHoldoutReport(
     const red = "\u001b[91m";
     const yellow = "\u001b[93m";
     const reset = "\u001b[0m";
-    const sectionPattern = /^(QUESTIONS ANSWERED|NEXT EXIT OOS SUMMARY|NEXT-EXIT SIGNAL CANDLE HOUR|ALL-CANDIDATE NEXT-EXIT BASELINE|FORWARD OOS SUMMARY|STRATEGY LIBRARY|OOS COUNTERFACTUAL|SIGNAL CANDLE HOUR|PERSISTENT CANDIDATES|CROSS-SORT AGREEMENT|SELECTION CONCENTRATION|PARAMETER FINGERPRINT)/;
+    const sectionPattern = /^(QUESTIONS ANSWERED|NEXT EXIT OOS SUMMARY|NEXT-EXIT SIGNAL CANDLE HOUR|ALL-CANDIDATE NEXT-EXIT BASELINE|FORWARD OOS SUMMARY|HOLD-UNTIL-CHANGE|STRATEGY LIBRARY|OOS COUNTERFACTUAL|SIGNAL CANDLE HOUR|PERSISTENT CANDIDATES|CROSS-SORT AGREEMENT|SELECTION CONCENTRATION|PARAMETER FINGERPRINT)/;
     return reportText.split("\n").map((line) => {
         const coloredLine = line.replace(/[-+]?\d+(?:\.\d+)?%/g, (match) => {
             const value = Number.parseFloat(match);
@@ -2338,6 +2639,13 @@ function main(): void {
         process.exitCode = 1;
         return;
     }
+    const requestedMode = getArgument(process.argv.slice(2), "--mode");
+    const calculationMode = CALCULATION_MODES.find((mode) => mode === requestedMode);
+    if (requestedMode !== undefined && !calculationMode) {
+        console.error(`[asset-opportunity-holdouts] Invalid --mode "${requestedMode}". Use one of: ${CALCULATION_MODES.join(", ")}.`);
+        process.exitCode = 1;
+        return;
+    }
     try {
         const records = readAssetOpportunityArchive(archiveDirectory);
         const report = analyzeAssetOpportunityArchive(records, {
@@ -2346,6 +2654,7 @@ function main(): void {
             includeAllBatchRuns: requestedBatchRunId === undefined,
             topK,
             ...(horizonBasis ? { horizonBasis } : {}),
+            calculationMode,
             excludeGains100: process.argv.includes("--exclude-gains-100"),
         });
         const renderedReport = renderAssetOpportunityHoldoutReport(report);
