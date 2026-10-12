@@ -39,6 +39,8 @@ import {
     TOP_MEAN_FEATURE_CONTRACT_VERSION,
     TOP_MEAN_FEATURE_FORMULA_VERSION,
     TOP_MEAN_FEATURE_AVAILABILITY_POLICY,
+    codeUnitCompare,
+    numberCompare,
     type TopMeanCandidateFeatureRow,
     type TopMeanCausalFeatureField,
 } from "../lib/batch-backtest/sp500-top-mean-causal-features";
@@ -403,14 +405,6 @@ class UsageFailure extends Error {
         super(message);
         this.name = "UsageFailure";
     }
-}
-
-function codeUnitCompare(left: string, right: string): number {
-    return left < right ? -1 : left > right ? 1 : 0;
-}
-
-function numberCompare(left: number, right: number): number {
-    return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function finite(value: unknown): value is number {

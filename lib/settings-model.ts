@@ -6,7 +6,7 @@ import type { BinanceMarketType } from "./binance-market";
 import { resolveBinanceMarketType } from "./binance-market";
 import type { ChartMode } from "./state";
 import { parseInputNumber } from "./dom-input-readers";
-import { readBoolean as readBooleanValue, readNumber as readNumberValue } from "./settings-parse-utils";
+import { readBoolean, readNumber as readNumberValue } from "./settings-parse-utils";
 import { DEFAULT_BUILT_IN_STRATEGY_KEY } from "./strategy-defaults";
 import { ADVANCED_SIZING_DEFAULTS, coerceAdvancedSizingFieldValue } from "./advanced-sizing-settings";
 import { resolveTakeProfitMode } from "./take-profit-settings";
@@ -206,10 +206,6 @@ function readString(value: unknown, fallback: string): string {
 
 function readOptionalString(value: unknown): string | undefined {
     return typeof value === 'string' && value.trim() ? value.trim() : undefined;
-}
-
-function readBoolean(value: unknown, fallback: boolean): boolean {
-    return readBooleanValue(value, fallback);
 }
 
 function readNumber(value: unknown, fallback: number): number {

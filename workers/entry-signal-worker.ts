@@ -16,7 +16,7 @@ import {
 } from "../lib/alert-evaluation-window";
 import {
     buildStreamId as buildAlertStreamId,
-    parseConfigNameFromStreamId as parseConfigNameFromAlertStreamId,
+    parseConfigNameFromStreamId,
 } from "../lib/alert-stream-id";
 import {
     buildSyntheticPairFromLegs,
@@ -28,6 +28,7 @@ import {
 } from "../lib/alert-subscription-utils";
 import { PENDING_ENTRY_SIGNAL_REASON } from "../lib/alert-signal-utils";
 import { resolveEntryRiskTargets } from "../lib/entry-risk-targets";
+import { safeJsonParse } from "../lib/json-utils";
 
 interface ScheduledController {
     scheduledTime: number | string;
@@ -436,18 +437,6 @@ function buildChannelKey(payload: {
 
 function buildDefaultStreamId(symbol: string, interval: string, strategyKey: string, configName?: string): string {
     return buildAlertStreamId(symbol, interval, strategyKey, configName);
-}
-
-function parseConfigNameFromStreamId(streamId: string): string | null {
-    return parseConfigNameFromAlertStreamId(streamId);
-}
-
-function safeJsonParse<T>(value: string, fallback: T): T {
-    try {
-        return JSON.parse(value) as T;
-    } catch {
-        return fallback;
-    }
 }
 
 export function buildLatestActionableEntrySignalQuery(selectClause: string): string {

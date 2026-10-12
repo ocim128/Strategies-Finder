@@ -22,6 +22,7 @@ import {
     TOP_MEAN_FEATURE_CONTRACT_VERSION,
     TOP_MEAN_FEATURE_FORMULA_VERSION,
     buildCandidateFeaturesFromOutcomeStream,
+    codeUnitCompare,
     type TopMeanCandidateFeatureRow,
 } from "./sp500-top-mean-causal-features";
 
@@ -554,10 +555,6 @@ async function builderSourceHash(): Promise<string> {
 
 function defaultWarning(event: string, data: Record<string, unknown>): void {
     console.warn(`[debug] ${event}`, data);
-}
-
-function codeUnitCompare(left: string, right: string): number {
-    return left < right ? -1 : left > right ? 1 : 0;
 }
 
 /**

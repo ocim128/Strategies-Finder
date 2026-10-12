@@ -10,7 +10,8 @@ import { strategies } from "../lib/strategies/library";
 import { median } from "../lib/statistics-utils";
 import { parseArgs as parseVerifyArgs, runVerification as runVerifyAlphaReport } from "./verify-alpha";
 import { parseOhlcvBars } from "./lib/ohlcv-file";
-import type { BacktestSettings, ExecutionModel, OHLCVData, Strategy, TradeDirection } from "../lib/types/strategies";
+import { inferDirection } from "./lib/strategy-hunt-utils";
+import type { BacktestSettings, ExecutionModel, OHLCVData, Strategy } from "../lib/types/strategies";
 
 type Cli = {
   symbol: string; interval: string; bars: number; freshnessHours: number;
@@ -145,11 +146,6 @@ function freshnessMs(filePath: string): number | null {
     }
   } catch {}
   try { return Date.now() - fs.statSync(filePath).mtimeMs; } catch { return null; }
-}
-
-function inferDirection(strategy: Strategy): TradeDirection {
-  const d = strategy.metadata?.direction;
-  return d === "short" || d === "both" || d === "long" ? d : "long";
 }
 
 function buildPayload(symbol: string, interval: string, bars: OHLCVData[]): Record<string, unknown> {

@@ -1,6 +1,6 @@
 /**
  * Shared helpers for the offline strategy-hunt CLIs (`alpha-sweep`,
- * `massive-alpha-sweep`, `verify-alpha`, `walk-forward-hunt`, `signal-tower`).
+ * `massive-alpha-sweep`, `verify-alpha`, `walk-forward-hunt`, `signal-tower`, `surgical-optimization`).
  * Each of them used to carry its own copy of these two functions; they now
  * share one implementation.
  *

@@ -60,11 +60,11 @@ interface EventGroup {
     events: Map<string, PoolSnapshotRecord[]>;
 }
 
-function codeUnitCompare(left: string, right: string): number {
+export function codeUnitCompare(left: string, right: string): number {
     return left < right ? -1 : left > right ? 1 : 0;
 }
 
-function numberCompare(left: number, right: number): number {
+export function numberCompare(left: number, right: number): number {
     return left < right ? -1 : left > right ? 1 : 0;
 }
 
