@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getArgument } from "./lib/cli-args";
+import { formatPercent } from "./lib/asset-opportunity-analysis";
 import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityNextExitOosBaseline,
@@ -1845,10 +1846,6 @@ function formatNumber(value: number | null, digits = 2): string {
     return value === null || !Number.isFinite(value) ? "n/a" : value.toFixed(digits);
 }
 
-function formatPercent(value: number | null): string {
-    return value === null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(2)}%`;
-}
-
 function formatHoldoutWindows(values: number[]): string {
     const sorted = [...new Set(values)].sort((left, right) => left - right);
     if (sorted.length === 0) return "n/a";
@@ -2090,6 +2087,25 @@ function renderNextExitReport(
     return `${lines.join("\n")}\n`;
 }
 
+/**
+ * One `|`-joined row of the "selection concentration by symbol" and "by
+ * strategy" tables. Both tables share this exact row shape, so a single owner
+ * keeps the two sections from silently drifting apart.
+ */
+function formatSelectionConcentrationRow(
+    group: SelectionConcentrationAnalysis,
+    report: AssetOpportunityHoldoutAnalysisReport,
+): string {
+    return [
+        group.key,
+        String(group.distinctCandidates),
+        `${group.holdoutBars.length}/${report.holdoutBars.length} (${formatPercent(group.holdoutCoveragePercent)})`,
+        `${group.sortMetrics.length}/${report.sorts.length} (${formatPercent(group.sortCoveragePercent)})`,
+        String(group.appearances),
+        String(group.topRankAppearances),
+    ].join(" | ");
+}
+
 export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHoldoutAnalysisReport): string {
     const headerLines: string[] = [
         "Asset Opportunity Holdout Evidence Report",
@@ -2254,26 +2270,12 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
     lines.push("", "SELECTION CONCENTRATION BY SYMBOL (not a pooled performance estimate)");
     lines.push("Symbol | Candidate variants | Holdout coverage | Sort coverage | Appearances | Top 3 appearances");
     for (const group of report.symbolConcentration.slice(0, DEFAULT_REPORT_CANDIDATES)) {
-        lines.push([
-            group.key,
-            String(group.distinctCandidates),
-            `${group.holdoutBars.length}/${report.holdoutBars.length} (${formatPercent(group.holdoutCoveragePercent)})`,
-            `${group.sortMetrics.length}/${report.sorts.length} (${formatPercent(group.sortCoveragePercent)})`,
-            String(group.appearances),
-            String(group.topRankAppearances),
-        ].join(" | "));
+        lines.push(formatSelectionConcentrationRow(group, report));
     }
     lines.push("", "SELECTION CONCENTRATION BY STRATEGY (not a pooled performance estimate)");
     lines.push("Strategy | Candidate variants | Holdout coverage | Sort coverage | Appearances | Top 3 appearances");
     for (const group of report.strategyConcentration.slice(0, DEFAULT_REPORT_CANDIDATES)) {
-        lines.push([
-            group.key,
-            String(group.distinctCandidates),
-            `${group.holdoutBars.length}/${report.holdoutBars.length} (${formatPercent(group.holdoutCoveragePercent)})`,
-            `${group.sortMetrics.length}/${report.sorts.length} (${formatPercent(group.sortCoveragePercent)})`,
-            String(group.appearances),
-            String(group.topRankAppearances),
-        ].join(" | "));
+        lines.push(formatSelectionConcentrationRow(group, report));
     }
     if (report.parameterFingerprintAvailable) {
         lines.push("", "PARAMETER FINGERPRINT STABILITY (same symbol + strategy; one fingerprint means stable parameters)");

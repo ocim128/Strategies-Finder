@@ -20,6 +20,7 @@ import {
     updatePositionState,
 } from './exit-handlers';
 import { isEntryBarAllowed } from '../../entry-time-filter';
+import { roundToHundredths as roundBacktestDiagnosticMs } from '../../number-utils';
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
 import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
@@ -111,10 +112,6 @@ function createBacktestDiagnostics(inputBars: number, inputSignals: number): Bac
             metrics: 0,
         },
     };
-}
-
-function roundBacktestDiagnosticMs(value: number): number {
-    return Number((Number.isFinite(value) ? value : 0).toFixed(2));
 }
 
 function addBacktestDiagnosticElapsed(
@@ -492,6 +489,68 @@ function getSinglePositionFinderFastPathBlockers(
     if (config.breakEvenPercent !== 0) blockers.push("break_even_percent");
     if (config.riskWinStreakStopLossEnabled) blockers.push("win_streak_stop_loss");
     return blockers;
+}
+
+/**
+ * Shared setup phase of the compact and standard backtest entry points: resolve
+ * indicators, decide the single-position fast path, prepare the signals, and
+ * record the matching diagnostics.
+ *
+ * `runBacktestCompact` and `runBacktest` must run this exact sequence in this
+ * exact order — they are separate entry points for the same engine and are
+ * covered by the compact/standard parity spec. Keeping one owner here means a
+ * new diagnostic counter or preparation step cannot be added to only one of
+ * them and silently drift the two engines apart.
+ */
+function prepareBacktestRunSignals(args: {
+    data: OHLCVData[];
+    signals: Signal[];
+    config: NormalizedSettings;
+    precomputed: PrecomputedIndicators | undefined;
+    tradeDirection: ReturnType<typeof normalizeTradeDirection>;
+    sizingMode: TradeSizingMode;
+    options: BacktestRunOptions | undefined;
+    diagnostics: BacktestDiagnostics | undefined;
+}): {
+    indicatorSeries: IndicatorSeries;
+    fastPathBlockers: string[];
+    indexedSignals: IndexedFinderSignals | null;
+    preparedSignals: Signal[];
+    preparedSignalBarIndexes: Int32Array;
+} {
+    const indicatorStartedAt = performance.now();
+    const indicatorSeries = resolveIndicatorsFromConfig(args.data, args.config, args.precomputed);
+    addBacktestDiagnosticElapsed(args.diagnostics, "indicatorResolution", indicatorStartedAt);
+
+    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(
+        args.config,
+        args.tradeDirection,
+        args.sizingMode,
+        args.options
+    );
+    const signalPreparationStartedAt = performance.now();
+    const indexedSignals = fastPathBlockers.length === 0
+        ? prepareIndexedFinderSignals(args.data, args.signals, args.config, args.tradeDirection)
+        : null;
+    const preparedSignals = indexedSignals
+        ? args.signals
+        : prepareSignals(args.data, args.signals, args.config, indicatorSeries, args.tradeDirection);
+    args.diagnostics && (args.diagnostics.counts.preparedSignals = indexedSignals?.count ?? preparedSignals.length);
+    addBacktestDiagnosticElapsed(args.diagnostics, "signalPreparation", signalPreparationStartedAt);
+    const signalIndexingStartedAt = performance.now();
+    const preparedSignalBarIndexes = indexedSignals?.barIndexes
+        ?? resolvePreparedSignalBarIndexes(args.data, preparedSignals);
+    addBacktestDiagnosticElapsed(args.diagnostics, "signalIndexing", signalIndexingStartedAt);
+
+    if (args.diagnostics) {
+        args.diagnostics.fastPath = {
+            used: fastPathBlockers.length === 0,
+            blockers: fastPathBlockers,
+            signalPreparation: indexedSignals ? "indexed" : "objects",
+        };
+    }
+
+    return { indicatorSeries, fastPathBlockers, indexedSignals, preparedSignals, preparedSignalBarIndexes };
 }
 
 function hasActivePercentageTakeProfit(config: NormalizedSettings): boolean {
@@ -2213,32 +2272,13 @@ export function runBacktestCompact(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const advancedSizing = sizing?.advancedSizing;
-    const indicatorStartedAt = performance.now();
-    const indicatorSeries = resolveIndicatorsFromConfig(data, config, precomputed);
-    addBacktestDiagnosticElapsed(diagnostics, "indicatorResolution", indicatorStartedAt);
-
-    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
-    const signalPreparationStartedAt = performance.now();
-    const indexedSignals = fastPathBlockers.length === 0
-        ? prepareIndexedFinderSignals(data, signals, config, tradeDirection)
-        : null;
-    const preparedSignals = indexedSignals
-        ? signals
-        : prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
-    diagnostics && (diagnostics.counts.preparedSignals = indexedSignals?.count ?? preparedSignals.length);
-    addBacktestDiagnosticElapsed(diagnostics, "signalPreparation", signalPreparationStartedAt);
-    const signalIndexingStartedAt = performance.now();
-    const preparedSignalBarIndexes = indexedSignals?.barIndexes
-        ?? resolvePreparedSignalBarIndexes(data, preparedSignals);
-    addBacktestDiagnosticElapsed(diagnostics, "signalIndexing", signalIndexingStartedAt);
-
-    if (diagnostics) {
-        diagnostics.fastPath = {
-            used: fastPathBlockers.length === 0,
-            blockers: fastPathBlockers,
-            signalPreparation: indexedSignals ? "indexed" : "objects",
-        };
-    }
+    const {
+        indicatorSeries,
+        fastPathBlockers,
+        indexedSignals,
+        preparedSignals,
+        preparedSignalBarIndexes,
+    } = prepareBacktestRunSignals({ data, signals, config, precomputed, tradeDirection, sizingMode, options, diagnostics });
 
     if (fastPathBlockers.length === 0) {
         const fastPathEquity = options?.includeSharpeRatio !== false
@@ -2383,32 +2423,13 @@ export function runBacktest(
     const sizingMode = sizing?.mode ?? 'percent';
     const fixedTradeAmount = Math.max(0, sizing?.fixedTradeAmount ?? 0);
     const advancedSizing = sizing?.advancedSizing;
-    const indicatorStartedAt = performance.now();
-    const indicatorSeries = resolveIndicatorsFromConfig(data, config, precomputed);
-    addBacktestDiagnosticElapsed(diagnostics, "indicatorResolution", indicatorStartedAt);
-
-    const fastPathBlockers = getSinglePositionFinderFastPathBlockers(config, tradeDirection, sizingMode, options);
-    const signalPreparationStartedAt = performance.now();
-    const indexedSignals = fastPathBlockers.length === 0
-        ? prepareIndexedFinderSignals(data, signals, config, tradeDirection)
-        : null;
-    const preparedSignals = indexedSignals
-        ? signals
-        : prepareSignals(data, signals, config, indicatorSeries, tradeDirection);
-    diagnostics && (diagnostics.counts.preparedSignals = indexedSignals?.count ?? preparedSignals.length);
-    addBacktestDiagnosticElapsed(diagnostics, "signalPreparation", signalPreparationStartedAt);
-    const signalIndexingStartedAt = performance.now();
-    const preparedSignalBarIndexes = indexedSignals?.barIndexes
-        ?? resolvePreparedSignalBarIndexes(data, preparedSignals);
-    addBacktestDiagnosticElapsed(diagnostics, "signalIndexing", signalIndexingStartedAt);
-
-    if (diagnostics) {
-        diagnostics.fastPath = {
-            used: fastPathBlockers.length === 0,
-            blockers: fastPathBlockers,
-            signalPreparation: indexedSignals ? "indexed" : "objects",
-        };
-    }
+    const {
+        indicatorSeries,
+        fastPathBlockers,
+        indexedSignals,
+        preparedSignals,
+        preparedSignalBarIndexes,
+    } = prepareBacktestRunSignals({ data, signals, config, precomputed, tradeDirection, sizingMode, options, diagnostics });
 
     if (fastPathBlockers.length === 0) {
         const fastPathEquity = options?.includeSharpeRatio !== false

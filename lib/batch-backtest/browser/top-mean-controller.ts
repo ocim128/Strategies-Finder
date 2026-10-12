@@ -441,10 +441,7 @@ export class TopMeanController {
                         this.latestTopMeanResult = event.result;
                         this.persistLatestTopMeanResult(event.result);
                         this.renderTopMeanResults(dom, event.result);
-                        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-                        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
-                            !Array.isArray(event.result.reportLines) || event.result.reportLines.length === 0;
-                        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                        this.applyTopMeanResultActions(dom, event.result);
                         dom.batchBacktestSp500TopMeanProgressText.textContent =
                             formatTopMeanCompletionMessage(event.result);
                         this.activeTopMeanRunId = null;
@@ -599,16 +596,27 @@ export class TopMeanController {
         clearPersistedLatestTopMeanResult();
     }
 
+    /**
+     * Reflect a loaded TOP_MEAN result onto the report action buttons: Copy and
+     * Download work as soon as a result exists, while Copy Open Score also needs
+     * the coordinator to have produced report lines. Shared by the stream
+     * completion, the persisted-result restore and the archive status path so
+     * all three agree on what "has a report" means.
+     */
+    private applyTopMeanResultActions(dom: BatchBacktestDom, result: TopMeanResultSummary): void {
+        const hasReportLines = Array.isArray(result.reportLines) && result.reportLines.length > 0;
+        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
+        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = !hasReportLines;
+        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+    }
+
     public loadPersistedLatestTopMeanResult(dom: BatchBacktestDom): void {
         const result = readLatestTopMeanResult();
         if (!result) return;
 
         this.latestTopMeanResult = result;
         this.renderTopMeanResults(dom, result);
-        dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-        dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
-            !Array.isArray(result.reportLines) || result.reportLines.length === 0;
-        dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+        this.applyTopMeanResultActions(dom, result);
         dom.batchBacktestSp500TopMeanProgressText.textContent = formatTopMeanCompletionMessage(result);
     }
 
@@ -1088,10 +1096,7 @@ export class TopMeanController {
                             this.latestTopMeanResult = result;
                             this.persistLatestTopMeanResult(result);
                             this.renderTopMeanResults(dom, result);
-                            dom.batchBacktestSp500TopMeanCopyBtn.disabled = false;
-                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled =
-                                !Array.isArray(result.reportLines) || result.reportLines.length === 0;
-                            dom.batchBacktestSp500TopMeanDownloadBtn.disabled = false;
+                            this.applyTopMeanResultActions(dom, result);
                         }
                         if (status.status === "completed" && !status.resultError) {
                             dom.batchBacktestSp500TopMeanProgressText.textContent =

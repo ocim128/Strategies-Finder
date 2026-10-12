@@ -6,6 +6,7 @@ import {
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { ensureConfirmationStrategiesLoaded } from "../confirmation-signal-filter";
 import { median } from "../statistics-utils";
+import { roundToHundredths as roundMs } from "../number-utils";
 import type { CapitalSettings } from "../types/backtest";
 import type {
     BacktestResult,
@@ -160,10 +161,6 @@ export function optimizeQualitySymbolOrder(symbols: readonly string[]): string[]
     return ordered.map((pair) => pair.symbol);
 }
 
-function roundMs(value: number): number {
-    return Number((Number.isFinite(value) ? value : 0).toFixed(2));
-}
-
 function roundMetric(value: number): number {
     return Number((Number.isFinite(value) ? value : 0).toFixed(4));
 }
@@ -199,13 +196,26 @@ function mean(values: readonly number[]): number {
         : 0;
 }
 
-function aggregateMetrics(
-    symbols: readonly FinderStrategyQualitySymbolResult[],
-    key: QualityMetricKey,
-): FinderStrategyQualityResult["oos"] {
-    const metrics = symbols
-        .map((symbol) => symbol[key])
-        .filter((result): result is FinderStrategyQualitySymbolMetrics => Boolean(result));
+type StrategyQualityMetricTotals = {
+    active: FinderStrategyQualitySymbolMetrics[];
+    grossProfit: number;
+    grossLoss: number;
+    totalTrades: number;
+    totalWins: number;
+    totalNetProfit: number;
+    sharpeResults: FinderStrategyQualitySymbolMetrics[];
+};
+
+/**
+ * Aggregate the per-symbol metrics shared by the in-sample quality result and
+ * the OOS `aggregateMetrics` view. One owner matters here: the "active" filter,
+ * the gross profit/loss formulas and the 5-trade Sharpe eligibility threshold
+ * must not drift between the two aggregates, or the same strategy would report
+ * inconsistent in-sample and out-of-sample numbers.
+ */
+function aggregateStrategyQualityMetrics(
+    metrics: readonly FinderStrategyQualitySymbolMetrics[],
+): StrategyQualityMetricTotals {
     const active = metrics.filter((result) => result.totalTrades > 0);
     const grossProfit = active.reduce(
         (sum, result) => sum + Math.max(0, result.avgWin) * result.winningTrades,
@@ -219,6 +229,18 @@ function aggregateMetrics(
     const totalWins = active.reduce((sum, result) => sum + result.winningTrades, 0);
     const totalNetProfit = active.reduce((sum, result) => sum + result.netProfit, 0);
     const sharpeResults = active.filter((result) => result.totalTrades >= 5);
+    return { active, grossProfit, grossLoss, totalTrades, totalWins, totalNetProfit, sharpeResults };
+}
+
+function aggregateMetrics(
+    symbols: readonly FinderStrategyQualitySymbolResult[],
+    key: QualityMetricKey,
+): FinderStrategyQualityResult["oos"] {
+    const metrics = symbols
+        .map((symbol) => symbol[key])
+        .filter((result): result is FinderStrategyQualitySymbolMetrics => Boolean(result));
+    const { active, grossProfit, grossLoss, totalTrades, totalWins, totalNetProfit, sharpeResults } =
+        aggregateStrategyQualityMetrics(metrics);
     return {
         activeSymbols: active.length,
         profitableSymbols: active.filter((result) => result.netProfit > 0.0001).length,
@@ -246,18 +268,8 @@ export function buildStrategyQualityResult(
     const metrics = symbols
         .map((symbol) => symbol.result)
         .filter((result): result is FinderStrategyQualitySymbolMetrics => Boolean(result));
-    const active = metrics.filter((result) => result.totalTrades > 0);
-    const grossProfit = active.reduce(
-        (sum, result) => sum + Math.max(0, result.avgWin) * result.winningTrades,
-        0,
-    );
-    const grossLoss = active.reduce(
-        (sum, result) => sum + Math.max(0, result.avgLoss) * result.losingTrades,
-        0,
-    );
-    const totalTrades = active.reduce((sum, result) => sum + result.totalTrades, 0);
-    const totalWins = active.reduce((sum, result) => sum + result.winningTrades, 0);
-    const sharpeResults = active.filter((result) => result.totalTrades >= 5);
+    const { active, grossProfit, grossLoss, totalTrades, totalWins, totalNetProfit, sharpeResults } =
+        aggregateStrategyQualityMetrics(metrics);
     const quality: FinderStrategyQualityResult = {
         strategyKey: selected.key,
         strategyName: selected.name,
@@ -273,7 +285,7 @@ export function buildStrategyQualityResult(
         losingSymbols: active.filter((result) => result.netProfit < -0.0001).length,
         noTradeSymbols: symbols.filter((symbol) => symbol.status === "no_trades").length,
         totalTrades,
-        totalNetProfit: active.reduce((sum, result) => sum + result.netProfit, 0),
+        totalNetProfit,
         averageNetProfit: mean(active.map((result) => result.netProfit)),
         averageExpectancy: mean(active.map((result) => result.expectancy)),
         medianExpectancy: median(active.map((result) => result.expectancy)),

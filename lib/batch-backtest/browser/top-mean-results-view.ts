@@ -192,6 +192,21 @@ function formatLatestScore(score: number | null): string {
     return score === null ? "--" : `${score >= 0 ? "+" : ""}${score}`;
 }
 
+/**
+ * Render a unix-seconds timestamp the way the TOP_MEAN report surfaces do:
+ * `YYYY-MM-DD HH:MM:SS UTC`, or `fallback` when the timestamp is absent.
+ *
+ * The unguarded copy in `renderLatestOpenScoreSelections` deliberately does NOT
+ * use this helper: its input is a required `number`, so a missing value
+ * currently throws out of `toISOString()` instead of degrading to a fallback,
+ * and that difference is preserved.
+ */
+function formatUtcTimestamp(value: number | null | undefined, fallback: string): string {
+    return typeof value === "number"
+        ? new Date(value * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
+        : fallback;
+}
+
 export function renderLatestOpenScoreSelections(
     summary: TopMeanResultSummary,
     latestArm: OpenScoreUsdLatestSelectorName,
@@ -451,9 +466,7 @@ export function renderCurrentTopMeanBanner(
     const tiePicked = tieBreakPickedAsset(currentSnapshot, tieMode);
     const winners = winnersAfterTieBreak(currentSnapshot, tiePicked);
     const asOfSec: number | null = snap?.asOf ?? null;
-    const asOfLabel = typeof asOfSec === "number"
-        ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
-        : "no common endpoint";
+    const asOfLabel = formatUtcTimestamp(asOfSec, "no common endpoint");
     const reason: string = snap?.reason ?? "empty";
     const stats = currentSnapshot.stats;
     const decision = resolveTiedDecision(currentSnapshot.decision, tiePicked, asOfSec);
@@ -470,9 +483,7 @@ export function renderCurrentTopMeanBanner(
     html += `<div class="batch-report-note">as-of: ${asOfLabel} | artifacts ${snap?.artifacts ?? 0} | open positions ${snap?.openPositions ?? 0} | candidates ${snap?.candidates?.length ?? 0} | stale ${stats.staleEndpoints ?? 0} | missing ${stats.missingEndpoints ?? 0}</div>`;
 
     if (decisionStatus === "LONG_NEXT_BAR" && decision?.asset) {
-        const decisionLabel = typeof decision.decisionTime === "number"
-            ? new Date(decision.decisionTime * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
-            : "unknown";
+        const decisionLabel = formatUtcTimestamp(decision.decisionTime, "unknown");
         html += `<div class="batch-report-decision">`;
         html += `<strong>ALGORITHMIC TRADE DECISION — LONG ${escapeHtml(decision.asset)}:</strong> enter on the first target-asset bar strictly after the ${escapeHtml(decisionLabel)} decision event. Research case: $${escapeHtml(decision.researchNotionalUsd)} notional, hold ${escapeHtml(decision.researchHoldBars)} bars, exit at ${escapeHtml(decision.researchExitRule.replaceAll("_", " "))}.`;
         html += `</div>`;
@@ -548,9 +559,7 @@ export function formatCurrentTopMeanLines(
     const tiePicked = tieBreakPickedAsset(currentSnapshot, tieMode);
     const winners: any[] = winnersAfterTieBreak(currentSnapshot, tiePicked);
     const asOfSec: number | null = snap?.asOf ?? null;
-    const asOfLabel = typeof asOfSec === "number"
-        ? new Date(asOfSec * 1000).toISOString().slice(0, 19).replace("T", " ") + " UTC"
-        : "no common endpoint";
+    const asOfLabel = formatUtcTimestamp(asOfSec, "no common endpoint");
     const reason: string = snap?.reason ?? "empty";
     const stats: any = currentSnapshot.stats ?? {};
     const decision: any = resolveTiedDecision(currentSnapshot.decision, tiePicked, asOfSec);

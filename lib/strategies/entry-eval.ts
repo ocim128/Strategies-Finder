@@ -1,4 +1,5 @@
 import type { BacktestDiagnostics, BacktestResult, EntryStats } from '../types/strategies';
+import { roundToHundredths as roundEntryDiagnosticMs } from '../number-utils';
 
 type EntryBacktestDiagnosticsInput = {
     entryStats: EntryStats;
@@ -6,10 +7,6 @@ type EntryBacktestDiagnosticsInput = {
     inputSignals: number;
     elapsedMs: number;
 };
-
-function roundEntryDiagnosticMs(value: number): number {
-    return Number((Number.isFinite(value) ? value : 0).toFixed(2));
-}
 
 export function buildEntryBacktestDiagnostics(input: EntryBacktestDiagnosticsInput): BacktestDiagnostics {
     const totalEntries = Math.max(0, input.entryStats.totalEntries);

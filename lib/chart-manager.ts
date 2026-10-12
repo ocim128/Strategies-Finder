@@ -1079,6 +1079,24 @@ export class ChartManager {
         }
     }
 
+    /**
+     * Shared tail of the indicator factories: push the data, mint an id, index
+     * the tooltip data under it, and register the series in the indicator list.
+     */
+    private registerIndicator(
+        series: ISeriesApi<any>,
+        type: string,
+        period: number,
+        data: { time: Time; value: number }[],
+        color: string,
+    ): string {
+        series.setData(data);
+        const id = `${type}_${period}_${Math.random().toString(36).substr(2, 9)}`;
+        this.indexIndicatorTooltipData(id, data);
+        setIndicators([...state.indicators, { id, type, series: [series], color }]);
+        return id;
+    }
+
     public addIndicatorLine(type: string, period: number, data: { time: Time; value: number }[], color: string) {
         const series = state.chart.addSeries(LineSeries, {
             color,
@@ -1089,11 +1107,7 @@ export class ChartManager {
             crosshairMarkerRadius: 3,
         });
 
-        series.setData(data);
-        const id = `${type}_${period}_${Math.random().toString(36).substr(2, 9)}`;
-        this.indexIndicatorTooltipData(id, data);
-        setIndicators([...state.indicators, { id, type, series: [series], color }]);
-        return id;
+        return this.registerIndicator(series, type, period, data, color);
     }
 
     public addIndicatorHistogram(type: string, period: number, data: { time: Time; value: number }[], color: string) {
@@ -1103,11 +1117,7 @@ export class ChartManager {
             lastValueVisible: false,
         });
 
-        series.setData(data);
-        const id = `${type}_${period}_${Math.random().toString(36).substr(2, 9)}`;
-        this.indexIndicatorTooltipData(id, data);
-        setIndicators([...state.indicators, { id, type, series: [series], color }]);
-        return id;
+        return this.registerIndicator(series, type, period, data, color);
     }
 
 

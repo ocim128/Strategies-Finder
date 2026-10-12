@@ -1,4 +1,5 @@
 import type { BatchDatasetCacheStats } from "../batch-backtest/batch-dataset-loader-core";
+export { nowMs as nowRankPairsMs } from "../perf-clock";
 
 export interface RankPairsPerformanceTimings {
     parseInput: number;
@@ -37,10 +38,6 @@ export interface RankPairsPerformanceDiagnostics {
     workerConcurrency?: number;
     timingsMs: RankPairsPerformanceTimings;
     cacheDelta: RankPairsCacheDelta;
-}
-
-export function nowRankPairsMs(): number {
-    return typeof performance !== "undefined" ? performance.now() : Date.now();
 }
 
 export function createRankPairsPerformanceTimings(): RankPairsPerformanceTimings {

@@ -216,6 +216,18 @@ function parseRustCapabilities(value: unknown, protocolVersion: unknown): Set<st
         .map(([capability]) => capability));
 }
 
+/**
+ * Read the engine-reported processing time out of a response body. The raw
+ * value is returned unvalidated so each caller keeps its own contract: the
+ * backtest path forwards it only when it is a finite number, while the batch
+ * path just logs it. One owner keeps the response shape knowledge in one place.
+ */
+function readProcessingTimeMs(responseJson: unknown): unknown {
+    return responseJson && typeof responseJson === 'object'
+        ? (responseJson as { processingTimeMs?: unknown }).processingTimeMs
+        : undefined;
+}
+
 interface RustBacktestRequest {
     data: OHLCVData[];
     signals: Signal[];
@@ -687,9 +699,7 @@ export class RustEngineClient {
             }
             const result = validation.result;
             const elapsed = performance.now() - startTime;
-            const processingTimeMs = responseJson && typeof responseJson === 'object'
-                ? (responseJson as { processingTimeMs?: unknown }).processingTimeMs
-                : undefined;
+            const processingTimeMs = readProcessingTimeMs(responseJson);
 
             rustLog.info(`[RustEngine] Backtest completed in ${elapsed.toFixed(2)}ms (Rust: ${String(processingTimeMs ?? 'unknown')}ms, ${data.length} bars)`);
 
@@ -895,9 +905,7 @@ export class RustEngineClient {
                 return { ok: false, reason: 'cancelled', requestBytes, responseBytes };
             }
             const elapsed = performance.now() - startTime;
-            const processingTimeMs = responseJson && typeof responseJson === 'object'
-                ? (responseJson as { processingTimeMs?: unknown }).processingTimeMs
-                : undefined;
+            const processingTimeMs = readProcessingTimeMs(responseJson);
             rustLog.info(`[RustEngine] Batch ${endpoint}: ${itemCount} runs in ${elapsed.toFixed(2)}ms (Rust: ${String(processingTimeMs ?? 'unknown')}ms)`);
             return { ok: true, response: responseJson, requestBytes, responseBytes, elapsedMs: elapsed };
         } catch (error) {

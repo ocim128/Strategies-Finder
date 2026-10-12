@@ -209,10 +209,7 @@ export class FinderUI {
                 metrics.appendChild(badge);
             }
 
-            const details = document.createElement("details");
-            const summary = document.createElement("summary");
-            summary.textContent = `Symbol Breakdown (${item.symbols.length})`;
-            details.appendChild(summary);
+            const details = this.createSymbolBreakdownDetails(item.symbols.length);
 
             // Verdict distribution summary stays lightweight (counts only, no
             // DOM rows) so the closed summary always shows it.
@@ -577,10 +574,7 @@ export class FinderUI {
                 metrics.appendChild(this.createMetricChip(`OOS Trades ${item.oos.totalTrades}`));
             }
 
-            const details = document.createElement("details");
-            const summary = document.createElement("summary");
-            summary.textContent = `Symbol Breakdown (${item.symbols.length})`;
-            details.appendChild(summary);
+            const details = this.createSymbolBreakdownDetails(item.symbols.length);
             let populated = false;
             details.addEventListener("toggle", () => {
                 if (!details.open || populated) return;
@@ -943,6 +937,18 @@ export class FinderUI {
         const span = document.createElement("span");
         span.textContent = text;
         return span;
+    }
+
+    /**
+     * The collapsed "Symbol Breakdown (n)" disclosure wrapper shared by the
+     * universe result tables. One owner so both tables keep the same heading.
+     */
+    private createSymbolBreakdownDetails(symbolCount: number): HTMLDetailsElement {
+        const details = document.createElement("details");
+        const summary = document.createElement("summary");
+        summary.textContent = `Symbol Breakdown (${symbolCount})`;
+        details.appendChild(summary);
+        return details;
     }
 
     /**

@@ -35,7 +35,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getArgument } from "./lib/cli-args";
-import { createRng, formatDelta, formatRate, mean, parseList, percentile } from "./lib/asset-opportunity-analysis";
+import { createRng, filterHoldoutsByStride, formatDelta, formatRate, mean, parseList, percentile } from "./lib/asset-opportunity-analysis";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const HORIZON_BASES = ["pair", "base_only", "quote_only"] as const;
@@ -206,19 +206,6 @@ function loadBlocks(archiveDirectory: string, basis?: string): ParsedBlock[] {
     return [...deduped.values()].sort((left, right) =>
         left.holdoutBars - right.holdoutBars || left.sortMetric.localeCompare(right.sortMetric),
     );
-}
-
-function filterHoldoutsByStride(holdouts: number[], stride: number): Set<number> {
-    if (stride <= 1) return new Set(holdouts);
-    const kept = new Set<number>();
-    let nextTarget = -Infinity;
-    for (const h of holdouts) {
-        if (h >= nextTarget) {
-            kept.add(h);
-            nextTarget = h + stride;
-        }
-    }
-    return kept;
 }
 
 function computePoolBaseline(blocks: ParsedBlock[]): Map<number, Map<number, number>> {

@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { filterHoldoutsByStride } from "./lib/asset-opportunity-analysis";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
@@ -99,19 +100,6 @@ function loadBlocks(archiveDirectory: string): ParsedBlock[] {
     return [...deduped.values()].sort((a, b) => a.holdoutBars - b.holdoutBars || a.sortMetric.localeCompare(b.sortMetric));
 }
 
-function filterByStride(holdouts: number[], stride: number): Set<number> {
-    if (stride <= 1) return new Set(holdouts);
-    const kept = new Set<number>();
-    let nextTarget = -Infinity;
-    for (const h of holdouts) {
-        if (h >= nextTarget) {
-            kept.add(h);
-            nextTarget = h + stride;
-        }
-    }
-    return kept;
-}
-
 function blockMetrics(block: ParsedBlock, topK: number, horizonBars: number): {
     rawReturn: number;
     baseline: number;
@@ -175,7 +163,7 @@ async function runAnalysis() {
         if (rawBlocks.length === 0) continue;
 
         const allHoldouts = [...new Set(rawBlocks.map((b) => b.holdoutBars))].sort((a, b) => a - b);
-        const strideHoldouts = filterByStride(allHoldouts, 12);
+        const strideHoldouts = filterHoldoutsByStride(allHoldouts, 12);
         const blocks = rawBlocks.filter((b) => strideHoldouts.has(b.holdoutBars));
 
         for (const block of blocks) {

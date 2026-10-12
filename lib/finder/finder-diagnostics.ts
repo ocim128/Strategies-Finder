@@ -7,6 +7,12 @@ import type {
     FinderMode,
     FinderStrategyDiagnostics,
 } from "../types/finder";
+import {
+    roundToHundredths as roundFinderCount,
+    roundToHundredths as roundFinderMs,
+} from "../number-utils";
+
+export { roundFinderMs };
 
 export type FinderDiagnosticsTimings = FinderDiagnostics["timingsMs"];
 
@@ -188,14 +194,6 @@ export function createEmptyFinderBacktestDiagnosticsStats(): FinderBacktestDiagn
 
 export function createFinderRunId(prefix: string): string {
     return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
-export function roundFinderMs(value: number): number {
-    return Number((Number.isFinite(value) ? value : 0).toFixed(2));
-}
-
-function roundFinderCount(value: number): number {
-    return Number((Number.isFinite(value) ? value : 0).toFixed(2));
 }
 
 export function addElapsed(

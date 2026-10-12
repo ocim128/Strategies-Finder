@@ -37,6 +37,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getArgument } from "./lib/cli-args";
+import { formatPercent } from "./lib/asset-opportunity-analysis";
 import {
     readAssetOpportunityArchive,
     type AssetOpportunityArchiveRecord,
@@ -196,10 +197,6 @@ function simulateRotation(steps: HoldoutStep[], costBps: number): SortRotation |
             : null,
         tenures,
     };
-}
-
-function formatPercent(value: number | null): string {
-    return value === null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(2)}%`;
 }
 
 function render(

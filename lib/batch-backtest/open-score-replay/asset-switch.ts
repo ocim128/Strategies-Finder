@@ -120,6 +120,18 @@ function newState(includeContributorSummary: boolean): ArmState {
     };
 }
 
+/**
+ * Drop a planned switch. A pending order is the four fields declared as a
+ * quartet on `ArmState`; clearing them is the same operation at every site, so
+ * a new pending field only has to be added here.
+ */
+function clearPendingOrder(state: ArmState): void {
+    state.pendingDecisionTimeSec = null;
+    state.pendingSell = null;
+    state.pendingBuy = null;
+    state.buyOrderFromSec = null;
+}
+
 class BoundedTradePreview {
     private readonly rows: AssetSwitchTradeRecord[] = [];
     private start = 0;
@@ -518,19 +530,13 @@ function createArmRuntime(args: {
             });
         }
         if (!targetAsset) {
-            state.pendingDecisionTimeSec = null;
-            state.pendingSell = null;
-            state.pendingBuy = null;
-            state.buyOrderFromSec = null;
+            clearPendingOrder(state);
             state.desiredAsset = state.position?.asset ?? null;
             state.desiredDirection = state.position?.direction ?? "long";
             return;
         }
         if (targetAsset === state.position?.asset && direction === state.position.direction) {
-            state.pendingDecisionTimeSec = null;
-            state.pendingSell = null;
-            state.pendingBuy = null;
-            state.buyOrderFromSec = null;
+            clearPendingOrder(state);
             state.desiredAsset = targetAsset;
             state.desiredDirection = direction;
             return;
@@ -660,10 +666,7 @@ function createArmRuntime(args: {
                 state.enteredCount += 1;
                 state.totalCosts += entryFee + entrySlippage;
                 state.desiredAsset = destination;
-                state.pendingDecisionTimeSec = null;
-                state.pendingSell = null;
-                state.pendingBuy = null;
-                state.buyOrderFromSec = null;
+                clearPendingOrder(state);
                 if (tradeRecord) onTradeOpened(tradeRecord);
                 changed = true;
             }

@@ -460,13 +460,23 @@ export class BatchBacktestService {
         this.batchRun.clearStaleRows(dom);
     }
 
-    private beginAnalysisBusy(dom: BatchBacktestDom): void {
-        this.batchRun.setRunBusy(dom, true);
-        setVisible(dom.batchBacktestStopBtn, true);
+    /**
+     * The operation triggers that stay disabled for the whole duration of a run
+     * (starting a run, plus the Open-Score-USD and Balanced generate/copy
+     * actions). One owner on purpose: a trigger added here must be covered by
+     * every lifecycle point that enters or leaves the busy state.
+     */
+    private disableOperationButtons(dom: BatchBacktestDom): void {
         dom.batchBacktestRunBtn.disabled = true;
         dom.batchBacktestOpenScoreUsdBtn.disabled = true;
         dom.batchBacktestBalancedGenerateBtn.disabled = true;
         dom.batchBacktestBalancedCopyBtn.disabled = true;
+    }
+
+    private beginAnalysisBusy(dom: BatchBacktestDom): void {
+        this.batchRun.setRunBusy(dom, true);
+        setVisible(dom.batchBacktestStopBtn, true);
+        this.disableOperationButtons(dom);
     }
 
     // Keep operations disabled until unscoped /stop requests have settled.
@@ -475,10 +485,7 @@ export class BatchBacktestService {
         this.analysisCancelRequested = false;
         this.batchRun.setRunBusy(dom, false);
         setVisible(dom.batchBacktestStopBtn, false);
-        dom.batchBacktestRunBtn.disabled = true;
-        dom.batchBacktestOpenScoreUsdBtn.disabled = true;
-        dom.batchBacktestBalancedGenerateBtn.disabled = true;
-        dom.batchBacktestBalancedCopyBtn.disabled = true;
+        this.disableOperationButtons(dom);
         const pending = this.pendingStopPromise;
         if (pending) {
             try { await pending; } catch { /* stopServerWork swallows errors */ }

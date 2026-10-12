@@ -49,3 +49,37 @@ export function formatDelta(value: number): string {
 export function formatRate(value: number): string {
     return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "n/a";
 }
+
+/**
+ * An *already-percentage* value rendered with 2 decimals, or `n/a` for a
+ * `null`/non-finite input.
+ *
+ * Distinct from the two above on purpose: `formatDelta` prefixes a sign and
+ * `formatRate` multiplies a [0, 1] rate by 100. Do not merge them — the
+ * holdouts and rotation reports would then render the same number differently.
+ */
+export function formatPercent(value: number | null): string {
+    return value === null || !Number.isFinite(value) ? "n/a" : `${value.toFixed(2)}%`;
+}
+
+/**
+ * Greedily thin an **ascending** list of holdout bar counts so the kept entries
+ * are at least `stride` apart (the first entry always survives). `stride <= 1`
+ * keeps everything.
+ *
+ * Shared by the negative-edge and stability analyses so both thin the same
+ * holdouts; a divergence here would silently change which holdouts either
+ * report covers.
+ */
+export function filterHoldoutsByStride(holdouts: number[], stride: number): Set<number> {
+    if (stride <= 1) return new Set(holdouts);
+    const kept = new Set<number>();
+    let nextTarget = -Infinity;
+    for (const h of holdouts) {
+        if (h >= nextTarget) {
+            kept.add(h);
+            nextTarget = h + stride;
+        }
+    }
+    return kept;
+}
