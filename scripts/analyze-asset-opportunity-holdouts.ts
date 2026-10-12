@@ -664,8 +664,35 @@ function percentOrNull(value: number): number | null {
     return Number.isFinite(value) ? value : null;
 }
 
+/** One valid forward-OOS horizon sample in the shape the horizon aggregators consume. */
+interface HorizonObservation {
+    pnlPercent: number;
+    sampleSize: number;
+    ongoing?: boolean;
+}
+
+/** An archive horizon with a measured average PnL over at least one sample. */
+type UsableArchiveHorizon = ArchiveHorizon & { averagePnlPercent: number };
+
+/**
+ * The one filter for stored horizons entering aggregation. The tenure-horizon
+ * variant in HoldUntilChangeTenure.horizons is built under the same non-null
+ * contract, so it feeds the same mapper.
+ */
+function isUsableArchiveHorizon(horizon: ArchiveHorizon): horizon is UsableArchiveHorizon {
+    return horizon.sampleSize >= 1 && horizon.averagePnlPercent !== null;
+}
+
+function toHorizonObservation(horizon: {
+    averagePnlPercent: number;
+    sampleSize: number;
+    ongoing?: boolean;
+}): HorizonObservation {
+    return { pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true };
+}
+
 function calculateHorizonAnalysis(
-    values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }>,
+    values: HorizonObservation[],
     horizonBars: number,
 ): HoldoutHorizonAnalysis {
     // Aggregates describe COMPLETED horizons only: an ongoing observation is a
@@ -709,11 +736,11 @@ function calculateHorizonAnalysis(
 }
 
 function calculateCandidateHorizonAnalysis(observations: CandidateObservation[], horizonBars: number): CandidateHoldoutAnalysis["horizons"][string] {
-    const values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }> = [];
+    const values: HorizonObservation[] = [];
     for (const observation of observations) {
         const horizon = observation.horizons.find((candidate) => candidate.bars === horizonBars);
-        if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
-        values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
+        if (!horizon || !isUsableArchiveHorizon(horizon)) continue;
+        values.push(toHorizonObservation(horizon));
     }
     const result = calculateHorizonAnalysis(values, horizonBars);
     return {
@@ -1136,14 +1163,14 @@ function buildSortHorizonAnalyses(
     matchBaseline: boolean,
 ): HoldoutHorizonAnalysis[] {
     return horizonBars.map((horizonBarsValue) => {
-        const values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }> = [];
+        const values: HorizonObservation[] = [];
         const contributingHoldouts = new Set<number>();
         for (const record of records) {
             const selected = record.topResults.slice(0, topK);
             for (const row of selected) {
                 const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
-                if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
-                values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
+                if (!horizon || !isUsableArchiveHorizon(horizon)) continue;
+                values.push(toHorizonObservation(horizon));
                 if (horizon.ongoing !== true) contributingHoldouts.add(record.holdoutBars);
             }
         }
@@ -1262,7 +1289,7 @@ function buildHoldUntilChangeTenures(records: AssetOpportunityArchiveRecord[]): 
     // silently skip real price movement).
     const chainOneBar = (state: ChainState, row: AssetOpportunityArchiveRow): void => {
         const oneBar = row.forwardOosPerformance?.horizons?.find((horizon) => horizon.bars === 1);
-        if (!oneBar || oneBar.sampleSize < 1 || oneBar.averagePnlPercent === null) {
+        if (!oneBar || !isUsableArchiveHorizon(oneBar)) {
             state.broken = true;
             return;
         }
@@ -1308,7 +1335,7 @@ function buildHoldUntilChangeTenures(records: AssetOpportunityArchiveRecord[]): 
         }
         const horizons: HoldUntilChangeTenure["horizons"] = {};
         for (const horizon of rankOne.forwardOosPerformance?.horizons ?? []) {
-            if (horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
+            if (!isUsableArchiveHorizon(horizon)) continue;
             horizons[String(horizon.bars)] = {
                 averagePnlPercent: horizon.averagePnlPercent,
                 sampleSize: horizon.sampleSize,
@@ -1374,7 +1401,7 @@ function buildHoldUntilChangeHorizonAnalyses(
         const values = tenures.flatMap((tenure) => {
             const horizon = tenure.horizons[String(horizonBars)];
             return horizon
-                ? [{ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true }]
+                ? [toHorizonObservation(horizon)]
                 : [];
         });
         const result = calculateHorizonAnalysis(values, horizonBars);
@@ -1609,7 +1636,7 @@ function buildStrategyPerformance(
         occurrences: number;
         holdoutBars: Set<number>;
         sortMetrics: Set<string>;
-        values: Map<number, Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }>>;
+        values: Map<number, HorizonObservation[]>;
     }>();
     for (const { record, row } of archiveRows(records, topK)) {
         if (!row.strategyId) continue;
@@ -1624,9 +1651,9 @@ function buildStrategyPerformance(
         group.holdoutBars.add(record.holdoutBars);
         group.sortMetrics.add(record.sortMetric);
         for (const horizon of row.forwardOosPerformance?.horizons ?? []) {
-            if (horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
+            if (!isUsableArchiveHorizon(horizon)) continue;
             const values = group.values.get(horizon.bars) ?? [];
-            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
+            values.push(toHorizonObservation(horizon));
             group.values.set(horizon.bars, values);
         }
         groups.set(row.strategyId, group);
@@ -1659,12 +1686,12 @@ function buildArchiveHorizonAnalyses(
     excludedStrategyId?: string,
 ): HoldoutHorizonAnalysis[] {
     return horizonBars.map((horizonBarsValue) => {
-        const values: Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }> = [];
+        const values: HorizonObservation[] = [];
         for (const { row } of archiveRows(records, topK)) {
             if (excludedStrategyId && row.strategyId === excludedStrategyId) continue;
             const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
-            if (!horizon || horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
-            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
+            if (!horizon || !isUsableArchiveHorizon(horizon)) continue;
+            values.push(toHorizonObservation(horizon));
         }
         return calculateHorizonAnalysis(values, horizonBarsValue);
     });
@@ -1741,7 +1768,7 @@ function buildSignalCandleHourPerformance(
         occurrences: number;
         holdoutBars: Set<number>;
         strategyIds: Set<string>;
-        values: Map<number, Array<{ pnlPercent: number; sampleSize: number; ongoing?: boolean }>>;
+        values: Map<number, HorizonObservation[]>;
     }>();
     for (const { record, row } of archiveRows(records, topK)) {
         const hour = row[field];
@@ -1756,9 +1783,9 @@ function buildSignalCandleHourPerformance(
         group.holdoutBars.add(record.holdoutBars);
         if (row.strategyId) group.strategyIds.add(row.strategyId);
         for (const horizon of row.forwardOosPerformance?.horizons ?? []) {
-            if (horizon.sampleSize < 1 || horizon.averagePnlPercent === null) continue;
+            if (!isUsableArchiveHorizon(horizon)) continue;
             const values = group.values.get(horizon.bars) ?? [];
-            values.push({ pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true });
+            values.push(toHorizonObservation(horizon));
             group.values.set(horizon.bars, values);
         }
         groups.set(hour, group);
