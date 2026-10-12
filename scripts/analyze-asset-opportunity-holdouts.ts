@@ -42,6 +42,7 @@ import type {
     AssetOpportunityArchiveRecord,
     AssetOpportunityArchiveRow,
     AssetOpportunityArchiveHorizonBasis,
+    ArchiveParseOptions,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
 // Parser/record types live in the shared leaf module now; the public names are
@@ -52,6 +53,7 @@ export type {
     AssetOpportunityArchiveRecord,
     AssetOpportunityArchiveRow,
     AssetOpportunityArchiveHorizonBasis,
+    ArchiveParseOptions,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
 const REPORT_SCHEMA_VERSION = 14;
@@ -489,10 +491,16 @@ interface HorizonBasisSelectionCounts {
  * single-basis rows contribute only when their stored basis matches. A legacy
  * baseline is kept only when every forward row in the record measured the
  * requested basis — the archived aggregate cannot be re-based after the fact.
+ * Provenance counts and the baseline consistency check cover the analyzed
+ * `topK` row prefix only; rows beyond it are never read by any aggregation and
+ * pass through untouched.
+ * Rows without any forward measurement (including parse-capped stubs) carry no
+ * outcome on any basis and are not counted as basis misses.
  */
 export function selectForwardOosBasis(
     records: AssetOpportunityArchiveRecord[],
     basis: AssetOpportunityArchiveHorizonBasis,
+    topK = Number.POSITIVE_INFINITY,
 ): { records: AssetOpportunityArchiveRecord[]; counts: HorizonBasisSelectionCounts } {
     const counts: HorizonBasisSelectionCounts = {
         rowsFromPerBasisMap: 0,
@@ -503,7 +511,11 @@ export function selectForwardOosBasis(
         baselinesDropped: 0,
     };
     const rewired = records.map((record) => {
-        const topResults = record.topResults.map((row) => {
+        const topResults = record.topResults.map((row, index) => {
+            // Rows outside the analyzed prefix are never read by aggregation;
+            // pass them through untouched so archive-level scans (maximum rank)
+            // still see them.
+            if (index >= topK) return row;
             const perBasis = row.forwardOosPerformanceByBasis?.[basis];
             if (perBasis) {
                 counts.rowsFromPerBasisMap += 1;
@@ -512,12 +524,13 @@ export function selectForwardOosBasis(
                     : { ...row, forwardOosPerformance: perBasis };
             }
             const legacy = row.forwardOosPerformance;
-            if (legacy && legacy.basis === basis) {
+            if (!legacy) return row;
+            if (legacy.basis === basis) {
                 counts.rowsFromLegacyMatch += 1;
                 return row;
             }
             counts.rowsWithoutBasis += 1;
-            return row.forwardOosPerformance ? { ...row, forwardOosPerformance: null } : row;
+            return { ...row, forwardOosPerformance: null };
         });
         let baseline = record.baseline;
         const perBasisBaseline = record.baselineByBasis?.[basis];
@@ -525,7 +538,7 @@ export function selectForwardOosBasis(
             counts.baselinesFromPerBasisMap += 1;
             baseline = perBasisBaseline;
         } else if (baseline) {
-            const basisConsistent = record.topResults.every((row) =>
+            const basisConsistent = record.topResults.slice(0, topK).every((row) =>
                 !row.forwardOosPerformance || row.forwardOosPerformance.basis === basis);
             if (basisConsistent) {
                 counts.baselinesFromLegacyMatch += 1;
@@ -548,8 +561,17 @@ interface BatchRunSelection {
     excludedBatchRunIds: string[];
 }
 
-/** Synchronous whole-archive read for CLI use; the Explorer streams per file instead. */
-export function readAssetOpportunityArchive(archiveDirectory: string): AssetOpportunityArchiveRecord[] {
+/**
+ * Synchronous whole-archive read for CLI use; the Explorer streams per file
+ * instead. `options.maxFullRows` caps how many ranked rows per block keep their
+ * full measurement data (see ArchiveParseOptions); pass the report's top-K so
+ * archive-wide parse memory scales with the requested depth instead of the
+ * archived rank count.
+ */
+export function readAssetOpportunityArchive(
+    archiveDirectory: string,
+    options: ArchiveParseOptions = {},
+): AssetOpportunityArchiveRecord[] {
     const files = fs.readdirSync(archiveDirectory, { withFileTypes: true })
         .filter((entry) => entry.isFile() && ARCHIVE_FILE_PATTERN.test(entry.name))
         .map((entry) => entry.name)
@@ -560,6 +582,7 @@ export function readAssetOpportunityArchive(archiveDirectory: string): AssetOppo
     return files.flatMap((file) => parseAssetOpportunityArchiveText(
         fs.readFileSync(path.join(archiveDirectory, file), "utf8"),
         file,
+        options,
     ));
 }
 
@@ -1852,11 +1875,12 @@ export function analyzeAssetOpportunityArchive(
     if (calculationMode === "hold_until_change" && measurementMode !== "fixed_horizon") {
         throw new Error("hold_until_change requires fixed-horizon archives; the selected batch runs measure next-exit outcomes instead.");
     }
+    const topK = Math.max(1, Math.floor(options.topK ?? DEFAULT_TOP_K));
     // Re-base every forward outcome to one price basis before any aggregation
     // (including gain exclusion, which trims forwardOosPerformance) so all
     // downstream analysis stays basis-consistent.
     const horizonBasisSelection = options.horizonBasis && measurementMode === "fixed_horizon"
-        ? selectForwardOosBasis(selected.records, options.horizonBasis)
+        ? selectForwardOosBasis(selected.records, options.horizonBasis, topK)
         : null;
     if (horizonBasisSelection) selected.records = horizonBasisSelection.records;
     const horizonBasisNotes: string[] = options.horizonBasis && measurementMode === "next_exit"
@@ -1869,7 +1893,6 @@ export function analyzeAssetOpportunityArchive(
                     : []),
             ]
             : [];
-    const topK = Math.max(1, Math.floor(options.topK ?? DEFAULT_TOP_K));
     const availableSortMetrics = new Set(selected.records.map((record) => record.sortMetric));
     const excludedRedundantSortMetrics = availableSortMetrics.has("netProfit") && availableSortMetrics.has("netProfitPercent")
         ? ["netProfit"]
@@ -2674,7 +2697,11 @@ function main(): void {
         return;
     }
     try {
-        const records = readAssetOpportunityArchive(archiveDirectory);
+        // Fixed-horizon aggregation reads only the first top-K rows of each
+        // block, so capping full-row parsing at top-K keeps archive-wide heap
+        // flat as sweeps accumulate; stub rows preserve the all-row rank,
+        // fingerprint, and signal-hour availability checks.
+        const records = readAssetOpportunityArchive(archiveDirectory, { maxFullRows: topK });
         const report = analyzeAssetOpportunityArchive(records, {
             archiveDirectory,
             batchRunId: requestedBatchRunId,

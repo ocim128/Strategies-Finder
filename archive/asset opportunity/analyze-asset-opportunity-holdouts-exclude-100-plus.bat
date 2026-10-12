@@ -35,6 +35,9 @@ if not defined NON_ZERO (
 )
 
 set "OUTPUT_PREFIX=%ARCHIVE_DIR%\holdout-analysis-exclude-100-plus-top-%TOP_K%"
+rem The parse retains every archived rank up to the requested top-K; give V8
+rem extra old-space headroom so deep top-K runs on a grown archive don't OOM.
+set "NODE_OPTIONS=--max-old-space-size=8192 %NODE_OPTIONS%"
 rem The analyzer combines all batch runs by default. Pass --batch-run-id <id>
 rem in extra arguments to restrict the report to one run.
 call "%ESNO%" "%REPO_ROOT%\scripts\analyze-asset-opportunity-holdouts.ts" --archive-dir "%ARCHIVE_DIR%" --exclude-gains-100 --top-k "%TOP_K%" --output-prefix "%OUTPUT_PREFIX%" %*

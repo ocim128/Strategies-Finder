@@ -180,6 +180,118 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(byBasis?.pair?.horizons?.[0]!.ongoing).to.equal(undefined);
     });
 
+    it("keeps full rows within the parse cap and stubs deeper ranks", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-12T00:00:00.000Z",
+            runId: "run-capped",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [
+                {
+                    ...row(1, 4, 1),
+                    candidateFingerprint: "fp-one",
+                    signalCandleHourUtc: 3,
+                    signalCandleHourJakarta: 10,
+                    selectionPerformance: { expectancy: 4 },
+                },
+                {
+                    ...row(2, 2, 1),
+                    candidateFingerprint: "fp-two",
+                    signalCandleHourUtc: 5,
+                    selectionPerformance: { expectancy: 2 },
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 1, exitReason: "signal", barsHeld: 2 },
+                },
+            ],
+        }), "fixture.txt", { maxFullRows: 1 });
+
+        expect(records[0]!.topResults[0]!.forwardOosPerformance).to.not.equal(undefined);
+        const stub = records[0]!.topResults[1]!;
+        expect(stub.rank).to.equal(2);
+        expect(stub.candidateFingerprint).to.equal("fp-two");
+        expect(stub.signalCandleHourUtc).to.equal(5);
+        expect(stub.forwardOosPerformance).to.equal(undefined);
+        expect(stub.forwardOosPerformanceByBasis).to.equal(undefined);
+        expect(stub.selectionPerformance).to.equal(undefined);
+        expect(stub.nextExitOosPerformance).to.equal(undefined);
+        // Availability checks scan every archived row, including stubs.
+        const report = analyzeAssetOpportunityArchive(records, { topK: 1 });
+        expect(report.archiveMaximumRank).to.equal(2);
+        expect(report.parameterFingerprintAvailable).to.equal(true);
+        expect(report.signalCandleHoursAvailable).to.equal(true);
+    });
+
+    it("parses next_exit blocks without the row cap", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-12T00:00:00.000Z",
+            runId: "run-capped",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            measurementMode: "next_exit",
+            rows: [
+                { ...row(1, 4, 1), selectionPerformance: { expectancy: 4 }, nextExitOosPerformance: { status: "exited", pnlPercent: 4, exitReason: "signal", barsHeld: 2 } },
+                { ...row(2, 2, 1), selectionPerformance: { expectancy: 2 }, nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "signal", barsHeld: 2 } },
+            ],
+        }), "fixture.txt", { maxFullRows: 1 });
+
+        // The thesis audit reads every archived row, so deep rows stay full.
+        expect(records[0]!.topResults[1]!.selectionPerformance).to.eql({ expectancy: 2 });
+        expect(records[0]!.topResults[1]!.nextExitOosPerformance?.pnlPercent).to.equal(2);
+    });
+
+    it("produces the same report with the parse cap as without it", () => {
+        const rankOnePnl = 4;
+        const rankTwoPnl = 2;
+        const buildRows = (symbol: string): unknown[] => ([rankOnePnl, rankTwoPnl]).map((pnl, index) => ({
+            ...row(index + 1, pnl, 1, symbol),
+            candidateFingerprint: `fp-${symbol}-${index + 1}`,
+            signalCandleHourUtc: 3 + index,
+            signalCandleHourJakarta: 10 + index,
+            selectionPerformance: { expectancy: pnl },
+            forwardOosPerformance: {
+                ignoreLastBars: 12,
+                basis: "pair",
+                horizons: [{ bars: 12, averagePnlPercent: pnl, sampleSize: 1 }, { bars: 24, averagePnlPercent: pnl / 2, sampleSize: 1 }],
+            },
+            forwardOosPerformanceByBasis: {
+                pair: { ignoreLastBars: 12, basis: "pair", horizons: [{ bars: 12, averagePnlPercent: pnl, sampleSize: 1 }] },
+                base_only: { ignoreLastBars: 12, basis: "base_only", horizons: [{ bars: 12, averagePnlPercent: pnl * 2, sampleSize: 1 }] },
+                quote_only: { ignoreLastBars: 12, basis: "quote_only", horizons: [{ bars: 12, averagePnlPercent: -pnl, sampleSize: 1 }] },
+            },
+        }));
+        const baseline = {
+            eligibleCandidateCount: 7,
+            horizons: [{ bars: 12, averagePnlPercent: 1.5, sampleWeightedAveragePnlPercent: 1.5, positiveResults: 4, observedResults: 7, totalSamples: 7 }],
+        };
+        const text = [24, 25].map((holdoutBars, index) => block({
+            timestamp: `2026-10-12T00:00:0${index}.000Z`,
+            runId: "run-equivalence",
+            holdoutBars,
+            sortMetric: "expectancy",
+            rows: buildRows(index === 0 ? "AAA•" : "BBB•"),
+            baseline,
+            baselineByBasis: { base_only: baseline },
+        })).join("\n");
+        const optionSets = [
+            { topK: 1 },
+            { topK: 1, horizonBasis: "base_only" as const },
+            { topK: 1, calculationMode: "hold_until_change" as const },
+        ];
+        for (const options of optionSets) {
+            const full = analyzeAssetOpportunityArchive(
+                parseAssetOpportunityArchiveText(text, "fixture.txt"),
+                { ...options, generatedAt: "2026-10-12T00:00:00.000Z" },
+            );
+            const capped = analyzeAssetOpportunityArchive(
+                parseAssetOpportunityArchiveText(text, "fixture.txt", { maxFullRows: options.topK }),
+                { ...options, generatedAt: "2026-10-12T00:00:00.000Z" },
+            );
+            expect(JSON.stringify(capped), JSON.stringify(options)).to.equal(JSON.stringify(full));
+            // Re-basing rewires the analyzed prefix without truncating the rows
+            // that archive-level scans (maximum rank) still read.
+            expect(capped.archiveMaximumRank).to.equal(2);
+        }
+    });
+
     it("re-bases every forward outcome and baseline to the requested horizon basis", () => {
         const records = parseAssetOpportunityArchiveText(block({
             timestamp: "2026-10-11T00:00:00.000Z",

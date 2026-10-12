@@ -249,13 +249,42 @@ function parseArchiveForwardOosByBasis(value: unknown): AssetOpportunityArchiveR
     return Object.keys(parsed).length > 0 ? parsed : undefined;
 }
 
-function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityArchiveRow[] {
+/** Options that bound how much of an archive block is materialized. */
+export interface ArchiveParseOptions {
+    /**
+     * Keep full measurement data only on the first N ranked rows of every
+     * fixed-horizon block; deeper rows become small rank/fingerprint/signal-hour
+     * stubs. The archive must list rows in rank order, as the Finder writer
+     * does. next_exit blocks ignore the cap because the thesis audit reads
+     * every archived row. Default: keep every row (Explorer parity).
+     */
+    maxFullRows?: number;
+}
+
+function parseArchiveRows(
+    value: unknown,
+    sourceFile: string,
+    maxFullRows?: number,
+): AssetOpportunityArchiveRow[] {
     if (!Array.isArray(value)) {
         throw new Error(`Expected a JSON array in ${sourceFile}`);
     }
     return value.map((row, index) => {
         if (!isRecord(row)) {
             throw new Error(`Expected an object at row ${index + 1} in ${sourceFile}`);
+        }
+        const rank = asPositiveInteger(row.rank) ?? undefined;
+        const signalCandleHourUtc = row.signalCandleHourUtc === null ? null : asHour(row.signalCandleHourUtc);
+        const signalCandleHourJakarta = row.signalCandleHourJakarta === null ? null : asHour(row.signalCandleHourJakarta);
+        if (maxFullRows !== undefined && index >= maxFullRows) {
+            // Stubs keep exactly the fields scanned beyond the aggregation top-K:
+            // archive maximum rank, fingerprint availability, signal-hour availability.
+            return {
+                rank,
+                signalCandleHourUtc,
+                signalCandleHourJakarta,
+                ...(typeof row.candidateFingerprint === "string" ? { candidateFingerprint: row.candidateFingerprint } : {}),
+            };
         }
         const forwardOosPerformance = parseArchiveHorizonPerformance(row.forwardOosPerformance)
             ?? parseArchiveHorizonPerformance(row.activePositionContinuationPerformance);
@@ -291,17 +320,13 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
         }
         return {
             scope: typeof row.scope === "string" ? row.scope : undefined,
-            rank: asPositiveInteger(row.rank) ?? undefined,
+            rank,
             symbol: typeof row.symbol === "string" ? row.symbol : undefined,
             strategyId: typeof row.strategyId === "string" ? row.strategyId : undefined,
             strategyName: typeof row.strategyName === "string" ? row.strategyName : undefined,
             candidateFingerprint: typeof row.candidateFingerprint === "string" ? row.candidateFingerprint : undefined,
-            signalCandleHourUtc: row.signalCandleHourUtc === null
-                ? null
-                : asHour(row.signalCandleHourUtc),
-            signalCandleHourJakarta: row.signalCandleHourJakarta === null
-                ? null
-                : asHour(row.signalCandleHourJakarta),
+            signalCandleHourUtc,
+            signalCandleHourJakarta,
             selectionPerformance: parseArchiveScalarRecord(row.selectionPerformance),
             ...(row.freshSignalLibraryCount !== undefined ? {
                 freshSignalLibraryCount: row.freshSignalLibraryCount === null
@@ -323,8 +348,22 @@ function parseArchiveRows(value: unknown, sourceFile: string): AssetOpportunityA
     });
 }
 
+/**
+ * Flatten a regex capture before storing it on a record. Captures of 13+
+ * characters are V8 sliced strings that reference the whole normalized file
+ * text, so keeping one alive pins the file's full text in the heap for the
+ * process lifetime.
+ */
+function flatCapture(value: string): string {
+    return (" " + value).slice(1);
+}
+
 /** Parse all delimited blocks from one archive file. */
-export function parseAssetOpportunityArchiveText(text: string, sourceFile = "archive file"): AssetOpportunityArchiveRecord[] {
+export function parseAssetOpportunityArchiveText(
+    text: string,
+    sourceFile = "archive file",
+    options: ArchiveParseOptions = {},
+): AssetOpportunityArchiveRecord[] {
     const normalized = text.replace(/\r\n?/g, "\n").trimEnd();
     const blockPattern = new RegExp(
         `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive baseline by basis: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
@@ -355,12 +394,16 @@ export function parseAssetOpportunityArchiveText(text: string, sourceFile = "arc
         }
         records.push({
             sourceFile,
-            timestamp: match[1]!,
-            batchRunId: match[2]!,
+            timestamp: flatCapture(match[1]!),
+            batchRunId: flatCapture(match[2]!),
             holdoutBars,
-            sortMetric: match[4]!,
-            measurementMode: match[5] || undefined,
-            topResults: parseArchiveRows(parsedRows, sourceFile),
+            sortMetric: flatCapture(match[4]!),
+            measurementMode: match[5] ? flatCapture(match[5]) : undefined,
+            topResults: parseArchiveRows(
+                parsedRows,
+                sourceFile,
+                options.maxFullRows !== undefined && match[5] !== "next_exit" ? options.maxFullRows : undefined,
+            ),
             baseline: match[6] ? parseArchiveBaseline(JSON.parse(match[6]), sourceFile) : null,
             ...(baselineByBasis ? { baselineByBasis } : {}),
             nextExitBaseline: match[8] ? parseNextExitBaseline(JSON.parse(match[8]), sourceFile) : null,

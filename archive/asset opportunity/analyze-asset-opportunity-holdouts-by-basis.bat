@@ -66,6 +66,9 @@ if not defined NON_ZERO (
 )
 
 :run_analysis
+rem The parse retains every archived rank up to the requested top-K; give V8
+rem extra old-space headroom so deep top-K runs on a grown archive don't OOM.
+set "NODE_OPTIONS=--max-old-space-size=8192 %NODE_OPTIONS%"
 set "OUTPUT_PREFIX=%ARCHIVE_DIR%\holdout-analysis-%BASIS%-top-%TOP_K%"
 if "%MODE%"=="hold_until_change" set "OUTPUT_PREFIX=%OUTPUT_PREFIX%-hold-until-change"
 rem New archive rows carry all three bases from one sweep; --basis re-bases the
