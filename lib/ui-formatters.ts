@@ -77,11 +77,8 @@ export function formatNullableSignedPercentPoints(
     emptyLabel = "--",
     includePlusForZero = true,
 ): string {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-        return emptyLabel;
-    }
-    const prefix = value > 0 || (includePlusForZero && value === 0) ? "+" : "";
-    return `${prefix}${value.toFixed(decimals)}%`;
+    const formatted = formatNullableSignedFixed(value, decimals, emptyLabel, includePlusForZero);
+    return formatted === emptyLabel ? formatted : `${formatted}%`;
 }
 
 export function formatNullableCurrency(

@@ -23,6 +23,9 @@ export const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 
 const BLOCK_SEPARATOR = "=".repeat(80);
 
+/** Canonical iteration order for per-basis archive maps (forward rows and baselines). */
+const ARCHIVE_BASES = ["pair", "base_only", "quote_only"] as const;
+
 /** Fixed-horizon price basis recorded on newer archive rows; absent = unknown legacy row. */
 export type AssetOpportunityArchiveHorizonBasis = "pair" | "base_only" | "quote_only";
 
@@ -239,7 +242,7 @@ function parseArchiveHorizonPerformance(value: unknown): ArchiveHorizonPerforman
 function parseArchiveForwardOosByBasis(value: unknown): AssetOpportunityArchiveRow["forwardOosPerformanceByBasis"] {
     if (!isRecord(value)) return undefined;
     const parsed: NonNullable<AssetOpportunityArchiveRow["forwardOosPerformanceByBasis"]> = {};
-    for (const basis of ["pair", "base_only", "quote_only"] as const) {
+    for (const basis of ARCHIVE_BASES) {
         const entry = parseArchiveHorizonPerformance(value[basis]);
         if (entry) parsed[basis] = entry;
     }
@@ -344,7 +347,7 @@ export function parseAssetOpportunityArchiveText(text: string, sourceFile = "arc
         if (match[7]) {
             const parsedMap = JSON.parse(match[7]) as Record<string, unknown>;
             const map: NonNullable<AssetOpportunityArchiveRecord["baselineByBasis"]> = {};
-            for (const basis of ["pair", "base_only", "quote_only"] as const) {
+            for (const basis of ARCHIVE_BASES) {
                 const baseline = parseArchiveBaseline(parsedMap[basis], sourceFile);
                 if (baseline) map[basis] = baseline;
             }

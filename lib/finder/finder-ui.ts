@@ -68,6 +68,17 @@ export class FinderUI {
         return this.getDom().finderCopyTopResults;
     }
 
+    /** Clear the results list and mirror emptiness onto the empty state and copy button; false when nothing to render. */
+    private resetResultList(results: readonly unknown[]): boolean {
+        const list = this.getListElement();
+        const copyButton = this.getCopyButton();
+        list.innerHTML = "";
+        const empty = results.length === 0;
+        setVisible("finderEmpty", empty);
+        if (copyButton) copyButton.disabled = empty;
+        return !empty;
+    }
+
     private getProgressElements(): { container: HTMLElement; fill: HTMLElement; label: HTMLElement } {
         const dom = this.getDom();
         return {
@@ -90,18 +101,7 @@ export class FinderUI {
     }
 
     public renderResults(results: FinderResult[]): void {
-        const list = this.getListElement();
-        const copyButton = this.getCopyButton();
-        list.innerHTML = "";
-
-        if (results.length === 0) {
-            setVisible("finderEmpty", true);
-            if (copyButton) copyButton.disabled = true;
-            return;
-        }
-
-        setVisible("finderEmpty", false);
-        if (copyButton) copyButton.disabled = false;
+        if (!this.resetResultList(results)) return;
 
         const rows = results.map((item, index): FinderResultRowParts => {
             const title = document.createElement("div");
@@ -157,22 +157,11 @@ export class FinderUI {
                 oosBadges,
             });
         });
-        this.appendResultNodes(list, [], rows, "current_chart");
+        this.appendResultNodes(this.getListElement(), [], rows, "current_chart");
     }
 
     public renderUniverseResults(results: FinderUniverseCandidate[]): void {
-        const list = this.getListElement();
-        const copyButton = this.getCopyButton();
-        list.innerHTML = "";
-
-        if (results.length === 0) {
-            setVisible("finderEmpty", true);
-            if (copyButton) copyButton.disabled = true;
-            return;
-        }
-
-        setVisible("finderEmpty", false);
-        if (copyButton) copyButton.disabled = false;
+        if (!this.resetResultList(results)) return;
 
         const rows = results.map((item, index): FinderResultRowParts => {
             const title = document.createElement("div");
@@ -317,22 +306,11 @@ export class FinderUI {
                 detailLines: this.formatUniverseExitStrategyDetail(item),
             });
         });
-        this.appendResultNodes(list, [], rows, "symbol_universe");
+        this.appendResultNodes(this.getListElement(), [], rows, "symbol_universe");
     }
 
     public renderAssetOpportunityResults(results: FinderAssetOpportunityResult[]): void {
-        const list = this.getListElement();
-        const copyButton = this.getCopyButton();
-        list.innerHTML = "";
-
-        if (results.length === 0) {
-            setVisible("finderEmpty", true);
-            if (copyButton) copyButton.disabled = true;
-            return;
-        }
-
-        setVisible("finderEmpty", false);
-        if (copyButton) copyButton.disabled = false;
+        if (!this.resetResultList(results)) return;
 
         const notes: HTMLElement[] = [];
         const freshResults = results.filter((result) => result.freshStatus === "fresh");
@@ -559,22 +537,11 @@ export class FinderUI {
                 details,
             });
         });
-        this.appendResultNodes(list, notes, rows, "asset_opportunity");
+        this.appendResultNodes(this.getListElement(), notes, rows, "asset_opportunity");
     }
 
     public renderStrategyQualityResults(results: FinderStrategyQualityResult[]): void {
-        const list = this.getListElement();
-        const copyButton = this.getCopyButton();
-        list.innerHTML = "";
-
-        if (results.length === 0) {
-            setVisible("finderEmpty", true);
-            if (copyButton) copyButton.disabled = true;
-            return;
-        }
-
-        setVisible("finderEmpty", false);
-        if (copyButton) copyButton.disabled = false;
+        if (!this.resetResultList(results)) return;
 
         const rows = results.map((item, index): FinderResultRowParts => {
             const title = document.createElement("div");
@@ -661,7 +628,7 @@ export class FinderUI {
                 showApply: false,
             });
         });
-        this.appendResultNodes(list, [], rows, "strategy_quality");
+        this.appendResultNodes(this.getListElement(), [], rows, "strategy_quality");
     }
 
     public renderArmPerformanceResults(

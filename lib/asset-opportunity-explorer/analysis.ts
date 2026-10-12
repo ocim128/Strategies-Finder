@@ -429,6 +429,11 @@ function medianOf(values: number[]): number | null {
         : sorted[middle]!;
 }
 
+/** Shared lookup key for one (sortMetric, holdoutBars) cell in a block map. */
+function blockCellKey(sortMetric: string, holdoutBars: number): string {
+    return `${sortMetric}|${holdoutBars}`;
+}
+
 /**
  * Build the full heatmap snapshot for one run. Rejects next-exit and mixed
  * measurement runs (v1 is fixed-horizon only) and conflicting explicit bases.
@@ -449,7 +454,7 @@ export function buildHeatmapSnapshot(view: ExplorerView, params: SnapshotParams)
     }
     const blocksByCell = new Map<string, ExplorerViewBlock>();
     for (const block of view.blocks) {
-        blocksByCell.set(`${block.sortMetric}|${block.holdoutBars}`, block);
+        blocksByCell.set(blockCellKey(block.sortMetric, block.holdoutBars), block);
     }
     const cells: AssetOpportunityExplorerHeatmapCell[] = [];
     const knownBases = new Set<"pair" | "base_only" | "quote_only">();
@@ -460,7 +465,7 @@ export function buildHeatmapSnapshot(view: ExplorerView, params: SnapshotParams)
     let unknownFingerprintRows = 0;
     for (const sortMetric of view.sortMetrics) {
         for (const holdoutBars of columns) {
-            const block = blocksByCell.get(`${sortMetric}|${holdoutBars}`);
+            const block = blocksByCell.get(blockCellKey(sortMetric, holdoutBars));
             if (!block) continue;
             if (block.basis !== null) knownBases.add(block.basis);
             const cell = summarizeCell(block, params.topK, params.horizonBars);
@@ -556,7 +561,7 @@ export function buildRangeDetails(params: RangeDetailParams): AssetOpportunityEx
     }
     const blocksByCell = new Map<string, ExplorerViewBlock>();
     for (const block of view.blocks) {
-        blocksByCell.set(`${block.sortMetric}|${block.holdoutBars}`, block);
+        blocksByCell.set(blockCellKey(block.sortMetric, block.holdoutBars), block);
     }
     const finiteCellValues: number[] = [];
     const rows: AssetOpportunityExplorerDetailRow[] = [];
@@ -567,7 +572,7 @@ export function buildRangeDetails(params: RangeDetailParams): AssetOpportunityEx
     // identities are counted separately, never merged into a claimed match.
     const confirmedIdentities = new Set<string>();
     for (const holdoutBars of rangeColumns) {
-        const block = blocksByCell.get(`${params.sortMetric}|${holdoutBars}`);
+        const block = blocksByCell.get(blockCellKey(params.sortMetric, holdoutBars));
         const cell = block ? summarizeCell(block, params.topK, params.horizonBars) : null;
         const metricValue = cell === null || cell.actual === null
             ? null

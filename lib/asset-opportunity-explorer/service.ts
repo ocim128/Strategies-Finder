@@ -1,5 +1,6 @@
 import "../../styles/asset-opportunity-explorer.css";
 import { coalesceAnimationFrame } from "../render-scheduler";
+import { EXPLORER_BASE_ORDER } from "./analysis";
 import { createAssetOpportunityExplorerDom, type AssetOpportunityExplorerDom } from "./dom";
 import {
     colorDomainFor,
@@ -355,8 +356,7 @@ export class AssetOpportunityExplorerService {
         const dom = this.getDom();
         const previousBasis = dom.explorerBasisSelect.value;
         const available = selected?.availableBases ?? [];
-        const order: AssetOpportunityExplorerBasis[] = ["pair", "base_only", "quote_only"];
-        const bases = order.filter((basis) => available.includes(basis));
+        const bases = EXPLORER_BASE_ORDER.filter((basis) => available.includes(basis));
         dom.explorerBasisSelect.replaceChildren(...bases.map((basis) => {
             const option = document.createElement("option");
             option.value = basis;
@@ -372,7 +372,7 @@ export class AssetOpportunityExplorerService {
             return;
         }
         dom.explorerBasisSelect.disabled = false;
-        const preferred = order.find((basis) => bases.includes(basis)) ?? bases[0]!;
+        const preferred = EXPLORER_BASE_ORDER.find((basis) => bases.includes(basis)) ?? bases[0]!;
         dom.explorerBasisSelect.value = bases.includes(previousBasis as AssetOpportunityExplorerBasis)
             ? previousBasis
             : preferred;
