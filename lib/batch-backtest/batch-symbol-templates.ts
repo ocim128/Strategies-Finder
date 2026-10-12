@@ -17,6 +17,7 @@ const BATCH_SYMBOL_TEMPLATES = (typeof templatesJson === "string"
     chop_crypto: string;
     downtrend: string;
     nasdaq: string;
+    sp500: string;
 };
 
 export type BatchSymbolTemplateKey = keyof typeof BATCH_SYMBOL_TEMPLATES;
