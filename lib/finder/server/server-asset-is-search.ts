@@ -64,6 +64,7 @@ import { ensureConfirmationStrategiesLoaded } from "../../confirmation-signal-fi
 import type { AssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import type { RustCapabilities } from "../../rust-engine-client";
 import { parseTimeToUnixSeconds } from "../../time-normalization";
+import { isAbortError, throwIfAborted } from "../../abort-utils";
 
 const ASSET_IS_SEARCH_YIELD_EVERY_RUNS = 256;
 const ASSET_IS_SEARCH_YIELD_MIN_MS = 1000;
@@ -725,18 +726,4 @@ export async function runServerAssetIsSearch(
                 .sort((a, b) => b.runs - a.runs || a.reason.localeCompare(b.reason)),
         },
     };
-}
-
-function isAbortError(error: unknown): boolean {
-    return error instanceof Error && error.name === "AbortError";
-}
-
-function throwAbortError(): never {
-    const error = new Error("Asset Opportunity cancelled");
-    error.name = "AbortError";
-    throw error;
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-    if (signal?.aborted) throwAbortError();
 }

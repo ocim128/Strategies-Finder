@@ -14,6 +14,7 @@ import {
     type TradeLedgerRankRow,
     type TradeLedgerRow,
 } from "./trade-ledger-schema";
+import { formatFailedPairList } from "./trade-ledger-replay-core";
 
 const LEDGER_FILE = "ledger.jsonl";
 const RANKS_FILE = "signal-ranks.jsonl";
@@ -161,11 +162,9 @@ export interface LoadLedgerOptions {
     validateProvenance?: (provenance: TradeLedgerProvenance) => void;
 }
 
-export function formatFailedPairList(failedPairs: readonly string[]): string {
-    return failedPairs.length <= 20
-        ? failedPairs.join(", ")
-        : `${failedPairs.slice(0, 20).join(", ")} … and ${failedPairs.length - 20} more`;
-}
+// Single implementation lives in the pure replay core; re-exported here so
+// existing importers of this module keep working unchanged.
+export { formatFailedPairList };
 
 /**
  * Load + validate a ledger folder for replay. Throws with a clear message on

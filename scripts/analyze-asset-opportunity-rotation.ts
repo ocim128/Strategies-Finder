@@ -36,6 +36,7 @@
  */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getArgument } from "./lib/cli-args";
 import {
     readAssetOpportunityArchive,
     type AssetOpportunityArchiveRecord,
@@ -61,11 +62,6 @@ interface SortRotation {
     rankOneNaiveAverage: number | null; // mean of rank-1 forward PnL across all steps
     deltaVersusNaive: number | null; // averageEntryNet - rankOneNaiveAverage
     tenures: LeaderTenure[]; // chronological leader-tenure path
-}
-
-function getArgument(argv: string[], flag: string): string | undefined {
-    const index = argv.indexOf(flag);
-    return index >= 0 ? argv[index + 1] : undefined;
 }
 
 function deduplicateRecords(records: AssetOpportunityArchiveRecord[]): AssetOpportunityArchiveRecord[] {

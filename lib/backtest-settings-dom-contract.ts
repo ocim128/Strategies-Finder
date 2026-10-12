@@ -1,6 +1,6 @@
 import { parseInputNumber } from "./dom-input-readers";
 import { ADVANCED_SIZING_FIELD_IDS } from "./advanced-sizing-dom";
-import { readBoolean, readNumber } from "./settings-parse-utils";
+import { readBoolean, readNumber, toJsonObjectLike } from "./settings-parse-utils";
 import {
     resolveKellyFraction,
     resolveMartingaleBaseSize,
@@ -334,15 +334,8 @@ function readBooleanValue(value: unknown, fallback: boolean): boolean {
 }
 
 function readConfirmationStrategyParamsValue(value: unknown): Record<string, StrategyParams> {
-    let source = value;
-    if (typeof value === "string") {
-        try {
-            source = JSON.parse(value || "{}");
-        } catch {
-            return {};
-        }
-    }
-    if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+    const source = toJsonObjectLike(value);
+    if (!source) return {};
 
     const result: Record<string, StrategyParams> = {};
     for (const [strategyKey, rawParams] of Object.entries(source as Record<string, unknown>)) {
@@ -364,15 +357,8 @@ function readConfirmationStrategyParamsValue(value: unknown): Record<string, Str
 }
 
 function readStrategyParamsValue(value: unknown): StrategyParams {
-    let source = value;
-    if (typeof value === "string") {
-        try {
-            source = JSON.parse(value || "{}");
-        } catch {
-            return {};
-        }
-    }
-    if (!source || typeof source !== "object" || Array.isArray(source)) return {};
+    const source = toJsonObjectLike(value);
+    if (!source) return {};
 
     const params: StrategyParams = {};
     for (const [paramKey, rawValue] of Object.entries(source as Record<string, unknown>)) {

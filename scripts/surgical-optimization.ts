@@ -7,6 +7,7 @@ import { resolveBacktestSettingsFromRaw, CAPITAL_DEFAULTS } from "../lib/backtes
 import { runGeneticOptimization, type GeneticOptimizerConfig } from "../lib/finder/genetic-optimizer";
 import { trimToClosedCandles } from "../lib/closed-candle-utils";
 import { strategies } from "../lib/strategies/library";
+import { median } from "../lib/statistics-utils";
 import { parseArgs as parseVerifyArgs, runVerification as runVerifyAlphaReport } from "./verify-alpha";
 import { parseOhlcvBars } from "./lib/ohlcv-file";
 import type { BacktestSettings, ExecutionModel, OHLCVData, Strategy, TradeDirection } from "../lib/types/strategies";
@@ -185,13 +186,6 @@ function runSeeds(baseSeed: number, symbol: string, strategy: string, count: num
     seen.add(s); out.push(s);
   }
   return out;
-}
-
-function median(values: number[]): number {
-  if (values.length === 0) return 0;
-  const s = values.slice().sort((a, b) => a - b);
-  const m = Math.floor(s.length / 2);
-  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
 }
 
 function aggregate(runs: SeedRun[]) {

@@ -1,4 +1,4 @@
-import { Signal, OHLCVData } from '../types/strategies';
+import { Signal, OHLCVData, StrategyParams } from '../types/strategies';
 
 // ============================================================================
 // Data Mapping & Memoization
@@ -244,4 +244,23 @@ export function buildPivotFlags(
     const result = { pivotHighs, pivotLows };
     byKey.set(cacheKey, result);
     return result;
+}
+
+// ============================================================================
+// Strategy Parameter Normalization
+// ============================================================================
+
+/**
+ * Canonical `lookback` normalization for the single-parameter confirmation
+ * strategies: round to a whole number, clamp to a minimum of 2, default 200.
+ *
+ * Each confirmation strategy in `lib/strategies/lib/` used to carry an
+ * identical private copy of this function; they now all reference this one so
+ * the rounding/clamping rule has a single owner.
+ */
+export function normalizeLookbackParams(params: StrategyParams): StrategyParams {
+    return {
+        ...params,
+        lookback: Math.max(2, Math.round(Number(params.lookback ?? 200))),
+    };
 }

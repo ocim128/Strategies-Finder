@@ -10,8 +10,8 @@ import type {
     OHLCVData,
     Strategy,
     StrategyParams,
-    TradeDirection,
 } from "../lib/types/strategies";
+import { inferDirection as inferTradeDirection } from "./lib/strategy-hunt-utils";
 
 type AlphaWinner = {
     rank?: number;
@@ -388,12 +388,6 @@ async function buildInitialState(alpha: SuperAlpha, options: TowerOptions): Prom
         data: trimmed,
         lastClosedTime: Number(trimmed[trimmed.length - 1].time),
     };
-}
-
-function inferTradeDirection(strategy: Strategy): TradeDirection {
-    const direction = strategy.metadata?.direction;
-    if (direction === "short" || direction === "both" || direction === "long") return direction;
-    return "long";
 }
 
 function buildBacktestSettings(state: TowerAssetState): BacktestSettings {

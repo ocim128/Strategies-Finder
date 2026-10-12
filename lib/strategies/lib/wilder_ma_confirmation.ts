@@ -5,15 +5,9 @@ import {
     createSellSignal,
     ensureCleanData,
     getCloses,
+    normalizeLookbackParams as normalizeParams,
 } from "../strategy-helpers";
 import { calculateWilderMovingAverage } from "../trend-confirmation-indicators";
-
-function normalizeParams(params: StrategyParams): StrategyParams {
-    return {
-        ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 200))),
-    };
-}
 
 export const wilder_ma_confirmation: Strategy = {
     name: "Wilder MA Confirmation",

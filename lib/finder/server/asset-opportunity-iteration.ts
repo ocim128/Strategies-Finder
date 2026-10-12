@@ -65,6 +65,7 @@ import type {
 } from "../finder-asset-candidate-execution";
 import { resolveCapitalSettingsFromRaw } from "../../backtest-capital-settings";
 import { parseTimeToUnixSeconds } from "../../time-normalization";
+import { isAbortError } from "../../abort-utils";
 
 const ASSET_OPPORTUNITY_DATA_LOAD_CONCURRENCY = 12;
 
@@ -1155,8 +1156,4 @@ export async function runAssetOpportunityIteration(
         totals,
         summary,
     };
-}
-
-function isAbortError(error: unknown): boolean {
-    return error instanceof Error && error.name === "AbortError";
 }

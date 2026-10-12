@@ -22,8 +22,8 @@ import { parseTimeToUnixSeconds } from "./time-normalization";
 import { toNumericTimeData, mapSignalsFromHigherTimeframe } from "./strategy-timeframe";
 import { applyConfirmationStrategiesToSignals } from "./confirmation-signal-filter";
 import { toBooleanLike } from "./settings-parse-utils";
-import { isTradeSizingMode, type CapitalSettings, type TradeSizingMode } from "./types/backtest";
-import { resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
+import { type CapitalSettings } from "./types/backtest";
+import { normalizeTradeSizingMode, resolveCapitalSettingsFromRaw } from "./backtest-capital-settings";
 
 export interface EntrySignalEvaluationRequest {
     strategyKey: string;
@@ -153,23 +153,10 @@ function toUnixSeconds(value: Time): number | null {
     return parseTimeToUnixSeconds(value);
 }
 
-function toSizingMode(value: unknown): TradeSizingMode | null {
-    if (value === "smart_fixed") return "smart_fixed_velocity_memory";
-    if (
-        value === "smart_fixed_early_heat_filter"
-        || value === "smart_fixed_adverse_memory"
-        || value === "smart_fixed_mfe_ancestor"
-        || value === "smart_fixed_tp_distance_fit"
-    ) {
-        return "smart_fixed_quality_x_velocity";
-    }
-    return isTradeSizingMode(value) ? value : null;
-}
-
 function resolveEvaluationCapitalSettings(request: EntrySignalEvaluationRequest): CapitalSettings {
     const rawBacktestSettings = request.backtestSettings as Record<string, unknown> | undefined;
     const rawCapitalSettings = request.capitalSettings as Record<string, unknown> | undefined;
-    const explicitSizingMode = toSizingMode(rawCapitalSettings?.sizingMode) ?? toSizingMode(rawBacktestSettings?.sizingMode);
+    const explicitSizingMode = normalizeTradeSizingMode(rawCapitalSettings?.sizingMode) ?? normalizeTradeSizingMode(rawBacktestSettings?.sizingMode);
     const fixedTradeToggle = toBooleanLike(rawCapitalSettings?.fixedTradeToggle) ?? toBooleanLike(rawBacktestSettings?.fixedTradeToggle);
 
     return resolveCapitalSettingsFromRaw({

@@ -6,16 +6,17 @@ import { resolveBacktestSettingsFromRaw, CAPITAL_DEFAULTS } from "../lib/backtes
 import { runGeneticOptimization, type GeneticOptimizerConfig } from "../lib/finder/genetic-optimizer";
 import { trimToClosedCandles } from "../lib/closed-candle-utils";
 import { strategies } from "../lib/strategies/library";
+import { median } from "../lib/statistics-utils";
 import { ensureUniversalMarketData } from "./universal-market-loader";
 import { parseArgs as parseVerifyArgs, runVerification as runVerifyAlphaReport } from "./verify-alpha";
 import type {
     BacktestSettings,
     ExecutionModel,
     Strategy,
-    TradeDirection,
 } from "../lib/types/strategies";
 import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
 import { parseOhlcvDataFile } from "./lib/ohlcv-file";
+import { inferDirection } from "./lib/strategy-hunt-utils";
 
 type CliOptions = {
     topN: number;
@@ -277,12 +278,6 @@ function parseArgs(argv: string[]): CliOptions & { help?: boolean } {
     };
 }
 
-function inferDirection(strategy: Strategy): TradeDirection {
-    const direction = strategy.metadata?.direction;
-    if (direction === "short" || direction === "both" || direction === "long") return direction;
-    return "long";
-}
-
 function hashString(baseSeed: number, value: string): number {
     let hash = baseSeed >>> 0;
     for (let i = 0; i < value.length; i++) {
@@ -333,13 +328,6 @@ function buildGeneticConfig(options: CliOptions, seed: number): GeneticOptimizer
             minTrades: options.minTrades,
         },
     };
-}
-
-function median(values: number[]): number {
-    if (values.length === 0) return 0;
-    const sorted = values.slice().sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 function aggregateSeedRuns(seedRuns: SeedRun[]): AggregatedFitness {

@@ -11,7 +11,7 @@ import {
 import { prepareSignals } from './signal-preparation';
 import { calculateTradeExitDetails, createEmptyBacktestResult, finalizeBacktestMetrics, calculateBacktestStats, calculateMaxDrawdown } from './position-stats';
 import { precomputeIndicators, resolveIndicatorsFromConfig } from './indicator-precompute';
-import { buildPositionFromSignal, type SmartSizingState } from './position-builder';
+import { buildPositionFromSignal, createSmartSizingState, type SmartSizingState } from './position-builder';
 import {
     canExitAfterMinimumHold,
     OPEN_ONLY_POSITION_EXIT_OPTIONS,
@@ -720,7 +720,7 @@ function runSinglePositionFinderFastPath(args: {
         price: 0,
     };
     const executionShift = getExecutionShift(config);
-    const smartSizingState = createSmartSizingState(initialCapital);
+    const smartSizingState = createSmartSizingState();
 
     const getPreparedSignal = (index: number, barIndex: number): Signal => {
         if (!indexedSignals) return preparedSignals[index];
@@ -1193,15 +1193,6 @@ function buildPositionRiskOverrides(config: NormalizedSettings, state: WinStreak
         enablePercentageStopLoss: config.riskMode === 'percentage'
             ? (config.stopLossEnabled || (overrideStopLossPercent ?? 0) > 0)
             : undefined,
-    };
-}
-
-function createSmartSizingState(_initialCapital: number): SmartSizingState {
-    return {
-        recentVelocityScores: [],
-        kellyState: createKellySizingState(),
-        martingaleState: createMartingaleState(),
-        optimalFState: createOptimalFState(),
     };
 }
 
@@ -1715,7 +1706,7 @@ function runFallbackPositionSimulation(args: {
     const commissionRate = commissionPercent / 100;
     const slippageRate = config.slippageBps / 10000;
     const winStreakRisk = createWinStreakRiskState();
-    const smartSizingState = createSmartSizingState(initialCapital);
+    const smartSizingState = createSmartSizingState();
     const smartSizingPositionState = createSmartSizingPositionState();
     const entryBuildContext: EntryBuildContext = {
         initialCapital,

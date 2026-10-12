@@ -14,6 +14,7 @@ import {
 } from "./monte-carlo-renderer";
 import { median } from "./statistics-utils";
 import { debugLogger } from "./debug-logger";
+import { isAbortError } from "./abort-utils";
 
 const MAX_SIMULATION_CAP = 10_000;
 const MIN_SIMULATION_CAP = 250;
@@ -395,10 +396,6 @@ function setIdleStatusMessageIfRelevant(message: string): void {
     ) {
         dom.statusSpan.textContent = message;
     }
-}
-
-function isAbortError(error: unknown): boolean {
-    return error instanceof Error && error.name === "AbortError";
 }
 
 export function refreshMonteCarloFromState(): void {

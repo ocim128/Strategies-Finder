@@ -1,4 +1,5 @@
 import { computePerformanceVerdict } from "../finder/finder-universe-metrics";
+import { mean, median } from "../statistics-utils";
 import type { Time } from "../types/strategies";
 import {
     formatNullableAdaptivePercentPoints as formatPercent,
@@ -646,20 +647,6 @@ function formatTime(time: Time): string {
         return `${time.year}-${month}-${day}`;
     }
     return String(time);
-}
-
-function mean(values: readonly number[]): number {
-    if (values.length === 0) return 0;
-    let sum = 0;
-    for (const v of values) sum += v;
-    return sum / values.length;
-}
-
-function median(values: readonly number[]): number {
-    if (values.length === 0) return 0;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid]! : (sorted[mid - 1]! + sorted[mid]!) / 2;
 }
 
 function formatSignedScore(value: number): string {

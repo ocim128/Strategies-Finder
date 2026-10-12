@@ -33,6 +33,8 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { getArgument } from "./lib/cli-args";
+import { createRng, formatDelta, formatRate, mean, parseList, percentile } from "./lib/asset-opportunity-analysis";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
@@ -78,27 +80,6 @@ interface Pick {
     symbol: string;
     value: number | null;
     detail?: string;
-}
-
-function getArgument(argv: string[], flag: string): string | undefined {
-    const index = argv.indexOf(flag);
-    return index >= 0 ? argv[index + 1] : undefined;
-}
-
-function parseList(value: string | undefined, fallback: number[]): number[] {
-    if (!value) return fallback;
-    const parsed = value.split(",").map((item) => Math.floor(Number(item.trim()))).filter((item) => Number.isFinite(item) && item >= 1);
-    return parsed.length > 0 ? [...new Set(parsed)].sort((left, right) => left - right) : fallback;
-}
-
-function createRng(seed: number): () => number {
-    let state = seed >>> 0;
-    return () => {
-        state = (state + 0x6D2B79F5) | 0;
-        let t = Math.imul(state ^ (state >>> 15), 1 | state);
-        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    };
 }
 
 function rowForwardPnl(row: ArchiveRow, horizonBars: number): number | null {
@@ -408,25 +389,6 @@ function customSortPicks(file: FileData, sortName: string, horizonBars: number):
         default:
             return [];
     }
-}
-
-function mean(values: number[]): number {
-    return values.length === 0 ? Number.NaN : values.reduce((sum, value) => sum + value, 0) / values.length;
-}
-
-function percentile(values: number[], fraction: number): number {
-    if (values.length === 0) return Number.NaN;
-    const sorted = [...values].sort((left, right) => left - right);
-    const index = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * fraction)));
-    return sorted[index]!;
-}
-
-function formatDelta(value: number): string {
-    return Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${value.toFixed(2)}%` : "n/a";
-}
-
-function formatRate(value: number): string {
-    return Number.isFinite(value) ? `${(value * 100).toFixed(1)}%` : "n/a";
 }
 
 function main(): void {

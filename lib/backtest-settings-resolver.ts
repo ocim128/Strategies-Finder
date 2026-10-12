@@ -13,6 +13,7 @@ import {
     readNumber as readNumberValue,
     toBooleanLike,
     toFiniteNumber,
+    toJsonObjectLike,
 } from "./settings-parse-utils";
 import { resolveTakeProfitMode } from "./take-profit-settings";
 import { DEFAULT_ENTRY_TIME_FILTER, resolveEntryTimeFilter } from "./entry-time-filter";
@@ -168,15 +169,8 @@ function readConfirmationStrategyParams(
     rawValue: unknown,
     allowedStrategies?: ReadonlySet<string>
 ): Record<string, StrategyParams> {
-    let rawSource = rawValue;
-    if (typeof rawValue === "string") {
-        try {
-            rawSource = JSON.parse(rawValue || "{}");
-        } catch {
-            return {};
-        }
-    }
-    if (!rawSource || typeof rawSource !== "object" || Array.isArray(rawSource)) return {};
+    const rawSource = toJsonObjectLike(rawValue);
+    if (!rawSource) return {};
 
     const source = coerceDeepValue(rawSource);
     if (!source || typeof source !== "object" || Array.isArray(source)) return {};
@@ -204,15 +198,8 @@ function readConfirmationStrategyParams(
 }
 
 function readStrategyParams(rawValue: unknown): StrategyParams {
-    let rawSource = rawValue;
-    if (typeof rawValue === "string") {
-        try {
-            rawSource = JSON.parse(rawValue || "{}");
-        } catch {
-            return {};
-        }
-    }
-    if (!rawSource || typeof rawSource !== "object" || Array.isArray(rawSource)) return {};
+    const rawSource = toJsonObjectLike(rawValue);
+    if (!rawSource) return {};
 
     const source = coerceDeepValue(rawSource);
     if (!source || typeof source !== "object" || Array.isArray(source)) return {};

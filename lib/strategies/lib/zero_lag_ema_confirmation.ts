@@ -5,15 +5,9 @@ import {
     createSellSignal,
     ensureCleanData,
     getCloses,
+    normalizeLookbackParams as normalizeParams,
 } from "../strategy-helpers";
 import { calculateZeroLagEma } from "../trend-confirmation-indicators";
-
-function normalizeParams(params: StrategyParams): StrategyParams {
-    return {
-        ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 200))),
-    };
-}
 
 export const zero_lag_ema_confirmation: Strategy = {
     name: "Zero-Lag EMA Confirmation",

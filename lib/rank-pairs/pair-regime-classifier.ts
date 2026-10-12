@@ -24,6 +24,7 @@
 
 import type { OHLCVData } from "../types/strategies";
 import { timeToNumber } from "../strategies/backtest/backtest-utils";
+import { mean } from "../statistics-utils";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -154,13 +155,6 @@ const MAX_ANCHOR_AGE_SECONDS = MAX_ANCHOR_AGE_DAYS * SECONDS_PER_DAY;
 interface AnchorPoint {
     time: number;
     close: number;
-}
-
-function mean(xs: number[]): number {
-    if (xs.length === 0) return 0;
-    let s = 0;
-    for (const x of xs) s += x;
-    return s / xs.length;
 }
 
 /**

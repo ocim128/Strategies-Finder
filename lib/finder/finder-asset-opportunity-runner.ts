@@ -115,6 +115,7 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import { timeKey } from "../strategies/backtest/backtest-utils";
 import { debugLogger } from "../debug-logger";
 import type { AssetOpportunitySignalCache } from "./finder-asset-opportunity-search-cache";
+import { isAbortError, throwAbortError, throwIfAborted } from "../abort-utils";
 
 /**
  * Bounded concurrency for fresh-entry signal regeneration. The server clamps
@@ -2963,18 +2964,4 @@ async function runCandidateOosOnAsset(args: {
             verdict: "inconclusive",
         };
     }
-}
-
-function isAbortError(error: unknown): boolean {
-    return error instanceof Error && error.name === "AbortError";
-}
-
-function throwAbortError(): never {
-    const error = new Error("Asset Opportunity cancelled");
-    error.name = "AbortError";
-    throw error;
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-    if (signal?.aborted) throwAbortError();
 }

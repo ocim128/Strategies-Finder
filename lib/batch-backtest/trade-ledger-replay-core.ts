@@ -700,7 +700,7 @@ function buildLedgerRuleEvaluation(
     };
 }
 
-function formatFailedPairList(failedPairs: readonly string[]): string {
+export function formatFailedPairList(failedPairs: readonly string[]): string {
     return failedPairs.length <= 20
         ? failedPairs.join(", ")
         : `${failedPairs.slice(0, 20).join(", ")} … and ${failedPairs.length - 20} more`;

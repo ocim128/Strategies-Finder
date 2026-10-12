@@ -18,6 +18,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { getArgument } from "./lib/cli-args";
 import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityNextExitOosBaseline,
@@ -2324,11 +2325,6 @@ export function colorizeAssetOpportunityHoldoutReport(
             ? `${cyan}${coloredLine}${reset}`
             : coloredLine;
     }).join("\n");
-}
-
-function getArgument(argv: string[], flag: string): string | undefined {
-    const index = argv.indexOf(flag);
-    return index >= 0 ? argv[index + 1] : undefined;
 }
 
 function defaultArchiveDirectory(): string {

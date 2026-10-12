@@ -5,6 +5,7 @@ import {
     createSellSignal,
     ensureCleanData,
     getCloses,
+    normalizeLookbackParams as normalizeParams,
 } from "../strategy-helpers";
 import { buildRollingMedian } from "./price-action-statistics-core";
 
@@ -13,13 +14,6 @@ type RollingMedianPrepared = {
     closes: number[];
     medianByLookback: Map<number, (number | null)[]>;
 };
-
-function normalizeParams(params: StrategyParams): StrategyParams {
-    return {
-        ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 200))),
-    };
-}
 
 function prepareData(data: OHLCVData[]): RollingMedianPrepared {
     const cleanData = ensureCleanData(data);

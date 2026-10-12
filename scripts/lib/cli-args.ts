@@ -16,3 +16,9 @@ export function toBoolean(value: string | undefined, fallback: boolean): boolean
     if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "off") return false;
     return fallback;
 }
+
+/** Value following `flag` in `argv`, or `undefined` when the flag is absent. */
+export function getArgument(argv: string[], flag: string): string | undefined {
+    const index = argv.indexOf(flag);
+    return index >= 0 ? argv[index + 1] : undefined;
+}

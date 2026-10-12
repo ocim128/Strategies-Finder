@@ -9,9 +9,9 @@ import {
     type TradeSizingMode
 } from '../../types/backtest';
 import { allowsSignalAsEntry, applySlippage, directionFactorFor, entrySideForDirection, signalToPositionDirection } from './backtest-utils';
-import { calculateKelly, type KellySizingState } from '../sizing/kelly-criterion';
-import { type MartingaleState, resolveMartingaleMultiplier } from '../sizing/martingale';
-import { type OptimalFState, calculateSecureF } from '../sizing/optimal-f';
+import { calculateKelly, createKellySizingState, type KellySizingState } from '../sizing/kelly-criterion';
+import { createMartingaleState, type MartingaleState, resolveMartingaleMultiplier } from '../sizing/martingale';
+import { calculateSecureF, createOptimalFState, type OptimalFState } from '../sizing/optimal-f';
 import { resolveRiskParityMultiplier } from '../sizing/risk-parity';
 import { average, clamp } from '../sizing/shared';
 import { resolveVolTargetingMultiplier } from '../sizing/volatility-targeting';
@@ -25,6 +25,19 @@ export interface SmartSizingState {
     kellyState?: KellySizingState;
     martingaleState?: MartingaleState;
     optimalFState?: OptimalFState;
+}
+
+/**
+ * Fresh adaptive-sizing state for a new run. Single owner shared by the
+ * backtest and Monte Carlo engines so both start from the same shape.
+ */
+export function createSmartSizingState(): SmartSizingState {
+    return {
+        recentVelocityScores: [],
+        kellyState: createKellySizingState(),
+        martingaleState: createMartingaleState(),
+        optimalFState: createOptimalFState(),
+    };
 }
 
 /**

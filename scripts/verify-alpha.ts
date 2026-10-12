@@ -14,10 +14,10 @@ import type {
     OHLCVData,
     Strategy,
     StrategyParams,
-    TradeDirection,
 } from "../lib/types/strategies";
 import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
 import { parseOhlcvBars } from "./lib/ohlcv-file";
+import { deriveSeed, inferDirection } from "./lib/strategy-hunt-utils";
 
 export type VerifyAlphaCliOptions = {
     inputFile: string;
@@ -268,21 +268,6 @@ export function parseArgs(argv: string[]): VerifyAlphaCliOptions & { help?: bool
         minPassCount: minPassCountSafe,
         dataDir,
     };
-}
-
-function inferDirection(strategy: Strategy): TradeDirection {
-    const direction = strategy.metadata?.direction;
-    if (direction === "short" || direction === "both" || direction === "long") return direction;
-    return "long";
-}
-
-function deriveSeed(baseSeed: number, symbol: string, strategyKey: string): number {
-    const key = `${symbol}|${strategyKey}`;
-    let hash = baseSeed >>> 0;
-    for (let i = 0; i < key.length; i++) {
-        hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
-    }
-    return (hash >>> 0) || 1;
 }
 
 function buildVerificationSeeds(baseSeed: number, symbol: string, strategyKey: string, count: number): number[] {

@@ -6,6 +6,7 @@ import {
     ensureCleanData,
     getCloses,
     getVolumes,
+    normalizeLookbackParams as normalizeParams,
 } from "../strategy-helpers";
 import { calculateVolumeWeightedMedian } from "../trend-confirmation-indicators";
 
@@ -15,13 +16,6 @@ type VolumeWeightedMedianPrepared = {
     volumes: number[];
     medianByLookback: Map<number, (number | null)[]>;
 };
-
-function normalizeParams(params: StrategyParams): StrategyParams {
-    return {
-        ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 200))),
-    };
-}
 
 function prepareData(data: OHLCVData[]): VolumeWeightedMedianPrepared {
     const cleanData = ensureCleanData(data);

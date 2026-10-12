@@ -12,7 +12,7 @@ import { createSeededRandom } from "../../param-math-utils";
 import { calculateSharpeRatioFromEquitySamples } from "../performance-metrics";
 import { medianOrNull, prepareSortedStats } from "../../statistics-utils";
 import { timeKey } from "../backtest/backtest-utils";
-import { resolveAllocatedCapital, type SmartSizingState } from "../backtest/position-builder";
+import { createSmartSizingState, resolveAllocatedCapital, type SmartSizingState } from "../backtest/position-builder";
 import { createKellySizingState, updateKellyState } from "../sizing/kelly-criterion";
 import { createMartingaleState, updateMartingaleState } from "../sizing/martingale";
 import { createOptimalFState, updateOptimalFState } from "../sizing/optimal-f";
@@ -445,7 +445,7 @@ function simulateChartTradePath(
     let nextCurvePoint = 0;
     const equitySamples = new Array<number>(order.length);
     const equityCurve = curveSampleIndices ? new Array<number>(curveSampleIndices.length) : undefined;
-    const smartSizingState = sizing ? createMonteCarloSmartSizingState() : null;
+    const smartSizingState = sizing ? createSmartSizingState() : null;
 
     for (let step = 0; step < order.length; step++) {
         const tradeIndex = order[step];
@@ -514,15 +514,6 @@ function simulateChartTradePath(
         ruinOccurred,
         timeToRuin,
         equityCurve,
-    };
-}
-
-function createMonteCarloSmartSizingState(): SmartSizingState {
-    return {
-        recentVelocityScores: [],
-        kellyState: createKellySizingState(),
-        martingaleState: createMartingaleState(),
-        optimalFState: createOptimalFState(),
     };
 }
 

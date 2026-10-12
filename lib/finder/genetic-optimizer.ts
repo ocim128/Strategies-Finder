@@ -23,6 +23,7 @@ import {
     validateParams,
 } from "./finder-param-math";
 import { clamp } from "../param-math-utils";
+import { median } from "../statistics-utils";
 
 interface ParamSpec {
     key: string;
@@ -259,13 +260,6 @@ function computeFitness(result: BacktestResult, minTrades: number): FitnessScore
         maxDrawdownPercent: drawdown,
         totalTrades: tradeCount,
     };
-}
-
-function median(values: number[]): number {
-    if (values.length === 0) return 0;
-    const sorted = values.slice().sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
 export async function runGeneticOptimization(input: GeneticOptimizerInput): Promise<GeneticOptimizationResult> {

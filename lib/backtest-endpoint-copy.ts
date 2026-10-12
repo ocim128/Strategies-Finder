@@ -9,6 +9,7 @@ import type { BacktestRunEngine } from "./backtest-run-presenter";
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import type { CapitalSettings } from "./types/backtest";
 import type { BacktestSettings, OHLCVData, StrategyParams } from "./types/strategies";
+import { isAbortLikeError } from "./local-api-transport";
 
 export interface UiBacktestEndpointSnapshot {
     symbol: string;
@@ -146,10 +147,6 @@ function extractBacktestEndpointError(payload: unknown): string | null {
     return typeof error === "string" && error.trim().length > 0
         ? error
         : null;
-}
-
-function isAbortLikeError(error: unknown): boolean {
-    return error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError");
 }
 
 function createBacktestEndpointRequestTimeoutSignal(): AbortSignal | undefined {

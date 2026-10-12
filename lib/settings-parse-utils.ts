@@ -38,3 +38,26 @@ export function toFiniteNumber(value: unknown, options?: NumberParseOptions): nu
 export function readNumber(value: unknown, fallback: number, options?: NumberParseOptions): number {
     return toFiniteNumber(value, options) ?? fallback;
 }
+
+/**
+ * Coerce a settings value into a plain (non-array) object, or `null` when it
+ * cannot be one. A string is first `JSON.parse`d — an empty string counts as
+ * `{}` — so values that arrive string-encoded from the DOM or from persisted
+ * JSON are accepted here identically to the way the raw settings resolver
+ * accepts them. Arrays, primitives and unparseable strings all yield `null`.
+ *
+ * Note this is deliberately NOT `settings-model.toRecord`, which performs only
+ * the object/array guard and rejects string-encoded values.
+ */
+export function toJsonObjectLike(value: unknown): Record<string, unknown> | null {
+    let source = value;
+    if (typeof value === "string") {
+        try {
+            source = JSON.parse(value || "{}");
+        } catch {
+            return null;
+        }
+    }
+    if (!source || typeof source !== "object" || Array.isArray(source)) return null;
+    return source as Record<string, unknown>;
+}

@@ -6,14 +6,8 @@ import {
     createSellSignal,
     ensureCleanData,
     getTypicalPrices,
+    normalizeLookbackParams as normalizeParams,
 } from "../strategy-helpers";
-
-function normalizeParams(params: StrategyParams): StrategyParams {
-    return {
-        ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 200))),
-    };
-}
 
 export const typical_price_ema_confirmation: Strategy = {
     name: "Typical Price EMA Confirmation",

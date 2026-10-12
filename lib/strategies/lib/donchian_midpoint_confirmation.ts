@@ -7,15 +7,9 @@ import {
     getCloses,
     getHighs,
     getLows,
+    normalizeLookbackParams as normalizeParams,
 } from "../strategy-helpers";
 import { calculateDonchianMidpoint } from "../trend-confirmation-indicators";
-
-function normalizeParams(params: StrategyParams): StrategyParams {
-    return {
-        ...params,
-        lookback: Math.max(2, Math.round(Number(params.lookback ?? 200))),
-    };
-}
 
 export const donchian_midpoint_confirmation: Strategy = {
     name: "Donchian Midpoint Confirmation",

@@ -49,7 +49,7 @@
  *           [--strategies 4] [--symbols 2] [--bars 20000] [--max-runs 48]
  *           [--port 3039]
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { performance } from "node:perf_hooks";
 import path from "node:path";
@@ -59,16 +59,15 @@ import type {
     FinderUniverseCandidate,
 } from "../lib/types/finder";
 import type { BacktestSettings, OHLCVData } from "../lib/types/strategies";
-
-function parseString(name: string, fallback: string): string {
-    const index = process.argv.indexOf(`--${name}`);
-    return index === -1 ? fallback : (process.argv[index + 1] ?? fallback);
-}
-function parseIntOption(name: string, fallback: number): number {
-    const index = process.argv.indexOf(`--${name}`);
-    const value = Number.parseInt(process.argv[index + 1] ?? "", 10);
-    return Number.isFinite(value) && value > 0 ? value : fallback;
-}
+import {
+    ensureReleaseBinary,
+    mulberry32,
+    parseIntOption,
+    parseString,
+    sampleRss,
+    stopServer,
+    waitHealthy,
+} from "./lib/rust-admission-harness";
 
 const CONFIGS = parseString("configs", "unbounded,2,4")
     .split(",")
@@ -90,18 +89,6 @@ const SERVER_BINARY = path.join(
     "release",
     "trading-engine-server.exe",
 );
-
-function mulberry32(seed: number): () => number {
-    let state = seed >>> 0;
-    return () => {
-        state = (state + 0x6d2b79f5) >>> 0;
-        let t = state;
-        t = Math.imul(t ^ (t >>> 15), t | 1);
-        t ^= t + Math.imul(t ^ (t >>> 7), t | 1);
-        t ^= t + (t << 13);
-        return ((t ^ (t >>> 16)) >>> 0) / 4294967296;
-    };
-}
 
 /** One deterministic dataset per symbol, shared by every run. */
 function buildDataset(symbolIndex: number, count: number): OHLCVData[] {
@@ -227,14 +214,6 @@ function freshCounts(): FetchCounts {
     return currentCounts;
 }
 
-function ensureReleaseBinary(): void {
-    const { status } = spawnSync("cargo", ["build", "--release", "--locked"], {
-        cwd: path.join(ROOT, "rust-engine"),
-        stdio: "inherit",
-    });
-    if (status !== 0) throw new Error("cargo build --release failed");
-}
-
 function startServer(limit: string | null): ChildProcess {
     const env: NodeJS.ProcessEnv = {
         ...process.env,
@@ -243,76 +222,6 @@ function startServer(limit: string | null): ChildProcess {
     };
     if (limit !== null) env.RUST_ENGINE_MAX_IN_FLIGHT = limit;
     return spawn(SERVER_BINARY, [], { env, stdio: "ignore" });
-}
-
-async function waitHealthy(baseUrl: string, timeoutMs = 30_000): Promise<void> {
-    const deadline = performance.now() + timeoutMs;
-    while (performance.now() < deadline) {
-        try {
-            const response = await fetch(`${baseUrl}/api/health`);
-            if (response.ok) return;
-        } catch {
-            // not up yet
-        }
-        await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    throw new Error("server did not become healthy in time");
-}
-
-function stopServer(child: ChildProcess | undefined): void {
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    if (process.platform === "win32") {
-        spawnSync("taskkill", ["/PID", String(child.pid), "/F", "/T"], {
-            stdio: "ignore",
-        });
-    } else {
-        child.kill("SIGKILL");
-    }
-}
-
-/**
- * Genuinely asynchronous RSS sampler (spawn, never spawnSync) so the
- * benchmark's event loop — which is also the Finder's event loop — is never
- * blocked by a PowerShell cold start. The reported maximum is a SAMPLED
- * maximum and misses transient peaks between samples; it is not true peak RSS.
- */
-type RssSampler = { stop: () => void; sampledMaxRssBytes: () => number | null };
-
-function sampleRss(pid: number | undefined, intervalMs = 250): RssSampler {
-    if (process.platform !== "win32" || pid === undefined) {
-        return { stop: () => {}, sampledMaxRssBytes: () => null };
-    }
-    let peak: number | null = null;
-    let inFlight = false;
-    const timer = setInterval(() => {
-        if (inFlight) return;
-        inFlight = true;
-        const child = spawn(
-            "powershell",
-            [
-                "-NoProfile",
-                "-Command",
-                `(Get-Process -Id ${pid} -ErrorAction SilentlyContinue).WorkingSet64`,
-            ],
-            { stdio: ["ignore", "pipe", "ignore"] },
-        );
-        child.stdout.on("data", (chunk: Buffer) => {
-            const value = Number.parseInt(chunk.toString().trim(), 10);
-            if (Number.isFinite(value) && (peak === null || value > peak)) {
-                peak = value;
-            }
-        });
-        child.on("close", () => {
-            inFlight = false;
-        });
-        child.on("error", () => {
-            inFlight = false;
-        });
-    }, intervalMs);
-    return {
-        stop: () => clearInterval(timer),
-        sampledMaxRssBytes: () => peak,
-    };
 }
 
 type EngineUsage = {
@@ -366,7 +275,7 @@ function candidateSignature(candidates: FinderUniverseCandidate[]): string {
 }
 
 async function main(): Promise<void> {
-    ensureReleaseBinary();
+    ensureReleaseBinary(ROOT);
     const baseUrl = `http://127.0.0.1:${PORT}`;
     // The client resolves its URL and binds global fetch at import time;
     // both must be prepared first.

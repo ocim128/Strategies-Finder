@@ -13,10 +13,10 @@ import type {
     ExecutionModel,
     OHLCVData,
     Strategy,
-    TradeDirection,
 } from "../lib/types/strategies";
 import { toBoolean, toFinite, toPositiveInt } from "./lib/cli-args";
 import { parseOhlcvDataFile } from "./lib/ohlcv-file";
+import { inferDirection } from "./lib/strategy-hunt-utils";
 
 type CliOptions = {
     strategyKey: string;
@@ -257,12 +257,6 @@ function deriveSeed(baseSeed: number, symbol: string, strategyKey: string, windo
         hash = Math.imul(hash ^ key.charCodeAt(i), 16777619);
     }
     return (hash >>> 0) || 1;
-}
-
-function inferDirection(strategy: Strategy): TradeDirection {
-    const direction = strategy.metadata?.direction;
-    if (direction === "short" || direction === "both" || direction === "long") return direction;
-    return "long";
 }
 
 function buildGeneticConfig(options: CliOptions, seed: number): GeneticOptimizerConfig {
