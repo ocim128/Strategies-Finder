@@ -124,7 +124,7 @@ import type { AssetSwitchCandidateStageResult, CandidateStageResult } from "./op
 import type { DecisionEvent, RankingEvent } from "./open-score-replay/internal-types";
 import { buildReportLines } from "./open-score-replay/report";
 import { createEmptyAssetSwitchSummary, runAssetSwitchReplay } from "./open-score-replay/asset-switch";
-import { createEmptyRankingMeasurement } from "./open-score-replay/types";
+import { createEmptyRankingMeasurement, normalizeRankingTopK } from "./open-score-replay/types";
 import { replayArmFields, assetSwitchArmFields, isCausalArm, RAW_DIRECTIONAL_MINIMUM_FRACTION } from "./open-score-replay/arm-contract";
 import { FINDER_SUPPORT_ARMS_V2 } from "./open-score-replay/causal-arm-constants";
 import { TOP_MEAN_HORIZONS_MAX_VALUE } from "./sp500-top-mean-request-limits";
@@ -154,6 +154,8 @@ export async function runOpenScoreUsdReplay(
         // Freeze the same cutoff for switch execution and its sequential measurement.
         options = { ...options, evaluationCutoffSec: options.evaluationCutoffSec ?? Math.floor(Date.now() / 1000) };
     }
+    // One normalized capture depth shared by every ranking stage below.
+    const rankingTopK = options.rankingHorizon !== undefined ? normalizeRankingTopK(options.rankingTopK) : undefined;
     if (options.enableCausalArms) options = { ...options, evaluationCutoffSec: options.evaluationCutoffSec ?? Math.floor(Date.now() / 1000) };
     const enabledArms = replayArmFields(options.enableCausalArms);
     const startedAt = Date.now();
@@ -177,7 +179,7 @@ export async function runOpenScoreUsdReplay(
     const horizons = [...new Set((options.horizons ?? []).filter((h) => Number.isFinite(h) && h >= 1).map((h) => Math.floor(h)))].sort((a, b) => a - b);
     const emptyResult = (partial: Partial<OpenScoreUsdReplayResult>): OpenScoreUsdReplayResult => ({
         mode: replayMode,
-        ...(options.rankingHorizon !== undefined ? { rankingMeasurement: createEmptyRankingMeasurement(options.rankingHorizon, options.enableCausalArms) } : {}),
+        ...(options.rankingHorizon !== undefined ? { rankingMeasurement: createEmptyRankingMeasurement(options.rankingHorizon, options.enableCausalArms, rankingTopK) } : {}),
         pairs: 0, assets: 0, complete: false, omittedPairs: 0, omittedAssets: 0,
         totalEvents: 0, candidateEvents: 0, eligibleEvents: 0, horizons: [],
         latestSelections: null, degree: degreeSummary([], null),
@@ -268,6 +270,7 @@ export async function runOpenScoreUsdReplay(
         directionalTotalPairs: options.directionalTotalPairs,
         enableCausalArms: options.enableCausalArms,
         interval: options.interval, mode: replayMode, assetNames, validDegree: scan.validDegree,
+        ...(rankingTopK !== undefined ? { rankingTopK } : {}),
         streams,
         profitableStreams,
         sampleFromSec: options.sampleFromSec,
@@ -310,6 +313,7 @@ export async function runOpenScoreUsdReplay(
             enableDirectionalArm: options.enableDirectionalArm,
             enableCausalArms: options.enableCausalArms,
             captureRanking: options.rankingHorizon !== undefined,
+            ...(rankingTopK !== undefined ? { rankingTopK } : {}),
             events,
             totalEvents,
             assetNames,
@@ -334,6 +338,7 @@ export async function runOpenScoreUsdReplay(
     } else {
         const outcome = await buildCandidateViews({
             enableCausalArms: options.enableCausalArms,
+            ...(rankingTopK !== undefined ? { rankingTopK } : {}),
             ...(options.rankingHorizon !== undefined ? { onRankingEvent: (event: RankingEvent) => { rankingEvents.push(event); rankingByTime.set(event.timeSec, event); } } : {}),
             events,
             totalEvents,
@@ -406,7 +411,7 @@ export async function runOpenScoreUsdReplay(
                 poolSnapshots: undefined, candidateOutcomes: undefined, requestsByAsset, positiveRequestedAssets: new Set(requestsByAsset.keys()),
                 totalEventCount: records.length, eventTimeOf: (index) => records[index]!.timeSec, shouldStop, onPhase, pairCount, assetCount });
             if (!measurementOutcomes.ok) return emptyResult({ reportLines: [measurementOutcomes.earlyExit.reportLine] });
-            rankingMeasurement = await aggregateRankingMeasurement({ enabledArms, events: records, outcomes: measurementOutcomes.result, horizonBars: options.rankingHorizon, interval: options.interval, shouldStop, onPhase });
+            rankingMeasurement = await aggregateRankingMeasurement({ enabledArms, events: records, outcomes: measurementOutcomes.result, horizonBars: options.rankingHorizon, ...(rankingTopK !== undefined ? { topK: rankingTopK } : {}), interval: options.interval, shouldStop, onPhase });
             measurementOutcomes.result.returnsByView.length = 0;
             measurementOutcomes.result.rankingGapAssetsByView?.clear();
             measurementOutcomes.result.invalidRankingAssets?.clear();
@@ -577,8 +582,8 @@ export async function runOpenScoreUsdReplay(
             const spec = RANKING_ARM_SPEC_BY_FIELD.get(field)!;
             const row = { picks: [] as RankingEvent["arms"][typeof field]["picks"], reason: undefined as RankingEvent["arms"][typeof field]["reason"] };
             const digestFor = (index: number): string => rankingDigestFor(time, index);
-            for (const candidate of pool) insertRankingPick(row.picks, candidate, spec, time, assetNames, digestFor);
-            row.reason = row.picks.length < 5 ? "small_pool" : spec.unique && row.picks[0]!.key === row.picks[1]!.key && row.picks[0]!.secondary === row.picks[1]!.secondary ? "unresolved_pick"
+            for (const candidate of pool) insertRankingPick(row.picks, candidate, spec, time, assetNames, digestFor, rankingTopK);
+            row.reason = row.picks.length < (rankingTopK ?? 5) ? "small_pool" : spec.unique && row.picks[0]!.key === row.picks[1]!.key && row.picks[0]!.secondary === row.picks[1]!.secondary ? "unresolved_pick"
                 : row.picks[0]!.assetIndex !== effectivePick ? "pick_changed" : undefined;
             event.arms[field] = row;
         } } : {}),
@@ -606,7 +611,7 @@ export async function runOpenScoreUsdReplay(
                 if (!originalView) continue;
                 const pools = Object.fromEntries(["positives", "profitPositives", "profitNowPositives", "profitNowConfidencePositives"].map((key) => [key,
                     ((originalView as unknown as Record<string, import("./open-score-replay/internal-types").Candidate[]>)[key] ?? []).filter((candidate) => !dataGapAssets.has(candidate.assetIndex))]));
-                const effective = captureRankingEvent(event.timeSec, pools, assetNames, options.enableCausalArms);
+                const effective = captureRankingEvent(event.timeSec, pools, assetNames, options.enableCausalArms, rankingTopK);
                 for (const field of enabledArms) {
                     if (isCausalArm(field)) continue; // New causal picks never rerank using forward gaps.
                     const row = event.arms[field];
@@ -618,6 +623,7 @@ export async function runOpenScoreUsdReplay(
         views.forEach((view, index) => indexByTime.set(view.timeSec, index));
         profitOnlyEvents.forEach((event, index) => indexByTime.set(event.timeSec, views.length + index));
         rankingMeasurement = await aggregateRankingMeasurement({ enabledArms, events: rankingEvents, outcomes: outcomeStage, horizonBars: options.rankingHorizon,
+            ...(rankingTopK !== undefined ? { topK: rankingTopK } : {}),
             interval: options.interval, horizonIndex: horizons.indexOf(options.rankingHorizon), outcomeIndexOf: (time) => indexByTime.get(time) ?? -1, shouldStop, onPhase });
         rankingEvents.length = 0; rankingByTime.clear();
         outcomeStage.rankingGapAssetsByView?.clear();

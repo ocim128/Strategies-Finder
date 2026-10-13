@@ -2,7 +2,7 @@ import type { ReplayComparison } from "../batch-backtest/batch-open-score-usd-re
 import type { AssetSwitchArmSummary, ReplayMode } from "../batch-backtest/open-score-replay/types";
 import { REPLAY_ARM_TO_FINDER_ARM } from "../batch-backtest/open-score-replay/arm-contract";
 import type { FinderArmField, ReplayArmField } from "../batch-backtest/open-score-replay/arm-contract";
-import { RANKING_MEASUREMENT_SEMANTICS, type RankingMeasurementSummary, type RankingMeasurement, type RankingArmSummary } from "../batch-backtest/open-score-replay/types";
+import { resolveRankingMeasurementTopK, type RankingMeasurementSummary, type RankingMeasurement, type RankingArmSummary } from "../batch-backtest/open-score-replay/types";
 
 /** The fixed set of OPEN_SCORE USD arms exposed by Finder Arm Performance. */
 export const FINDER_ARM_PERFORMANCE_REPLAY_FIELDS = Object.fromEntries(
@@ -75,8 +75,10 @@ export function resolveFinderArmRankingHorizon(
 
 export function getFinderArmRankingMetric(row: { rankingMeasurement?: RankingMeasurementSummary }, arm: FinderArmPerformanceArm, filter: FinderArmPerformanceDisplayFilter = {}): RankingArmSummary | undefined {
     const section = row.rankingMeasurement;
-    if (section?.semanticsVersion !== RANKING_MEASUREMENT_SEMANTICS || (filter.rankingHorizon !== undefined && filter.rankingHorizon !== section.horizonBars)) return undefined;
-    return section.arms[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]];
+    // Both the fixed-five v2 semantics and the recorded-topK v3 semantics are
+    // readable; anything else (v1, future, malformed) requires a rerun.
+    if (resolveRankingMeasurementTopK(section) === undefined || (filter.rankingHorizon !== undefined && filter.rankingHorizon !== section?.horizonBars)) return undefined;
+    return section?.arms[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm]];
 }
 
 export function getFinderCausalAvailabilityDetails(row: { causalArmDiagnostics?: import("../batch-backtest/open-score-replay/types").CausalArmDiagnostics }, arm: FinderArmPerformanceArm): string[] {

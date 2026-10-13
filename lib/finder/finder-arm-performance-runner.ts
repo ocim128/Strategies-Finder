@@ -1,4 +1,4 @@
-import { compactRankingMeasurement } from "../batch-backtest/open-score-replay/types";
+import { compactRankingMeasurement, resolveRankingMeasurementTopK } from "../batch-backtest/open-score-replay/types";
 import { randomBytes } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { resolve, sep } from "node:path";
@@ -231,6 +231,11 @@ function buildCandidateResult(args: {
     if (rankingRequested && (!rankingMeasurement || Object.keys(FINDER_ARM_PERFORMANCE_REPLAY_FIELDS).some((arm) => !rankingMeasurement.arms[FINDER_ARM_PERFORMANCE_REPLAY_FIELDS[arm as keyof typeof FINDER_ARM_PERFORMANCE_REPLAY_FIELDS]]) || rankingMeasurement.horizonBars !== (replayMode === "horizon" ? input.options.armPerformance?.horizon : input.options.armPerformance?.rankingHorizon))) {
         throw new Error("TOP_MEAN child completed without the required valid ranking measurement section.");
     }
+    // A section measured at a different capture depth is a contract error,
+    // never a comparable ranking measurement.
+    if (rankingRequested && rankingMeasurement && resolveRankingMeasurementTopK(rankingMeasurement) !== (input.options.armPerformance?.rankingTopK ?? 5)) {
+        throw new Error("TOP_MEAN child completed with a ranking measurement captured at a different top-K depth.");
+    }
     const pairCount = input.enumeration.canonicalPairs.length;
     const failedPairs = status.failedPairs;
     const completedPairs = status.completedPairs;
@@ -445,6 +450,9 @@ async function runFinderArmPerformanceCandidates(
             replayMode,
             ...(replayMode === "horizon" ? { horizons: [horizon!] } : {}),
             ...(input.options.armPerformance?.measurement === "ranking_consistency" ? { rankingHorizon: replayMode === "horizon" ? horizon : input.options.armPerformance.rankingHorizon } : {}),
+            ...(input.options.armPerformance?.measurement === "ranking_consistency" && input.options.armPerformance.rankingTopK !== undefined
+                ? { rankingTopK: input.options.armPerformance.rankingTopK }
+                : {}),
             pairListText: input.enumeration.canonicalPairs.join("\n"),
             resume: false,
             saveArchiveLog: false,

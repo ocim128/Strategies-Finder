@@ -4,7 +4,7 @@ import { captureRankingEvent, buildAssetSwitchDecisions, selectAfterOutcomes, cr
 import { aggregateRankingMeasurement, rankingPairCredit } from "../lib/batch-backtest/open-score-replay/aggregation";
 import { blockBootstrapMeanCi, buildRankingTimeBlocks } from "../lib/batch-backtest/open-score-replay/statistics";
 import { LEGACY_REPLAY_ARM_FIELDS as REPLAY_ARM_FIELDS } from "../lib/batch-backtest/open-score-replay/arm-contract";
-import { compactRankingMeasurement } from "../lib/batch-backtest/open-score-replay/types";
+import { compactRankingMeasurement, RANKING_MEASUREMENT_SEMANTICS, RANKING_MEASUREMENT_VARIABLE_TOP_K_SEMANTICS, resolveRankingMeasurementTopK, type RankingMeasurementSummary } from "../lib/batch-backtest/open-score-replay/types";
 import type { Candidate, DecisionEvent, EventView, RankingEvent, RankingPick } from "../lib/batch-backtest/open-score-replay/internal-types";
 import type { TargetOutcomeStageResult, ViewOutcomeRecord } from "../lib/batch-backtest/open-score-replay/target-outcomes";
 import { tieBreakDigest } from "../lib/batch-backtest/max-active-research-contract";
@@ -339,5 +339,68 @@ describe("top-five ranking consistency", () => {
         let error: unknown;
         try { await aggregateRankingMeasurement({ events: [event(0)], outcomes: outcomes([event(0)]), horizonBars: 1, interval: "1s", shouldStop: () => true }); } catch (caught) { error = caught; }
         expect(String(error)).to.contain("cancelled during ranking measurement");
+    });
+
+    it("captures a configurable top-K depth with the same order prefix as the fixed five", () => {
+        const base = event(0);
+        for (const topK of [2, 3, 4]) {
+            const bounded = captureRankingEvent(0, { positives: pool, profitPositives: pool, profitNowPositives: pool, profitNowConfidencePositives: pool }, names, false, topK);
+            for (const field of REPLAY_ARM_FIELDS) {
+                expect(bounded.arms[field].picks).to.have.length(topK);
+                expect(bounded.arms[field].picks.map((pick) => pick.assetIndex))
+                    .to.deep.equal(base.arms[field].picks.slice(0, topK).map((pick) => pick.assetIndex));
+            }
+            const smallPool = captureRankingEvent(0, { positives: pool.slice(0, topK - 1) }, names, false, topK);
+            expect(smallPool.arms.topRaw.reason).to.equal("small_pool");
+        }
+        const assetNames = Array.from({ length: 40 }, (_, index) => `ASSET${index}`);
+        const candidates: Candidate[] = assetNames.map((_, assetIndex) => ({ assetIndex, raw: assetIndex % 5, mean: assetIndex % 3, z: assetIndex % 4, adjusted: 1, activePairs: 1, topStableSupport: assetIndex % 3, topFreshSupport: assetIndex % 3 }));
+        for (const spec of RANKING_ARM_SPECS) {
+            const expected = candidates.map((candidate) => ({ assetIndex: candidate.assetIndex,
+                key: spec.key === "z" ? candidate.z ?? 0 : candidate[spec.key]!, secondary: spec.unique ? candidate.raw : 0 }))
+                .sort((a, b) => spec.direction * (a.key - b.key || a.secondary - b.secondary)
+                    || tieBreakDigest(1700000000, assetNames[a.assetIndex]!).localeCompare(tieBreakDigest(1700000000, assetNames[b.assetIndex]!)))
+                .slice(0, 3);
+            const actual: RankingPick[] = [];
+            for (const candidate of candidates) insertRankingPick(actual, candidate, spec, 1700000000, assetNames, undefined, 3);
+            expect(actual).to.deep.equal(expected);
+        }
+    });
+
+    it("measures three-way comparisons at top K 3 with recorded v3 semantics", async () => {
+        const capture = (timeSec: number): RankingEvent =>
+            captureRankingEvent(timeSec, { positives: pool, profitPositives: pool, profitNowPositives: pool, profitNowConfidencePositives: pool }, names, false, 3);
+        const events = [capture(0), capture(10)];
+        const summary = await aggregateRankingMeasurement({ events, outcomes: outcomes(events), horizonBars: 1, interval: "1s", shouldStop: () => false, topK: 3 });
+        expect(summary.semanticsVersion).to.equal(RANKING_MEASUREMENT_VARIABLE_TOP_K_SEMANTICS);
+        expect(summary.topK).to.equal(3);
+        expect(summary.arms.topRaw).to.include({ scoredEvents: 2, comparisons: 6, tiedComparisons: 0, meanAccuracy: 1, top1Superiority: 1 });
+        expect(summary.arms.botRaw.meanAccuracy).to.equal(0);
+        expect(compactRankingMeasurement(summary)).to.deep.equal(summary);
+        // The same three-member capture is unusable at the default depth, and vice versa.
+        expect((await measure(events)).arms.topRaw.skippedReasons.small_pool).to.equal(2);
+        const five = [event(0), event(10)];
+        expect((await aggregateRankingMeasurement({ events: five, outcomes: outcomes(five), horizonBars: 1, interval: "1s", shouldStop: () => false, topK: 3 })).arms.topRaw.skippedReasons.small_pool).to.equal(2);
+    });
+
+    it("keeps the fixed five on the legacy v2 semantics and rejects unusable top-K sections", async () => {
+        const measured = await measure([event(0)]);
+        expect(measured.semanticsVersion).to.equal(RANKING_MEASUREMENT_SEMANTICS);
+        expect(measured.topK).to.equal(undefined);
+        expect(resolveRankingMeasurementTopK(measured)).to.equal(5);
+        const v3 = await aggregateRankingMeasurement({ events: [captureRankingEvent(0, { positives: pool }, names, false, 3)], outcomes: outcomes([event(0)]), horizonBars: 1, interval: "1s", shouldStop: () => false, topK: 3 });
+        expect(resolveRankingMeasurementTopK(v3)).to.equal(3);
+        const legacy = { ...structuredClone(measured), semanticsVersion: "top-five-ranking-v1" };
+        expect(resolveRankingMeasurementTopK(legacy)).to.equal(undefined);
+        expect(compactRankingMeasurement(legacy)).to.equal(undefined);
+        const droppedTopK = structuredClone(v3) as RankingMeasurementSummary;
+        delete (droppedTopK as { topK?: number }).topK;
+        expect(compactRankingMeasurement(droppedTopK)).to.equal(undefined);
+        const relabeledFive = structuredClone(v3) as RankingMeasurementSummary;
+        relabeledFive.topK = 5;
+        expect(compactRankingMeasurement(relabeledFive)).to.equal(undefined);
+        const outOfRange = structuredClone(v3) as RankingMeasurementSummary;
+        outOfRange.topK = 9;
+        expect(compactRankingMeasurement(outOfRange)).to.equal(undefined);
     });
 });

@@ -1,4 +1,4 @@
-import { RANKING_MEASUREMENT_SEMANTICS } from "../../batch-backtest/open-score-replay/types";
+import { RANKING_MEASUREMENT_SEMANTICS, RANKING_TOP_K_DEFAULT } from "../../batch-backtest/open-score-replay/types";
 /**
  * Finder copy/export payloads and the clipboard transport. Browser-only.
  * Builders assemble the exact JSON the Copy buttons put on the clipboard;
@@ -255,7 +255,7 @@ export function buildArmPerformanceTopResultsPayload(args: {
 			}),
 		measurement: ranking ? "ranking_consistency" : "return",
 		rankingMetric: ranking ? (displayFilter.rankingSort === "selected_asset" ? "top1_superiority" : "mean_accuracy_ci_lower") : replayMode === "asset_switch" ? "totalNetPnlUsd" : "topMean",
-		...(ranking ? { rankingSort: displayFilter.rankingSort ?? "overall_ordering", rankingHorizon: resolveFinderArmRankingHorizon(displayFilter, results[0]?.rankingMeasurement?.horizonBars, runContext), rankingSemantics: RANKING_MEASUREMENT_SEMANTICS, scoredEventFilter: { enabled: displayFilter.eventFilterEnabled === true, minEvents: displayFilter.minEvents ?? 1, maxEvents: displayFilter.maxEvents ?? null } } : {}),
+		...(ranking ? { rankingSort: displayFilter.rankingSort ?? "overall_ordering", rankingHorizon: resolveFinderArmRankingHorizon(displayFilter, results[0]?.rankingMeasurement?.horizonBars, runContext), rankingTopK: results[0]?.rankingMeasurement?.topK ?? RANKING_TOP_K_DEFAULT, rankingSemantics: results[0]?.rankingMeasurement?.semanticsVersion ?? RANKING_MEASUREMENT_SEMANTICS, scoredEventFilter: { enabled: displayFilter.eventFilterEnabled === true, minEvents: displayFilter.minEvents ?? 1, maxEvents: displayFilter.maxEvents ?? null } } : {}),
 		runContext,
 		inventoryComplete,
 		results: filteredResults.map((candidate, index) => {

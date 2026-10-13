@@ -417,7 +417,7 @@ affected comparison instead of supplying another pick.
 Both support arms use the ordinary TOP digest tie break. Ranking stores the actual
 score key so numerical score ties retain half credit. The random control uses
 each arm's eligible pool and the existing leave-one-out rule. Cooldown applies
-before top-five capture, using the existing arm history. Five members are
+before top-K capture, using the existing arm history. K members are
 frozen before forward inspection, with no replacement after target failures.
 
 Scalar results include `causalArmDefinitions.version: "finder-causal-arms-v2"`
@@ -447,7 +447,14 @@ as transferable.
 
 
 **Measurement** defaults to **Return**. **Ranking consistency** opts into a
-fixed forward top-five comparison for every arm, alongside the original replay.
+fixed forward top-K comparison for every arm, alongside the original replay.
+Its **Ranking top K** input (2..5, default 5) chooses how many of each arm's
+highest-ranked assets are frozen per decision event before forward inspection;
+5 keeps the original `top-five-ranking-v2` semantics, any other depth records
+`top-k-ranking-v3` with the exact K in each result, and a section captured at a
+different depth than requested is a child contract error, never re-baselined.
+K stays fixed for the whole run and changing it requires new runs — results
+captured at different depths never display as one another.
 Its **Ranking sort** defaults to **Overall ordering**, which ranks configurations
 by the lower bound of the mean-accuracy CI95. **Selected asset** instead sorts
 descending by the existing #1 superiority point score. Both choices require the
@@ -455,7 +462,7 @@ same confidence eligibility (100 scored events, ten populated time blocks and
 an available mean-accuracy CI); unavailable values sort last and equal values
 use `candidateOrdinal`. The choice is saved locally and sorts the complete retained
 inventory before `Top Results`, without running backtests. Return sorting and
-the arm selector retain their existing behavior. Five distinct
+the arm selector retain their existing behavior. K distinct
 assets must have complete cost-adjusted long returns with matching entry and
 exit timestamps. Predictor and outcome ties receive half credit. BOT arms use
 their minimum-first preference order and remain hypothetical longs.
@@ -466,11 +473,13 @@ the existing arm history. Missing, invalid, gapped, censored, mismatched-calenda
 small-pool or unresolved-pick events are skipped without replacement. A changed
 effective replay pick also skips its frozen ranking. Every valid completed event,
 including overlapping forward windows, contributes to both mean accuracy and
-#1 superiority. Ten pair comparisons contribute one equally weighted event.
+#1 superiority. Each event contributes `K * (K - 1) / 2` equally weighted pair
+comparisons (ten at the default K = 5).
 The event filter uses **scored ranking events** in both replay modes.
 
 For those same events, **Best asset frequency** is the fraction where the actual
-selected #1 has a strictly higher completed return than all four other assets.
+selected #1 has a strictly higher completed return than the other K−1 captured
+assets.
 **Shared first place** is the fraction where #1 equals the highest return and
 at least one other asset ties it. These separate counts divide by `scoredEvents`;
 shared first places never count as sole wins. Comparisons use the existing exact
@@ -552,7 +561,9 @@ switch path, and ranking-data failures do not change trading status or P&L.
 **Exclude top contributor** is disabled for ranking while retaining its saved
 Return preference. Re-Sort changes arm, measurement or ranking sort locally using the full
 inventory; unavailable intervals sort last with stable candidate-order ties.
-The current measurement semantics are `top-five-ranking-v2`. Older v1 ranking
+The current measurement semantics are `top-five-ranking-v2` at the default
+capture depth and `top-k-ranking-v3` (recording its exact `topK`) at any other
+depth. Older v1 ranking
 summaries require a rerun because both their scoring sample and bootstrap changed;
 their original return/P&L results survive. First-place counts/rates are additive
 fields within v2, with no measurement or persistence-envelope version bump.

@@ -51,17 +51,21 @@ Ranking consistency is an optional measurement on the existing local route.
 `options.armPerformance.measurement` is `return` (also the omitted legacy
 default) or `ranking_consistency`. Fixed-horizon ranking uses `horizon`; switch
 ranking requires `rankingHorizon`, sent from the same saved UI input. Both use
-the existing positive integer bound of 1,000 bars. Validation occurs before
+the existing positive integer bound of 1,000 bars. Optional
+`options.armPerformance.rankingTopK` chooses the capture depth — how many
+top-ranked assets are frozen per arm and event — as an integer between 2 and 5;
+omitted and 5 both keep the fixed five-member legacy capture. Validation occurs before
 owner acquisition; stale contributor exclusion becomes raw when ranking is
 selected. Optional `options.armPerformance.rankingSort` accepts
 `overall_ordering` (the compatibility default) or `selected_asset`. It is a local
 display preference captured for configuration/export metadata; replay never uses
 it to select assets or calculate scores. The captured context records the
-effective measurement, horizon and submitted sort preference.
+effective measurement, horizon, top-K depth and submitted sort preference.
 Authorization, pair limits, memory admission and run-id-scoped Stop are unchanged.
 
 Only the trusted `finder_arm` execution profile forwards the opt-in to replay.
 Switch capture retains at most five indexes and complete predictor keys per arm
+(the requested top-K depth, bounded at five)
 before releasing score snapshots. Its simulation and target-outcome measurement
 run sequentially; horizon mode shares its existing same-horizon outcomes. Both
 reuse lazy target loading, bounded prefetch/LRUs, frozen cutoff and cost arithmetic.
@@ -69,13 +73,15 @@ Ranking uses completed candles, including when switch fills can use the current
 candle's known open. Target timestamps are normalized before gap detection.
 Forward gaps beyond the decision-window end also invalidate frozen measurements.
 Cooldown capture uses original pools and the existing pre-update selection
-history; it never adds a second history or replaces failed members with #6.
-Cooldown top-five capture shares a lazy digest cache across arms at one event
+history; it never adds a second history or replaces failed members with #K+1.
+Cooldown top-K capture shares a lazy digest cache across arms at one event
 timestamp. The cache is cleared when the timestamp changes, preserving the
 existing digest and tie order without retaining a run-length cache.
 
 Replay, coordinator and both Finder candidate variants add a scalar-only
-`rankingMeasurement` section: `semanticsVersion: "top-five-ranking-v2"`,
+`rankingMeasurement` section: `semanticsVersion: "top-five-ranking-v2"` at the
+default depth or `"top-k-ranking-v3"` with a required integer `topK` (2..5) at
+any other depth,
 `horizonBars` and `arms` keyed by the canonical replay arm mapping. Each arm
 carries `eligibleEvents` and `scoredEvents` (both count every valid event),
 other skipped counts and reasons, tied/total comparisons, mean accuracy, #1
@@ -95,11 +101,11 @@ and event counts. Unequal blocks never give events unequal point-score weight.
 See [the exact rule and its limits](finder.md#arm-performance).
 
 A valid zero-event section is unavailable
-data; a requested missing, malformed or wrong-horizon child section is a fatal
+data; a requested missing, malformed, wrong-horizon or wrong-top-K child section is a fatal
 child contract error, collected before owned artifact cleanup. Stop prevents
 partial measurement scores from completing a candidate.
 
-The first-place counts use the same five completed returns and scored events:
+The first-place counts use the same K completed returns and scored events:
 strictly highest selected return is sole first place; a tied highest return is
 shared first place. Their rates divide separately by scored events and are null
 at zero events. Predictor ties do not change these realized outcomes. No extra
@@ -112,13 +118,15 @@ leave only frequencies unavailable with a rerun message; existing accuracy,
 superiority, CI and return/P&L survive. Valid counts can reconstruct absent rates;
 provided rates must agree with counts. Recovery never invents zero counts.
 Version-1 persistence envelopes remain unchanged. Missing UI preference means
-Return and Overall ordering; v1 ranking, missing or future/malformed measurement semantics require
+Return and Overall ordering; v1 ranking, missing or future/malformed measurement semantics (including
+a v3 section whose `topK` is missing, out of range, or inconsistent with the
+recorded comparison counts) require
 a rerun while
 original return/P&L summaries survive. The existing terminal/status inventory
 remains authoritative on reload. No annual passes, pool snapshots, outcome
 archives, detailed ranking event rows, database migration or resume storage
 are introduced. The original v1 delivery plan has been retired; the current
-v2 rules are documented above.
+v2 and variable-top-K v3 rules are documented above.
 
 Scalar ranking recovery validates each of the seventeen arm sections once. The
 fifteen legacy sections remain required; absent or malformed additional sections
@@ -290,7 +298,7 @@ on worker count and host load.
 
 Causal switch picks share lazy tie digests within each decision timestamp.
 Ranking insertion computes the incoming candidate digest at most once and
-visits only the applicable pool specifications. Bounded top-five insertion
+visits only the applicable pool specifications. Bounded top-K insertion
 creates no retained row for discarded candidates. These changes preserve
 score arithmetic, tie keys, and all seventeen retained arms.
 
@@ -374,7 +382,8 @@ missing or invalid required sections are child contract errors before cleanup.
 Legacy recovery requires only the original fifteen arms, validates present
 additional data independently and leaves absent/malformed additions unavailable
 with **Rerun required**. It never invents zero-event recovery data. The existing
-`top-five-ranking-v2` and persistence envelope remain unchanged.
+`top-five-ranking-v2` (and its additive `top-k-ranking-v3` top-K field) and
+persistence envelope remain unchanged.
 
 For rollback, disable the trusted additional-arm option for new runs and show
 the legacy selector subset. Keep optional-field readers so previously saved

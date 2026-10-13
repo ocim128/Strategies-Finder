@@ -65,6 +65,7 @@ export type FinderBoundStateKey =
 	| "armPerformanceHorizon"
 	| "armPerformanceMeasurement"
 	| "armPerformanceRankingSort"
+	| "armPerformanceRankingTopK"
 	| "armPerformanceReplayMode"
 	| "armPerformanceExcludeTopContributor"
 	| "armPerformanceEventFilterEnabled"
@@ -131,6 +132,7 @@ export const FINDER_CONTROL_BINDINGS: readonly FinderControlBinding[] = [
 	{ domKey: "finderAssetOosBatchToggle", stateKey: "assetOpportunityOosBatchEnabled", read: "boolean", id: "finderAssetOosBatchToggle" },
 	{ domKey: "finderArmPerformanceMeasurement", stateKey: "armPerformanceMeasurement", read: "select", id: "finderArmPerformanceMeasurement" },
 	{ domKey: "finderArmPerformanceRankingSort", stateKey: "armPerformanceRankingSort", read: "select", id: "finderArmPerformanceRankingSort" },
+	{ domKey: "finderArmPerformanceRankingTopK", stateKey: "armPerformanceRankingTopK", read: "number", min: 2, id: "finderArmPerformanceRankingTopK" },
 	{ domKey: "finderArmPerformanceReplayMode", stateKey: "armPerformanceReplayMode", read: "select", id: "finderArmPerformanceReplayMode" },
 	{ domKey: "finderArmPerformanceHorizon", stateKey: "armPerformanceHorizon", read: "number", min: 1, id: "finderArmPerformanceHorizon" },
 	{ domKey: "finderArmPerformanceExcludeTopContributor", stateKey: "armPerformanceExcludeTopContributor", read: "boolean", id: "finderArmPerformanceExcludeTopContributor" },

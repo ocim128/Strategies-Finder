@@ -30,7 +30,7 @@ import { pickUsableMaxByAssetNames, pickUsableMinByAssetNames, causalCandidatePo
 import { yieldLoop } from "./runtime";
 import { LEGACY_REPLAY_ARM_FIELDS, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, type CausalArmField } from "./arm-contract";
 import { REPLAY_ARM_TO_FINDER_ARM } from "./arm-contract";
-import { RANKING_MEASUREMENT_SEMANTICS, type RankingMeasurementSummary, type RankingSkipReason } from "./types";
+import { RANKING_TOP_K_DEFAULT, rankedPairComparisons, rankingSemanticsForTopK, type RankingMeasurementSummary, type RankingSkipReason } from "./types";
 import type { RankingEvent, RankingPick } from "./internal-types";
 import { blockBootstrapMeanCi, buildRankingTimeBlocks, meanOrNull, type RankingMeasurementWindow } from "./statistics";
 import type { TargetOutcomeStageResult } from "./target-outcomes";
@@ -45,12 +45,16 @@ export async function aggregateRankingMeasurement(args: {
     events: readonly RankingEvent[];
     outcomes: TargetOutcomeStageResult;
     horizonBars: number;
+    /** Capture depth; undefined = legacy five-member capture. */
+    topK?: number;
     horizonIndex?: number;
     interval?: string;
     outcomeIndexOf?: (time: number, index: number) => number;
     shouldStop: () => boolean;
     onPhase?: ReplayPhaseCallback;
 }): Promise<RankingMeasurementSummary> {
+    const topK = args.topK ?? RANKING_TOP_K_DEFAULT;
+    const comparisonsPerEvent = rankedPairComparisons(topK);
     const arms = {} as RankingMeasurementSummary["arms"];
     const hi = args.horizonIndex ?? 0;
     const enabledArms = args.enabledArms ?? LEGACY_REPLAY_ARM_FIELDS;
@@ -68,7 +72,7 @@ export async function aggregateRankingMeasurement(args: {
             const { event, index } = order[i]!;
             const row = event.arms[field];
             if (row.reason) { skip(row.reason); continue; }
-            if (row.picks.length !== 5 || new Set(row.picks.map((pick) => pick.assetIndex)).size !== 5) { skip("small_pool"); continue; }
+            if (row.picks.length !== topK || new Set(row.picks.map((pick) => pick.assetIndex)).size !== topK) { skip("small_pool"); continue; }
             const outcomeIndex = args.outcomeIndexOf?.(event.timeSec, index) ?? index;
             const outcomes = args.outcomes.returnsByView[outcomeIndex];
             let reason: RankingSkipReason | undefined;
@@ -93,13 +97,13 @@ export async function aggregateRankingMeasurement(args: {
                 else soleFirstPlaceCount += 1;
             }
             let credits = 0, firstCredits = 0;
-            for (let a = 0; a < 5; a += 1) for (let b = a + 1; b < 5; b += 1) {
+            for (let a = 0; a < topK; a += 1) for (let b = a + 1; b < topK; b += 1) {
                 const credit = rankingPairCredit(row.picks[a]!, row.picks[b]!, completed[a]!.long[hi]!, completed[b]!.long[hi]!);
                 if (credit === 0.5) tiedComparisons += 1;
                 credits += credit;
                 if (a === 0) firstCredits += credit;
             }
-            values.push(credits / 10); firstValues.push(firstCredits / 4);
+            values.push(credits / comparisonsPerEvent); firstValues.push(firstCredits / (topK - 1));
             windows.push({ entryTime: first.entryTime, exitTime: first.exitTimes[hi]! });
         }
         if (args.shouldStop()) throw new Error("OPEN_SCORE USD replay cancelled during ranking measurement.");
@@ -107,7 +111,7 @@ export async function aggregateRankingMeasurement(args: {
         const ci = await blockBootstrapMeanCi(blocks, 10_000, args.shouldStop);
         arms[field] = { eligibleEvents, scoredEvents: values.length,
             skippedEvents: Object.values(skippedReasons).reduce((sum, n) => sum + n, 0), skippedReasons,
-            tiedComparisons, comparisons: values.length * 10, meanAccuracy: meanOrNull(values), top1Superiority: meanOrNull(firstValues),
+            tiedComparisons, comparisons: values.length * comparisonsPerEvent, meanAccuracy: meanOrNull(values), top1Superiority: meanOrNull(firstValues),
             soleFirstPlaceCount, sharedFirstPlaceCount,
             soleFirstPlaceRate: values.length ? soleFirstPlaceCount / values.length : null,
             sharedFirstPlaceRate: values.length ? sharedFirstPlaceCount / values.length : null,
@@ -115,7 +119,7 @@ export async function aggregateRankingMeasurement(args: {
             status: ci.lower !== null && ci.upper !== null ? "available" : values.length ? "insufficient_data" : "no_events" };
         args.onPhase?.("aggregate", `measured ranking consistency ${REPLAY_ARM_TO_FINDER_ARM[field]}`, Object.keys(arms).length, enabledArms.length);
     }
-    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars: args.horizonBars, arms };
+    return { semanticsVersion: rankingSemanticsForTopK(topK), ...(topK !== RANKING_TOP_K_DEFAULT ? { topK } : {}), horizonBars: args.horizonBars, arms };
 }
 
 const ARM_EVENT_DETAIL_SELECTORS = REPLAY_ARM_TO_FINDER_ARM as Record<ReplayArmField, OpenScoreUsdEventDetailSelector>;

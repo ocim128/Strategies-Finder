@@ -279,6 +279,41 @@ export interface CandidateOutcomeRecord {
 }
 
 export const RANKING_MEASUREMENT_SEMANTICS = "top-five-ranking-v2";
+/**
+ * Semantics for runs with a capture depth other than the fixed five. The
+ * summary records the exact `topK`; a section whose recorded K differs from
+ * the requested one is a contract error, not a re-baselined measurement.
+ */
+export const RANKING_MEASUREMENT_VARIABLE_TOP_K_SEMANTICS = "top-k-ranking-v3";
+export const RANKING_TOP_K_MIN = 2;
+/** Frozen legacy capture depth; retention bounds elsewhere assume at most five. */
+export const RANKING_TOP_K_MAX = 5;
+export const RANKING_TOP_K_DEFAULT = RANKING_TOP_K_MAX;
+/** C(K,2) pairwise outcome comparisons scored per completed ranking event. */
+export const rankedPairComparisons = (topK: number): number => (topK * (topK - 1)) / 2;
+
+/** Clamp any request shape onto the supported capture depths; undefined = legacy five. */
+export function normalizeRankingTopK(value: unknown): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) return RANKING_TOP_K_DEFAULT;
+    return Math.max(RANKING_TOP_K_MIN, Math.min(RANKING_TOP_K_MAX, Math.round(value)));
+}
+
+export function rankingSemanticsForTopK(topK: number): typeof RANKING_MEASUREMENT_SEMANTICS | typeof RANKING_MEASUREMENT_VARIABLE_TOP_K_SEMANTICS {
+    return topK === RANKING_TOP_K_DEFAULT ? RANKING_MEASUREMENT_SEMANTICS : RANKING_MEASUREMENT_VARIABLE_TOP_K_SEMANTICS;
+}
+
+/** Resolve a section's capture depth from its semantics; undefined = unusable for ranking display. */
+export function resolveRankingMeasurementTopK(section: { semanticsVersion?: unknown; topK?: unknown } | null | undefined): number | undefined {
+    if (!section || typeof section !== "object") return undefined;
+    if (section.semanticsVersion === RANKING_MEASUREMENT_SEMANTICS) return RANKING_TOP_K_DEFAULT;
+    if (section.semanticsVersion === RANKING_MEASUREMENT_VARIABLE_TOP_K_SEMANTICS) {
+        return typeof section.topK === "number" && Number.isInteger(section.topK)
+            && section.topK >= RANKING_TOP_K_MIN && section.topK <= RANKING_TOP_K_MAX
+            ? section.topK : undefined;
+    }
+    return undefined;
+}
+
 export type RankingMeasurement = "return" | "ranking_consistency";
 export type RankingSkipReason = "small_pool" | "unresolved_pick" | "pick_changed" | "missing_target" | "missing_entry" | "invalid_price" | "data_gap" | "right_censored" | "calendar_mismatch";
 export interface RankingArmSummary {
@@ -306,20 +341,22 @@ export interface RankingArmSummary {
 }
 /** Scalar-only additive diagnostic, separate from trading status. */
 export interface RankingMeasurementSummary {
-    semanticsVersion: typeof RANKING_MEASUREMENT_SEMANTICS;
+    semanticsVersion: typeof RANKING_MEASUREMENT_SEMANTICS | typeof RANKING_MEASUREMENT_VARIABLE_TOP_K_SEMANTICS;
+    /** Capture depth; present (and validated) whenever the semantics is not the fixed five. */
+    topK?: number;
     horizonBars: number;
     arms: import("./arm-contract").ReplayArmResults<RankingArmSummary>;
 }
 
-export function createEmptyRankingMeasurement(horizonBars: number, enabled = false): RankingMeasurementSummary {
-    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars, arms: Object.fromEntries(replayArmFields(enabled).map((field) => [field, {
+export function createEmptyRankingMeasurement(horizonBars: number, enabled = false, topK: number = RANKING_TOP_K_DEFAULT): RankingMeasurementSummary {
+    return { semanticsVersion: rankingSemanticsForTopK(topK), ...(topK !== RANKING_TOP_K_DEFAULT ? { topK } : {}), horizonBars, arms: Object.fromEntries(replayArmFields(enabled).map((field) => [field, {
         eligibleEvents: 0, scoredEvents: 0, skippedEvents: 0, skippedReasons: {}, tiedComparisons: 0, comparisons: 0,
         meanAccuracy: null, top1Superiority: null, soleFirstPlaceCount: 0, sharedFirstPlaceCount: 0, soleFirstPlaceRate: null, sharedFirstPlaceRate: null, ciLower: null, ciUpper: null, blockCount: 0, measurementWindowSec: null, timeBlockWidthSec: null, timeCoverageSec: null, status: "no_events",
     }])) as RankingMeasurementSummary["arms"] };
 }
 
 /** Validate one arm without fabricating missing additive frequencies. */
-function compactRankingArm(value: unknown): RankingArmSummary | undefined {
+function compactRankingArm(value: unknown, comparisonsPerEvent: number): RankingArmSummary | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const row = value as RankingArmSummary;
     const target = { skippedReasons: {} } as RankingArmSummary;
@@ -335,7 +372,7 @@ function compactRankingArm(value: unknown): RankingArmSummary | undefined {
         target[key] = row[key];
     }
     if (row.status !== "available" && row.status !== "insufficient_data" && row.status !== "no_events") return undefined;
-    if (row.scoredEvents !== row.eligibleEvents || row.comparisons !== row.scoredEvents * 10 || row.tiedComparisons > row.comparisons || row.blockCount > row.scoredEvents) return undefined;
+    if (row.scoredEvents !== row.eligibleEvents || row.comparisons !== row.scoredEvents * comparisonsPerEvent || row.tiedComparisons > row.comparisons || row.blockCount > row.scoredEvents) return undefined;
     for (const key of ["measurementWindowSec", "timeBlockWidthSec", "timeCoverageSec"] as const) {
         if (row[key] !== null && (typeof row[key] !== "number" || !Number.isFinite(row[key]) || row[key]! <= 0)) return undefined;
         target[key] = row[key];
@@ -376,14 +413,16 @@ function compactRankingArm(value: unknown): RankingArmSummary | undefined {
 export function compactRankingMeasurement(value: unknown): RankingMeasurementSummary | undefined {
     if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
     const section = value as RankingMeasurementSummary;
-    if (section.semanticsVersion !== RANKING_MEASUREMENT_SEMANTICS || !Number.isInteger(section.horizonBars) || section.horizonBars < 1 || section.horizonBars > TOP_MEAN_HORIZONS_MAX_VALUE || !section.arms || typeof section.arms !== "object") return undefined;
+    const topK = resolveRankingMeasurementTopK(section);
+    if (topK === undefined || !Number.isInteger(section.horizonBars) || section.horizonBars < 1 || section.horizonBars > TOP_MEAN_HORIZONS_MAX_VALUE || !section.arms || typeof section.arms !== "object") return undefined;
+    const comparisonsPerEvent = rankedPairComparisons(topK);
     const arms = {} as RankingMeasurementSummary["arms"];
     for (const field of REPLAY_ARM_FIELDS) {
-        const arm = compactRankingArm(section.arms[field]);
+        const arm = compactRankingArm(section.arms[field], comparisonsPerEvent);
         if (arm) arms[field] = arm;
         else if (!isCausalArm(field)) return undefined;
     }
-    return { semanticsVersion: RANKING_MEASUREMENT_SEMANTICS, horizonBars: section.horizonBars, arms };
+    return { semanticsVersion: section.semanticsVersion, ...(topK !== RANKING_TOP_K_DEFAULT ? { topK } : {}), horizonBars: section.horizonBars, arms };
 }
 
 export interface CausalArmDiagnostics {
@@ -809,6 +848,12 @@ export interface RunOpenScoreUsdReplayOptions {
     enableCausalArms?: boolean;
     /** Finder-only opt-in; independent of switch execution horizon. */
     rankingHorizon?: number;
+    /**
+     * Ranking-measurement capture depth (assets frozen per arm/event).
+     * Integer 2..RANKING_TOP_K_MAX; undefined and 5 both mean the fixed
+     * five-member legacy capture with its v2 semantics.
+     */
+    rankingTopK?: number;
     /** Required only for horizon mode. Omitted mode defaults to `horizon`. */
     mode?: ReplayMode;
     /** Required in horizon mode: positive bar horizons. */

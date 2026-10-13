@@ -1,4 +1,4 @@
-import { RANKING_MEASUREMENT_SEMANTICS } from "../batch-backtest/open-score-replay/types";
+import { rankingSemanticsForTopK, RANKING_TOP_K_DEFAULT } from "../batch-backtest/open-score-replay/types";
 /**
  * Shared normalization for captured Finder run configurations.
  *
@@ -50,7 +50,12 @@ export function buildFinderArmPerformanceRunConfiguration(
             measurement: context.measurement ?? context.searchOptions.armPerformance?.measurement ?? "return",
             rankingSort: context.searchOptions.armPerformance?.rankingSort ?? "overall_ordering",
             rankingHorizon: context.rankingHorizon ?? null,
-            rankingSemantics: context.measurement === "ranking_consistency" ? RANKING_MEASUREMENT_SEMANTICS : null,
+            rankingTopK: context.measurement === "ranking_consistency"
+                ? (context.rankingTopK ?? context.searchOptions.armPerformance?.rankingTopK ?? RANKING_TOP_K_DEFAULT)
+                : null,
+            rankingSemantics: context.measurement === "ranking_consistency"
+                ? rankingSemanticsForTopK(context.rankingTopK ?? context.searchOptions.armPerformance?.rankingTopK ?? RANKING_TOP_K_DEFAULT)
+                : null,
             defaultSort: context.measurement === "ranking_consistency" ? (context.searchOptions.armPerformance?.rankingSort === "selected_asset" ? "TOP_RAW_PROFIT_NOW by top1Superiority" : "TOP_RAW_PROFIT_NOW by mean accuracy ciLower") : context.replayMode === "asset_switch" ? "TOP_RAW_PROFIT_NOW by totalNetPnl" : "TOP_RAW_PROFIT_NOW by topMean",
         },
         backtestSettings: context.backtestSettings,

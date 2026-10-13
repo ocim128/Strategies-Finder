@@ -245,6 +245,27 @@ describe("Finder Arm Performance runner", () => {
             expect(removed).to.equal(1);
             expect(collected).to.equal(0);
         });
+        it("treats a " + mode + " ranking section captured at a different top-K depth as a child contract error", async () => {
+            const input = makeInput();
+            input.options.armPerformance = { replayMode: mode, horizon: 5, rankingHorizon: 20, measurement: "ranking_consistency", rankingTopK: 3, dateMode: "full" };
+            const summary = mode === "asset_switch" ? makeSwitchSummary() : makeSummary();
+            // The child ignored the requested depth and captured the fixed five.
+            summary.rankingMeasurement = createEmptyRankingMeasurement(mode === "horizon" ? 5 : 20, true, 5);
+            let removed = 0, collected = 0, error: unknown;
+            try {
+                await runFinderArmPerformance(input, { onProgress() {}, setActiveCoordinator() {}, onCandidate() { collected += 1; } }, {
+                    createCoordinator(request) {
+                        expect(request.rankingTopK).to.equal(3);
+                        return makeCoordinator(request, { result: summary }, async (emit) => { emit({ type: "done", result: summary }); }, []);
+                    },
+                    async removeChildArtifacts() { removed += 1; },
+                });
+            } catch (caught) { error = caught; }
+            expect(error).to.be.instanceOf(FinderArmPerformanceChildError);
+            expect(String(error)).to.contain("different top-K depth");
+            expect(removed).to.equal(1);
+            expect(collected).to.equal(0);
+        });
         for (const failure of ["missing_arm", "invalid_arm", "missing_definition"] as const) {
             it(`rejects ${failure} on a newly enabled ${mode} child before collecting it`, async () => {
                 const input = makeInput();

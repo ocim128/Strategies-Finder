@@ -22,6 +22,7 @@
  * behavior contracts — see the comments at each helper.
  */
 import { createTieBreakDigest, tieBreakDigest } from "../max-active-research-contract";
+import { RANKING_TOP_K_DEFAULT } from "./types";
 import type { OpenScoreUsdLatestSelection, OpenScoreUsdLatestSelectionCandidate, OpenScoreUsdLatestSelections, OpenScoreUsdLatestSelectorName } from "./types";
 import type { AssetSwitchDecision, BotViewPicks, Candidate, DecisionEvent, EventView, ProfitOnlyEvent, ReplayArmSelectionMap, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { REPLAY_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, replayArmFields, isCausalArm, CAUSAL_ARM_FIELDS, RAW_DIRECTIONAL_MINIMUM_FRACTION, type CausalArmField } from "./arm-contract";
@@ -79,14 +80,14 @@ export function createRankingDigestCache(names: readonly string[]): (time: numbe
 }
 
 /** Bounded insertion retains membership using the existing digest, never outcomes. */
-export function insertRankingPick(picks: RankingPick[], candidate: Candidate, spec: typeof RANKING_ARM_SPECS[number], time: number, names: readonly string[], digestFor?: (index: number) => string): void {
+export function insertRankingPick(picks: RankingPick[], candidate: Candidate, spec: typeof RANKING_ARM_SPECS[number], time: number, names: readonly string[], digestFor?: (index: number) => string, topK: number = RANKING_TOP_K_DEFAULT): void {
     if (isCausalArm(spec.field) && !Number.isFinite(candidate[spec.field])) return;
     const assetIndex = candidate.assetIndex;
     const key = spec.key === "z" ? candidate.z ?? 0 : candidate[spec.key]!;
     const secondary = spec.unique ? candidate.raw : 0;
     let rowDigest: string | undefined;
     // This runs for every eligible asset and arm. Avoid a comparator closure
-    // and allocate a retained row only when it enters the bounded top five.
+    // and allocate a retained row only when it enters the bounded top K.
     let index = 0;
     while (index < picks.length) {
         const a = picks[index]!;
@@ -102,10 +103,10 @@ export function insertRankingPick(picks: RankingPick[], candidate: Candidate, sp
         if (!(comparison <= 0)) break;
         index += 1;
     }
-    if (index < 5) { picks.splice(index, 0, { assetIndex, key, secondary }); if (picks.length > 5) picks.pop(); }
+    if (index < topK) { picks.splice(index, 0, { assetIndex, key, secondary }); if (picks.length > topK) picks.pop(); }
 }
 
-export function captureRankingEvent(timeSec: number, pools: Partial<Record<typeof RANKING_ARM_SPECS[number]["pool"], readonly Candidate[]>>, assetNames: readonly string[], enabled = false): RankingEvent {
+export function captureRankingEvent(timeSec: number, pools: Partial<Record<typeof RANKING_ARM_SPECS[number]["pool"], readonly Candidate[]>>, assetNames: readonly string[], enabled = false, topK: number = RANKING_TOP_K_DEFAULT): RankingEvent {
     const arms = {} as RankingEvent["arms"];
     const digests = new Map<number, string>();
     const digestFor = (index: number): string => {
@@ -115,8 +116,8 @@ export function captureRankingEvent(timeSec: number, pools: Partial<Record<typeo
     };
     for (const spec of RANKING_ARM_SPECS.filter((spec) => enabled || !isCausalArm(spec.field))) {
         const picks: RankingPick[] = [];
-        for (const candidate of pools[spec.pool] ?? []) insertRankingPick(picks, candidate, spec, timeSec, assetNames, digestFor);
-        arms[spec.field] = { picks, ...(picks.length < 5 ? { reason: "small_pool" as const }
+        for (const candidate of pools[spec.pool] ?? []) insertRankingPick(picks, candidate, spec, timeSec, assetNames, digestFor, topK);
+        arms[spec.field] = { picks, ...(picks.length < topK ? { reason: "small_pool" as const }
             : spec.unique && picks[0]!.key === picks[1]!.key && picks[0]!.secondary === picks[1]!.secondary ? { reason: "unresolved_pick" as const } : {}) };
     }
     return { timeSec, arms };
@@ -164,6 +165,8 @@ export function resolveRawDirectional(scores: ArrayLike<number>, totalPairs: num
 
 export async function buildCandidateViews(args: {
     enableCausalArms?: boolean;
+    /** Ranking capture depth; undefined = legacy five. */
+    rankingTopK?: number;
     events: readonly DecisionEvent[];
     /** events.length at sweep exit; progress denominator only. */
     totalEvents: number;
@@ -297,7 +300,7 @@ export async function buildCandidateViews(args: {
         // TOP_Z history update: strictly-past semantics — this event's
         // profit-now scores join each asset's history only AFTER the pools
         // above captured this event's z values.
-        args.onRankingEvent?.(captureRankingEvent(ev.timeSec, { positives, profitPositives, profitNowPositives, profitNowConfidencePositives }, assetNames, args.enableCausalArms));
+        args.onRankingEvent?.(captureRankingEvent(ev.timeSec, { positives, profitPositives, profitNowPositives, profitNowConfidencePositives }, assetNames, args.enableCausalArms, args.rankingTopK));
         for (let a = 0; a < assetCount; a += 1) updateZStats(a, ev.rawScoreProfitNow[a]!);
         // A singleton cannot form a paired comparison, but with cooldown
         // enabled it still represents a real selection event and must be
@@ -550,6 +553,8 @@ export async function buildAssetSwitchDecisions(args: {
     totalPairs: number;
     enableDirectionalArm?: boolean;
     enableCausalArms?: boolean;
+    /** Ranking capture depth; undefined = legacy five. */
+    rankingTopK?: number;
     events: readonly DecisionEvent[];
     totalEvents: number;
     assetNames: readonly string[];
@@ -606,11 +611,11 @@ export async function buildAssetSwitchDecisions(args: {
             if (eventIndex % 1000 === 0) await yieldLoop();
             continue;
         }
-        const ranking = rankingEvents ? captureRankingEvent(event.timeSec, {}, assetNames, args.enableCausalArms) : null;
+        const ranking = rankingEvents ? captureRankingEvent(event.timeSec, {}, assetNames, args.enableCausalArms, args.rankingTopK) : null;
         const considerRanking = (pool: typeof RANKING_ARM_SPECS[number]["pool"], raw: number, count: number, assetIndex: number, z?: number): void => {
             if (!ranking || raw <= 0) return;
             const candidate: Candidate = { assetIndex, raw, mean: count > 0 ? raw / count : raw, activePairs: count, adjusted: raw, z };
-            for (const spec of rankingSpecsByPool.get(pool) ?? []) insertRankingPick(ranking.arms[spec.field].picks, candidate, spec, event.timeSec, assetNames, digestFor);
+            for (const spec of rankingSpecsByPool.get(pool) ?? []) insertRankingPick(ranking.arms[spec.field].picks, candidate, spec, event.timeSec, assetNames, digestFor, args.rankingTopK);
         };
         let digestCache: Map<number, string> | null = null;
         let hashAsset: ((asset: string) => string) | undefined;
@@ -722,7 +727,7 @@ export async function buildAssetSwitchDecisions(args: {
             for (const field of replayArmFields(args.enableCausalArms)) {
                 if (isCausalArm(field)) ranking.arms[field] = { picks: event.causalArms?.[field]?.picks ?? [] };
                 const row = ranking.arms[field];
-                row.reason = row.picks.length < 5 ? "small_pool" : picks[field] === null ? "unresolved_pick"
+                row.reason = row.picks.length < (args.rankingTopK ?? RANKING_TOP_K_DEFAULT) ? "small_pool" : picks[field] === null ? "unresolved_pick"
                     : row.picks[0]!.assetIndex !== picks[field] ? "pick_changed" : undefined;
             }
             rankingEvents!.push(ranking);

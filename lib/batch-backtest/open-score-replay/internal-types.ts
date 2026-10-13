@@ -162,7 +162,7 @@ export interface EventView {
     ties: Record<SelectorName, number>;
 }
 
-/** Only five members per arm/event survive switch snapshot release. */
+/** Only the bounded top-K members per arm/event survive switch snapshot release (legacy K = 5). */
 export interface RankingPick {
     assetIndex: number;
     key: number;

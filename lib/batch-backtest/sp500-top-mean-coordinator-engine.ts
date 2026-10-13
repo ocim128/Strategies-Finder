@@ -104,6 +104,12 @@ import {
 
 export interface TopMeanCoordinatorRunRequest {
     rankingHorizon?: number;
+    /**
+     * Finder Arm Performance capture depth for the ranking measurement
+     * (integer 2..5). Omitted and 5 both mean the fixed five-member legacy
+     * capture; standalone TOP_MEAN never sets it.
+     */
+    rankingTopK?: number;
     runId: string;
     strategyKey: string;
     strategyParams: StrategyParams;
@@ -1570,6 +1576,7 @@ export class TopMeanCoordinatorEngine {
                         ...(finderArmProfile || replayMode === "asset_switch" ? {} : { sharedTargetCache: sharedTargetOutcomeCache }),
                         mode: replayMode,
                         ...(finderArmProfile && this._request.rankingHorizon !== undefined ? { rankingHorizon: this._request.rankingHorizon } : {}),
+                        ...(finderArmProfile && this._request.rankingTopK !== undefined ? { rankingTopK: this._request.rankingTopK } : {}),
                         ...(replayMode === "horizon"
                             ? { horizons: this._request.horizons && this._request.horizons.length > 0 ? this._request.horizons : [12, 24, 48] }
                             : {}),

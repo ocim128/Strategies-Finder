@@ -120,6 +120,12 @@ export interface FinderArmPerformanceOptions {
     /** Local display preference; never changes replay computation. */
     rankingSort?: import("../finder/finder-arm-performance-metrics").FinderArmPerformanceRankingSort;
     rankingHorizon?: number;
+    /**
+     * Ranking-consistency capture depth: how many top assets are frozen per
+     * arm and event before forward inspection. Integer 2..5; omitted and 5
+     * both mean the fixed five-member legacy comparison.
+     */
+    rankingTopK?: number;
     replayMode?: ReplayMode;
     horizon?: number;
     dateMode: "full" | "date_range";
@@ -136,6 +142,8 @@ export interface FinderArmPerformanceOptions {
 export interface FinderArmPerformanceRunContext {
     measurement?: import("../batch-backtest/open-score-replay/types").RankingMeasurement;
     rankingHorizon?: number;
+    /** Captured ranking measurement depth; absent means the fixed five. */
+    rankingTopK?: number;
     runId: string;
     startedAt: number;
     strategyKeys: string[];

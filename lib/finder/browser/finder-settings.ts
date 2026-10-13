@@ -77,6 +77,8 @@ export type FinderPersistedUiState = {
 	armPerformanceHorizon: number;
 	armPerformanceMeasurement: "return" | "ranking_consistency";
 	armPerformanceRankingSort: import("../finder-arm-performance-metrics").FinderArmPerformanceRankingSort;
+	/** Ranking-consistency capture depth (2..5); 5 is the fixed legacy comparison. */
+	armPerformanceRankingTopK: number;
 	armPerformanceReplayMode: "horizon" | "asset_switch";
 	armPerformanceExcludeTopContributor: boolean;
 	armPerformanceEventFilterEnabled: boolean;
@@ -130,6 +132,7 @@ export const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	armPerformanceHorizon: 5,
 	armPerformanceMeasurement: "return",
 	armPerformanceRankingSort: "overall_ordering",
+	armPerformanceRankingTopK: 5,
 	armPerformanceReplayMode: "horizon",
 	armPerformanceExcludeTopContributor: false,
 	armPerformanceEventFilterEnabled: false,
@@ -371,6 +374,11 @@ export function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		)))),
 		armPerformanceRankingSort: source.armPerformanceRankingSort === "selected_asset" ? "selected_asset" : "overall_ordering",
 		armPerformanceMeasurement: source.armPerformanceMeasurement === "ranking_consistency" ? "ranking_consistency" : "return",
+		armPerformanceRankingTopK: Math.max(2, Math.min(5, Math.round(normalizeNumber(
+			source.armPerformanceRankingTopK,
+			DEFAULT_FINDER_UI_STATE.armPerformanceRankingTopK,
+			2,
+		)))),
 		armPerformanceReplayMode: source.armPerformanceReplayMode === "asset_switch" ? "asset_switch" : "horizon",
 		armPerformanceExcludeTopContributor: source.armPerformanceExcludeTopContributor === true,
 		armPerformanceEventFilterEnabled: source.armPerformanceEventFilterEnabled === true,

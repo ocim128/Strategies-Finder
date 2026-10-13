@@ -195,6 +195,7 @@ import {
     validateTopMeanRequestLimits,
 } from "../../batch-backtest/sp500-top-mean-request-limits";
 import { parseTopMeanDateWindow } from "../../batch-backtest/top-mean-date-window";
+import { RANKING_TOP_K_DEFAULT, RANKING_TOP_K_MAX, RANKING_TOP_K_MIN } from "../../batch-backtest/open-score-replay/types";
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
 import type { BatchOwnerLocks, BatchOwnerToken } from "../../batch-backtest/sp500-top-mean-vite-routes";
 import {
@@ -3117,6 +3118,7 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
     if (rankingSort !== "overall_ordering" && rankingSort !== "selected_asset") throw new HttpStatusError(400, "options.armPerformance.rankingSort must be overall_ordering or selected_asset.");
     const rankingHorizon = armOptions.rankingHorizon === undefined ? undefined : readOptionalInteger("rankingHorizon", 5, 1, TOP_MEAN_HORIZONS_MAX_VALUE);
     if (measurement === "ranking_consistency" && replayMode === "asset_switch" && rankingHorizon === undefined) throw new HttpStatusError(400, "Switch ranking requires rankingHorizon.");
+    const rankingTopK = armOptions.rankingTopK === undefined ? undefined : readOptionalInteger("rankingTopK", RANKING_TOP_K_DEFAULT, RANKING_TOP_K_MIN, RANKING_TOP_K_MAX);
     const scoringBasis = measurement === "ranking_consistency" ? "raw" : requestedScoringBasis;
     const eventFilterEnabled = readOptionalBoolean("eventFilterEnabled", false);
     const minEvents = readOptionalInteger("minEvents", 1, 0, 1_000_000);
@@ -3185,6 +3187,7 @@ async function prepareFinderArmPerformanceRun(body: FinderArmPerformanceRequestB
             measurement,
             rankingSort,
             ...(measurement === "ranking_consistency" ? { rankingHorizon: replayMode === "horizon" ? horizonLimits.value.horizons[0]! : rankingHorizon } : {}),
+            ...(measurement === "ranking_consistency" && rankingTopK !== undefined ? { rankingTopK } : {}),
             replayMode,
             ...(replayMode === "horizon" ? { horizon: horizonLimits.value.horizons[0]! } : {}),
             dateMode: dateWindow.mode,
@@ -3325,6 +3328,9 @@ async function handleArmPerformanceRunRequest(
         replayMode: prepared.options.armPerformance!.replayMode ?? "horizon",
         measurement: prepared.options.armPerformance!.measurement ?? "return",
         ...(prepared.options.armPerformance!.measurement === "ranking_consistency" ? { rankingHorizon: prepared.options.armPerformance!.rankingHorizon } : {}),
+        ...(prepared.options.armPerformance!.measurement === "ranking_consistency" && prepared.options.armPerformance!.rankingTopK !== undefined
+            ? { rankingTopK: prepared.options.armPerformance!.rankingTopK }
+            : {}),
         ...(prepared.options.armPerformance!.horizon !== undefined
             ? { horizon: prepared.options.armPerformance!.horizon }
             : {}),

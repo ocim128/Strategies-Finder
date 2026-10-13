@@ -30,6 +30,8 @@ export interface ScoreEventSweepArgs {
     enableDirectionalArm?: boolean;
     directionalTotalPairs?: number;
     enableCausalArms?: boolean;
+    /** Causal ranking capture depth; undefined = legacy five. */
+    rankingTopK?: number;
     interval?: string;
     mode?: "horizon" | "asset_switch";
     assetNames?: readonly string[];
@@ -379,7 +381,7 @@ export async function sweepScoreEvents(args: ScoreEventSweepArgs): Promise<Stage
                             diagnostics!.eligibleCandidates[field] = (diagnostics!.eligibleCandidates[field] ?? 0) + 1;
                             if (causalArms) {
                                 const row = causalArms[field]!; row.eligibleCount++;
-                                insertRankingPick(row.picks, candidate!, RANKING_ARM_SPEC_BY_FIELD.get(field)!, t, args.assetNames!, digestFor);
+                                insertRankingPick(row.picks, candidate!, RANKING_ARM_SPEC_BY_FIELD.get(field)!, t, args.assetNames!, digestFor, args.rankingTopK);
                             }
                         }
                         causalScores?.set(a, keys);

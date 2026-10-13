@@ -139,6 +139,7 @@ describe("normalizeFinderUiState", () => {
             universeMinProfitableActiveRatio: 7,
             assetOpportunityCandidatePoolSize: 500,
             armPerformanceHorizon: 5_000,
+            armPerformanceRankingTopK: 99,
             armPerformanceMinEvents: 3_000_000,
             armPerformanceSelectionCooldownBars: 50_000,
             armPerformanceEventFilterEnabled: true,
@@ -152,6 +153,9 @@ describe("normalizeFinderUiState", () => {
         expect(normalized.universeMinProfitableActiveRatio).to.equal(1);
         expect(normalized.assetOpportunityCandidatePoolSize).to.equal(50);
         expect(normalized.armPerformanceHorizon).to.equal(1_000);
+        expect(normalized.armPerformanceRankingTopK).to.equal(5);
+        expect(normalizeFinderUiState({ armPerformanceRankingTopK: 0.4 }).armPerformanceRankingTopK).to.equal(2);
+        expect(normalizeFinderUiState({ armPerformanceRankingTopK: 3.6 }).armPerformanceRankingTopK).to.equal(4);
         expect(normalized.armPerformanceMinEvents).to.equal(1_000_000);
         expect(normalized.armPerformanceSelectionCooldownBars).to.equal(10_000);
         expect(normalized.armPerformanceEventFilterEnabled).to.equal(true);
@@ -182,6 +186,7 @@ describe("normalizeFinderUiState", () => {
             universeSymbolsText: "AAPL\nMSFT",
             assetOpportunityOosMeasurementMode: "next_exit",
             armPerformanceHorizon: 20,
+            armPerformanceRankingTopK: 3,
             armPerformanceReplayMode: "asset_switch",
             armPerformanceExcludeTopContributor: true,
             armPerformanceEventFilterEnabled: true,
@@ -228,7 +233,7 @@ describe("finder UI state persistence", () => {
             expect(readFinderUiState().armPerformanceRankingSort).to.equal("overall_ordering");
             const ranking = normalizeFinderUiState({ ...legacy, armPerformanceMeasurement: "ranking_consistency", armPerformanceRankingSort: "selected_asset" });
             writeFinderUiState(ranking);
-            expect(readFinderUiState()).to.include({ armPerformanceRankingSort: "selected_asset", armPerformanceMeasurement: "ranking_consistency", armPerformanceHorizon: 20, armPerformanceExcludeTopContributor: true });
+            expect(readFinderUiState()).to.include({ armPerformanceRankingSort: "selected_asset", armPerformanceMeasurement: "ranking_consistency", armPerformanceHorizon: 20, armPerformanceRankingTopK: 5, armPerformanceExcludeTopContributor: true });
         }
         expect(normalizeFinderUiState({ armPerformanceMeasurement: "future" }).armPerformanceMeasurement).to.equal("return");
         expect(normalizeFinderUiState({ armPerformanceRankingSort: "future" }).armPerformanceRankingSort).to.equal("overall_ordering");

@@ -245,6 +245,14 @@ private readArmPerformanceHorizon(): number {
 	)));
 }
 
+private readArmPerformanceRankingTopK(): number {
+	return Math.max(2, Math.min(5, this.readRoundedInput(
+		this.deps.getDom().finderArmPerformanceRankingTopK,
+		DEFAULT_FINDER_UI_STATE.armPerformanceRankingTopK,
+		2,
+	)));
+}
+
 /**
  * Asset Opportunity settings group: identical parsing at capture and
  * execution boundaries. Symbol input is intentionally absent — capture keeps
@@ -700,6 +708,7 @@ private syncArmPerformanceControls(): void {
 	dom.finderArmPerformanceHorizonLabel.textContent = ranking ? "Ranking Horizon (bars)" : "Replay Horizon (bars)";
 	dom.finderArmPerformanceExcludeTopContributor.disabled = ranking;
 	dom.finderArmPerformanceRankingSort.disabled = !ranking;
+	dom.finderArmPerformanceRankingTopK.disabled = !ranking;
 	dom.finderArmPerformanceSelectionCooldownEnabled.disabled = switchMode;
 	dom.finderArmPerformanceSelectionCooldownBars.disabled = switchMode || !dom.finderArmPerformanceSelectionCooldownEnabled.checked;
 	dom.finderArmPerformanceMinEvents.disabled = !filterEnabled;
@@ -797,6 +806,7 @@ captureFinderUiState(persist = true): void {
 	this.uiState.steps = this.readRoundedInput(dom.finderSteps, DEFAULT_FINDER_UI_STATE.steps, 2);
 	this.uiState.minTrades = this.readRoundedInput(dom.finderTradesMin, DEFAULT_FINDER_UI_STATE.minTrades, 0);
 	this.uiState.armPerformanceHorizon = this.readArmPerformanceHorizon();
+	this.uiState.armPerformanceRankingTopK = this.readArmPerformanceRankingTopK();
 	this.uiState.armPerformanceRankingSort = armEnums.rankingSort;
 	this.uiState.armPerformanceMeasurement = armEnums.measurement;
 	this.uiState.armPerformanceReplayMode = armEnums.replayMode;
@@ -969,6 +979,7 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 			measurement,
 			rankingSort: armEnums.rankingSort,
 			...(measurement === "ranking_consistency" && replayMode === "asset_switch" ? { rankingHorizon: this.readArmPerformanceHorizon() } : {}),
+			...(measurement === "ranking_consistency" ? { rankingTopK: this.readArmPerformanceRankingTopK() } : {}),
 			replayMode,
 			...(replayMode === "horizon" ? {
 				horizon: this.readArmPerformanceHorizon(),
