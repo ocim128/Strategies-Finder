@@ -62,7 +62,7 @@ Use this file as a short task router. Read the guide and tests for the feature y
 
 ## Workspace dependencies
 
-Feature work installs dependencies from **debug/playground/**, whose lockfile is used by the npm workspace and CI. The lockfile in this directory is for the standalone Vercel deployment. Update the workspace lock when adding a dependency; update this directory's lock only when the Vercel build needs it. See [deployment instructions](DEPLOY_TO_VERCEL.md).
+Feature work installs dependencies from **debug/playground/**, whose lockfile drives local npm workspace installs. CI and the Vercel deployment check this repository out **standalone** and install **this directory's** `package-lock.json`, so every dependency change in this directory's `package.json` must regenerate that lockfile in the same commit: `npm install --package-lock-only --workspaces=false --ignore-scripts` (run plain install commands without `--workspaces=false` and npm resolves them against the parent workspace root instead). CI's Puppeteer browser download and cache key read the Puppeteer version from this lockfile. See [deployment instructions](DEPLOY_TO_VERCEL.md).
 
 ## Git worktrees
 

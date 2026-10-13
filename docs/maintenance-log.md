@@ -4,6 +4,96 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-13 — Un-red CI: standalone lockfile desync, and the e2e regression it masked
+
+- **Evidence:** Every "Strategies Finder test specs" run since 2026-10-12
+  failed at `npm ci` in both install jobs: `69d0ad81` bumped six dependency
+  ranges in `package.json` (`@types/chai`, `@types/node`, `puppeteer`,
+  `semver`, `lightweight-charts`, `undici`) without regenerating the
+  standalone `package-lock.json` (last touched by `f55ac47b`). CI checks the
+  repository out without the parent workspace, so its strict lockfile sync
+  check rejects the stale pins. Locally this is invisible: npm resolves
+  install commands from inside this directory to the parent
+  `debug/playground` workspace root (its 1,780-package tree), and local tests
+  run on workspace-hoisted `node_modules`. With the install gate down, the
+  e2e job never ran — hiding a second regression (below).
+- **Change 1 (`cd545d5f`):** Regenerated `package-lock.json` lockfile-only
+  (`npm install --package-lock-only --workspaces=false --ignore-scripts`;
+  `--workspaces=false` is required or npm audits the parent workspace and
+  writes nothing). New pins match the declared ranges: puppeteer 24.43.1,
+  lightweight-charts 5.2.1, undici 7.30.0, @types/chai 5.2.3,
+  @types/node 25.9.9; `node_modules` and the parent workspace lock untouched
+  (hash-verified). The workflow's Puppeteer browser download and cache key
+  read the version from this lockfile and self-adapt.
+- **Evidence 2:** The first post-fix CI run (38362504703) went green on the
+  unit job (all specs, windows-latest) and Rust, but failed `test:e2e`:
+  `verifySimplifiedSettings` reads `.options` of `#takeProfitMode` — and
+  `5c8c46d9` (three hours before the lockfile break, same day) deleted that
+  select from the settings markup while its e2e rewrite still asserted the
+  select exists with one option. Unpassable since 2026-10-11; masked by the
+  install failure ever since.
+- **Change 2 (`931d1dfc`):** Aligned the e2e with the shipped contract: no
+  mode select, no `[data-tp-modes]` adaptive controls, `takeProfitPercent`
+  present. Legacy mode-value collapse to `fixed` stays unit-covered in the
+  settings-compat parser parity matrix. Also corrected the stale
+  "workspace lockfile is used by CI" sentence in AGENTS.md's Workspace
+  dependencies section — it directed the original mistake — with the
+  verified standalone-install contract and the regeneration command.
+- **Checks:** `npm ci --dry-run --workspaces=false` accepts the new lockfile;
+  `deps:check` passes; a disposable standalone worktree (outside
+  `debug/playground`, removed via `worktree:check` first) installed the exact
+  CI set with `npm ci --ignore-scripts` and passed typecheck, the production
+  build/budget (573.9/650 KiB), and chart browser specs against
+  lightweight-charts 5.2.1 (the one version local validation had not
+  exercised — the workspace hoists 5.1.0). Full local `npm run test:e2e`
+  green after the assertion fix. CI run 38363977632: all three jobs success —
+  first green run since 2026-10-11. Commands ran through RTK.
+- **Follow-up:** The workspace still hoists lightweight-charts 5.1.0 against
+  the declared `^5.2.1`; `deps:check` tolerates it locally, but aligning the
+  workspace lock would make local runs match CI exactly. Re-verify CI after
+  the next dependency-range bump lands — the AGENTS.md contract is now
+  written down, but nothing enforces it mechanically (a validation-router
+  rule keyed on `package.json` could select a lockfile-sync check).
+
+## 2026-10-13 — Make failed built-in strategy loads retryable
+
+- **Evidence:** `ensureBuiltInStrategyLoaded` (`lib/strategies/built-in-catalog.ts`)
+  deleted a key's `loadingPromises` entry only on success, so one transient
+  chunk-load failure (production hashed asset, network blip) left a permanently
+  rejected promise in the map. Every later load of that strategy — backtest
+  execution, exit strategies, confirmation filters, Batch runs, TOP_MEAN,
+  walk-forward — replayed the cached rejection instantly until a full page
+  reload. This was the open follow-up of the 2026-10-09 repair entry, whose
+  strategy-selection fixtures had to be designed around the poisoning.
+- **Change:** The rejection handler now deletes the `loadingPromises` entry
+  before rethrowing, so a later call re-runs the loader; in-flight dedupe and
+  success caching are unchanged (the Finder SyntheticLegCache already followed
+  this evict-on-rejection pattern). New `tests/built-in-catalog.spec.ts` covers
+  retry after a transient failure, single in-flight dedupe across concurrent
+  callers, and shared-rejection cleanup with later recovery — confirmed
+  failing 3/3 against the previous implementation. Two
+  `strategy-selection.browser.spec.ts` exit-rollback cases had relied on the
+  poisoning for their "fails immediately" expectation (selecting a key whose
+  gate an earlier test rejected); they now reject their own fresh loader gate
+  in-test, removing the accidental cross-test ordering coupling while keeping
+  every assertion.
+- **Checks:** Focused: `built-in-catalog.spec.ts` (red pre-fix, green post),
+  `strategy-selection.browser.spec.ts` (failed with the fix before the fixture
+  repair, green after; also verified green on the pre-fix baseline),
+  `strategy-registry-loading`, `new-strategy-lib-smoke`,
+  `strategy-manifest-sync`, `backtest-service-lifecycle.browser`,
+  `settings-handlers.browser`, `finder-selection-apply.browser`,
+  `walk-forward-engine`, `entry-signal-worker`,
+  `batch-backtest-service-lifecycle.browser` — all pass. Both typechecks pass.
+  `npm run ci` passed end to end (286 specs, deps check, production build,
+  bundle budget 573.1/650 KiB). `npm run strategies:sync-manifest` produced no
+  generated-file diff. `npm run validate:changes` routes the catalog change to
+  full-js (`npm run ci`) — run green on the final state. Commands ran through RTK.
+- **Docs:** No guide documents the catalog's load cache; the retry contract
+  lives in the module comment and `tests/built-in-catalog.spec.ts`.
+- **Follow-up:** None for this area. The stale poison references in the
+  2026-10-09/2026-10-10 log entries are historical records and stay as written.
+
 ## 2026-10-11 — Dead-code removal pass (post adaptive take-profit refactor)
 
 **Evidence.** A textual reachability scan over the whole tree (code, docs, HTML,
