@@ -37,14 +37,14 @@ describe("Batch scheduled result rendering", () => {
             assert.equal(schedules, 1);
             frame(0);
             assert.equal(renders, 1);
-            assert.equal(dom.batchBacktestResults.textContent.split(",")[0], "999");
+            assert.equal(dom.batchBacktestResults.textContent!.split(",")[0], "999");
             const tail = { ...rows[0]!, symbol: "TAIL", result: { ...rows[0]!.result!, netProfit: 2_000 } };
             rows.push(tail);
             view.queueLiveRender(dom, tail, 1, render);
             view.cancelLiveRenderRaf();
             view.flushLiveRenderNow(dom, 1, render);
             assert.equal(renders, 2);
-            assert.equal(dom.batchBacktestResults.textContent.split(",")[0], "TAIL");
+            assert.equal(dom.batchBacktestResults.textContent!.split(",")[0], "TAIL");
             view.flushLiveRenderNow(dom, 1, render);
             assert.equal(renders, 2, "a terminal flush must drain the dirty flag");
         } finally {
