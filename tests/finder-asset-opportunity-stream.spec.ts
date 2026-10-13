@@ -87,4 +87,18 @@ describe("Asset Opportunity scalar stream contract", () => {
         scalar.signals = [];
         expect(() => assertAssetResultIsScalar(scalar)).to.throw(/signals/);
     });
+
+    it("keeps the scalar consensus rank weight on the wire", () => {
+        const source = makeAssetResult();
+        source.consensusRankWeight = 35;
+        const scalar = toScalarAssetResult(source);
+
+        // A grouped consensus scalar survives projection like every other
+        // top-level scalar; no arrays are introduced to carry it.
+        expect(scalar.consensusRankWeight).to.equal(35);
+        expect(() => assertAssetResultIsScalar(scalar)).to.not.throw();
+
+        const missing = toScalarAssetResult(makeAssetResult());
+        expect(missing.consensusRankWeight).to.equal(undefined);
+    });
 });

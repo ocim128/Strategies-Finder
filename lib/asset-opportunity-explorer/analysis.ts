@@ -129,6 +129,10 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
         sourceBlockCount: number;
         hasBaselines: boolean;
         availableBases: Set<AssetOpportunityExplorerBasis>;
+        /** Epoch ids seen on any block of the run (0 = legacy run, 1 = single contract). */
+        archiveEpochs: Set<string>;
+        /** True when any block of the run carries a pool distribution. */
+        hasPoolDistribution: boolean;
     }>();
     for (const record of records) {
         let group = groups.get(record.batchRunId);
@@ -143,6 +147,8 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
                 sourceBlockCount: 0,
                 hasBaselines: false,
                 availableBases: new Set(),
+                archiveEpochs: new Set(),
+                hasPoolDistribution: false,
             };
             groups.set(record.batchRunId, group);
         }
@@ -160,6 +166,8 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
         group.archiveMaximumRank = Math.max(group.archiveMaximumRank, maxRankOfRows(record.topResults));
         group.sourceBlockCount += 1;
         if (record.baseline) group.hasBaselines = true;
+        if (record.archiveEpoch) group.archiveEpochs.add(record.archiveEpoch);
+        if (record.poolDistribution) group.hasPoolDistribution = true;
     }
     return [...groups.entries()]
         .map(([batchRunId, group]) => {
@@ -179,6 +187,13 @@ export function summarizeRunCatalog(records: AssetOpportunityArchiveRecord[]): A
                 sourceBlockCount: group.sourceBlockCount,
                 hasBaselines: group.hasBaselines,
                 availableBases: EXPLORER_BASE_ORDER.filter((basis) => group.availableBases.has(basis)),
+                // Epoch of any block of the run; legacy runs carry none.
+                ...(group.archiveEpochs.size > 0
+                    ? { archiveEpoch: [...group.archiveEpochs].sort((left, right) => left.localeCompare(right))[0] }
+                    : {}),
+                // Distinct epoch count beyond 1 means the run mixes contracts.
+                archiveEpochCount: group.archiveEpochs.size,
+                hasPoolDistribution: group.hasPoolDistribution,
             };
         })
         .sort((left, right) => right.latestTimestamp.localeCompare(left.latestTimestamp)

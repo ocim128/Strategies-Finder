@@ -7,11 +7,14 @@ import {
     appendAssetOpportunityArchiveBlock,
     appendAssetOpportunityArchiveBlocks,
     appendAssetOpportunityArchiveRunConfig,
+    ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
     buildAssetOpportunityArchiveBlockText,
     buildAssetOpportunityArchiveFilename,
     readAssetOpportunityArchiveTupleSnapshots,
     resolveAssetOpportunityArchiveDir,
 } from "../lib/finder/server/finder-asset-opportunity-archive";
+import { CONSENSUS_RANK_WEIGHT_METRIC } from "../lib/finder/finder-asset-opportunity-metrics";
+import { parseAssetOpportunityArchiveText } from "../lib/asset-opportunity-explorer/archive-parser";
 
 describe("Asset Opportunity archive writer", () => {
     it("derives the archive dir from the configured root only", () => {
@@ -316,6 +319,152 @@ describe("Asset Opportunity archive writer", () => {
             topResults: [{ rank: 1 }],
         });
         expect(withoutBasis).to.not.contain("Archive baseline by basis:");
+    });
+
+    it("serializes the epoch and pool distribution after the baseline lines", () => {
+        const poolDistribution = {
+            eligibleCandidateCount: 40,
+            horizons: [{
+                bars: 12,
+                observedResults: 40,
+                totalSamples: 40,
+                averagePnlPercent: 0.5,
+                p10: -1,
+                p25: -0.2,
+                p50: 0.4,
+                p75: 1.1,
+                p90: 2.3,
+            }],
+            selection: {
+                netProfit: { count: 40, p10: -5, p25: -1, p50: 3, p75: 8, p90: 21 },
+            },
+        };
+        const text = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            baseline: {
+                eligibleCandidateCount: 40,
+                horizons: [{
+                    bars: 12,
+                    averagePnlPercent: 0.5,
+                    sampleWeightedAveragePnlPercent: 0.5,
+                    positiveResults: 20,
+                    observedResults: 40,
+                    totalSamples: 40,
+                }],
+            },
+            poolDistribution,
+            archiveEpoch: ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
+            topResults: [{ rank: 1 }],
+        });
+        expect(text).to.contain(`Archive epoch: ${ASSET_OPPORTUNITY_ARCHIVE_EPOCH}`);
+        expect(text).to.contain(`Archive pool distribution: ${JSON.stringify(poolDistribution)}`);
+        // Both optional lines sit after every baseline line and before the rows.
+        expect(text.indexOf("Archive epoch:")).to.be.greaterThan(text.indexOf("Archive baseline:"));
+        expect(text.indexOf("Archive pool distribution:")).to.be.greaterThan(text.indexOf("Archive baseline:"));
+        expect(text.lastIndexOf("\n[")).to.be.greaterThan(text.indexOf("Archive pool distribution:"));
+    });
+
+    it("round-trips the consensus rank weight row scalar through the shared parser", () => {
+        const text = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 12,
+            sortMetric: CONSENSUS_RANK_WEIGHT_METRIC,
+            topResults: [
+                { scope: "asset_opportunity", rank: 1, symbol: "AAA", strategyId: "a", consensusRankWeight: 35 },
+                { scope: "asset_opportunity", rank: 2, symbol: "BBB", strategyId: "b", consensusRankWeight: null },
+            ],
+        });
+        expect(text).to.contain("Archive sort: consensusRankWeight");
+
+        const records = parseAssetOpportunityArchiveText(text, "fixture.txt");
+        expect(records[0]!.sortMetric).to.equal("consensusRankWeight");
+        expect(records[0]!.topResults.map((row) => row.consensusRankWeight)).to.deep.equal([35, null]);
+
+        // Legacy rows without the field stay absent rather than reading as 0.
+        const legacy = parseAssetOpportunityArchiveText(buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            topResults: [{ scope: "asset_opportunity", rank: 1 }],
+        }), "legacy.txt");
+        expect(legacy[0]!.topResults[0]!.consensusRankWeight).to.equal(undefined);
+    });
+
+    it("keeps legacy block text byte-identical when the new fields are omitted", () => {
+        const legacy = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 7,
+            sortMetric: "expectancy",
+            baseline: {
+                eligibleCandidateCount: 3,
+                horizons: [{
+                    bars: 7,
+                    averagePnlPercent: 0.1,
+                    sampleWeightedAveragePnlPercent: 0.1,
+                    positiveResults: 2,
+                    observedResults: 3,
+                    totalSamples: 3,
+                }],
+            },
+            topResults: [{ rank: 1 }],
+        });
+        expect(legacy).to.not.contain("Archive epoch:");
+        expect(legacy).to.not.contain("Archive pool distribution:");
+
+        const explicitNulls = buildAssetOpportunityArchiveBlockText({
+            timestamp: "t",
+            batchRunId: "b",
+            holdoutBars: 7,
+            sortMetric: "expectancy",
+            baseline: {
+                eligibleCandidateCount: 3,
+                horizons: [{
+                    bars: 7,
+                    averagePnlPercent: 0.1,
+                    sampleWeightedAveragePnlPercent: 0.1,
+                    positiveResults: 2,
+                    observedResults: 3,
+                    totalSamples: 3,
+                }],
+            },
+            poolDistribution: null,
+            archiveEpoch: undefined,
+            topResults: [{ rank: 1 }],
+        });
+        expect(explicitNulls).to.equal(legacy);
+    });
+
+    it("appends the epoch and pool distribution into the archive file", async () => {
+        const root = mkdtempSync(path.join(tmpdir(), "finder-archive-"));
+        try {
+            const poolDistribution = {
+                eligibleCandidateCount: 2,
+                horizons: [],
+                selection: { winRate: { count: 2, p10: 40, p25: 45, p50: 50, p75: 55, p90: 60 } },
+            };
+            const result = await appendAssetOpportunityArchiveBlocks({
+                root,
+                blocks: [{
+                    batchRunId: "batch-1",
+                    holdoutBars: 3,
+                    sortMetric: "consensusRankWeight",
+                    topResults: [{ rank: 1 }],
+                    poolDistribution,
+                    archiveEpoch: ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
+                }],
+            });
+            const content = readFileSync(result[0]!.path, "utf8");
+            expect(content).to.contain(`Archive epoch: ${ASSET_OPPORTUNITY_ARCHIVE_EPOCH}`);
+            expect(content).to.contain(`Archive pool distribution: ${JSON.stringify(poolDistribution)}`);
+        } finally {
+            rmSync(root, { recursive: true, force: true });
+        }
     });
 
     it("appends one run-config block per batch run to config.txt and never overwrites", async () => {

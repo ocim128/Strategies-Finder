@@ -53,6 +53,7 @@ export interface AssetOpportunityMetadataPayload {
     medianBarsToTp?: FinderAssetOpportunityResult["medianBarsToTp"];
     priorTupleRecurrenceCount?: FinderAssetOpportunityResult["priorTupleRecurrenceCount"];
     strategyCoverageCount?: FinderAssetOpportunityResult["strategyCoverageCount"];
+    consensusRankWeight?: FinderAssetOpportunityResult["consensusRankWeight"];
     barrierExitShare?: FinderAssetOpportunityResult["barrierExitShare"];
     entryHourConcentration?: FinderAssetOpportunityResult["entryHourConcentration"];
     tradeGapUniformity?: FinderAssetOpportunityResult["tradeGapUniformity"];
@@ -87,6 +88,7 @@ export function compactOptionalOpportunityDiagnostics(result: FinderAssetOpportu
         ...(result.medianBarsToTp !== undefined ? { medianBarsToTp: result.medianBarsToTp } : {}),
         ...(result.priorTupleRecurrenceCount !== undefined ? { priorTupleRecurrenceCount: result.priorTupleRecurrenceCount } : {}),
         ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
+        ...(result.consensusRankWeight !== undefined ? { consensusRankWeight: result.consensusRankWeight } : {}),
         ...(result.barrierExitShare !== undefined ? { barrierExitShare: result.barrierExitShare } : {}),
         ...(result.entryHourConcentration !== undefined ? { entryHourConcentration: result.entryHourConcentration } : {}),
         ...(result.tradeGapUniformity !== undefined ? { tradeGapUniformity: result.tradeGapUniformity } : {}),
@@ -169,6 +171,8 @@ export interface AssetOpportunityPerformancePayload {
     totalTradesCappedValue?: number | null;
     /** Present on the grouped strategy-coverage resort representative. */
     strategyCoverageCount?: number | null;
+    /** Symbol-level consensus rank points; null on symbols that failed the coverage floor. */
+    consensusRankWeight?: number | null;
     /** Hour of the latest signal candle; null for date-only/no signal times. */
     signalCandleHourUtc: number | null;
     /** Hour of the latest signal candle in the app's Asia/Jakarta display zone. */
@@ -222,6 +226,143 @@ export interface AssetOpportunityForwardOosBaseline {
     /** Number of all result rows available before the archive top-N slice. */
     eligibleCandidateCount: number;
     horizons: AssetOpportunityForwardOosBaselineHorizon[];
+}
+
+/**
+ * One selection scalar's distribution over the retained candidate pool.
+ * `count` counts only rows with a finite value; percentiles are `null`
+ * (never `NaN`) when nothing is available.
+ */
+export interface AssetOpportunityPoolScalarDistribution {
+    /** Rows with a finite value for this scalar. */
+    count: number;
+    p10: number | null;
+    p25: number | null;
+    p50: number | null;
+    p75: number | null;
+    p90: number | null;
+}
+
+/**
+ * One fixed horizon's distribution over the pool. `averagePnlPercent` equals
+ * the baseline mean on the same input; the percentiles add the robust
+ * location/tail view the baseline cannot express.
+ */
+export interface AssetOpportunityPoolDistributionHorizon {
+    bars: number;
+    observedResults: number;
+    totalSamples: number;
+    /** Equals {@link AssetOpportunityForwardOosBaselineHorizon.averagePnlPercent} for this horizon. */
+    averagePnlPercent: number | null;
+    p10: number | null;
+    p25: number | null;
+    p50: number | null;
+    p75: number | null;
+    p90: number | null;
+}
+
+/**
+ * Pool-level distribution persisted in every new archive block. Summarizes
+ * the retained candidate pool (the Candidate Pool setting) — the same
+ * population the all-candidate baseline aggregates — so offline analysis can
+ * compare picks against the pool distribution. Scalar summaries only; no
+ * heavy arrays ever reach the archive.
+ */
+export interface AssetOpportunityPoolDistribution {
+    eligibleCandidateCount: number;
+    /** Primary (pair-basis) fixed-horizon distribution, same eligibility as the baseline. */
+    horizons: AssetOpportunityPoolDistributionHorizon[];
+    /** Present only when rows carry per-basis forward measurements. */
+    horizonsByBasis?: Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityPoolDistributionHorizon[]>>;
+    /** Selection-scalar distribution over the pool, frozen key set. */
+    selection: Record<string, AssetOpportunityPoolScalarDistribution>;
+}
+
+/** Frozen percentile fractions used by every archive pool distribution. */
+export const ASSET_OPPORTUNITY_POOL_PERCENTILE_FRACTIONS = [0.1, 0.25, 0.5, 0.75, 0.9] as const;
+
+/**
+ * Frozen selection-scalar key set for the pool distribution: exactly the
+ * `BacktestScalarMetrics` keys `selectAssetOpportunityPerformanceMetrics`
+ * persists on `AssetOpportunityPerformancePayload.selectionPerformance`.
+ * Do not invent new keys here — reconcile against that function first.
+ */
+export const ASSET_OPPORTUNITY_POOL_SELECTION_METRIC_KEYS = [
+    "netProfit",
+    "netProfitPercent",
+    "winRate",
+    "expectancy",
+    "avgTrade",
+    "profitFactor",
+    "maxDrawdown",
+    "maxDrawdownPercent",
+    "totalTrades",
+    "winningTrades",
+    "losingTrades",
+    "avgWin",
+    "avgLoss",
+    "sharpeRatio",
+] as const;
+
+export type AssetOpportunityPoolSelectionMetricKey = typeof ASSET_OPPORTUNITY_POOL_SELECTION_METRIC_KEYS[number];
+
+/**
+ * Nearest-rank percentile, reimplemented from the `percentile` helper in
+ * `scripts/lib/asset-opportunity-analysis.ts` (sorted copy, index
+ * `Math.round((n - 1) * fraction)`). `lib/` must not import from `scripts/`,
+ * so the two implementations share the method by contract, pinned by a
+ * parity test. Returns `null` for an empty or non-finite input — never `NaN`.
+ */
+export function assetOpportunityNearestRankPercentile(
+    values: readonly number[],
+    fraction: number,
+): number | null {
+    if (values.length === 0 || !Number.isFinite(fraction)) return null;
+    const sorted = [...values].sort((left, right) => left - right);
+    const index = Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * fraction)));
+    return sorted[index]!;
+}
+
+export interface AssetOpportunityPoolDistributionBuildOptions {
+    /**
+     * Include fixed-horizon percentiles (default). Pass `false` to persist
+     * selection scalars only — the next-exit measurement mode keeps its
+     * count-based baseline and ships no horizon distribution.
+     */
+    includeHorizons?: boolean;
+}
+
+interface ForwardHorizonSample {
+    pnl: number;
+    sampleSize: number;
+}
+
+/**
+ * Shared forward-horizon sample collection: ONE row/horizon filtering code
+ * path feeding both the mean baseline and the pool distribution, so their
+ * eligibility can never drift.
+ */
+function collectForwardHorizonSamples(
+    results: readonly FinderAssetOpportunityResult[],
+    basis?: FinderAssetOosHorizonBasis,
+): Map<number, ForwardHorizonSample[]> {
+    // With a basis, aggregate that basis's measurements so baseline deltas
+    // never compare a selected top-K basis outcome against a mixed-basis pool.
+    const metricsFor = (result: FinderAssetOpportunityResult): FinderAssetOosMetrics | null | undefined =>
+        basis
+            ? result.oosHorizonMetricsByBasis?.[basis] ?? result.activePositionContinuationMetricsByBasis?.[basis]
+            : result.oosHorizonMetrics ?? result.activePositionContinuationMetrics;
+    const samples = new Map<number, ForwardHorizonSample[]>();
+    for (const result of results) {
+        for (const horizon of metricsFor(result)?.horizons ?? []) {
+            const averagePnlPercent = horizon.averagePnlPercent;
+            if (averagePnlPercent === null || !Number.isFinite(averagePnlPercent) || horizon.sampleSize < 1) continue;
+            const bucket = samples.get(horizon.bars) ?? [];
+            bucket.push({ pnl: averagePnlPercent, sampleSize: horizon.sampleSize });
+            samples.set(horizon.bars, bucket);
+        }
+    }
+    return samples;
 }
 
 export interface AssetOpportunityNextExitOosBaseline {
@@ -339,6 +480,7 @@ export function buildAssetOpportunityPerformancePayload(args: {
         ...(result.freshSignalLibraryCount !== undefined ? { freshSignalLibraryCount: result.freshSignalLibraryCount } : {}),
         ...(result.totalTradesCappedValue !== undefined ? { totalTradesCappedValue: result.totalTradesCappedValue } : {}),
         ...(result.strategyCoverageCount !== undefined ? { strategyCoverageCount: result.strategyCoverageCount } : {}),
+        ...(result.consensusRankWeight !== undefined ? { consensusRankWeight: result.consensusRankWeight } : {}),
         signalCandleHourUtc: hours.utc,
         signalCandleHourJakarta: hours.jakarta,
         selectionPerformance: selectAssetOpportunityPerformanceMetrics(
@@ -364,54 +506,25 @@ export function buildAssetOpportunityForwardOosBaseline(
     results: FinderAssetOpportunityResult[],
     basis?: FinderAssetOosHorizonBasis,
 ): AssetOpportunityForwardOosBaseline {
-    // With a basis, aggregate that basis's measurements so baseline deltas
-    // never compare a selected top-K basis outcome against a mixed-basis pool.
-    const metricsFor = (result: FinderAssetOpportunityResult): FinderAssetOosMetrics | null | undefined =>
-        basis
-            ? result.oosHorizonMetricsByBasis?.[basis] ?? result.activePositionContinuationMetricsByBasis?.[basis]
-            : result.oosHorizonMetrics ?? result.activePositionContinuationMetrics;
-    const aggregates = new Map<number, {
-        sum: number;
-        weightedSum: number;
-        positiveResults: number;
-        observedResults: number;
-        totalSamples: number;
-    }>();
-    for (const result of results) {
-        for (const horizon of metricsFor(result)?.horizons ?? []) {
-            const averagePnlPercent = horizon.averagePnlPercent;
-            if (averagePnlPercent === null || !Number.isFinite(averagePnlPercent) || horizon.sampleSize < 1) continue;
-            const aggregate = aggregates.get(horizon.bars) ?? {
-                sum: 0,
-                weightedSum: 0,
-                positiveResults: 0,
-                observedResults: 0,
-                totalSamples: 0,
-            };
-            aggregate.sum += averagePnlPercent;
-            aggregate.weightedSum += averagePnlPercent * horizon.sampleSize;
-            aggregate.positiveResults += averagePnlPercent > 0 ? 1 : 0;
-            aggregate.observedResults += 1;
-            aggregate.totalSamples += horizon.sampleSize;
-            aggregates.set(horizon.bars, aggregate);
-        }
-    }
+    const aggregates = collectForwardHorizonSamples(results, basis);
     return {
         eligibleCandidateCount: results.length,
         horizons: [...aggregates.entries()]
             .sort(([left], [right]) => left - right)
-            .map(([bars, aggregate]) => ({
-                bars,
-                averagePnlPercent: aggregate.observedResults > 0
-                    ? aggregate.sum / aggregate.observedResults
-                    : null,
-                sampleWeightedAveragePnlPercent: aggregate.totalSamples > 0
-                    ? aggregate.weightedSum / aggregate.totalSamples
-                    : null,
-                positiveResults: aggregate.positiveResults,
-                observedResults: aggregate.observedResults,
-                totalSamples: aggregate.totalSamples,
-            })),
+            .map(([bars, samples]) => {
+                const sum = samples.reduce((total, sample) => total + sample.pnl, 0);
+                const weightedSum = samples.reduce((total, sample) => total + sample.pnl * sample.sampleSize, 0);
+                return {
+                    bars,
+                    averagePnlPercent: samples.length > 0 ? sum / samples.length : null,
+                    sampleWeightedAveragePnlPercent: samples.reduce((total, sample) => total + sample.sampleSize, 0) > 0
+                        ? weightedSum / samples.reduce((total, sample) => total + sample.sampleSize, 0)
+                        : null,
+                    positiveResults: samples.filter((sample) => sample.pnl > 0).length,
+                    observedResults: samples.length,
+                    totalSamples: samples.reduce((total, sample) => total + sample.sampleSize, 0),
+                };
+            }),
     };
 }
 
@@ -468,5 +581,90 @@ export function buildAssetOpportunityNextExitOosBaseline(
         averagePnlPercent: pnlSamples > 0 ? pnlTotal / pnlSamples : null,
         exitReasonCounts,
         unavailableReasonCounts,
+    };
+}
+
+function buildAssetOpportunityPoolScalarDistribution(
+    values: readonly number[],
+): AssetOpportunityPoolScalarDistribution {
+    const percentiles: Record<string, number | null> = {};
+    for (const fraction of ASSET_OPPORTUNITY_POOL_PERCENTILE_FRACTIONS) {
+        percentiles[`p${Math.round(fraction * 100)}`] = assetOpportunityNearestRankPercentile(values, fraction);
+    }
+    return {
+        count: values.length,
+        p10: percentiles["p10"] ?? null,
+        p25: percentiles["p25"] ?? null,
+        p50: percentiles["p50"] ?? null,
+        p75: percentiles["p75"] ?? null,
+        p90: percentiles["p90"] ?? null,
+    };
+}
+
+function buildAssetOpportunityPoolHorizonDistribution(
+    bars: number,
+    samples: readonly ForwardHorizonSample[],
+): AssetOpportunityPoolDistributionHorizon {
+    const pnlValues = samples.map((sample) => sample.pnl);
+    const percentiles: Record<string, number | null> = {};
+    for (const fraction of ASSET_OPPORTUNITY_POOL_PERCENTILE_FRACTIONS) {
+        percentiles[`p${Math.round(fraction * 100)}`] = assetOpportunityNearestRankPercentile(pnlValues, fraction);
+    }
+    return {
+        bars,
+        observedResults: samples.length,
+        totalSamples: samples.reduce((total, sample) => total + sample.sampleSize, 0),
+        averagePnlPercent: samples.length > 0
+            ? pnlValues.reduce((sum, value) => sum + value, 0) / pnlValues.length
+            : null,
+        p10: percentiles["p10"] ?? null,
+        p25: percentiles["p25"] ?? null,
+        p50: percentiles["p50"] ?? null,
+        p75: percentiles["p75"] ?? null,
+        p90: percentiles["p90"] ?? null,
+    };
+}
+
+/**
+ * Pool distribution for one iteration's unchanged result set. Horizon
+ * eligibility is the baseline's (shared {@link collectForwardHorizonSamples}
+ * path), so `averagePnlPercent` equals the baseline mean on the same input;
+ * selection-scalar percentiles are measurement-mode independent and always
+ * computed. Pure function: no mutation, deterministic output, `null` (never
+ * `NaN`) for unavailable values.
+ */
+export function buildAssetOpportunityPoolDistribution(
+    results: readonly FinderAssetOpportunityResult[],
+    basis?: FinderAssetOosHorizonBasis,
+    options: AssetOpportunityPoolDistributionBuildOptions = {},
+): AssetOpportunityPoolDistribution {
+    const includeHorizons = options.includeHorizons ?? true;
+    const selection: Record<string, AssetOpportunityPoolScalarDistribution> = {};
+    for (const key of ASSET_OPPORTUNITY_POOL_SELECTION_METRIC_KEYS) {
+        const values: number[] = [];
+        for (const result of results) {
+            const value = (result.selectionResult as unknown as Record<string, unknown>)[key];
+            if (typeof value === "number" && Number.isFinite(value)) values.push(value);
+        }
+        selection[key] = buildAssetOpportunityPoolScalarDistribution(values);
+    }
+    if (!includeHorizons) {
+        return { eligibleCandidateCount: results.length, horizons: [], selection };
+    }
+    const horizons = [...collectForwardHorizonSamples(results, basis).entries()]
+        .sort(([left], [right]) => left - right)
+        .map(([bars, samples]) => buildAssetOpportunityPoolHorizonDistribution(bars, samples));
+    const horizonsByBasis: Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityPoolDistributionHorizon[]>> = {};
+    for (const basisKey of ["pair", "base_only", "quote_only"] as const) {
+        if (!results.some((result) => mergeForwardOosByBasis(result)?.[basisKey])) continue;
+        horizonsByBasis[basisKey] = [...collectForwardHorizonSamples(results, basisKey).entries()]
+            .sort(([left], [right]) => left - right)
+            .map(([bars, samples]) => buildAssetOpportunityPoolHorizonDistribution(bars, samples));
+    }
+    return {
+        eligibleCandidateCount: results.length,
+        horizons,
+        ...(Object.keys(horizonsByBasis).length > 0 ? { horizonsByBasis } : {}),
+        selection,
     };
 }

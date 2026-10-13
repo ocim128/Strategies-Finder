@@ -56,7 +56,7 @@ export type {
     ArchiveParseOptions,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
-const REPORT_SCHEMA_VERSION = 14;
+const REPORT_SCHEMA_VERSION = 15;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const HORIZON_BASES = ["pair", "base_only", "quote_only"] as const;
@@ -86,6 +86,7 @@ const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
     medianBarsToTp: "medianBarsToTp",
     priorTupleRecurrence: "priorTupleRecurrenceCount",
     strategyCoverageGate: "strategyCoverageCount",
+    consensusRankWeight: "consensusRankWeight",
     barrierExitShare: "barrierExitShare",
     entryHourConcentration: "entryHourConcentration",
     tradeGapUniformity: "tradeGapUniformity",
@@ -192,6 +193,14 @@ export interface HoldoutHorizonAnalysis {
     baselineAveragePnlPercent: number | null;
     baselinePositiveRatePercent: number | null;
     baselineEligibleCandidateCount: number | null;
+    /** Pool P50 at this horizon, averaged over contributing holdouts (newer archives). */
+    poolP50PnlPercent: number | null;
+    /** Pool P10 band edge, averaged over contributing holdouts. */
+    poolP10PnlPercent: number | null;
+    /** Pool P90 band edge, averaged over contributing holdouts. */
+    poolP90PnlPercent: number | null;
+    /** Holdouts whose pool distribution carried this horizon. */
+    poolDistributionHoldouts: number;
 }
 
 export interface SortHoldoutAnalysis {
@@ -430,6 +439,12 @@ export interface AssetOpportunityHoldoutAnalysisReport {
     parameterFingerprintAvailable: boolean;
     baselineAvailable: boolean;
     baseline: BaselineHorizonAnalysis[];
+    /** Distinct measurement-contract ids per analyzed batch run; empty = legacy. */
+    epochRuns: Array<{ batchRunId: string; epochs: string[]; blocksMissingEpoch: number }>;
+    /** Non-null when the report pools blocks with differing or absent epochs. */
+    mixedEpochWarning: string | null;
+    /** Analyzed blocks that carry a pool distribution. */
+    poolDistributionBlocks: number;
     nextExit: {
         baseline: NextExitBaselineAnalysis | null;
         sorts: NextExitSortAnalysis[];
@@ -755,6 +770,10 @@ function calculateHorizonAnalysis(
         baselineAveragePnlPercent: null,
         baselinePositiveRatePercent: null,
         baselineEligibleCandidateCount: null,
+        poolP50PnlPercent: null,
+        poolP10PnlPercent: null,
+        poolP90PnlPercent: null,
+        poolDistributionHoldouts: 0,
     };
 }
 
@@ -1037,7 +1056,9 @@ function getThesisSortMetricValue(row: AssetOpportunityArchiveRow, sortMetric: s
             ? row.freshSignalLibraryCount
             : field === "totalTradesCappedValue"
                 ? row.totalTradesCappedValue
-                : performance?.[field];
+                : field === "consensusRankWeight"
+                    ? row.consensusRankWeight
+                    : performance?.[field];
     if (raw === undefined) return undefined;
     if (field === "profitFactor" && raw === null) {
         const netProfit = performance?.netProfit;
@@ -1179,6 +1200,40 @@ function buildNextExitBaselineAnalysis(
     };
 }
 
+/**
+ * Pool horizon percentiles beside the all-candidate baseline. Pool-level data
+ * is repeated into every sort block of an iteration, so holdouts are collapsed
+ * by (batchRunId, holdoutBars) — one entry per holdout — exactly like the
+ * baseline analysis. Equal weight per holdout, same convention as the
+ * baseline's median/percentile spread.
+ */
+function buildPoolDistributionHorizonAnalysis(
+    records: AssetOpportunityArchiveRecord[],
+    horizonBars: number,
+): { p50: number | null; p10: number | null; p90: number | null; holdouts: number } | null {
+    const valuesByHoldout = new Map<number, { p10: number | null; p50: number | null; p90: number | null }>();
+    for (const record of records) {
+        if (valuesByHoldout.has(record.holdoutBars)) continue;
+        const horizon = record.poolDistribution?.horizons.find((candidate) => candidate.bars === horizonBars);
+        if (!horizon) continue;
+        valuesByHoldout.set(record.holdoutBars, { p10: horizon.p10, p50: horizon.p50, p90: horizon.p90 });
+    }
+    const values = [...valuesByHoldout.values()];
+    if (values.length === 0) return null;
+    const averageOf = (
+        read: (value: { p10: number | null; p50: number | null; p90: number | null }) => number | null,
+    ): number | null => {
+        const finite = values.map(read).filter((value): value is number => value !== null && Number.isFinite(value));
+        return finite.length > 0 ? finite.reduce((sum, value) => sum + value, 0) / finite.length : null;
+    };
+    return {
+        p10: averageOf((value) => value.p10),
+        p50: averageOf((value) => value.p50),
+        p90: averageOf((value) => value.p90),
+        holdouts: values.length,
+    };
+}
+
 function buildSortHorizonAnalyses(
     records: AssetOpportunityArchiveRecord[],
     topK: number,
@@ -1206,6 +1261,16 @@ function buildSortHorizonAnalyses(
             result.baselineAveragePnlPercent = matchedBaseline?.averagePnlPercent ?? null;
             result.baselinePositiveRatePercent = matchedBaseline?.positiveRatePercent ?? null;
             result.baselineEligibleCandidateCount = matchedBaseline?.averageEligibleCandidateCount ?? null;
+            const pool = buildPoolDistributionHorizonAnalysis(
+                records.filter((record) => contributingHoldouts.has(record.holdoutBars)),
+                horizonBarsValue,
+            );
+            if (pool) {
+                result.poolP10PnlPercent = pool.p10;
+                result.poolP50PnlPercent = pool.p50;
+                result.poolP90PnlPercent = pool.p90;
+                result.poolDistributionHoldouts = pool.holdouts;
+            }
         }
         return result;
     });
@@ -2003,6 +2068,40 @@ export function analyzeAssetOpportunityArchive(
             jakarta: buildNextExitSignalCandleHourPerformance(analysisRecords, topK, "signalCandleHourJakarta"),
         }
         : { utc: [], jakarta: [] };
+    // Measurement-contract segregation: one line per analyzed run lists the
+    // distinct epoch values its blocks carry, and a warning fires when the
+    // report pools blocks with differing or absent epochs.
+    const epochRuns = [...selected.records.reduce((groups, record) => {
+        const group = groups.get(record.batchRunId) ?? { batchRunId: record.batchRunId, epochs: new Set<string>(), blocksMissingEpoch: 0 };
+        if (record.archiveEpoch) group.epochs.add(record.archiveEpoch);
+        else group.blocksMissingEpoch += 1;
+        groups.set(record.batchRunId, group);
+        return groups;
+    }, new Map<string, { batchRunId: string; epochs: Set<string>; blocksMissingEpoch: number }>()).values()]
+        .map((group) => ({
+            batchRunId: group.batchRunId,
+            epochs: [...group.epochs].sort((left, right) => left.localeCompare(right)),
+            blocksMissingEpoch: group.blocksMissingEpoch,
+        }))
+        .sort((left, right) => left.batchRunId.localeCompare(right.batchRunId));
+    const mixedEpochWarning = (() => {
+        const distinctEpochs = new Set(epochRuns.flatMap((run) => run.epochs));
+        const anyMissing = epochRuns.some((run) => run.blocksMissingEpoch > 0);
+        const runsWithMixed = epochRuns.filter((run) => run.epochs.length > 1);
+        if (distinctEpochs.size <= 1 && !anyMissing && runsWithMixed.length === 0) return null;
+        const parts: string[] = [];
+        if (runsWithMixed.length > 0) {
+            parts.push(`runs mixing epochs: ${runsWithMixed.map((run) => `${run.batchRunId} [${run.epochs.join(", ")}]`).join("; ")}`);
+        }
+        if (anyMissing) {
+            parts.push(`${epochRuns.reduce((sum, run) => sum + run.blocksMissingEpoch, 0)} blocks carry no epoch (legacy/unknown measurement contract)`);
+        }
+        if (distinctEpochs.size > 1) {
+            parts.push(`report epochs: ${[...distinctEpochs].sort((left, right) => left.localeCompare(right)).join(", ")}`);
+        }
+        return `WARNING: pooled blocks differ in measurement contract (${parts.join("; ")}). Segregate runs by epoch before comparing picks across contracts.`;
+    })();
+    const poolDistributionBlocks = analysisRecords.filter((record) => record.poolDistribution !== null).length;
     return {
         schemaVersion: REPORT_SCHEMA_VERSION,
         generatedAt: options.generatedAt ?? new Date().toISOString(),
@@ -2028,6 +2127,9 @@ export function analyzeAssetOpportunityArchive(
         parameterFingerprintAvailable,
         baselineAvailable: baseline.length > 0,
         baseline,
+        epochRuns,
+        mixedEpochWarning,
+        poolDistributionBlocks,
         nextExit: measurementMode === "next_exit"
             ? {
                 baseline: buildNextExitBaselineAnalysis(selected.records),
@@ -2099,6 +2201,12 @@ export function analyzeAssetOpportunityArchive(
                     ...thesisEvidenceNotes,
                 ]
                 : []),
+            ...(poolDistributionBlocks > 0
+                ? [
+                    "Pool P50 / P10–P90 columns read the archived pool distribution (nearest-rank percentiles over the retained candidate pool). Percentiles add robust location and tails only: they do NOT reconstruct trimmed means, so --exclude-gains-100 baselines remain unavailable.",
+                ]
+                : []),
+            ...(mixedEpochWarning ? [mixedEpochWarning] : []),
             signalCandleHoursAvailable
                 ? "Signal candle hour is derived from latestSignalTime and reported in UTC and Asia/Jakarta; it is not necessarily the eventual trade-entry hour."
                 : "Signal candle-hour analysis is unavailable because the selected archive predates signalCandleHourUtc and signalCandleHourJakarta fields.",
@@ -2219,7 +2327,9 @@ function formatThesisSortEvidence(evidence: ThesisSortEvidence): string {
     return `${evidence.validRows}/${evidence.totalRows} valid${recurrence}, varied=${evidence.differentiatedHoldouts}/${evidence.comparableHoldouts} comparable holdouts, distinct=${evidence.distinctValues} (${status})`;
 }
 
-function buildThesisEvidenceNotes(sorts: readonly NextExitSortAnalysis[]): string[] {
+function buildThesisEvidenceNotes(
+    sorts: ReadonlyArray<{ sortMetric: string; thesisMetricEvidence: ThesisSortEvidence }>,
+): string[] {
     return sorts
         .filter((sort) => sort.thesisMetricEvidence.status === "unavailable"
             || sort.thesisMetricEvidence.status === "insufficient_data"
@@ -2409,6 +2519,8 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         `Candidate identity: ${report.candidateIdentity}`,
         `Parameter fingerprints: ${report.parameterFingerprintAvailable ? "available" : "not available in this archive"}`,
         `All-candidate baseline: ${report.gainExclusion ? "unavailable after gain exclusion (only aggregates archived)" : report.baselineAvailable || report.nextExit?.baseline ? "available" : "not available in this archive"}`,
+        `Pool distribution: ${report.poolDistributionBlocks > 0 ? `available in ${report.poolDistributionBlocks} analyzed blocks` : "not available in this archive"}`,
+        ...report.epochRuns.map((run) => `Archive epoch (${run.batchRunId}): ${run.epochs.length > 0 ? run.epochs.join(", ") : "none (legacy/unknown)"}${run.blocksMissingEpoch > 0 ? ` · ${run.blocksMissingEpoch} blocks without an epoch` : ""}`),
     ];
     if (report.measurementMode === "next_exit") {
         return renderNextExitReport(report, headerLines);
@@ -2501,7 +2613,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         lines.push(
             "",
             "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
-            "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Delta | Ongoing n | Ongoing avg | Samples (completed)",
+            "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Pool P50 | Pool P10–P90 | Delta | Ongoing n | Ongoing avg | Samples (completed)",
         );
         for (const sort of orderedSorts) {
             for (const horizon of sort.horizons) {
@@ -2517,6 +2629,10 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
                     formatPercent(horizon.p10PnlPercent),
                     formatPercent(horizon.worstPnlPercent),
                     formatPercent(horizon.baselineAveragePnlPercent),
+                    formatPercent(horizon.poolP50PnlPercent),
+                    horizon.poolP10PnlPercent !== null && horizon.poolP90PnlPercent !== null
+                        ? `${formatPercent(horizon.poolP10PnlPercent)} – ${formatPercent(horizon.poolP90PnlPercent)}`
+                        : formatPercent(null),
                     formatPercent(delta),
                     String(horizon.ongoingRows),
                     formatPercent(horizon.ongoingAveragePnlPercent),

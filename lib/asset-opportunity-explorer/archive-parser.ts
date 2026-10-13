@@ -1,6 +1,9 @@
 import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityNextExitOosBaseline,
+    AssetOpportunityPoolDistribution,
+    AssetOpportunityPoolDistributionHorizon,
+    AssetOpportunityPoolScalarDistribution,
 } from "../finder/finder-asset-opportunity-metadata";
 import type { FinderAssetOosNextExitUnavailableReason } from "../finder/finder-asset-opportunity-oos";
 
@@ -59,6 +62,8 @@ export interface AssetOpportunityArchiveRow {
     /** Exact capped trade-count thesis value in newer archives. */
     totalTradesCappedValue?: number | null;
     strategyCoverageCount?: number | null;
+    /** Symbol-level consensus rank weight in newer archives (rank points). */
+    consensusRankWeight?: number | null;
     forwardOosPerformance?: ArchiveHorizonPerformance | null;
     /** Per-basis forward measurements captured in the same pass; absent on single-basis (older) rows. */
     forwardOosPerformanceByBasis?: Partial<Record<AssetOpportunityArchiveHorizonBasis, ArchiveHorizonPerformance>> | null;
@@ -84,6 +89,10 @@ export interface AssetOpportunityArchiveRecord {
     /** All-result baseline per price basis; absent on single-basis (older) blocks. */
     baselineByBasis?: Partial<Record<AssetOpportunityArchiveHorizonBasis, AssetOpportunityForwardOosBaseline>> | null;
     nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
+    /** Measurement-contract id stamped on newer blocks; absent = legacy/unknown. */
+    archiveEpoch?: string;
+    /** Pool-level distribution summaries; absent on legacy blocks. */
+    poolDistribution?: AssetOpportunityPoolDistribution | null;
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -205,6 +214,95 @@ export function parseArchiveScalarRecord(value: unknown): Record<string, number 
         if (number !== null) parsed[key] = number;
     }
     return parsed;
+}
+
+/**
+ * Parse an optional nullable percentile field of the pool distribution.
+ * Archive text is untrusted input: anything that is neither `null` nor a
+ * finite number fails the scan with the block's filename.
+ */
+function parsePoolDistributionPercentile(value: unknown, sourceFile: string): number | null {
+    if (value === null || value === undefined) return null;
+    const parsed = asFiniteNumber(value);
+    if (parsed === null) throw new Error(`Invalid archive pool distribution percentile in ${sourceFile}`);
+    return parsed;
+}
+
+/**
+ * Strictly parse one `Archive pool distribution:` header JSON into the frozen
+ * shape. Unknown/malformed values fail the scan with its filename, like
+ * invalid row JSON does today.
+ */
+export function parseArchivePoolDistribution(
+    value: unknown,
+    sourceFile: string,
+): AssetOpportunityPoolDistribution | null {
+    if (value === undefined) return null;
+    if (!isRecord(value) || !Array.isArray(value.horizons) || !isRecord(value.selection)) {
+        throw new Error(`Invalid archive pool distribution in ${sourceFile}`);
+    }
+    const eligibleCandidateCount = asNonNegativeInteger(value.eligibleCandidateCount);
+    if (eligibleCandidateCount === null) {
+        throw new Error(`Invalid archive pool distribution candidate count in ${sourceFile}`);
+    }
+    const parseHorizon = (item: unknown): AssetOpportunityPoolDistributionHorizon => {
+        if (!isRecord(item)) throw new Error(`Invalid archive pool distribution horizon in ${sourceFile}`);
+        const bars = asPositiveInteger(item.bars);
+        const observedResults = asNonNegativeInteger(item.observedResults);
+        const totalSamples = asNonNegativeInteger(item.totalSamples);
+        if (bars === null || observedResults === null || totalSamples === null) {
+            throw new Error(`Invalid archive pool distribution horizon in ${sourceFile}`);
+        }
+        return {
+            bars,
+            observedResults,
+            totalSamples,
+            averagePnlPercent: parsePoolDistributionPercentile(item.averagePnlPercent, sourceFile),
+            p10: parsePoolDistributionPercentile(item.p10, sourceFile),
+            p25: parsePoolDistributionPercentile(item.p25, sourceFile),
+            p50: parsePoolDistributionPercentile(item.p50, sourceFile),
+            p75: parsePoolDistributionPercentile(item.p75, sourceFile),
+            p90: parsePoolDistributionPercentile(item.p90, sourceFile),
+        };
+    };
+    const parseHorizons = (raw: unknown): AssetOpportunityPoolDistributionHorizon[] => {
+        if (!Array.isArray(raw)) throw new Error(`Invalid archive pool distribution horizons in ${sourceFile}`);
+        return raw.map(parseHorizon);
+    };
+    const selection: Record<string, AssetOpportunityPoolScalarDistribution> = {};
+    for (const [key, raw] of Object.entries(value.selection)) {
+        if (!isRecord(raw)) throw new Error(`Invalid archive pool distribution scalar in ${sourceFile}`);
+        const count = asNonNegativeInteger(raw.count);
+        if (count === null) {
+            throw new Error(`Invalid archive pool distribution scalar count in ${sourceFile}`);
+        }
+        selection[key] = {
+            count,
+            p10: parsePoolDistributionPercentile(raw.p10, sourceFile),
+            p25: parsePoolDistributionPercentile(raw.p25, sourceFile),
+            p50: parsePoolDistributionPercentile(raw.p50, sourceFile),
+            p75: parsePoolDistributionPercentile(raw.p75, sourceFile),
+            p90: parsePoolDistributionPercentile(raw.p90, sourceFile),
+        };
+    }
+    const horizonsByBasisValue = value.horizonsByBasis;
+    let parsedHorizonsByBasis: AssetOpportunityPoolDistribution["horizonsByBasis"];
+    if (horizonsByBasisValue !== undefined) {
+        if (!isRecord(horizonsByBasisValue)) {
+            throw new Error(`Invalid archive pool distribution by basis in ${sourceFile}`);
+        }
+        for (const basis of ARCHIVE_BASES) {
+            if (horizonsByBasisValue[basis] === undefined) continue;
+            parsedHorizonsByBasis = parsedHorizonsByBasis ?? {};
+            parsedHorizonsByBasis[basis] = parseHorizons(horizonsByBasisValue[basis]);
+        }
+    }
+    return {
+        eligibleCandidateCount,
+        horizons: parseHorizons(value.horizons),
+        ...(parsedHorizonsByBasis ? { horizonsByBasis: parsedHorizonsByBasis } : {}),
+        selection,
+    };
 }
 
 function parseArchiveHorizonPerformance(value: unknown): ArchiveHorizonPerformance | null {
@@ -341,6 +439,11 @@ function parseArchiveRows(
             strategyCoverageCount: row.strategyCoverageCount === null
                 ? null
                 : asFiniteNumber(row.strategyCoverageCount),
+            ...(row.consensusRankWeight !== undefined ? {
+                consensusRankWeight: row.consensusRankWeight === null
+                    ? null
+                    : asFiniteNumber(row.consensusRankWeight),
+            } : {}),
             forwardOosPerformance,
             ...(forwardOosPerformanceByBasis ? { forwardOosPerformanceByBasis } : {}),
             nextExitOosPerformance,
@@ -360,7 +463,7 @@ function flatCapture(value: string): string {
 
 /** Header lines of one archive block, between the two separator lines. */
 const ARCHIVE_BLOCK_HEADER_PATTERN = new RegExp(
-    `^Timestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive baseline by basis: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?$`,
+    `^Timestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive baseline by basis: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?(?:Archive epoch: ([^\\n]+)\\n)?(?:Archive pool distribution: ([^\\n]+)\\n)?$`,
 );
 
 /** Parse all delimited blocks from one archive file. */
@@ -417,6 +520,15 @@ export function parseAssetOpportunityArchiveText(
             }
             baselineByBasis = Object.keys(map).length > 0 ? map : undefined;
         }
+        let poolDistribution: AssetOpportunityArchiveRecord["poolDistribution"] = null;
+        if (headerMatch[10]) {
+            try {
+                poolDistribution = parseArchivePoolDistribution(JSON.parse(headerMatch[10]), sourceFile);
+            } catch (error) {
+                if (error instanceof Error && error.message.includes(sourceFile)) throw error;
+                throw new Error(`Invalid archive pool distribution in ${sourceFile}`);
+            }
+        }
         records.push({
             sourceFile,
             timestamp: flatCapture(headerMatch[1]!),
@@ -432,6 +544,8 @@ export function parseAssetOpportunityArchiveText(
             baseline: headerMatch[6] ? parseArchiveBaseline(JSON.parse(headerMatch[6]), sourceFile) : null,
             ...(baselineByBasis ? { baselineByBasis } : {}),
             nextExitBaseline: headerMatch[8] ? parseNextExitBaseline(JSON.parse(headerMatch[8]), sourceFile) : null,
+            ...(headerMatch[9] ? { archiveEpoch: flatCapture(headerMatch[9]!) } : {}),
+            poolDistribution,
         });
     }
     if (records.length === 0 && normalized.length > 0) {

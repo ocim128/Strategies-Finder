@@ -3,7 +3,8 @@ import { describe, it } from "node:test";
 import {
     parseAssetOpportunityArchiveText,
 } from "../lib/asset-opportunity-explorer/archive-parser";
-import { buildAssetOpportunityArchiveBlockText } from "../lib/finder/server/finder-asset-opportunity-archive";
+import { buildAssetOpportunityArchiveBlockText, ASSET_OPPORTUNITY_ARCHIVE_EPOCH } from "../lib/finder/server/finder-asset-opportunity-archive";
+import type { AssetOpportunityForwardOosBaseline } from "../lib/finder/finder-asset-opportunity-metadata";
 import {
     ExplorerAnalysisError,
     buildExplorerView,
@@ -68,6 +69,8 @@ function block(args: {
     baseline?: unknown;
     baselineByBasis?: Record<string, unknown>;
     measurementMode?: string;
+    archiveEpoch?: string;
+    poolDistribution?: unknown;
 }): string {
     return [
         "=".repeat(80),
@@ -78,13 +81,15 @@ function block(args: {
         ...(args.measurementMode === undefined ? [] : [`Forward measurement: ${args.measurementMode}`]),
         ...(args.baseline === undefined ? [] : [`Archive baseline: ${JSON.stringify(args.baseline)}`]),
         ...(args.baselineByBasis === undefined ? [] : [`Archive baseline by basis: ${JSON.stringify(args.baselineByBasis)}`]),
+        ...(args.archiveEpoch === undefined ? [] : [`Archive epoch: ${args.archiveEpoch}`]),
+        ...(args.poolDistribution === undefined ? [] : [`Archive pool distribution: ${JSON.stringify(args.poolDistribution)}`]),
         "=".repeat(80),
         JSON.stringify(args.rows),
         "=".repeat(80),
     ].join("\n");
 }
 
-function baseline(horizons: Array<{ bars: number; averagePnlPercent: number | null }>): unknown {
+function baseline(horizons: Array<{ bars: number; averagePnlPercent: number | null }>): AssetOpportunityForwardOosBaseline {
     return {
         eligibleCandidateCount: 50,
         horizons: horizons.map((horizon) => ({
@@ -97,6 +102,38 @@ function baseline(horizons: Array<{ bars: number; averagePnlPercent: number | nu
         })),
     };
 }
+
+const poolDistributionFixture = {
+    eligibleCandidateCount: 50,
+    horizons: [{
+        bars: 12,
+        observedResults: 50,
+        totalSamples: 50,
+        averagePnlPercent: 0.5,
+        p10: -1.5,
+        p25: -0.5,
+        p50: 0.5,
+        p75: 1.5,
+        p90: 2.5,
+    }],
+    horizonsByBasis: {
+        pair: [{
+            bars: 12,
+            observedResults: 50,
+            totalSamples: 50,
+            averagePnlPercent: 0.5,
+            p10: -1.5,
+            p25: -0.5,
+            p50: 0.5,
+            p75: 1.5,
+            p90: 2.5,
+        }],
+    },
+    selection: {
+        expectancy: { count: 50, p10: -0.2, p25: 0.1, p50: 0.4, p75: 0.8, p90: 1.6 },
+        netProfit: { count: 50, p10: -12, p25: -3, p50: 4, p75: 11, p90: 24 },
+    },
+};
 
 describe("Asset Opportunity Explorer analysis", () => {
     it("keeps legacy parsing behavior including CRLF normalization", () => {
@@ -143,6 +180,76 @@ describe("Asset Opportunity Explorer analysis", () => {
         expect(records[0]!.measurementMode).to.equal("fixed_horizon");
         expect(records[0]!.topResults[0]!.forwardOosPerformance?.horizons?.[0]?.averagePnlPercent).to.equal(4);
         expect(records[1]!.topResults[0]!.forwardOosPerformance?.horizons?.[0]?.averagePnlPercent).to.equal(2);
+    });
+
+    it("round-trips the epoch and pool distribution through the writer and parser", () => {
+        const writerText = buildAssetOpportunityArchiveBlockText({
+            timestamp: "2026-09-26T00:00:00.000Z",
+            batchRunId: "writer-run",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            measurementMode: "fixed_horizon",
+            baseline: baseline([{ bars: 12, averagePnlPercent: 0.5 }]),
+            poolDistribution: poolDistributionFixture,
+            archiveEpoch: ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
+            topResults: [archiveRow({ rank: 1, horizons: [{ bars: 12, averagePnlPercent: 4, sampleSize: 1 }] })],
+        });
+
+        const records = parseAssetOpportunityArchiveText(writerText, "enriched.txt");
+        expect(records).to.have.length(1);
+        expect(records[0]!.archiveEpoch).to.equal(ASSET_OPPORTUNITY_ARCHIVE_EPOCH);
+        expect(records[0]!.poolDistribution).to.deep.equal(poolDistributionFixture);
+        // Enriched blocks stay fully usable for the existing analysis.
+        expect(records[0]!.baseline?.horizons[0]?.averagePnlPercent).to.equal(0.5);
+        expect(records[0]!.topResults[0]!.forwardOosPerformance?.horizons?.[0]?.averagePnlPercent).to.equal(4);
+    });
+
+    it("keeps legacy blocks without the new header lines parseable", () => {
+        const legacyText = buildAssetOpportunityArchiveBlockText({
+            timestamp: "2026-08-01T00:00:00.000Z",
+            batchRunId: "legacy-run",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            topResults: [archiveRow({ rank: 1, horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }] })],
+        });
+        const records = parseAssetOpportunityArchiveText(legacyText, "legacy.txt");
+        expect(records).to.have.length(1);
+        expect(records[0]!.archiveEpoch).to.equal(undefined);
+        expect(records[0]!.poolDistribution).to.equal(null);
+        expect(records[0]!.topResults[0]!.forwardOosPerformance?.horizons?.[0]?.averagePnlPercent).to.equal(1);
+    });
+
+    it("rejects malformed pool distribution JSON with the source filename", () => {
+        const malformed = [
+            "=".repeat(80),
+            "Timestamp: t",
+            "Batch run id: run",
+            "OOS holdout: 12 bars",
+            "Archive sort: expectancy",
+            "Archive epoch: 2026-09-26-selection-correction",
+            "Archive pool distribution: {not valid json",
+            "=".repeat(80),
+            JSON.stringify([archiveRow({ rank: 1, horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }] })]),
+            "=".repeat(80),
+        ].join("\n");
+        expect(() => parseAssetOpportunityArchiveText(malformed, "malformed.txt"))
+            .to.throw(/malformed\.txt/);
+
+        // A well-formed but wrong-shaped distribution fails the scan the same way.
+        const wrongShape = malformed.replace(
+            "{not valid json",
+            JSON.stringify({ eligibleCandidateCount: 5, horizons: "nope", selection: {} }),
+        );
+        expect(() => parseAssetOpportunityArchiveText(wrongShape, "wrong-shape.txt"))
+            .to.throw(/wrong-shape\.txt/);
+
+        // A missing percentile field (non-null, non-finite) is rejected too.
+        const badPercentile = malformed.replace(
+            "{not valid json",
+            JSON.stringify({ eligibleCandidateCount: 5, horizons: [], selection: { winRate: { count: 3, p10: "x", p25: null, p50: null, p75: null, p90: null } } }),
+        );
+        expect(() => parseAssetOpportunityArchiveText(badPercentile, "bad-percentile.txt"))
+            .to.throw(/bad-percentile\.txt/);
     });
 
     it("preserves the optional forwardOosPerformance.basis measurement metadata", () => {
@@ -361,6 +468,57 @@ describe("Asset Opportunity Explorer analysis", () => {
         expect(catalog.find((run) => run.batchRunId === "run-mixed")!.support).to.equal("mixed_modes");
         expect(catalog.find((run) => run.batchRunId === "run-next-exit")!.support).to.equal("next_exit");
         expect(catalog.find((run) => run.batchRunId === "run-old")!.support).to.equal("fixed_horizon");
+    });
+
+    it("catalogs epoch markers and pool-distribution availability per run", () => {
+        const catalog = summarizeRunCatalog(parseAssetOpportunityArchiveText([
+            buildAssetOpportunityArchiveBlockText({
+                timestamp: "2026-09-26T00:00:00.000Z",
+                batchRunId: "run-enriched",
+                holdoutBars: 12,
+                sortMetric: "expectancy",
+                archiveEpoch: ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
+                poolDistribution: poolDistributionFixture,
+                topResults: [archiveRow({ rank: 1, horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }] })],
+            }),
+            block({
+                timestamp: "2026-08-01T00:00:00.000Z",
+                runId: "run-legacy",
+                holdoutBars: 12,
+                sortMetric: "expectancy",
+                rows: [archiveRow({ rank: 1, horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }] })],
+            }),
+            block({
+                timestamp: "2026-09-26T05:00:00.000Z",
+                runId: "run-mixed-epoch",
+                holdoutBars: 12,
+                sortMetric: "expectancy",
+                archiveEpoch: "2026-09-26-selection-correction",
+                rows: [archiveRow({ rank: 1, horizons: [{ bars: 12, averagePnlPercent: 1, sampleSize: 1 }] })],
+            }),
+            block({
+                timestamp: "2026-09-27T05:00:00.000Z",
+                runId: "run-mixed-epoch",
+                holdoutBars: 6,
+                sortMetric: "expectancy",
+                archiveEpoch: "2026-10-01-later-contract",
+                rows: [archiveRow({ rank: 1, horizons: [{ bars: 6, averagePnlPercent: 1, sampleSize: 1 }] })],
+            }),
+        ].join("\n")));
+
+        const enriched = catalog.find((run) => run.batchRunId === "run-enriched")!;
+        expect(enriched.archiveEpoch).to.equal(ASSET_OPPORTUNITY_ARCHIVE_EPOCH);
+        expect(enriched.archiveEpochCount).to.equal(1);
+        expect(enriched.hasPoolDistribution).to.equal(true);
+
+        const legacy = catalog.find((run) => run.batchRunId === "run-legacy")!;
+        expect(legacy.archiveEpoch).to.equal(undefined);
+        expect(legacy.archiveEpochCount).to.equal(0);
+        expect(legacy.hasPoolDistribution).to.equal(false);
+
+        const mixed = catalog.find((run) => run.batchRunId === "run-mixed-epoch")!;
+        expect(mixed.archiveEpochCount).to.equal(2);
+        expect(mixed.archiveEpoch).to.equal("2026-09-26-selection-correction");
     });
 
     it("distinguishes null (unobserved) from zero (observed) cell outcomes", () => {

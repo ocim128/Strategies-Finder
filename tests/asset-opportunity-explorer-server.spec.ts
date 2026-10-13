@@ -582,6 +582,8 @@ describe("Asset Opportunity Explorer server", () => {
                 sourceBlockCount: 1,
                 hasBaselines: false,
                 availableBases: ["base_only"],
+                archiveEpochCount: 0,
+                hasPoolDistribution: false,
             }],
             view: {
                 batchRunId: retainRunId ?? "run-a",
@@ -637,6 +639,8 @@ describe("Asset Opportunity Explorer server", () => {
                 sourceBlockCount: 1,
                 hasBaselines: false,
                 availableBases: ["base_only"],
+                archiveEpochCount: 0,
+                hasPoolDistribution: false,
             }],
             view: {
                 batchRunId: retainRunId ?? "run-a",

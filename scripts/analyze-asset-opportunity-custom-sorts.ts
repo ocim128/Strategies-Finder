@@ -33,13 +33,15 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getArgument } from "./lib/cli-args";
 import { createRng, formatDelta, formatRate, mean, parseList, percentile } from "./lib/asset-opportunity-analysis";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
-const BLOCK_PATTERN = new RegExp(
-    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
+/** Exported for the block-parser regression spec (no behavior change). */
+export const BLOCK_PATTERN = new RegExp(
+    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?(?:Archive epoch: ([^\\n]+)\\n)?(?:Archive pool distribution: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
     "gm",
 );
 const MIN_TRADES_FOR_LOSS_QUALITY = 15;
@@ -90,7 +92,8 @@ function rowForwardPnl(row: ArchiveRow, horizonBars: number): number | null {
     return null;
 }
 
-function loadFiles(archiveDirectory: string): FileData[] {
+/** Exported for the block-parser regression spec (no behavior change). */
+export function loadFiles(archiveDirectory: string): FileData[] {
     const entries = fs.readdirSync(archiveDirectory)
         .map((file) => ({ file, match: file.match(ARCHIVE_FILE_PATTERN) }))
         .filter((entry): entry is { file: string; match: RegExpMatchArray } => entry.match !== null)
@@ -123,7 +126,7 @@ function loadFiles(archiveDirectory: string): FileData[] {
                 }
             }
             try {
-                rows.push(...(JSON.parse(match[8]!) as ArchiveRow[]));
+                rows.push(...(JSON.parse(match[10]!) as ArchiveRow[]));
             } catch {
                 // Skip malformed block body.
             }
@@ -555,4 +558,8 @@ function main(): void {
     }
 }
 
-main();
+// Run only as a CLI; importing this module (tests) must not execute the report.
+const invokedScript = process.argv[1] ? path.resolve(process.argv[1]) : "";
+if (invokedScript === path.resolve(fileURLToPath(import.meta.url))) {
+    main();
+}

@@ -131,10 +131,12 @@ import {
     buildAssetOpportunityForwardOosBaselinesByBasis,
     buildAssetOpportunityNextExitOosBaseline,
     buildAssetOpportunityPerformancePayload,
+    buildAssetOpportunityPoolDistribution,
 } from "../finder-asset-opportunity-metadata";
 import {
     appendAssetOpportunityArchiveBlocks,
     appendAssetOpportunityArchiveRunConfig,
+    ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
     buildAssetOpportunityRecurrenceIndex,
     buildAssetOpportunityTupleKey,
     countPriorAssetOpportunityTupleRecurrenceIndexed,
@@ -2061,6 +2063,14 @@ export async function processFinderAssetOpportunityBatchRun(
         const nextExitBaseline = measurementMode === "next_exit"
             ? buildAssetOpportunityNextExitOosBaseline(iteration.results)
             : null;
+        // Pool-level distribution: same population as the baseline, computed
+        // once per iteration and repeated into every sort block. Fixed-horizon
+        // percentiles ship only in fixed_horizon mode; selection scalars always.
+        const poolDistribution = buildAssetOpportunityPoolDistribution(
+            iteration.results,
+            undefined,
+            { includeHorizons: measurementMode === "fixed_horizon" },
+        );
         try {
             const archiveSorts = resolveAssetOpportunityArchiveSorts();
             const archiveBlocks = archiveSorts.map((sortMetric) => {
@@ -2084,6 +2094,8 @@ export async function processFinderAssetOpportunityBatchRun(
                     baselineByBasis,
                     measurementMode,
                     nextExitBaseline,
+                    poolDistribution,
+                    archiveEpoch: ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
                 };
             });
             const appendedBlocks = await appendAssetOpportunityArchiveBlocks({

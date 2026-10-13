@@ -2797,6 +2797,7 @@ describe("FinderUI Asset Opportunity metric presentation", () => {
                 ? {
                     priorTupleRecurrenceCount: 2,
                     strategyCoverageCount: 3,
+                    consensusRankWeight: 35,
                     barrierExitShare: 0.8,
                     entryHourConcentration: 0.75,
                     tradeGapUniformity: 1.25,
@@ -2845,5 +2846,18 @@ describe("FinderUI Asset Opportunity metric presentation", () => {
         expect(text).to.include("Price Regime 0.90");
         expect(text).to.include("Path R² 0.85");
         expect(text).to.include("Coverage --");
+    });
+
+    it("renders the consensus rank weight chip and its unavailable marker", () => {
+        const ui = new FinderUI();
+        ui.renderAssetOpportunityResults([
+            makeAssetResult(3.5),
+            makeAssetResult(null),
+        ]);
+
+        const text = collectText(elsById.get("finderList"));
+        expect(text).to.include("Consensus 35");
+        // Legacy snapshots / coverage-floor symbols must not render 0.
+        expect(text).to.include("Consensus --");
     });
 });

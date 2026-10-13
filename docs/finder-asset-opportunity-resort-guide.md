@@ -83,6 +83,21 @@ specification; do not silently implement only the first row.
 | `winnerLoserHoldGapBars` | Median winner hold bars minus median loser hold bars | Lower first; at least 3 winners and 3 losers |
 | `entryPriceRegimeMembership` | `1 - abs(2 * empiricalCDF(freshEntryPrice) - 1)` over historical entry prices | Higher first; at least 8 historical entries |
 | `equityPathLinearity` | Pearson `r²` between trade ordinal and cumulative completed-trade PnL | Higher first; at least 8 trades |
+| `consensusRankWeight` | Per base metric m, rank the rows that carry a value for m by that metric's own comparator (`rank = 1..R_m`) and award `R_m + 1 - rank_m` points; a row carries a value when m is finite, plus the documented all-win `+Infinity` cases (`profitFactor` for a no-loss candidate with positive net, `payoffRatio` for a no-loss candidate with a positive average win); the symbol's score is the sum over its rows that cover at least 3 base metrics | Higher symbol score first; symbols under the coverage floor sort invalid-last |
+
+Base metrics for `consensusRankWeight` (higher first except drawdown):
+`expectancy`, `netProfitPercent`, `profitFactor`, `sharpeRatio`, `winRate`,
+`averageGain`, `payoffRatio`, `maxDrawdownPercent` (smaller first). A row
+carries a base metric when its value is finite; the two all-win aggregates are
+the documented exception — `profitFactor` maps to `+Infinity` for a no-loss
+candidate with positive net, and `payoffRatio` maps to `+Infinity` for a no-loss
+candidate with a positive average win — so they rank first instead of dropping
+out of that metric's ranking. The metric replaces one optimized number with
+cross-metric agreement, following the offline `consensus_rank_weighted` sort;
+scores are only comparable inside one iteration and the unit is rank points. Its
+representative is the symbol's highest-scoring row, ties fall to the candidate
+tuple, and persisted rows carry `null` when no row of the symbol met the
+coverage floor.
 
 The invalid policy is part of the thesis, not an implementation detail: the
 row-level metrics above sort missing/insufficient/non-finite values last, while
@@ -462,6 +477,29 @@ input fields. If the metric needs a new scalar:
 - make missing old-archive values explicit rather than treating them as zero.
 
 The new block must remain distinguishable from the existing next-exit output.
+
+### Optional block header lines for pool context
+
+New blocks append two optional header lines after the baseline lines, and the
+shared parser plus the per-script `BLOCK_PATTERN` regexes read them together:
+
+- `Archive epoch: <id>` — measurement-contract marker. Segregate reports by
+  epoch (or `--batch-run-id`); a block without the line is legacy/unknown.
+- `Archive pool distribution: <single-line JSON>` — nearest-rank
+  P10/P25/P50/P75/P90 for the frozen `BacktestScalarMetrics` key set and per
+  fixed horizon, over the retained candidate pool. `averagePnlPercent` equals
+  the block's baseline mean, so the two fields never disagree; `next_exit`
+  blocks write the selection scalars only.
+
+Both are optional and pool-level: they are computed once per iteration and
+repeated into every sort block, so archive consumers collapse blocks by
+`(batchRunId, holdoutBars)` before aggregating pool-level data. An unmatched
+header still makes a block *skipped*, never mis-parsed, so a writer and parser
+must ship together. The holdout analyzer prints the pool P50 and the P10–P90
+band beside the all-candidate baseline and reports distinct epoch values with a
+warning when a report pools blocks with differing or absent epochs; percentiles
+add robust location and tails only and never reconstruct trimmed means, so
+`--exclude-gains-100` baselines stay unavailable.
 
 ## Final implementation checklist
 

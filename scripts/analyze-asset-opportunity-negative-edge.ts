@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { filterHoldoutsByStride } from "./lib/asset-opportunity-analysis";
 
 const ARCHIVE_FILE_PATTERN = /^oos-holdout-(\d+)-bars\.txt$/;
 const BLOCK_SEPARATOR = "=".repeat(80);
-const BLOCK_PATTERN = new RegExp(
-    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
+/** Exported for the block-parser regression spec (no behavior change). */
+export const BLOCK_PATTERN = new RegExp(
+    `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive epoch: ([^\\n]+)\\n)?(?:Archive pool distribution: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
     "gm",
 );
 
@@ -33,7 +35,8 @@ interface ParsedBlock {
     rows: ArchiveRow[];
 }
 
-function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
+/** Exported for the block-parser regression spec (no behavior change). */
+export function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
     const blocks: ParsedBlock[] = [];
     for (const match of text.matchAll(BLOCK_PATTERN)) {
         const baselineByHorizon = new Map<number, number>();
@@ -49,7 +52,10 @@ function parseBlocks(text: string, holdoutBars: number): ParsedBlock[] {
         }
         let rows: ArchiveRow[] = [];
         try {
-            rows = JSON.parse(match[6]!) as ArchiveRow[];
+            // Group 6: epoch, group 7: pool distribution — both optional and
+            // unread here; the body shifted from group 6 to group 8 when the
+            // new optional header lines were appended to the pattern.
+            rows = JSON.parse(match[8]!) as ArchiveRow[];
         } catch {
             continue;
         }
@@ -250,4 +256,8 @@ async function runAnalysis() {
     }
 }
 
-runAnalysis();
+// Run only as a CLI; importing this module (tests) must not execute the report.
+const invokedScript = process.argv[1] ? path.resolve(process.argv[1]) : "";
+if (invokedScript === path.resolve(fileURLToPath(import.meta.url))) {
+    void runAnalysis();
+}

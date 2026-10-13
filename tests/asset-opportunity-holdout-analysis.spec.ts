@@ -9,6 +9,7 @@ import {
     readAssetOpportunityArchive,
     renderAssetOpportunityHoldoutReport,
 } from "../scripts/analyze-asset-opportunity-holdouts";
+import { ASSET_OPPORTUNITY_ARCHIVE_EPOCH } from "../lib/finder/server/finder-asset-opportunity-archive";
 
 function block(args: {
     timestamp: string;
@@ -20,6 +21,8 @@ function block(args: {
     baselineByBasis?: unknown;
     measurementMode?: string;
     nextExitBaseline?: unknown;
+    archiveEpoch?: string;
+    poolDistribution?: unknown;
 }): string {
     return [
         "=".repeat(80),
@@ -31,6 +34,8 @@ function block(args: {
         ...(args.baseline === undefined ? [] : [`Archive baseline: ${JSON.stringify(args.baseline)}`]),
         ...(args.baselineByBasis === undefined ? [] : [`Archive baseline by basis: ${JSON.stringify(args.baselineByBasis)}`]),
         ...(args.nextExitBaseline === undefined ? [] : [`Next-exit archive baseline: ${JSON.stringify(args.nextExitBaseline)}`]),
+        ...(args.archiveEpoch === undefined ? [] : [`Archive epoch: ${args.archiveEpoch}`]),
+        ...(args.poolDistribution === undefined ? [] : [`Archive pool distribution: ${JSON.stringify(args.poolDistribution)}`]),
         "=".repeat(80),
         JSON.stringify(args.rows),
         "=".repeat(80),
@@ -146,6 +151,138 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(records[0]!.topResults[0]!.candidateFingerprint).to.equal("fp-1");
         expect(records[0]!.baseline?.eligibleCandidateCount).to.equal(25);
         expect(records[0]!.baseline?.horizons[0]!.averagePnlPercent).to.equal(0.5);
+    });
+
+    it("parses the epoch and pool distribution headers alongside the baseline", () => {
+        const poolDistribution = {
+            eligibleCandidateCount: 25,
+            horizons: [{
+                bars: 12,
+                observedResults: 25,
+                totalSamples: 25,
+                averagePnlPercent: 0.5,
+                p10: -2,
+                p25: -0.5,
+                p50: 0.5,
+                p75: 1.5,
+                p90: 3,
+            }],
+            selection: { expectancy: { count: 25, p10: -0.2, p25: 0.1, p50: 0.4, p75: 0.8, p90: 1.6 } },
+        };
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-09-26T00:00:00.000Z",
+            runId: "run-a",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [row(1, 4, 1)],
+            baseline: {
+                eligibleCandidateCount: 25,
+                horizons: [{
+                    bars: 12,
+                    averagePnlPercent: 0.5,
+                    sampleWeightedAveragePnlPercent: 0.5,
+                    positiveResults: 13,
+                    observedResults: 25,
+                    totalSamples: 25,
+                }],
+            },
+            archiveEpoch: ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
+            poolDistribution,
+        }), "fixture.txt");
+
+        expect(records[0]!.archiveEpoch).to.equal(ASSET_OPPORTUNITY_ARCHIVE_EPOCH);
+        expect(records[0]!.poolDistribution).to.deep.equal(poolDistribution);
+        // The enriched block still analyzes exactly like the baseline-only one.
+        expect(records[0]!.baseline?.horizons[0]!.averagePnlPercent).to.equal(0.5);
+        expect(records[0]!.topResults[0]!.symbol).to.equal("PAIR•");
+    });
+
+    it("keeps legacy blocks without the epoch or distribution parseable", () => {
+        const records = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:00.000Z",
+            runId: "run-a",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            rows: [row(1, 4, 1)],
+        }), "fixture.txt");
+        expect(records[0]!.archiveEpoch).to.equal(undefined);
+        expect(records[0]!.poolDistribution).to.equal(null);
+    });
+
+    it("shows the archived baseline, pool percentiles, and epoch in the rendered report", () => {
+        const baseline = {
+            eligibleCandidateCount: 25,
+            horizons: [{
+                bars: 12,
+                averagePnlPercent: 0.5,
+                sampleWeightedAveragePnlPercent: 0.5,
+                positiveResults: 13,
+                observedResults: 25,
+                totalSamples: 25,
+            }],
+        };
+        const poolDistribution = {
+            eligibleCandidateCount: 25,
+            horizons: [{
+                bars: 12,
+                observedResults: 25,
+                totalSamples: 25,
+                averagePnlPercent: 0.5,
+                p10: -1.5,
+                p25: -0.25,
+                p50: 0.75,
+                p75: 1.25,
+                p90: 2.5,
+            }],
+            selection: {},
+        };
+        const text = [12, 25].map((holdoutBars, index) => block({
+            timestamp: `2026-10-12T00:00:0${index}.000Z`,
+            runId: "run-a",
+            holdoutBars,
+            sortMetric: "expectancy",
+            rows: [row(1, 4, 1), row(2, 2, 1, "BBB•")],
+            baseline,
+            archiveEpoch: ASSET_OPPORTUNITY_ARCHIVE_EPOCH,
+            poolDistribution,
+        })).join("\n");
+        const report = analyzeAssetOpportunityArchive(
+            parseAssetOpportunityArchiveText(text, "fixture.txt"),
+            { topK: 2, generatedAt: "2026-10-12T00:00:00.000Z" },
+        );
+
+        expect(report.poolDistributionBlocks).to.equal(2);
+        expect(report.mixedEpochWarning).to.equal(null);
+        expect(report.epochRuns).to.have.length(1);
+        expect(report.epochRuns[0]!.epochs).to.deep.equal([ASSET_OPPORTUNITY_ARCHIVE_EPOCH]);
+        expect(report.sorts[0]!.horizons[0]!.baselineAveragePnlPercent).to.equal(0.5);
+        expect(report.sorts[0]!.horizons[0]!.poolP50PnlPercent).to.equal(0.75);
+        expect(report.sorts[0]!.horizons[0]!.poolP10PnlPercent).to.equal(-1.5);
+        expect(report.sorts[0]!.horizons[0]!.poolP90PnlPercent).to.equal(2.5);
+
+        const rendered = renderAssetOpportunityHoldoutReport(report);
+        expect(rendered).to.contain("Pool distribution: available in 2 analyzed blocks");
+        expect(rendered).to.contain(`Archive epoch (run-a): ${ASSET_OPPORTUNITY_ARCHIVE_EPOCH}`);
+        expect(rendered).to.contain("Pool P50 | Pool P10–P90");
+        expect(rendered).to.contain("0.75%");
+        expect(rendered).to.contain("-1.50% – 2.50%");
+        expect(rendered).to.contain("do NOT reconstruct trimmed means");
+    });
+
+    it("rejects malformed pool distribution JSON with the source filename", () => {
+        const malformed = [
+            "=".repeat(80),
+            "Timestamp: t",
+            "Batch run id: run",
+            "OOS holdout: 12 bars",
+            "Archive sort: expectancy",
+            "Archive epoch: some-epoch",
+            "Archive pool distribution: {{{",
+            "=".repeat(80),
+            JSON.stringify([row(1, 4, 1)]),
+            "=".repeat(80),
+        ].join("\n");
+        expect(() => parseAssetOpportunityArchiveText(malformed, "broken.txt")).to.throw(/broken\.txt/);
     });
 
     it("parses per-basis forward maps and the per-basis baseline header", () => {
@@ -625,6 +762,131 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(text).to.contain("medianBarsToTp | 0/1 valid, varied=0/0 comparable holdouts, distinct=0 (UNAVAILABLE)");
         expect(text).to.contain("priorTupleRecurrence | 1/1 valid, recurring=0/1, varied=0/0 comparable holdouts, distinct=1 (INSUFFICIENT DATA)");
         expect(text).to.contain("cannot establish that this thesis chose the winner rather than a tiebreak");
+    });
+
+    it("reports consensus rank weight coverage and its DEGENERATE flag", () => {
+        const records = parseAssetOpportunityArchiveText([
+            // Two distinct symbol scores and two distinct rank-1 values across
+            // holdouts: the thesis is measured.
+            block({
+                timestamp: "2026-08-11T00:00:00.000Z",
+                runId: "run-consensus",
+                holdoutBars: 5,
+                sortMetric: "consensusRankWeight",
+                measurementMode: "next_exit",
+                rows: [
+                    {
+                        ...row(1, 2, 1, "AAA•"),
+                        consensusRankWeight: 24,
+                        nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                    },
+                    {
+                        ...row(2, -1, 1, "BBB•"),
+                        consensusRankWeight: 12,
+                        nextExitOosPerformance: { status: "exited", pnlPercent: -1, exitReason: "time_stop" },
+                    },
+                ],
+            }),
+            block({
+                timestamp: "2026-08-11T00:00:01.000Z",
+                runId: "run-consensus",
+                holdoutBars: 9,
+                sortMetric: "consensusRankWeight",
+                measurementMode: "next_exit",
+                rows: [
+                    {
+                        ...row(1, 1, 1, "AAA•"),
+                        consensusRankWeight: 18,
+                        nextExitOosPerformance: { status: "exited", pnlPercent: 1, exitReason: "time_stop" },
+                    },
+                    {
+                        ...row(2, 4, 1, "BBB•"),
+                        consensusRankWeight: 18,
+                        nextExitOosPerformance: { status: "exited", pnlPercent: 4, exitReason: "time_stop" },
+                    },
+                ],
+            }),
+            // Every row of one symbol repeats a single score: degenerate.
+            block({
+                timestamp: "2026-08-11T00:00:02.000Z",
+                runId: "run-consensus",
+                holdoutBars: 13,
+                sortMetric: "consensusRankWeight",
+                measurementMode: "next_exit",
+                rows: [{
+                    ...row(1, 2, 1, "CCC•"),
+                    consensusRankWeight: 7,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                }],
+            }),
+        ].join("\n"));
+        const report = analyzeAssetOpportunityArchive(records, { topK: 1 });
+        const sort = report.nextExit!.sorts[0]!;
+
+        expect(sort.thesisMetricEvidence.status).to.equal("measured");
+        expect(sort.thesisMetricEvidence.validRows).to.equal(5);
+        // 24/12/18/7: the repeated 18 counts once.
+        expect(sort.thesisMetricEvidence.distinctValues).to.equal(4);
+        // Only the two-row holdouts are comparable; one of them varied.
+        expect(sort.thesisMetricEvidence.comparableHoldouts).to.equal(2);
+        expect(sort.thesisMetricEvidence.differentiatedHoldouts).to.equal(1);
+
+        // A coverage-floor symbol persists null and reads as unavailable rather
+        // than as a zero weight.
+        const unavailable = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:03.000Z",
+            runId: "run-consensus",
+            holdoutBars: 5,
+            sortMetric: "consensusRankWeight",
+            measurementMode: "next_exit",
+            rows: [
+                {
+                    ...row(1, 2, 1, "AAA•"),
+                    consensusRankWeight: null,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                },
+                {
+                    ...row(2, -1, 1, "BBB•"),
+                    consensusRankWeight: null,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: -1, exitReason: "time_stop" },
+                },
+            ],
+        }));
+        const nullSort = analyzeAssetOpportunityArchive(unavailable, { topK: 1 }).nextExit!.sorts[0]!;
+        // The field IS archived (as an explicit null), so the metric reads as
+        // persisted-but-unavailable rather than "not archived".
+        expect(nullSort.thesisMetricEvidence.status).to.equal("unavailable");
+        expect(nullSort.thesisMetricEvidence.validRows).to.equal(0);
+
+        expect(renderAssetOpportunityHoldoutReport(report))
+            .to.contain("consensusRankWeight | 5/5 valid, varied=1/2 comparable holdouts, distinct=4 (MEASURED)");
+
+        // Every symbol shares one score: the sort cannot separate a winner
+        // from a tiebreak, so the audit reports DEGENERATE.
+        const degenerate = parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-08-11T00:00:04.000Z",
+            runId: "run-consensus",
+            holdoutBars: 5,
+            sortMetric: "consensusRankWeight",
+            measurementMode: "next_exit",
+            rows: [
+                {
+                    ...row(1, 2, 1, "AAA•"),
+                    consensusRankWeight: 9,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: 2, exitReason: "time_stop" },
+                },
+                {
+                    ...row(2, -1, 1, "BBB•"),
+                    consensusRankWeight: 9,
+                    nextExitOosPerformance: { status: "exited", pnlPercent: -1, exitReason: "time_stop" },
+                },
+            ],
+        }));
+        const degenerateSort = analyzeAssetOpportunityArchive(degenerate, { topK: 1 }).nextExit!.sorts[0]!;
+        expect(degenerateSort.thesisMetricEvidence.status).to.equal("degenerate");
+        expect(renderAssetOpportunityHoldoutReport(
+            analyzeAssetOpportunityArchive(degenerate, { topK: 1 }),
+        )).to.contain("consensusRankWeight | 2/2 valid, varied=0/1 comparable holdouts, distinct=1 (DEGENERATE)");
     });
 
     it("audits persisted inverted metrics across the whole archived shortlist, not only outcome top-K", () => {

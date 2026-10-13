@@ -295,6 +295,31 @@ export const WINNER_LOSER_HOLD_GAP_BARS_METRIC = "winnerLoserHoldGapBars" as con
 export const ENTRY_PRICE_REGIME_MEMBERSHIP_METRIC = "entryPriceRegimeMembership" as const;
 export const EQUITY_PATH_LINEARITY_METRIC = "equityPathLinearity" as const;
 export const STRATEGY_COVERAGE_GATE_METRIC = "strategyCoverageGate" as const;
+/**
+ * Cross-metric consensus: a symbol's score is the sum of per-metric RANK
+ * contributions (`R_m + 1 - rank_m`) over the group's rows, so agreement across
+ * several selection aggregates replaces one optimized number. Mirrors the
+ * offline `consensus_rank_weighted` sort measured as the robust alternative to
+ * single-metric tops in `scripts/analyze-asset-opportunity-custom-sorts.ts`.
+ */
+export const CONSENSUS_RANK_WEIGHT_METRIC = "consensusRankWeight" as const;
+/** Base metrics the consensus score ranks by (higher first, except drawdown). */
+export const CONSENSUS_BASE_METRICS: readonly FinderMetric[] = [
+    "expectancy",
+    "netProfitPercent",
+    "profitFactor",
+    "sharpeRatio",
+    "winRate",
+    "averageGain",
+    "payoffRatio",
+    "maxDrawdownPercent",
+];
+/**
+ * Minimum number of base metrics a row must carry a finite value for to
+ * contribute to its symbol's consensus score. Rows below the floor stay
+ * invalid-last so a thin candidate cannot win on one strong aggregate.
+ */
+export const MIN_CONSENSUS_BASE_METRICS = 3;
 export const BARRIER_EXIT_SHARE_MIN_TRADES = 10;
 export const ENTRY_HOUR_CONCENTRATION_MIN_ENTRIES = 8;
 export const TRADE_GAP_UNIFORMITY_MIN_GAPS = 3;
@@ -337,6 +362,7 @@ export type FinderAssetOpportunityResortMetric =
     | typeof WINNER_LOSER_HOLD_GAP_BARS_METRIC
     | typeof EQUITY_PATH_LINEARITY_METRIC
     | typeof STRATEGY_COVERAGE_GATE_METRIC
+    | typeof CONSENSUS_RANK_WEIGHT_METRIC
     | typeof INVERTED_NET_PROFIT_METRIC
     | typeof INVERTED_EXPECTANCY_METRIC
     | typeof INVERTED_AVERAGE_GAIN_METRIC
@@ -368,6 +394,7 @@ const ASSET_RESORT_METRICS: readonly FinderAssetOpportunityResortMetric[] = [
     MEDIAN_BARS_TO_TP_METRIC,
     PRIOR_TUPLE_RECURRENCE_METRIC,
     STRATEGY_COVERAGE_GATE_METRIC,
+    CONSENSUS_RANK_WEIGHT_METRIC,
     BARRIER_EXIT_SHARE_METRIC,
     TRADE_GAP_UNIFORMITY_METRIC,
     TOP_DECILE_PROFIT_SHARE_METRIC,
@@ -709,6 +736,211 @@ function compareAssetOpportunityCandidateTuple(
 }
 
 /**
+ * Value of one consensus base metric, or `null` when the row has no finite
+ * value for it. Unlike `getAssetOpportunityMetricValue` (which substitutes 0
+ * so sorts never see NaN) this preserves the missing/invalid distinction the
+ * consensus score needs: a metric without a value contributes neither coverage
+ * nor rank points.
+ */
+function readConsensusBaseMetricValue(
+    result: FinderAssetOpportunityResult,
+    metric: FinderMetric,
+): number | null {
+    const sel = result.selectionResult;
+    switch (metric) {
+        case "expectancy": return Number.isFinite(sel.expectancy) ? sel.expectancy : null;
+        case "netProfitPercent": return Number.isFinite(sel.netProfitPercent) ? sel.netProfitPercent : null;
+        case "profitFactor": {
+            if (Number.isFinite(sel.profitFactor)) return sel.profitFactor;
+            // All-win candidate (no losses => null PF) with positive net maps to
+            // +Infinity, mirroring getAssetOpportunityMetricValue's invalid case.
+            return sel.netProfit > 0 ? Number.POSITIVE_INFINITY : null;
+        }
+        case "sharpeRatio": return Number.isFinite(sel.sharpeRatio) ? sel.sharpeRatio : null;
+        case "winRate": return Number.isFinite(sel.winRate) ? sel.winRate : null;
+        case "averageGain": return Number.isFinite(sel.avgWin) ? sel.avgWin : null;
+        case "payoffRatio": {
+            if (sel.avgLoss > 0) return sel.avgWin / sel.avgLoss;
+            return sel.avgWin > 0 ? Number.POSITIVE_INFINITY : null;
+        }
+        case "maxDrawdownPercent": return Number.isFinite(sel.maxDrawdownPercent) ? sel.maxDrawdownPercent : null;
+        default: return null;
+    }
+}
+
+/** One symbol's consensus score, computed over the whole collection. */
+export interface AssetOpportunityConsensusSymbolScore {
+    /**
+     * Sum of `R_m + 1 - rank_m` rank contributions over the symbol's rows that
+     * met {@link MIN_CONSENSUS_BASE_METRICS}; `null` when no row qualified, so
+     * the symbol ranks invalid-last and renders as `Consensus --`.
+     */
+    score: number | null;
+    /** Highest per-row base-metric coverage in the group (0 when nothing qualifies). */
+    coverage: number;
+    /** Rows that met the coverage floor and contributed to `score`. */
+    validRows: number;
+    /** Every row grouped under this symbol. */
+    totalRows: number;
+}
+
+interface ConsensusRowScore {
+    result: FinderAssetOpportunityResult;
+    /** Rank points earned across the base metrics that have a finite value. */
+    score: number;
+    /** Number of base metrics with a finite value on this row. */
+    coverage: number;
+    /** Coverage met {@link MIN_CONSENSUS_BASE_METRICS}. */
+    valid: boolean;
+}
+
+/**
+ * Per-row consensus rank points: for each base metric, rank the rows that
+ * carry a finite value for it with that metric's own pairwise comparator
+ * (`resolvePairwiseAssetMetricComparator`, which already encodes the
+ * higher-first / drawdown-ascending directions) and award
+ * `R_m + 1 - rank_m` points, so rank 1 of R_m earns R_m points and the last
+ * ranked row earns 1. Alignment with `results` is index-for-index, and ranks
+ * are stored per input index (never per object identity) so a result that
+ * appears twice in the pool still ranks twice.
+ */
+function computeConsensusRowScores(
+    results: readonly FinderAssetOpportunityResult[],
+): ConsensusRowScore[] {
+    const rankedCountByMetric = new Map<FinderMetric, number>();
+    const ranksByMetric = new Map<FinderMetric, number[]>();
+    for (const metric of CONSENSUS_BASE_METRICS) {
+        const comparator = resolvePairwiseAssetMetricComparator(metric);
+        if (comparator === null) continue; // base metrics always resolve; defensive.
+        const eligible = results
+            .map((result, index) => ({ result, index }))
+            .filter((entry) => readConsensusBaseMetricValue(entry.result, metric) !== null);
+        // Deterministic: the metric's comparator first, then input order.
+        eligible.sort((left, right) => comparator(left.result, right.result) || left.index - right.index);
+        const ranks = new Array<number>(results.length).fill(0); // 0 = not ranked for this metric
+        eligible.forEach((entry, position) => {
+            ranks[entry.index] = position + 1;
+        });
+        rankedCountByMetric.set(metric, eligible.length);
+        ranksByMetric.set(metric, ranks);
+    }
+    return results.map((result, index) => {
+        let score = 0;
+        let coverage = 0;
+        for (const metric of CONSENSUS_BASE_METRICS) {
+            const rank = ranksByMetric.get(metric)?.[index] ?? 0;
+            if (rank === 0) continue;
+            coverage += 1;
+            score += (rankedCountByMetric.get(metric) ?? 0) + 1 - rank;
+        }
+        return { result, score, coverage, valid: coverage >= MIN_CONSENSUS_BASE_METRICS };
+    });
+}
+
+/**
+ * Group rows by normalized symbol (trim + uppercase, as
+ * `deduplicateAssetOpportunityResultsBySymbol`) and score each symbol as the
+ * sum of its valid rows' rank points. Rows without a symbol stay ungrouped
+ * (one singleton group each, keyed `#unkeyed-<input index>`) instead of
+ * collapsing into a single bucket.
+ * Pure: reads the pool, mutates nothing, and is deterministic.
+ */
+export function computeAssetOpportunityConsensusScores(
+    results: readonly FinderAssetOpportunityResult[],
+): Map<string, AssetOpportunityConsensusSymbolScore> {
+    const rowScores = computeConsensusRowScores(results);
+    const groups = groupConsensusRowsBySymbol(rowScores);
+    const scores = new Map<string, AssetOpportunityConsensusSymbolScore>();
+    for (const [key, group] of groups) {
+        scores.set(key, summarizeConsensusGroup(group));
+    }
+    return scores;
+}
+
+/** Index-aligned with `rowScores`, so keys stay stable across calls. */
+function groupConsensusRowsBySymbol(
+    rowScores: readonly ConsensusRowScore[],
+): Map<string, ConsensusRowScore[]> {
+    const groups = new Map<string, ConsensusRowScore[]>();
+    for (const [index, rowScore] of rowScores.entries()) {
+        const symbol = rowScore.result.symbol.trim().toUpperCase();
+        const key = symbol || `#unkeyed-${index}`;
+        const group = groups.get(key) ?? [];
+        group.push(rowScore);
+        groups.set(key, group);
+    }
+    return groups;
+}
+
+function summarizeConsensusGroup(group: readonly ConsensusRowScore[]): AssetOpportunityConsensusSymbolScore {
+    const validRows = group.filter((row) => row.valid);
+    return {
+        score: validRows.length > 0
+            ? validRows.reduce((total, row) => total + row.score, 0)
+            : null,
+        coverage: group.reduce((max, row) => Math.max(max, row.coverage), 0),
+        validRows: validRows.length,
+        totalRows: group.length,
+    };
+}
+
+/**
+ * Whole-collection consensus re-sort: one representative row per symbol,
+ * ordered by the symbol's consensus score (higher first). Symbols whose rows
+ * never meet {@link MIN_CONSENSUS_BASE_METRICS} keep their input order at the
+ * end and carry `consensusRankWeight: null` (rendered as `Consensus --`). The
+ * representative is the symbol's highest-scoring valid row; ties fall to the
+ * symbol's mean avgTrade, then the deterministic candidate tuple.
+ * Returns a NEW array of enriched copies; the caller's pool is never mutated,
+ * so a later re-sort and the saved default order still see every row.
+ */
+function sortAssetOpportunityResultsByConsensusRankWeight(
+    results: readonly FinderAssetOpportunityResult[],
+): FinderAssetOpportunityResult[] {
+    if (results.length === 0) return [];
+    const groups = groupConsensusRowsBySymbol(computeConsensusRowScores(results));
+    const entries = [...groups.values()].map((group, index) => {
+        // Representative cascade: valid rows first, then the highest row score.
+        // The card's next step (higher mean avgTrade) is a symbol-level figure,
+        // constant inside a group, so intra-symbol ties fall straight through to
+        // the deterministic candidate tuple.
+        const representative = [...group]
+            .sort((left, right) => {
+                if (left.valid !== right.valid) return left.valid ? -1 : 1;
+                if (left.score !== right.score) return right.score - left.score;
+                return compareAssetOpportunityCandidateTuple(left.result, right.result);
+            })[0]!;
+        return {
+            summary: summarizeConsensusGroup(group),
+            representative,
+            inputIndex: index,
+        };
+    });
+    // Stable partition: valid symbols by score (then the deterministic tuple),
+    // invalid symbols keep their relative input order at the end.
+    return entries
+        .sort((left, right) => {
+            const leftValid = left.summary.score !== null;
+            const rightValid = right.summary.score !== null;
+            if (leftValid !== rightValid) return leftValid ? -1 : 1;
+            if (leftValid && rightValid) {
+                const scoreDiff = right.summary.score! - left.summary.score!;
+                if (scoreDiff !== 0) return scoreDiff;
+            } else if (left.inputIndex !== right.inputIndex) {
+                return left.inputIndex - right.inputIndex;
+            }
+            return compareAssetOpportunityCandidateTuple(
+                left.representative.result,
+                right.representative.result,
+            );
+        })
+        .map((entry) => ({
+            ...entry.representative.result,
+            consensusRankWeight: entry.summary.score,
+        }));
+}
+
+/**
  * Sort a copy of Asset Opportunity results by a single metric for the post-run
  * re-sort dropdown. When `metric` is null, falls back to the existing
  * grade-first lexicographic comparator (the run-time default).
@@ -726,9 +958,10 @@ function compareAssetOpportunityCandidateTuple(
  * top-N selector: `resolvePairwiseAssetMetricComparator` is the single ranking
  * policy, consumed here for the full stable sort and by
  * `selectTopAssetOpportunityResults` for heap selection. Only the grouped
- * collection metrics (fresh-signal-library consensus and the strategy coverage
- * gate) keep whole-collection branches here, because no pairwise comparator
- * can express them; the selector delegates those to this full sort.
+ * collection metrics (fresh-signal-library consensus, the strategy coverage
+ * gate, and the consensus rank weight) keep whole-collection branches here,
+ * because no pairwise comparator can express them; the selector delegates
+ * those to this full sort.
  *
  * Returns a NEW array — does not mutate the input.
  */
@@ -800,6 +1033,9 @@ export function sortAssetOpportunityResultsByMetric(
                 return compareAssetOpportunityCandidateTuple(a, b);
             });
     }
+    if (metric === CONSENSUS_RANK_WEIGHT_METRIC) {
+        return sortAssetOpportunityResultsByConsensusRankWeight(results);
+    }
     // The grouped collection metrics handled above are exactly the resolver's
     // null cases, so a pairwise comparator always exists from here on.
     const comparator = resolvePairwiseAssetMetricComparator(metric)!;
@@ -853,8 +1089,9 @@ function prepareTotalTradesCappedRows(
  * stable sort and `selectTopAssetOpportunityResults` for the bounded top-N
  * heap. Returns `null` for the metrics whose ranking is derived from the WHOLE
  * collection (the grouped FRESH_SIGNAL_LIBRARIES representatives, the
- * STRATEGY_COVERAGE_GATE filter, and the null-metric grade order) — those have
- * no pairwise shortcut and fall back to the full sort. The
+ * STRATEGY_COVERAGE_GATE filter, the CONSENSUS_RANK_WEIGHT symbol scores, and
+ * the null-metric grade order) — those have no pairwise shortcut and fall back
+ * to the full sort. The
  * TOTAL_TRADES_CAPPED comparator reads the precomputed
  * `totalTradesCappedValue` field, so callers must augment rows with the
  * collection-wide P90 cap first (see `prepareTotalTradesCappedRows`).
@@ -870,6 +1107,7 @@ function resolvePairwiseAssetMetricComparator(
         metric === FRESH_SIGNAL_LIBRARIES_METRIC
         || metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
         || metric === STRATEGY_COVERAGE_GATE_METRIC
+        || metric === CONSENSUS_RANK_WEIGHT_METRIC
     ) {
         return null;
     }
@@ -983,7 +1221,7 @@ function resolvePairwiseAssetMetricComparator(
  * (comparator result, then original index) and iterates in original order, so
  * comparator-equal rows keep the stable-sort order (earlier original index
  * wins) exactly like V8's stable Array#sort. The grouped metrics
- * (FRESH_SIGNAL_LIBRARIES*, STRATEGY_COVERAGE_GATE) and the null metric
+ * (FRESH_SIGNAL_LIBRARIES*, STRATEGY_COVERAGE_GATE, CONSENSUS_RANK_WEIGHT) and the null metric
  * delegate to the full sort — their output is already bounded by the symbol
  * count / grade order. TOTAL_TRADES_CAPPED computes the collection-wide P90
  * cap first and returns the same augmented row copies the sort produces.

@@ -34,6 +34,12 @@ export interface AssetOpportunityExplorerCatalogRun {
     hasBaselines: boolean;
     /** Price bases this run can be viewed on, fixed order; enables the basis selector. */
     availableBases: AssetOpportunityExplorerBasis[];
+    /** Measurement-contract id from any block of the run; absent on legacy runs. */
+    archiveEpoch?: string;
+    /** Distinct epoch ids across the run's blocks; > 1 means mixed contracts. */
+    archiveEpochCount: number;
+    /** True when any block carries pool distribution summaries. */
+    hasPoolDistribution: boolean;
 }
 
 export interface AssetOpportunityExplorerCatalogResponse {

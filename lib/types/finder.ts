@@ -558,6 +558,8 @@ export interface FinderAssetOpportunityResult {
     priorTupleRecurrenceCount?: number | null;
     /** Distinct strategy-library count attached by the coverage-gate resort. */
     strategyCoverageCount?: number | null;
+    /** Symbol-level consensus score (rank points) attached by the consensusRankWeight resort. */
+    consensusRankWeight?: number | null;
     /** Share of completed trades closed by a take-profit or stop-loss barrier. */
     barrierExitShare?: number | null;
     /** Circular concentration of completed-trade entry hours in UTC. */

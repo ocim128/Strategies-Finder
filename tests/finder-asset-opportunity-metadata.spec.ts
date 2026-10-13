@@ -1,12 +1,15 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import {
+    ASSET_OPPORTUNITY_POOL_SELECTION_METRIC_KEYS,
+    assetOpportunityNearestRankPercentile,
     buildAssetOpportunityCandidateFingerprint,
     buildAssetOpportunityForwardOosBaseline,
     buildAssetOpportunityForwardOosBaselinesByBasis,
     buildAssetOpportunityNextExitOosBaseline,
     buildAssetOpportunityMetadataPayload,
     buildAssetOpportunityPerformancePayload,
+    buildAssetOpportunityPoolDistribution,
 } from "../lib/finder/finder-asset-opportunity-metadata";
 import type { FinderAssetOpportunityResult } from "../lib/types/finder";
 import type { Time } from "../lib/types/strategies";
@@ -321,6 +324,34 @@ describe("Asset Opportunity metadata payload serializer", () => {
         expect(payload.totalTradesCappedValue).to.equal(120);
     });
 
+    it("persists the consensus rank weight when present and leaves legacy rows missing", () => {
+        const payload = buildAssetOpportunityPerformancePayload({
+            result: makeAssetResult({ consensusRankWeight: 35 }),
+            rank: 1,
+        });
+        expect(payload.consensusRankWeight).to.equal(35);
+
+        // A symbol that failed the coverage floor carries the explicit null.
+        const missing = buildAssetOpportunityPerformancePayload({
+            result: makeAssetResult({ consensusRankWeight: null }),
+            rank: 1,
+        });
+        expect(missing.consensusRankWeight).to.equal(null);
+
+        // Legacy rows/snapshots without the field stay valid and omit it entirely.
+        const legacy = buildAssetOpportunityPerformancePayload({ result: makeAssetResult(), rank: 1 });
+        expect(Object.prototype.hasOwnProperty.call(legacy, "consensusRankWeight")).to.equal(false);
+
+        // The browser copy payload mirrors the archive payload.
+        const metadata = buildAssetOpportunityMetadataPayload({
+            result: makeAssetResult({ consensusRankWeight: 12 }),
+            rank: 1,
+            interval: "1d",
+            strategyMetadata: null,
+        });
+        expect(metadata.consensusRankWeight).to.equal(12);
+    });
+
     it("ranks are passed through 1-based per displayed row", () => {
         const rows = [makeAssetResult(), makeAssetResult({ symbol: "ETHUSDT" })];
         const payloads = rows.map((result, index) => buildAssetOpportunityMetadataPayload({
@@ -491,6 +522,112 @@ describe("Asset Opportunity metadata payload serializer", () => {
             exitReasonCounts: { take_profit: 1, end_of_data: 1 },
             unavailableReasonCounts: { no_boundary_trade: 1 },
         });
+    });
+
+    it("builds a pool distribution whose horizon mean equals the baseline", () => {
+        const rows = [1, 4, 2, 8, 5].map((netProfit, index) => makeAssetResult({
+            symbol: `SYM${index}USDT`,
+            selectionResult: { ...makeAssetResult().selectionResult, netProfit, expectancy: netProfit / 2 },
+            oosHorizonMetrics: {
+                ignoreLastBars: 5,
+                horizons: [
+                    { bars: 1, pnlPercent: netProfit, averagePnlPercent: netProfit, winRatePercent: 50, sampleSize: 1 },
+                ],
+            },
+        }));
+        const baseline = buildAssetOpportunityForwardOosBaseline(rows);
+        const distribution = buildAssetOpportunityPoolDistribution(rows);
+        expect(distribution.eligibleCandidateCount).to.equal(5);
+        expect(distribution.horizons).to.have.lengthOf(1);
+        const horizon = distribution.horizons[0]!;
+        expect(horizon.bars).to.equal(1);
+        expect(horizon.averagePnlPercent).to.equal(baseline.horizons[0]!.averagePnlPercent);
+        expect(horizon.observedResults).to.equal(baseline.horizons[0]!.observedResults);
+        expect(horizon.totalSamples).to.equal(baseline.horizons[0]!.totalSamples);
+        // Nearest-rank percentiles over the sorted pool values [1, 2, 4, 5, 8].
+        expect([horizon.p10, horizon.p25, horizon.p50, horizon.p75, horizon.p90])
+            .to.deep.equal([1, 2, 4, 5, 8]);
+        // Selection scalars: frozen key set only, count over finite values.
+        expect(Object.keys(distribution.selection)).to.deep.equal([...ASSET_OPPORTUNITY_POOL_SELECTION_METRIC_KEYS]);
+        expect(distribution.selection.netProfit).to.deep.equal({
+            count: 5,
+            p10: 1,
+            p25: 2,
+            p50: 4,
+            p75: 5,
+            p90: 8,
+        });
+        expect(distribution.selection.expectancy).to.deep.equal({
+            count: 5,
+            p10: 0.5,
+            p25: 1,
+            p50: 2,
+            p75: 2.5,
+            p90: 4,
+        });
+    });
+
+    it("returns empty horizons and zero-count scalars for an empty pool", () => {
+        const distribution = buildAssetOpportunityPoolDistribution([]);
+        expect(distribution.eligibleCandidateCount).to.equal(0);
+        expect(distribution.horizons).to.deep.equal([]);
+        for (const key of ASSET_OPPORTUNITY_POOL_SELECTION_METRIC_KEYS) {
+            expect(distribution.selection[key]).to.deep.equal({
+                count: 0,
+                p10: null,
+                p25: null,
+                p50: null,
+                p75: null,
+                p90: null,
+            });
+        }
+    });
+
+    it("computes per-basis horizon distributions with the baseline's eligibility", () => {
+        const results = [
+            makeAssetResult({
+                oosHorizonMetricsByBasis: {
+                    pair: { ignoreLastBars: 5, basis: "pair", horizons: [{ bars: 1, pnlPercent: 3, averagePnlPercent: 3, winRatePercent: 100, sampleSize: 1 }] },
+                    quote_only: { ignoreLastBars: 5, basis: "quote_only", horizons: [{ bars: 1, pnlPercent: -5, averagePnlPercent: -5, winRatePercent: 0, sampleSize: 1 }] },
+                },
+            }),
+            makeAssetResult({
+                symbol: "ETHUSDT",
+                oosHorizonMetricsByBasis: {
+                    quote_only: { ignoreLastBars: 5, basis: "quote_only", horizons: [{ bars: 1, pnlPercent: 7, averagePnlPercent: 7, winRatePercent: 100, sampleSize: 2 }] },
+                },
+            }),
+        ];
+        const distribution = buildAssetOpportunityPoolDistribution(results);
+        expect(Object.keys(distribution.horizonsByBasis ?? {}).sort()).to.deep.equal(["pair", "quote_only"]);
+        const quote = distribution.horizonsByBasis!.quote_only![0]!;
+        expect(quote.averagePnlPercent).to.equal(buildAssetOpportunityForwardOosBaseline(results, "quote_only").horizons[0]!.averagePnlPercent);
+        expect(quote.observedResults).to.equal(2);
+        expect(quote.totalSamples).to.equal(3);
+        // Nearest-rank over [-5, 7]: p10 = index round(0.1) = -5, p50/p90 = index 1 = 7.
+        expect([quote.p10, quote.p50, quote.p90]).to.deep.equal([-5, 7, 7]);
+
+        // Selection-only mode (next-exit runs) keeps scalars and drops horizons.
+        const selectionOnly = buildAssetOpportunityPoolDistribution(results, undefined, { includeHorizons: false });
+        expect(selectionOnly.horizons).to.deep.equal([]);
+        expect(selectionOnly.horizonsByBasis).to.equal(undefined);
+        expect(selectionOnly.selection.netProfit.count).to.equal(2);
+    });
+
+    it("pins the nearest-rank percentile to the scripts/lib method", () => {
+        const values = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];
+        expect(assetOpportunityNearestRankPercentile(values, 0)).to.equal(10);
+        // 10 values: index round((n-1)*fraction); p90 = index 8, only p100 = index 9.
+        expect(assetOpportunityNearestRankPercentile(values, 0.1)).to.equal(20);
+        expect(assetOpportunityNearestRankPercentile(values, 0.5)).to.equal(60);
+        expect(assetOpportunityNearestRankPercentile(values, 0.9)).to.equal(90);
+        expect(assetOpportunityNearestRankPercentile(values, 0.95)).to.equal(100);
+        expect(assetOpportunityNearestRankPercentile(values, 1)).to.equal(100);
+        // Nearest-rank, not interpolated: nearby fractions do not blend values.
+        expect(assetOpportunityNearestRankPercentile(values, 0.55)).to.equal(60);
+        expect(assetOpportunityNearestRankPercentile(values, 0.54)).to.equal(60);
+        expect(assetOpportunityNearestRankPercentile([], 0.5)).to.equal(null);
+        expect(assetOpportunityNearestRankPercentile(values, Number.NaN)).to.equal(null);
     });
 
 });

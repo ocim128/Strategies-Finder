@@ -6,6 +6,7 @@ import type { FinderAssetOpportunityResortMetric } from "../finder-asset-opportu
 import type {
     AssetOpportunityForwardOosBaseline,
     AssetOpportunityNextExitOosBaseline,
+    AssetOpportunityPoolDistribution,
 } from "../finder-asset-opportunity-metadata";
 import { buildAssetOpportunityCandidateFingerprint } from "../finder-asset-opportunity-metadata";
 import type { FinderAssetOpportunityResult } from "../../types/finder";
@@ -26,6 +27,14 @@ import type { FinderAssetOpportunityResult } from "../../types/finder";
  */
 
 export const ASSET_OPPORTUNITY_ARCHIVE_DIR_NAME = "asset opportunity";
+
+/**
+ * Measurement-contract id stamped into every new archive block. Blocks
+ * carrying the id share one measurement contract; blocks without the line
+ * are "legacy/unknown" by definition. The id is metadata for segregation
+ * and reporting — it does not claim old runs were wrong.
+ */
+export const ASSET_OPPORTUNITY_ARCHIVE_EPOCH = "2026-09-26-selection-correction";
 
 /** Resolve the archive directory from a Vite-configured project root. */
 export function resolveAssetOpportunityArchiveDir(root: string): string {
@@ -60,6 +69,10 @@ export interface AssetOpportunityArchiveBlock {
     baselineByBasis?: Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityForwardOosBaseline>> | null;
     measurementMode?: "fixed_horizon" | "next_exit";
     nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
+    /** Pool-level distribution summaries repeated into every block of the iteration. */
+    poolDistribution?: AssetOpportunityPoolDistribution | null;
+    /** Measurement-contract id; absent on legacy blocks. */
+    archiveEpoch?: string;
 }
 
 export interface AssetOpportunityArchiveTupleSnapshot {
@@ -303,6 +316,12 @@ export function buildAssetOpportunityArchiveBlockText(block: AssetOpportunityArc
         ...(block.baseline ? [`Archive baseline: ${JSON.stringify(block.baseline)}`] : []),
         ...(block.baselineByBasis ? [`Archive baseline by basis: ${JSON.stringify(block.baselineByBasis)}`] : []),
         ...(block.nextExitBaseline ? [`Next-exit archive baseline: ${JSON.stringify(block.nextExitBaseline)}`] : []),
+        // Optional header lines emitted only when present. An older parser
+        // that cannot match the extended header skips the whole block instead
+        // of mis-parsing it — the behavior scripts already rely on for
+        // next-exit blocks.
+        ...(block.archiveEpoch ? [`Archive epoch: ${block.archiveEpoch}`] : []),
+        ...(block.poolDistribution ? [`Archive pool distribution: ${JSON.stringify(block.poolDistribution)}`] : []),
         separator,
         JSON.stringify(block.topResults),
         "",
@@ -333,6 +352,8 @@ export interface AppendAssetOpportunityArchiveBlockArgs {
     baselineByBasis?: Partial<Record<FinderAssetOosHorizonBasis, AssetOpportunityForwardOosBaseline>> | null;
     measurementMode?: "fixed_horizon" | "next_exit";
     nextExitBaseline?: AssetOpportunityNextExitOosBaseline | null;
+    poolDistribution?: AssetOpportunityPoolDistribution | null;
+    archiveEpoch?: string;
     /** Optional deterministic timestamp for tests. */
     timestamp?: string;
     /** Optional injected append leaf for tests. */
@@ -382,6 +403,8 @@ export async function appendAssetOpportunityArchiveBlocks(
             baselineByBasis: block.baselineByBasis,
             measurementMode: block.measurementMode,
             nextExitBaseline: block.nextExitBaseline,
+            poolDistribution: block.poolDistribution,
+            archiveEpoch: block.archiveEpoch,
         });
         return { block, timestamp, content };
     });
@@ -416,6 +439,8 @@ export async function appendAssetOpportunityArchiveBlock(
             baselineByBasis: args.baselineByBasis,
             measurementMode: args.measurementMode,
             nextExitBaseline: args.nextExitBaseline,
+            poolDistribution: args.poolDistribution,
+            archiveEpoch: args.archiveEpoch,
             timestamp: args.timestamp,
         }],
         ...(args.append ? { append: args.append } : {}),

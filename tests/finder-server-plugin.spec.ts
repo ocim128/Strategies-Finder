@@ -39,11 +39,15 @@ import { buildFinderUniverseCandidate } from "../lib/finder/finder-universe-metr
 import { FINDER_RESULT_SNAPSHOT_LIMIT } from "../lib/finder/finder-result-snapshot";
 import {
     ASSET_OPPORTUNITY_ALL_SORTS,
+    CONSENSUS_RANK_WEIGHT_METRIC,
     getAssetOpportunityResortMetrics,
     MEDIAN_BARS_TO_TP_METRIC,
+    sortAssetOpportunityResultsByMetric,
     type FinderAssetOpportunityArchiveSort,
 } from "../lib/finder/finder-asset-opportunity-metrics";
 import { runServerAssetIsSearch } from "../lib/finder/server/server-asset-is-search";
+import { ASSET_OPPORTUNITY_ARCHIVE_EPOCH } from "../lib/finder/server/finder-asset-opportunity-archive";
+import { parseAssetOpportunityArchiveText } from "../lib/asset-opportunity-explorer/archive-parser";
 import { ensureConfirmationStrategiesLoaded } from "../lib/confirmation-signal-filter";
 import { getLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from "../lib/strategies/built-in-catalog";
 import type { CapitalSettings } from "../lib/types/backtest";
@@ -1615,6 +1619,70 @@ describe("finder server plugin Asset Opportunity batch execution", () => {
         if (start.type === "asset_batch_start") {
             expect(start.archiveSort).to.equal(ASSET_OPPORTUNITY_ALL_SORTS);
         }
+    });
+
+    it("stamps every All-Sorts archive block with the epoch and pool distribution", async () => {
+        const { contents } = await runAssetBatch({
+            owner: 7308,
+            start: 2,
+            end: 2,
+            runId: "batch-epoch",
+            archiveSort: ASSET_OPPORTUNITY_ALL_SORTS,
+        });
+
+        const holdoutBlocks = contents.filter((content) => content.includes("OOS holdout: 2 bars"));
+        expect(holdoutBlocks).to.have.length(1 + getAssetOpportunityResortMetrics().length);
+        for (const block of holdoutBlocks) {
+            expect(block).to.contain(`Archive epoch: ${ASSET_OPPORTUNITY_ARCHIVE_EPOCH}`);
+            expect(block).to.contain("Archive pool distribution:");
+        }
+
+        // The stamped blocks round-trip through the shared parser with the
+        // distribution attached and its mean equal to the archived baseline.
+        const records = parseAssetOpportunityArchiveText(holdoutBlocks.join(""), "virtual-archive.txt");
+        expect(records).to.have.length(holdoutBlocks.length);
+        for (const record of records) {
+            expect(record.archiveEpoch).to.equal(ASSET_OPPORTUNITY_ARCHIVE_EPOCH);
+            expect(record.poolDistribution).to.not.equal(null);
+            expect(record.poolDistribution!.eligibleCandidateCount)
+                .to.equal(record.baseline?.eligibleCandidateCount ?? record.poolDistribution!.eligibleCandidateCount);
+            for (const horizon of record.poolDistribution!.horizons) {
+                const baselineHorizon = record.baseline?.horizons.find((candidate) => candidate.bars === horizon.bars);
+                expect(horizon.averagePnlPercent).to.equal(baselineHorizon?.averagePnlPercent ?? horizon.averagePnlPercent);
+            }
+            // Selection scalars cover the frozen key set on every block.
+            expect(record.poolDistribution!.selection.expectancy.count).to.be.a("number");
+        }
+    });
+
+    it("archives a consensusRankWeight block whose rows match the grouped sort", async () => {
+        const { events, contents } = await runAssetBatch({
+            owner: 7309,
+            start: 2,
+            end: 2,
+            runId: "batch-consensus",
+            archiveSort: ASSET_OPPORTUNITY_ALL_SORTS,
+        });
+
+        const iterations = events.filter((event) => event.type === "asset_batch_iteration_done");
+        expect(iterations).to.have.length(1);
+        const iteration = iterations[0]!;
+        if (iteration.type !== "asset_batch_iteration_done") throw new Error("unexpected event");
+
+        const consensusBlocks = contents.filter((content) =>
+            content.includes(`Archive sort: ${CONSENSUS_RANK_WEIGHT_METRIC}\n`));
+        expect(consensusBlocks).to.have.length(1);
+
+        const records = parseAssetOpportunityArchiveText(consensusBlocks[0]!, "virtual-archive.txt");
+        // The grouped path emits one representative per symbol, in the exact
+        // order the shared sort produces before the top-N slice.
+        const expected = sortAssetOpportunityResultsByMetric(iteration.assets, CONSENSUS_RANK_WEIGHT_METRIC)
+            .slice(0, 2);
+        expect(records[0]!.topResults.map((row) => row.symbol))
+            .to.deep.equal(expected.map((row) => row.symbol));
+        expect(records[0]!.topResults.map((row) => row.consensusRankWeight))
+            .to.deep.equal(expected.map((row) => row.consensusRankWeight));
+        expect(records[0]!.topResults.map((row) => row.rank)).to.deep.equal([1, 2]);
     });
 
     it("stops after the current iteration when ownership is lost mid-batch", async () => {

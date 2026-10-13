@@ -19,6 +19,8 @@ import {
     compareAssetOpportunityResults,
     deduplicateAssetOpportunityResultsBySymbol,
     PRIOR_TUPLE_RECURRENCE_METRIC,
+    CONSENSUS_RANK_WEIGHT_METRIC,
+    computeAssetOpportunityConsensusScores,
     selectTopAssetOpportunityResults,
     sortAssetOpportunityResults,
     sortAssetOpportunityResultsByMetric,
@@ -487,6 +489,177 @@ describe("Asset Opportunity post-run re-sort", () => {
 
         it("is exposed through the re-sort metric list", () => {
             expect(getAssetOpportunityResortMetrics()).to.include(TOTAL_TRADES_CAPPED_METRIC);
+        });
+    });
+
+    describe("consensusRankWeight", () => {
+        /** Full-coverage consensus input: every base metric ranks AAA above BBB. */
+        function consensusPair(): FinderAssetOpportunityResult[] {
+            return [
+                makeResortResult({
+                    symbol: "AAA",
+                    strategyKey: "a",
+                    expectancy: 5,
+                    netProfitPercent: 4,
+                    profitFactor: 3,
+                    sharpeRatio: 2,
+                    winRate: 90,
+                    avgWin: 10,
+                    avgLoss: 1,
+                    maxDrawdownPercent: 1,
+                }),
+                makeResortResult({
+                    symbol: "BBB",
+                    strategyKey: "b",
+                    expectancy: 4,
+                    netProfitPercent: 3,
+                    profitFactor: 2,
+                    sharpeRatio: 1,
+                    winRate: 80,
+                    avgWin: 5,
+                    avgLoss: 1,
+                    maxDrawdownPercent: 5,
+                }),
+            ];
+        }
+
+        it("awards R_m + 1 - rank_m per base metric and sorts higher symbol scores first", () => {
+            const sorted = sortAssetOpportunityResultsByMetric(consensusPair(), CONSENSUS_RANK_WEIGHT_METRIC);
+            // Every one of the 8 base metrics ranks AAA first, so AAA earns
+            // 8 * (2 + 1 - 1) = 16 rank points and BBB 8 * (2 + 1 - 2) = 8.
+            expect(sorted.map((row) => [row.symbol, row.consensusRankWeight])).to.deep.equal([
+                ["AAA", 16],
+                ["BBB", 8],
+            ]);
+        });
+
+        it("sums the symbol's valid rows and emits one representative per symbol", () => {
+            const rows = [
+                makeResortResult({ symbol: "AAA", strategyKey: "a", expectancy: 3 }),
+                makeResortResult({ symbol: "AAA", strategyKey: "b", expectancy: 2 }),
+                makeResortResult({ symbol: "BBB", strategyKey: "a", expectancy: 1 }),
+            ];
+            const sorted = sortAssetOpportunityResultsByMetric(rows, CONSENSUS_RANK_WEIGHT_METRIC);
+
+            // R_m = 3 for every metric: expectancy ranks 1/2/3, and the six
+            // all-zero metrics tie into that same order, so each row also
+            // contributes 3/2/1 on them. AAA = (3 + 6*3) + (2 + 6*2) = 35,
+            // BBB = 1 + 6*1 = 7.
+            expect(sorted.map((row) => row.symbol)).to.deep.equal(["AAA", "BBB"]);
+            expect(sorted.map((row) => row.consensusRankWeight)).to.deep.equal([35, 7]);
+            // The representative is the symbol's highest-scoring row.
+            expect(sorted.map((row) => row.strategyKey)).to.deep.equal(["a", "a"]);
+        });
+
+        it("sorts rows below the coverage floor invalid-last with a null weight", () => {
+            const rows = [
+                makeResortResult({
+                    symbol: "THIN",
+                    expectancy: 5,
+                    netProfitPercent: Number.NaN,
+                    profitFactor: Number.NaN,
+                    sharpeRatio: Number.NaN,
+                    winRate: Number.NaN,
+                    avgWin: Number.NaN,
+                    maxDrawdownPercent: Number.NaN,
+                }),
+                makeResortResult({ symbol: "FULL", strategyKey: "b", expectancy: 1 }),
+            ];
+            const sorted = sortAssetOpportunityResultsByMetric(rows, CONSENSUS_RANK_WEIGHT_METRIC);
+
+            expect(sorted.map((row) => row.symbol)).to.deep.equal(["FULL", "THIN"]);
+            // A fully-ranked single row earns one rank point per finite metric.
+            expect(sorted[0]!.consensusRankWeight).to.equal(7);
+            expect(sorted[1]!.consensusRankWeight).to.equal(null);
+        });
+
+        it("falls back to the candidate tuple when valid symbol scores tie", () => {
+            // Four ranked metrics split two-and-two between the symbols, so both
+            // earn 6 rank points; the tuple's symbol order decides.
+            const rows = [
+                makeResortResult({
+                    symbol: "BBB",
+                    strategyKey: "b",
+                    expectancy: 1,
+                    netProfitPercent: 5,
+                    profitFactor: 1,
+                    sharpeRatio: 5,
+                    winRate: Number.NaN,
+                    avgWin: Number.NaN,
+                    maxDrawdownPercent: Number.NaN,
+                }),
+                makeResortResult({
+                    symbol: "AAA",
+                    strategyKey: "a",
+                    expectancy: 5,
+                    netProfitPercent: 1,
+                    profitFactor: 5,
+                    sharpeRatio: 1,
+                    winRate: Number.NaN,
+                    avgWin: Number.NaN,
+                    maxDrawdownPercent: Number.NaN,
+                }),
+            ];
+            const sorted = sortAssetOpportunityResultsByMetric(rows, CONSENSUS_RANK_WEIGHT_METRIC);
+            expect(sorted.map((row) => row.symbol)).to.deep.equal(["AAA", "BBB"]);
+            expect(sorted.map((row) => row.consensusRankWeight)).to.deep.equal([6, 6]);
+        });
+
+        it("returns enriched copies without mutating the caller's pool", () => {
+            const input = consensusPair();
+            const snapshot = JSON.stringify(input);
+            const sorted = sortAssetOpportunityResultsByMetric(input, CONSENSUS_RANK_WEIGHT_METRIC);
+
+            expect(JSON.stringify(input)).to.equal(snapshot);
+            expect(sorted).to.have.length(2);
+            expect(sorted[0]).to.not.equal(input[0]);
+            expect(input[0].consensusRankWeight).to.equal(undefined);
+            expect(input[1].consensusRankWeight).to.equal(undefined);
+        });
+
+        it("delegates bounded top-N selection to the full grouped sort", () => {
+            const rows = [
+                ...consensusPair(),
+                makeResortResult({ symbol: "CCC", strategyKey: "c", expectancy: 2 }),
+            ];
+            for (const limit of [1, 2, 3]) {
+                const selected = selectTopAssetOpportunityResults(rows, CONSENSUS_RANK_WEIGHT_METRIC, limit);
+                const expected = sortAssetOpportunityResultsByMetric(rows, CONSENSUS_RANK_WEIGHT_METRIC)
+                    .slice(0, limit);
+                expect(selected.map((row) => [row.symbol, row.consensusRankWeight]))
+                    .to.deep.equal(expected.map((row) => [row.symbol, row.consensusRankWeight]));
+            }
+        });
+
+        it("exposes per-symbol scores and coverage for callers and tests", () => {
+            const scores = computeAssetOpportunityConsensusScores([
+                makeResortResult({ symbol: "aaa", strategyKey: "a", expectancy: 3 }),
+                makeResortResult({ symbol: " AAA ", strategyKey: "b", expectancy: 2 }),
+                makeResortResult({ symbol: "BBB", strategyKey: "a", expectancy: 1 }),
+            ]);
+            // Symbols are grouped case-insensitively after trimming.
+            expect([...scores.keys()]).to.deep.equal(["AAA", "BBB"]);
+            expect(scores.get("AAA")).to.deep.equal({ score: 35, coverage: 7, validRows: 2, totalRows: 2 });
+            expect(scores.get("BBB")).to.deep.equal({ score: 7, coverage: 7, validRows: 1, totalRows: 1 });
+        });
+
+        it("is exposed through the re-sort metric list", () => {
+            expect(getAssetOpportunityResortMetrics()).to.include(CONSENSUS_RANK_WEIGHT_METRIC);
+        });
+
+        it("stays deterministic when only one symbol qualifies", () => {
+            const rows = [
+                makeResortResult({ symbol: "AAA", strategyKey: "a", expectancy: 1 }),
+                makeResortResult({ symbol: "AAA", strategyKey: "b", expectancy: 2 }),
+            ];
+            const first = sortAssetOpportunityResultsByMetric(rows, CONSENSUS_RANK_WEIGHT_METRIC);
+            const second = sortAssetOpportunityResultsByMetric(rows, CONSENSUS_RANK_WEIGHT_METRIC);
+            // Both rows group into AAA, so the sort emits a single representative
+            // (the highest-scoring row) carrying the symbol's summed score.
+            expect(first.map((row) => row.strategyKey)).to.deep.equal(["b"]);
+            expect(second.map((row) => row.strategyKey)).to.deep.equal(first.map((row) => row.strategyKey));
+            // (2 + 6*2) from the top row plus (1 + 6*1) from its sibling.
+            expect(first[0]!.consensusRankWeight).to.equal(21);
         });
     });
 

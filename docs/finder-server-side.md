@@ -529,6 +529,25 @@ signal-hour questions. Manual Copy Top Results remains the full metadata
 payload; automatic archives omit params, strategy metadata, support, trades,
 equity curves, and exit details.
 
+Newer blocks also carry two optional header lines after the baseline lines:
+`Archive epoch: <id>` (`ASSET_OPPORTUNITY_ARCHIVE_EPOCH`) and
+`Archive pool distribution: <single-line JSON>`. The epoch is a
+measurement-contract marker: blocks sharing the id were written under the same
+measurement contract, and a block without the line is legacy/unknown by
+definition — segregation metadata, not a claim that older runs were wrong. The
+pool distribution summarizes the retained candidate pool (the same population
+the all-candidate baseline aggregates): the frozen `BacktestScalarMetrics` key
+set as nearest-rank P10/P25/P50/P75/P90 plus per-horizon percentiles whose
+`averagePnlPercent` equals that block's baseline mean; in `next_exit` mode only
+the selection scalars are written. Both lines are computed once per iteration
+and repeated into every sort block for that holdout, exactly like the baseline,
+so consumers that must not double-count pool-level data collapse blocks by
+`(batchRunId, holdoutBars)`. Both lines are optional: a block without them
+parses exactly as before, and a writer without them simply omits them.
+The pooled consensus sort (`consensusRankWeight`) archives like every other
+registered re-sort and persists its symbol-level rank points as the optional
+row scalar `consensusRankWeight` (`null` for symbols below the coverage floor).
+
 The archive can be analyzed with
 `archive/asset opportunity/analyze-asset-opportunity-holdouts.bat` (or
 `scripts/analyze-asset-opportunity-holdouts.ts`). The analyzer reads only

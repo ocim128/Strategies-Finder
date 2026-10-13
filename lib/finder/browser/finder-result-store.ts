@@ -31,6 +31,7 @@ import {
 	MEDIAN_BARS_TO_TP_METRIC,
 	PRIOR_TUPLE_RECURRENCE_METRIC,
 	STRATEGY_COVERAGE_GATE_METRIC,
+	CONSENSUS_RANK_WEIGHT_METRIC,
 	BARRIER_EXIT_SHARE_METRIC,
 	TRADE_GAP_UNIFORMITY_METRIC,
 	TOP_DECILE_PROFIT_SHARE_METRIC,
@@ -356,7 +357,8 @@ export class FinderResultStore {
 		} else if (scope === 'asset_opportunity') {
 			const isConsensusMetric = metric === FRESH_SIGNAL_LIBRARIES_METRIC
 				|| metric === FRESH_SIGNAL_LIBRARIES_BY_TRADES_METRIC
-				|| metric === STRATEGY_COVERAGE_GATE_METRIC;
+				|| metric === STRATEGY_COVERAGE_GATE_METRIC
+				|| metric === CONSENSUS_RANK_WEIGHT_METRIC;
 			const results = isConsensusMetric && this.assetOpportunityDefaultResults.length > 0
 				? this.assetOpportunityDefaultResults
 				: this.assetOpportunityRunResults.length > 0
@@ -433,6 +435,8 @@ export class FinderResultStore {
 									? "Prior Fold Tuple Recurrence"
 								: metric === STRATEGY_COVERAGE_GATE_METRIC
 									? "Strategy Coverage Gate (PF first)"
+								: metric === CONSENSUS_RANK_WEIGHT_METRIC
+									? "Consensus Rank Weight"
 								: metric === BARRIER_EXIT_SHARE_METRIC
 									? "Barrier Exit Dominance Share"
 								: metric === TRADE_GAP_UNIFORMITY_METRIC

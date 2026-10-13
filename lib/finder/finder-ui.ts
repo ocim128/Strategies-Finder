@@ -464,6 +464,10 @@ export class FinderUI {
             };
             metrics.appendChild(this.createMetricChip(formatAssetMetric(item.priorTupleRecurrenceCount, "Recurrence", 0)));
             metrics.appendChild(this.createMetricChip(formatAssetMetric(item.strategyCoverageCount, "Coverage", 0, " strategies")));
+            // Consensus rank points are a (symbol, pool) property, so the chip
+            // only carries meaning under the consensus re-sort; older snapshots
+            // and symbols that failed the coverage floor show the marker.
+            metrics.appendChild(this.createMetricChip(formatAssetMetric(item.consensusRankWeight, "Consensus", 0)));
             metrics.appendChild(this.createMetricChip(formatAssetMetric(
                 typeof item.barrierExitShare === "number" ? item.barrierExitShare * 100 : item.barrierExitShare,
                 "Barrier",
