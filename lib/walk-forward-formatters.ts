@@ -13,11 +13,7 @@ export function formatWalkForwardParamValue(value: number): string {
 
 export function formatWalkForwardBaseParamsSummary(snapshot: WalkForwardBaseParamsSnapshot): string | null {
     if (!snapshot) return null;
-    const entries = Object.entries(snapshot.params);
-    if (entries.length === 0) return null;
-    return entries
-        .map(([key, value]) => `${key}:${formatWalkForwardParamValue(value)}`)
-        .join(", ");
+    return formatWalkForwardWindowParams(snapshot.params) || null;
 }
 
 export function formatWalkForwardWindowParams(params: StrategyParams): string {

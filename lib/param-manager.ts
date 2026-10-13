@@ -64,19 +64,12 @@ export class ParamManager {
                 continue;
             }
 
-            if (input instanceof HTMLSelectElement) {
+            if (input instanceof HTMLInputElement && input.type === 'checkbox') {
+                params[key] = input.checked ? 1 : 0;
+            } else {
                 const parsed = parseInputNumber(input.value);
                 params[key] = parsed === null ? strategy.defaultParams[key] : parsed;
-                continue;
             }
-
-            if (input.type === 'checkbox') {
-                params[key] = input.checked ? 1 : 0;
-                continue;
-            }
-
-            const parsed = parseInputNumber(input.value);
-            params[key] = parsed === null ? strategy.defaultParams[key] : parsed;
         }
         return params;
     }
@@ -86,17 +79,11 @@ export class ParamManager {
             const input = this.getParamInput(key);
             if (!input || params[key] === undefined) continue;
 
-            if (input instanceof HTMLSelectElement) {
-                input.value = String(params[key]);
-                continue;
-            }
-
-            if (input.type === 'checkbox') {
+            if (input instanceof HTMLInputElement && input.type === 'checkbox') {
                 input.checked = params[key] !== 0;
-                continue;
+            } else {
+                input.value = String(params[key]);
             }
-
-            input.value = String(params[key]);
         }
     }
 

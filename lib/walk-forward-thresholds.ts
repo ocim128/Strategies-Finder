@@ -31,7 +31,7 @@ export function deriveWalkForwardTradeThresholds(
 
     return {
         expectedOOSTradesPerWindow,
-        minTrades: Math.max(1, minOOSTradesPerWindow),
+        minTrades: minOOSTradesPerWindow,
         minOOSTradesPerWindow,
         minTotalOOSTrades
     };

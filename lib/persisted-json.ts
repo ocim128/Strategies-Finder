@@ -122,20 +122,16 @@ export function writePersistedJson<T>(options: WritePersistedJsonOptions<T>): bo
         const writeMs = performance.now() - serializedAt;
         const stringifyMs = serializedAt - startedAt;
         const bytes = serialized.length * 2;
+        const writeDetails = {
+            key,
+            bytes,
+            stringifyMs: Math.round(stringifyMs * 1000) / 1000,
+            writeMs: Math.round(writeMs * 1000) / 1000,
+        };
         if (bytes > PERSISTENCE_WARN_BYTES || stringifyMs + writeMs > PERSISTENCE_WARN_MS) {
-            debugLogger.warn("persistence.write.slow", {
-                key,
-                bytes,
-                stringifyMs: Math.round(stringifyMs * 1000) / 1000,
-                writeMs: Math.round(writeMs * 1000) / 1000,
-            });
+            debugLogger.warn("persistence.write.slow", writeDetails);
         } else {
-            debugLogger.event("persistence.write", {
-                key,
-                bytes,
-                stringifyMs: Math.round(stringifyMs * 1000) / 1000,
-                writeMs: Math.round(writeMs * 1000) / 1000,
-            });
+            debugLogger.event("persistence.write", writeDetails);
         }
         return true;
     } catch (error) {

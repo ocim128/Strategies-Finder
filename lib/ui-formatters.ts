@@ -130,14 +130,12 @@ export function formatProfitFactor(
     infinityLabel = "Inf",
     emptyLabel = "n/a"
 ): string {
-    if (value === null || value === undefined || Number.isNaN(value)) {
-        return emptyLabel;
-    }
-    if (value === Infinity) {
-        return infinityLabel;
-    }
-    if (!Number.isFinite(value)) {
-        return emptyLabel;
-    }
-    return value.toFixed(2);
+    return formatNullableFixed(value, 2, emptyLabel, infinityLabel);
+}
+
+export function formatVolume(volume: number): string {
+    if (volume >= 1e9) return (volume / 1e9).toFixed(2) + 'B';
+    if (volume >= 1e6) return (volume / 1e6).toFixed(2) + 'M';
+    if (volume >= 1e3) return (volume / 1e3).toFixed(2) + 'K';
+    return volume.toFixed(2);
 }

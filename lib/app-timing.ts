@@ -35,6 +35,10 @@ export function getMark(name: TimingMark): number | undefined {
     return marks.get(name);
 }
 
+function elapsedMs(start?: number, end?: number): number {
+    return start !== undefined && end !== undefined ? end - start : 0;
+}
+
 export function getAppTimingSnapshot(): AppTimingSnapshot | null {
     const bootstrapStart = marks.get("bootstrapStart");
     const bootstrapReady = marks.get("bootstrapReady");
@@ -55,19 +59,13 @@ export function getAppTimingSnapshot(): AppTimingSnapshot | null {
         bootstrapTotalMs: bootstrapReady - bootstrapStart,
         manifestLoadStart: manifestLoadStart ?? 0,
         manifestLoadEnd: manifestLoadEnd ?? 0,
-        manifestLoadMs: manifestLoadStart !== undefined && manifestLoadEnd !== undefined
-            ? manifestLoadEnd - manifestLoadStart
-            : 0,
+        manifestLoadMs: elapsedMs(manifestLoadStart, manifestLoadEnd),
         dataLoadStart: dataLoadStart ?? 0,
         dataLoadEnd: dataLoadEnd ?? 0,
-        dataLoadMs: dataLoadStart !== undefined && dataLoadEnd !== undefined
-            ? dataLoadEnd - dataLoadStart
-            : 0,
+        dataLoadMs: elapsedMs(dataLoadStart, dataLoadEnd),
         firstBacktestStart: firstBacktestStart ?? 0,
         firstBacktestEnd: firstBacktestEnd ?? 0,
-        firstBacktestMs: firstBacktestStart !== undefined && firstBacktestEnd !== undefined
-            ? firstBacktestEnd - firstBacktestStart
-            : 0,
+        firstBacktestMs: elapsedMs(firstBacktestStart, firstBacktestEnd),
     };
 }
 

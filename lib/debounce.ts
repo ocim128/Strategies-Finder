@@ -9,14 +9,19 @@ export function debounce<T extends (...args: any[]) => void>(
 ): DebouncedFunction<(...args: Parameters<T>) => void> {
     let timeoutId: ReturnType<typeof setTimeout> | null = null;
     let pendingArgs: Parameters<T> | null = null;
+
+    const executePending = () => {
+        const argsToUse = pendingArgs;
+        pendingArgs = null;
+        if (argsToUse !== null) fn(...argsToUse);
+    };
+
     const debounced = ((...args: Parameters<T>) => {
         pendingArgs = args;
         if (timeoutId !== null) clearTimeout(timeoutId);
         timeoutId = setTimeout(() => {
             timeoutId = null;
-            const argsToUse = pendingArgs;
-            pendingArgs = null;
-            if (argsToUse !== null) fn(...argsToUse);
+            executePending();
         }, delay);
     }) as DebouncedFunction<(...args: Parameters<T>) => void>;
     debounced.cancel = () => {
@@ -30,9 +35,7 @@ export function debounce<T extends (...args: any[]) => void>(
         if (timeoutId === null) return;
         clearTimeout(timeoutId);
         timeoutId = null;
-        const argsToUse = pendingArgs;
-        pendingArgs = null;
-        if (argsToUse !== null) fn(...argsToUse);
+        executePending();
     };
     return debounced;
 }

@@ -9,6 +9,7 @@ import { tradesRenderer } from "./renderers/tradesRenderer";
 import { paramManager } from "./param-manager";
 import { formatJakartaTime, isBusinessDayTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
+import { formatVolume } from "./ui-formatters";
 import { createSettingsWorkspaceDom, createUiManagerDom, type UiManagerDom } from "./ui-manager-dom";
 
 export class UIManager {
@@ -116,7 +117,7 @@ export class UIManager {
 
         // Volume display
         if (data.volume !== undefined) {
-            dom.ohlcVolume.textContent = this.formatVolume(data.volume);
+            dom.ohlcVolume.textContent = formatVolume(data.volume);
         }
 
         // Change percentage
@@ -128,13 +129,6 @@ export class UIManager {
         changeValueEl.textContent = `${isPositive ? '+' : ''}${change.toFixed(2)}%`;
         changeEl.className = `ohlc-change ${isPositive ? 'positive' : 'negative'}`;
         arrowEl.textContent = isPositive ? '▲' : '▼';
-    }
-
-    private formatVolume(volume: number): string {
-        if (volume >= 1e9) return (volume / 1e9).toFixed(2) + 'B';
-        if (volume >= 1e6) return (volume / 1e6).toFixed(2) + 'M';
-        if (volume >= 1e3) return (volume / 1e3).toFixed(2) + 'K';
-        return volume.toFixed(2);
     }
 
     public updatePriceDisplay() {

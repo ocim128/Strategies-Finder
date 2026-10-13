@@ -2,6 +2,7 @@ import type { Time } from "lightweight-charts";
 import type { OHLCVData } from "../strategies/index";
 import { state } from "../state";
 import { DATA_PROVIDER_TOTAL_LIMIT } from "../data/constants";
+import { createSeededRandom } from "../param-math-utils";
 import { getIntervalSeconds } from "./utils";
 
 export const MIN_MOCK_BARS = 100;
@@ -21,7 +22,7 @@ export function generateMockData(symbol: string, interval: string): OHLCVData[] 
     const bars = Math.min(MAX_MOCK_BARS, Math.max(MIN_MOCK_BARS, requestedBars));
     const intervalSeconds = Math.max(1, getIntervalSeconds(interval));
     const latestTime = Math.floor(Date.now() / 1000 / intervalSeconds) * intervalSeconds;
-    const rng = createRng(hashString(`${symbol}:${interval}`));
+    const rng = createSeededRandom(hashString(`${symbol}:${interval}`));
     const data: OHLCVData[] = [];
     let price = startingPrice(symbol);
 
@@ -57,15 +58,6 @@ function hashString(value: string): number {
     return hash >>> 0;
 }
 
-function createRng(seed: number): () => number {
-    let stateValue = seed >>> 0;
-    return () => {
-        stateValue += 0x6d2b79f5;
-        let value = Math.imul(stateValue ^ (stateValue >>> 15), 1 | stateValue);
-        value ^= value + Math.imul(value ^ (value >>> 7), 61 | value);
-        return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-    };
-}
 
 function normal(rng: () => number): number {
     const u = Math.max(Number.EPSILON, rng());

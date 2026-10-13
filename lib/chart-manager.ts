@@ -20,6 +20,7 @@ import { darkTheme, lightTheme, ENHANCED_CANDLE_COLORS, LIGHT_CANDLE_COLORS, EQU
 import { toHeikinAshi } from "./heikin-ashi-utils";
 import { formatJakartaTickMark, formatJakartaTime } from "./timezone-utils";
 import { formatDisplayPrice } from "./price-format";
+import { formatVolume } from "./ui-formatters";
 import { bindChartRuntime, buildOhlcvTimeMap, setIndicators, setMarkersPlugin } from "./state-actions";
 import { createChartManagerDom } from "./chart-manager-dom";
 
@@ -321,13 +322,6 @@ export class ChartManager {
 
         // Update content
         const formatPrice = (p: number) => formatDisplayPrice(p);
-
-        const formatVolume = (v: number) => {
-            if (v >= 1e9) return (v / 1e9).toFixed(2) + 'B';
-            if (v >= 1e6) return (v / 1e6).toFixed(2) + 'M';
-            if (v >= 1e3) return (v / 1e3).toFixed(2) + 'K';
-            return v.toFixed(2);
-        };
 
         const formatDate = (time: Time) => formatJakartaTime(time, {
             weekday: 'short',

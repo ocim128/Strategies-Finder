@@ -179,10 +179,6 @@ function openDb(): Promise<IDBDatabase | null> {
     return opening;
 }
 
-function normalizeTime(raw: unknown): number | null {
-    return parseTimeToUnixSeconds(raw);
-}
-
 /**
  * Validate raw numeric candle fields and build an OHLCVData, rejecting
  * non-finite prices and null times; non-finite volume becomes 0. Shared by
@@ -228,7 +224,7 @@ function parseRawCandle(row: unknown): OHLCVData | null {
 
     if (Array.isArray(row)) {
         if (row.length < 5) return null;
-        const time = normalizeTime(row[0]);
+        const time = parseTimeToUnixSeconds(row[0]);
         const open = Number(row[1]);
         const high = Number(row[2]);
         const low = Number(row[3]);
@@ -239,7 +235,7 @@ function parseRawCandle(row: unknown): OHLCVData | null {
 
     if (typeof row === 'object') {
         const value = row as Record<string, unknown>;
-        const time = normalizeTime(
+        const time = parseTimeToUnixSeconds(
             value.time ??
             value.t ??
             value.timestamp ??
