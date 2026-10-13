@@ -851,11 +851,12 @@ describe("exit strategy override latest-wins rendering", () => {
     });
 
     // The stale-failure case runs before any test rejects keyD so its loader
-    // gate is still fresh and controllable: the catalog caches rejected load
-    // promises per key, so a poisoned key could never pend again. The newer
-    // selection is a registered custom strategy with a distinct param name —
-    // hidden params carry over across exit-strategy switches by contract, so
-    // a same-shaped strategy could not prove which render won.
+    // gate is still fresh and controllable. Rejected loads stay retryable —
+    // the catalog drops the rejected promise — so later tests that need a
+    // failing key reject their own fresh gate in-test. The newer selection is
+    // a registered custom strategy with a distinct param name — hidden params
+    // carry over across exit-strategy switches by contract, so a same-shaped
+    // strategy could not prove which render won.
     it("a stale exit-strategy failure must not roll back a newer successful selection", async () => {
         const exitKeySelect = el("exitStrategyKey");
         exitKeySelect.value = keyB;
@@ -899,11 +900,12 @@ describe("exit strategy override latest-wins rendering", () => {
         el("exitStrategyParamsContainer").dispatchEvent({ type: "input" });
         assert.deepEqual(exitHiddenParams(), { period: 44 }, "the edit must sync into the hidden JSON");
 
-        // keyD's load was rejected by the stale-failure case above, so the
-        // catalog returns that rejection immediately — the failure still hits
-        // the current generation and must retain the edited configuration.
+        // Failed loads are retryable — the catalog drops the rejected promise
+        // — so this test rejects keyD's own fresh gate. The failure must hit
+        // the current generation and retain the edited configuration.
         exitKeySelect.value = keyD;
         exitKeySelect.dispatchEvent({ type: "change" });
+        gateFor(keyD).reject(new Error("exit strategy boom"));
         await waitFor(() => toasts.some((toast) => toast.type === "error"), 2000, "the exit-failure toast");
 
         assert.deepEqual(
@@ -1016,11 +1018,12 @@ describe("exit strategy override latest-wins rendering", () => {
         const sameKeyInput = ((el("exitStrategyParamsContainer").children[0] as FakeElement).children[0] as FakeElement).children[1] as FakeElement;
         assert.equal(sameKeyInput.value, "77", "the same-key update syncs into the form");
 
-        // keyB's loader was rejected by the previous case, so this selection
-        // fails immediately and must roll back to the updated incoming
+        // Retryable loads mean this test rejects keyB's own fresh gate; the
+        // failed selection must roll back to the updated incoming
         // configuration rather than to anything earlier.
         exitKeySelect.value = keyB;
         exitKeySelect.dispatchEvent({ type: "change" });
+        gateFor(keyB).reject(new Error("incoming exit strategy failed"));
         await waitFor(() => toasts.some((toast) => toast.type === "error"), 2000, "the rollback toast");
 
         assert.equal(exitKeySelect.value, "custom_exit_incoming", "the rollback must return to the successful incoming configuration");

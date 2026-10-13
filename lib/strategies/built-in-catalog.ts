@@ -54,10 +54,18 @@ export async function ensureBuiltInStrategyLoaded(key: string): Promise<Strategy
         return loadedStrategies.get(key);
     }
 
-    const promise = loader().then((strategy) => {
-        loadedStrategies.set(key, strategy);
-        loadingPromises.delete(key);
-    });
+    const promise = loader().then(
+        (strategy) => {
+            loadedStrategies.set(key, strategy);
+            loadingPromises.delete(key);
+        },
+        (error) => {
+            // Drop the rejected promise so a later call retries the loader
+            // instead of replaying a transient chunk-load failure forever.
+            loadingPromises.delete(key);
+            throw error;
+        },
+    );
     loadingPromises.set(key, promise);
     await promise;
     return loadedStrategies.get(key);
