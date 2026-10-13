@@ -37,9 +37,8 @@ import type {
     FinderMetric,
     FinderOosVerdict,
 } from "../types/finder";
-import type { BacktestResult, OHLCVData } from "../types/strategies";
+import type { BacktestResult, OHLCVData, Time } from "../types/strategies";
 import { buildAssetOpportunityCandidateFingerprint } from "./finder-asset-opportunity-metadata";
-import { timeKey } from "../strategies/backtest/backtest-utils";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 
 /**
@@ -395,17 +394,15 @@ export function getAssetOpportunityResortMetrics(): readonly FinderAssetOpportun
 export function calculateMedianBarsToTp(
     result: Pick<BacktestResult, "trades" | "totalTrades">,
     candles: readonly OHLCVData[],
-    indexByTime?: ReadonlyMap<string, number>,
 ): number | null {
     if (!Number.isFinite(result.totalTrades) || result.totalTrades < MEDIAN_BARS_TO_TP_MIN_HITS) return null;
-    const resolvedIndexByTime = indexByTime ?? candleIndexByTime(candles);
 
     const barsToTakeProfit: number[] = [];
     for (const trade of result.trades) {
         if (trade.exitReason !== "take_profit") continue;
-        const entryIndex = resolvedIndexByTime.get(timeKey(trade.entryTime));
-        const exitIndex = resolvedIndexByTime.get(timeKey(trade.exitTime));
-        if (entryIndex === undefined || exitIndex === undefined) return null;
+        const entryIndex = findCandleIndexByTime(candles, trade.entryTime);
+        const exitIndex = findCandleIndexByTime(candles, trade.exitTime);
+        if (entryIndex === -1 || exitIndex === -1) return null;
         const bars = exitIndex - entryIndex;
         if (!Number.isFinite(bars) || bars < 0) return null;
         barsToTakeProfit.push(bars);
@@ -435,28 +432,40 @@ function completedTrades(result: Pick<BacktestResult, "trades">) {
     return result.trades.filter((trade) => trade.exitReason !== "end_of_data");
 }
 
-const candleIndexCache = new WeakMap<readonly OHLCVData[], Map<string, number>>();
-
-function candleIndexByTime(candles: readonly OHLCVData[]): Map<string, number> {
-    const cached = candleIndexCache.get(candles);
-    if (cached) return cached;
-    const indexByTime = new Map<string, number>();
-    for (let index = 0; index < candles.length; index += 1) {
-        indexByTime.set(timeKey(candles[index]!.time), index);
+/**
+ * Zero-allocation binary search for a candle index by time on chronologically
+ * sorted candles. Mirrors the runner's `findCandleIndexByTime` so derived
+ * metrics resolve the same entry/exit bars the signal path uses, without
+ * materializing a time-keyed map per (asset, holdout) window. Returns -1 when
+ * the time is absent or unparsable.
+ */
+function findCandleIndexByTime(candles: readonly OHLCVData[], time: Time | null): number {
+    const targetTime = time === null ? null : parseTimeToUnixSeconds(time);
+    if (targetTime === null) return -1;
+    let low = 0;
+    let high = candles.length;
+    while (low < high) {
+        const middle = Math.floor((low + high) / 2);
+        const middleTime = parseTimeToUnixSeconds(candles[middle]!.time);
+        if (middleTime === null) return -1;
+        if (middleTime < targetTime) low = middle + 1;
+        else high = middle;
     }
-    candleIndexCache.set(candles, indexByTime);
-    return indexByTime;
+    return low < candles.length
+        && parseTimeToUnixSeconds(candles[low]!.time) === targetTime
+        ? low
+        : -1;
 }
 
 function completedTradeBarPairs(
     result: Pick<BacktestResult, "trades">,
-    indexByTime: ReadonlyMap<string, number>,
+    candles: readonly OHLCVData[],
 ): Array<{ entryIndex: number; exitIndex: number; pnl: number }> | null {
     const pairs: Array<{ entryIndex: number; exitIndex: number; pnl: number }> = [];
     for (const trade of completedTrades(result)) {
-        const entryIndex = indexByTime.get(timeKey(trade.entryTime));
-        const exitIndex = indexByTime.get(timeKey(trade.exitTime));
-        if (entryIndex === undefined || exitIndex === undefined || !Number.isFinite(trade.pnl)) return null;
+        const entryIndex = findCandleIndexByTime(candles, trade.entryTime);
+        const exitIndex = findCandleIndexByTime(candles, trade.exitTime);
+        if (entryIndex === -1 || exitIndex === -1 || !Number.isFinite(trade.pnl)) return null;
         const holdBars = exitIndex - entryIndex;
         if (!Number.isFinite(holdBars) || holdBars < 0) return null;
         pairs.push({ entryIndex, exitIndex, pnl: trade.pnl });
@@ -503,7 +512,7 @@ export function calculateTradeGapUniformity(
     candles: readonly OHLCVData[],
     pairs: Array<{ entryIndex: number; exitIndex: number; pnl: number }> | null = completedTradeBarPairs(
         result,
-        candleIndexByTime(candles),
+        candles,
     ),
 ): number | null {
     if (!pairs || pairs.length - 1 < TRADE_GAP_UNIFORMITY_MIN_GAPS) return null;
@@ -533,7 +542,7 @@ export function calculateWinnerLoserHoldGapBars(
     candles: readonly OHLCVData[],
     pairs: Array<{ entryIndex: number; exitIndex: number; pnl: number }> | null = completedTradeBarPairs(
         result,
-        candleIndexByTime(candles),
+        candles,
     ),
 ): number | null {
     if (!pairs) return null;
@@ -602,10 +611,9 @@ export function calculateAssetOpportunityDerivedMetrics(args: {
             equityPathLinearity: null,
         };
     }
-    const indexByTime = candleIndexByTime(args.candles);
-    const completedPairs = completedTradeBarPairs(args.result, indexByTime);
+    const completedPairs = completedTradeBarPairs(args.result, args.candles);
     return {
-        medianBarsToTp: calculateMedianBarsToTp(args.result, args.candles, indexByTime),
+        medianBarsToTp: calculateMedianBarsToTp(args.result, args.candles),
         barrierExitShare: calculateBarrierExitShare(args.result),
         entryHourConcentration: calculateEntryHourConcentration(args.result),
         tradeGapUniformity: calculateTradeGapUniformity(args.result, args.candles, completedPairs),

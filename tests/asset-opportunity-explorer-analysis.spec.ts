@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
     parseAssetOpportunityArchiveText,
 } from "../lib/asset-opportunity-explorer/archive-parser";
+import { buildAssetOpportunityArchiveBlockText } from "../lib/finder/server/finder-asset-opportunity-archive";
 import {
     ExplorerAnalysisError,
     buildExplorerView,
@@ -114,6 +115,34 @@ describe("Asset Opportunity Explorer analysis", () => {
         expect(legacyHorizons[0]?.averagePnlPercent).to.equal(1.5);
         // Legacy rows carry no explicit basis; it must stay absent, not guessed.
         expect(records[0]!.topResults[0]!.forwardOosPerformance?.basis).to.equal(undefined);
+    });
+
+    it("parses blocks exactly as the archive writer appends them (no trailing separator)", () => {
+        // buildAssetOpportunityArchiveBlockText frames each block as
+        // SEP/header/SEP/rows and ends with a single newline — blocks written
+        // back-to-back never carry a separator line between them.
+        const writerText = buildAssetOpportunityArchiveBlockText({
+            timestamp: "2026-09-25T00:00:00.000Z",
+            batchRunId: "writer-run",
+            holdoutBars: 12,
+            sortMetric: "expectancy",
+            measurementMode: "fixed_horizon",
+            topResults: [archiveRow({ rank: 1, horizons: [{ bars: 12, averagePnlPercent: 4, sampleSize: 1 }] })],
+        }) + buildAssetOpportunityArchiveBlockText({
+            timestamp: "2026-09-25T01:00:00.000Z",
+            batchRunId: "writer-run",
+            holdoutBars: 24,
+            sortMetric: "expectancy",
+            topResults: [archiveRow({ rank: 1, horizons: [{ bars: 24, averagePnlPercent: 2, sampleSize: 1 }] })],
+        });
+
+        const records = parseAssetOpportunityArchiveText(writerText, "writer-fixture.txt");
+        expect(records).to.have.length(2);
+        expect(records.map((record) => record.holdoutBars)).to.deep.equal([12, 24]);
+        expect(records[0]!.batchRunId).to.equal("writer-run");
+        expect(records[0]!.measurementMode).to.equal("fixed_horizon");
+        expect(records[0]!.topResults[0]!.forwardOosPerformance?.horizons?.[0]?.averagePnlPercent).to.equal(4);
+        expect(records[1]!.topResults[0]!.forwardOosPerformance?.horizons?.[0]?.averagePnlPercent).to.equal(2);
     });
 
     it("preserves the optional forwardOosPerformance.basis measurement metadata", () => {

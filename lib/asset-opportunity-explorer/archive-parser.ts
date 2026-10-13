@@ -358,6 +358,11 @@ function flatCapture(value: string): string {
     return (" " + value).slice(1);
 }
 
+/** Header lines of one archive block, between the two separator lines. */
+const ARCHIVE_BLOCK_HEADER_PATTERN = new RegExp(
+    `^Timestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive baseline by basis: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?$`,
+);
+
 /** Parse all delimited blocks from one archive file. */
 export function parseAssetOpportunityArchiveText(
     text: string,
@@ -365,26 +370,46 @@ export function parseAssetOpportunityArchiveText(
     options: ArchiveParseOptions = {},
 ): AssetOpportunityArchiveRecord[] {
     const normalized = text.replace(/\r\n?/g, "\n").trimEnd();
-    const blockPattern = new RegExp(
-        `^${BLOCK_SEPARATOR}\\nTimestamp: ([^\\n]+)\\nBatch run id: ([^\\n]+)\\nOOS holdout: (\\d+) bars\\nArchive sort: ([^\\n]+)\\n(?:Forward measurement: ([^\\n]+)\\n)?(?:Archive baseline: ([^\\n]+)\\n)?(?:Archive baseline by basis: ([^\\n]+)\\n)?(?:Next-exit archive baseline: ([^\\n]+)\\n)?${BLOCK_SEPARATOR}\\n([\\s\\S]*?)(?=\\n${BLOCK_SEPARATOR}\\n|$)`,
-        "gm",
-    );
     const records: AssetOpportunityArchiveRecord[] = [];
-    for (const match of normalized.matchAll(blockPattern)) {
-        const holdoutBars = Number(match[3]);
+    // Split on newline-wrapped separator lines instead of scanning the whole
+    // text with a lookahead regex. Block bodies are single-line JSON (see
+    // buildAssetOpportunityArchiveBlockText), so every real block boundary is
+    // a `\n<sep>\n` occurrence and the split pairs each header part (even
+    // index) with its body part (odd index). A block whose writer closed its
+    // frame with a bare trailing separator leaves that separator on the last
+    // body part, which the suffix strip below absorbs.
+    const blockDelimiter = `\n${BLOCK_SEPARATOR}\n`;
+    const leadingSeparator = `${BLOCK_SEPARATOR}\n`;
+    const trailingSeparator = `\n${BLOCK_SEPARATOR}`;
+    const parts = normalized.split(blockDelimiter);
+    for (let index = 0; index < parts.length; index += 2) {
+        const headerPart = parts[index]!;
+        const header = headerPart.startsWith(leadingSeparator)
+            ? headerPart.slice(leadingSeparator.length)
+            : headerPart;
+        const rawBody = index + 1 < parts.length ? parts[index + 1]! : "";
+        const body = rawBody.endsWith(trailingSeparator)
+            ? rawBody.slice(0, rawBody.length - trailingSeparator.length)
+            : rawBody;
+        // The split consumed the newline that terminated the header's last
+        // line; restore it so the header pattern's line terminators stay
+        // identical to the block format the writer emits.
+        const headerMatch = ARCHIVE_BLOCK_HEADER_PATTERN.exec(`${header}\n`);
+        if (!headerMatch) continue;
+        const holdoutBars = Number(headerMatch[3]);
         if (!Number.isInteger(holdoutBars) || holdoutBars < 1) {
             throw new Error(`Invalid holdout value in ${sourceFile}`);
         }
         let parsedRows: unknown;
         try {
-            parsedRows = JSON.parse(match[9]!);
+            parsedRows = JSON.parse(body);
         } catch (error) {
             const detail = error instanceof Error ? error.message : String(error);
             throw new Error(`Invalid JSON in ${sourceFile}: ${detail}`);
         }
         let baselineByBasis: AssetOpportunityArchiveRecord["baselineByBasis"];
-        if (match[7]) {
-            const parsedMap = JSON.parse(match[7]) as Record<string, unknown>;
+        if (headerMatch[7]) {
+            const parsedMap = JSON.parse(headerMatch[7]) as Record<string, unknown>;
             const map: NonNullable<AssetOpportunityArchiveRecord["baselineByBasis"]> = {};
             for (const basis of ARCHIVE_BASES) {
                 const baseline = parseArchiveBaseline(parsedMap[basis], sourceFile);
@@ -394,19 +419,19 @@ export function parseAssetOpportunityArchiveText(
         }
         records.push({
             sourceFile,
-            timestamp: flatCapture(match[1]!),
-            batchRunId: flatCapture(match[2]!),
+            timestamp: flatCapture(headerMatch[1]!),
+            batchRunId: flatCapture(headerMatch[2]!),
             holdoutBars,
-            sortMetric: flatCapture(match[4]!),
-            measurementMode: match[5] ? flatCapture(match[5]) : undefined,
+            sortMetric: flatCapture(headerMatch[4]!),
+            measurementMode: headerMatch[5] ? flatCapture(headerMatch[5]) : undefined,
             topResults: parseArchiveRows(
                 parsedRows,
                 sourceFile,
-                options.maxFullRows !== undefined && match[5] !== "next_exit" ? options.maxFullRows : undefined,
+                options.maxFullRows !== undefined && headerMatch[5] !== "next_exit" ? options.maxFullRows : undefined,
             ),
-            baseline: match[6] ? parseArchiveBaseline(JSON.parse(match[6]), sourceFile) : null,
+            baseline: headerMatch[6] ? parseArchiveBaseline(JSON.parse(headerMatch[6]), sourceFile) : null,
             ...(baselineByBasis ? { baselineByBasis } : {}),
-            nextExitBaseline: match[8] ? parseNextExitBaseline(JSON.parse(match[8]), sourceFile) : null,
+            nextExitBaseline: headerMatch[8] ? parseNextExitBaseline(JSON.parse(headerMatch[8]), sourceFile) : null,
         });
     }
     if (records.length === 0 && normalized.length > 0) {

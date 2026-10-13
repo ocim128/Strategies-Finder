@@ -635,7 +635,6 @@ export async function runAssetOpportunityIteration(
                 ): Promise<Map<number, OHLCVData>> => {
                     const legCacheKey = `${legSymbol}|${input.interval}`;
                     const cachedLegData = datasetCache?.get(legCacheKey);
-                    const legLoadStartedAt = performance.now();
                     const legData = cachedLegData
                         ? await cachedLegData
                         : await input.loadDataset(
@@ -654,8 +653,6 @@ export async function runAssetOpportunityIteration(
                             datasetCache?.set(legCacheKey, Promise.resolve(loaded));
                             return loaded;
                         });
-                    currentLegDataLoadingMs += performance.now() - legLoadStartedAt;
-                    completedAssetLoadIntervals.push([legLoadStartedAt, performance.now()]);
                     if (!Array.isArray(legData) || legData.length === 0) {
                         throw new Error(`no ${legLabel} data for ${legSymbol}`);
                     }
@@ -675,24 +672,47 @@ export async function runAssetOpportunityIteration(
                     }
                     return legCandlesByTime;
                 };
-                for (const [legLabel, legSymbol] of [
-                    ["BASE", syntheticPair.baseSymbol],
-                    ["QUOTE", syntheticPair.quoteSymbol],
-                ] as const) {
+                // The two leg queries are independent reads, so resolve them
+                // concurrently; ordered outcome handling keeps BASE reported
+                // before QUOTE. Identical leg symbols issue one request that
+                // feeds both bases.
+                const isSharedLegSymbol = syntheticPair.baseSymbol === syntheticPair.quoteSymbol;
+                const legRequests: Array<{ legLabel: "BASE" | "QUOTE"; legSymbol: string }> = isSharedLegSymbol
+                    ? [{ legLabel: "BASE", legSymbol: syntheticPair.baseSymbol }]
+                    : [
+                        { legLabel: "BASE", legSymbol: syntheticPair.baseSymbol },
+                        { legLabel: "QUOTE", legSymbol: syntheticPair.quoteSymbol },
+                    ];
+                const legLoadIntervals: Array<readonly [number, number]> = [];
+                const legOutcomes = await Promise.allSettled(legRequests.map(async (leg) => {
+                    const legLoadStartedAt = performance.now();
                     try {
-                        const legCandlesByTime = await loadOosLegCandlesByTime(legLabel, legSymbol);
-                        if (legLabel === "BASE") oosBaseCandlesByTime = legCandlesByTime;
-                        else oosQuoteCandlesByTime = legCandlesByTime;
-                    } catch (error) {
-                        if (input.abortSignal.aborted || isAbortError(error)) throw error;
+                        return await loadOosLegCandlesByTime(leg.legLabel, leg.legSymbol);
+                    } finally {
+                        const legLoadFinishedAt = performance.now();
+                        legLoadIntervals.push([legLoadStartedAt, legLoadFinishedAt]);
+                        completedAssetLoadIntervals.push([legLoadStartedAt, legLoadFinishedAt]);
+                    }
+                }));
+                // Overlapping concurrent loads merge to wall-clock impact, so
+                // the per-asset timing does not double-count leg overlap.
+                currentLegDataLoadingMs += mergeTimingIntervals(legLoadIntervals);
+                for (let legIndex = 0; legIndex < legRequests.length; legIndex += 1) {
+                    const leg = legRequests[legIndex]!;
+                    const legOutcome = legOutcomes[legIndex]!;
+                    if (legOutcome.status !== "fulfilled") {
+                        if (input.abortSignal.aborted || isAbortError(legOutcome.reason)) throw legOutcome.reason;
                         debugLogger.warn("finder.asset_opportunity.leg_candles_unavailable", {
                             runId: input.runId,
                             symbol,
-                            legSymbol,
-                            legLabel,
-                            reason: error instanceof Error ? error.message : String(error),
+                            legSymbol: leg.legSymbol,
+                            legLabel: leg.legLabel,
+                            reason: legOutcome.reason instanceof Error ? legOutcome.reason.message : String(legOutcome.reason),
                         });
+                        continue;
                     }
+                    if (leg.legLabel === "BASE" || isSharedLegSymbol) oosBaseCandlesByTime = legOutcome.value;
+                    if (leg.legLabel === "QUOTE" || isSharedLegSymbol) oosQuoteCandlesByTime = legOutcome.value;
                 }
             }
             // Hoist the strategy-independent search windows out of the

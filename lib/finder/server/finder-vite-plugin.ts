@@ -169,6 +169,7 @@ import {
     type AssetOpportunityIterationResult,
     type FinderAssetOpportunityRunInput,
 } from "./asset-opportunity-iteration";
+import { createAssetOpportunitySignalCache } from "../finder-asset-opportunity-search-cache";
 import {
     ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX,
     ASSET_OPPORTUNITY_BATCH_RUST_CHUNK_WORKER_CAP,
@@ -2363,10 +2364,13 @@ export async function processFinderAssetOpportunityBatchRun(
         // candles. Keep the large synthetic-leg/pair caches alive across all batch
         // iterations and reset only per-iteration diagnostics in the iteration
         // runner above. symbolCount attaches the plain-dataset LRU so each
-        // symbol loads once for the whole sequential sweep.
+        // symbol loads once for the whole sequential sweep. The bounded
+        // full-signal cache gives holdout iterations 2..N the same candidate
+        // signal reuse the persistent-worker path gets.
         const assetLoadContext = createServerFinderAssetOpportunityLoadContext(totalAssets);
         const paramSetCache = new Map<string, StrategyParams[]>();
         const exitSignalCacheBySymbol: NonNullable<FinderAssetOpportunityRunInput["exitSignalCacheBySymbol"]> = new Map();
+        const signalCache = createAssetOpportunitySignalCache();
         const throttleProgressWrite = createProgressEventThrottle();
 
         for (let iterationIndex = 0; iterationIndex < totalIterations; iterationIndex += 1) {
@@ -2405,6 +2409,7 @@ export async function processFinderAssetOpportunityBatchRun(
                         assetLoadContext,
                         paramSetCache,
                         exitSignalCacheBySymbol,
+                        signalCache,
                     },
                     {
                         onProgress: (progress) => {

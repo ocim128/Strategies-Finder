@@ -1715,19 +1715,6 @@ async function searchOneAsset(args: {
         }
         return oosWindowIdentityMemo.digest;
     };
-    let oosSliceWindow: OHLCVData[] = [];
-    if (input.options.oosValidationEnabled) {
-        const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
-        if (oosSlice) {
-            oosSliceWindow = sliceFinderDataWindow(
-                inSampleHistorical,
-                oosSlice,
-                normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo),
-            );
-            diagnostics.oosBars = Math.max(diagnostics.oosBars, oosSliceWindow.length);
-        }
-    }
-
     // Reduce WITHOUT OOS first. The winner is chosen by fresh rank alone (OOS
     // never changes which candidate wins — it only gates the grade), so the
     // OOS pass can be deferred to run for the single winner below.
@@ -1753,6 +1740,22 @@ async function searchOneAsset(args: {
             candidatesEvaluated: totalCandidatesEvaluated,
             bestHistoricalRank: 1,
         });
+    }
+
+    // The legacy OOS slice is only consumed by the winner's OOS pass below, so
+    // resolve it after the fresh gate: assets discarded above must not pay for
+    // the window filter and copy.
+    let oosSliceWindow: OHLCVData[] = [];
+    if (input.options.oosValidationEnabled) {
+        const oosSlice = resolveOosDataSlice(input.options.dataSlice ?? "all");
+        if (oosSlice) {
+            oosSliceWindow = sliceFinderDataWindow(
+                inSampleHistorical,
+                oosSlice,
+                normalizeFinderDateRange(input.options.dataRangeFrom, input.options.dataRangeTo),
+            );
+            diagnostics.oosBars = Math.max(diagnostics.oosBars, oosSliceWindow.length);
+        }
     }
 
     // The server IS path intentionally keeps candidate results scalar. When
@@ -1792,11 +1795,12 @@ async function searchOneAsset(args: {
         && winnerCandidate !== undefined;
     let eodSelectionResult: BacktestResult | undefined;
     let eodOpenTradePnl: number | undefined;
-    let derivedMetrics = calculateAssetOpportunityDerivedMetrics({
-        result: result.selectionResult,
-        candles: slicedHistorical,
-        freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
-    });
+    // Resolve the analytics trade source first and compute the derived metrics
+    // exactly once below: the compact server selection result usually retains
+    // no trades, so a baseline computation here would be discarded by one of
+    // the replay branches that follows.
+    let metricsResult: BacktestResult = result.selectionResult;
+    let metricsCandles: OHLCVData[] = slicedHistorical;
     if (includeEodOpenPerformance) {
         try {
             // Replay the full visible boundary so an open position entered
@@ -1837,11 +1841,8 @@ async function searchOneAsset(args: {
                     ? { ...trade, exitReason: "signal" }
                     : trade),
             };
-            derivedMetrics = calculateAssetOpportunityDerivedMetrics({
-                result: eodTradesCountedAsClosed,
-                candles: eodAnalyticsData,
-                freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
-            });
+            metricsResult = eodTradesCountedAsClosed;
+            metricsCandles = eodAnalyticsData;
             diagnostics.winnerAnalyticsRecomputations += 1;
             diagnostics.timingsMs.winnerAnalytics += performance.now() - winnerStartedAt;
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
@@ -1867,11 +1868,7 @@ async function searchOneAsset(args: {
         }
     }
     if (!eodSelectionResult && freshReplayAnalyticsResult) {
-        derivedMetrics = calculateAssetOpportunityDerivedMetrics({
-            result: freshReplayAnalyticsResult,
-            candles: slicedHistorical,
-            freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
-        });
+        metricsResult = freshReplayAnalyticsResult;
     } else if (
         !eodSelectionResult && selectionTrades.length === 0
         && result.selectionResult.totalTrades >= MEDIAN_BARS_TO_TP_MIN_HITS
@@ -1904,11 +1901,7 @@ async function searchOneAsset(args: {
                 slicedHistorical[slicedHistorical.length - 1]?.time ?? null,
                 preResolvedCapital.initialCapital,
             );
-            derivedMetrics = calculateAssetOpportunityDerivedMetrics({
-                result: selection.result,
-                candles: slicedHistorical,
-                freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
-            });
+            metricsResult = selection.result;
             diagnostics.winnerAnalyticsRecomputations += 1;
             diagnostics.timingsMs.winnerAnalytics += performance.now() - winnerStartedAt;
             mergeAssetOpportunityEngineUsage(diagnostics.engineUsage, {
@@ -1933,6 +1926,11 @@ async function searchOneAsset(args: {
             });
         }
     }
+    const derivedMetrics = calculateAssetOpportunityDerivedMetrics({
+        result: metricsResult,
+        candles: metricsCandles,
+        freshEntryPrice: winnerFresh?.freshEntryPrice ?? null,
+    });
 
     // Run OOS only for the winner. The reducer previously ran OOS for all K
     // candidates but only consumed the winner's verdict in `decideAssetGrade`;
