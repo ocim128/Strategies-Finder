@@ -242,12 +242,14 @@ const verifySimplifiedSettings = async (page: Page): Promise<void> => {
         risk.open = true;
         try {
             manager.applyBacktestSettings({ ...saved, riskSettingsToggle: true, riskMode: 'percentage', takeProfitMode: 'fixed' });
-            const select = document.getElementById('takeProfitMode') as HTMLSelectElement;
-            if (select.options.length !== 1 || select.options[0].value !== 'fixed') {
-                throw new Error('takeProfitMode must only offer Fixed %');
+            if (document.getElementById('takeProfitMode') !== null) {
+                throw new Error('the take-profit mode select should be removed; take profit is always Fixed %');
             }
             if (document.querySelectorAll('[data-tp-modes]').length !== 0) {
                 throw new Error('adaptive take-profit controls should be removed');
+            }
+            if (!document.getElementById('takeProfitPercent')) {
+                throw new Error('the fixed-percent take-profit control should remain');
             }
         } finally {
             manager.applyBacktestSettings(saved);
