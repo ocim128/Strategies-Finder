@@ -105,4 +105,63 @@ describe("TOP_MEAN asset-switch event details", () => {
         expect(html).to.include("Filtered Full-Window Preview — Calendar Year 2024 | 1 trade records");
         expect(html).to.include("FULL_2024");
     });
+
+    it("shows entry and exit price columns instead of side and costs", () => {
+        const html = renderTopMeanOpenScoreEventDetails(summary([trade("PRICE_2024", 2024)]), "TOP_MEAN");
+
+        expect(html).to.include("<th>Entry Price</th>");
+        expect(html).to.include("<th>Exit Price</th>");
+        expect(html).to.not.include("<th>Side</th>");
+        expect(html).to.not.include("<th>Costs</th>");
+        expect(html).to.include("<td>100</td>");
+        expect(html).to.include("<td>101</td>");
+    });
+
+    it("shows the open position mark as the current exit price of an open trade", () => {
+        const openTrade: AssetSwitchTradeRecord = {
+            ...trade("OPEN_2024", 2024),
+            exitTimeSec: null,
+            exitPrice: null,
+            holdingDurationSec: null,
+            netPnl: null,
+            exitCost: 0,
+            status: "open",
+        };
+        const result = summary([openTrade]);
+        result.assetSwitch!.arms.topMean = {
+            openPosition: {
+                asset: "OPEN_2024",
+                entryDecisionTimeSec: openTrade.decisionTimeSec,
+                entryTimeSec: openTrade.entryTimeSec,
+                entryPrice: openTrade.entryPrice,
+                markTimeSec: openTrade.entryTimeSec + 60,
+                markPrice: 105,
+                markAgeSec: 60,
+                openNetPnl: 50,
+                entryCost: 0,
+                holdingDurationSec: 60,
+            },
+        } as NonNullable<TopMeanResultSummary["assetSwitch"]>["arms"]["topMean"];
+
+        const html = renderTopMeanOpenScoreEventDetails(result, "TOP_MEAN");
+
+        expect(html).to.include("<td>105</td>");
+        expect(html).to.not.include("<td>101</td>");
+    });
+
+    it("keeps the exit price n/a when an open trade has no matching open position mark", () => {
+        const openTrade: AssetSwitchTradeRecord = {
+            ...trade("OPEN_2024", 2024),
+            exitTimeSec: null,
+            exitPrice: null,
+            holdingDurationSec: null,
+            netPnl: null,
+            exitCost: 0,
+            status: "open",
+        };
+
+        const html = renderTopMeanOpenScoreEventDetails(summary([openTrade]), "TOP_MEAN");
+
+        expect(html).to.include("<td>n/a</td><td>n/a</td><td>open</td><td>OPEN</td></tr>");
+    });
 });

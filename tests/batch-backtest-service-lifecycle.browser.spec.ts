@@ -1377,7 +1377,7 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(readLatestTopMeanResult()).to.equal(null);
     });
 
-    it("restores the directional arm, shows short details, and copies holding and pending direction", async () => {
+    it("restores the directional arm, shows trade price details, and copies holding and pending direction", async () => {
         const assetSwitch = createEmptyAssetSwitchSummary({ evaluationCutoffSec: 1_700_001_000, directionalTotalPairs: 1_000 });
         assetSwitch.arms.topRawDirectional!.openPosition = {
             asset: "NVDA", direction: "short", entryDecisionTimeSec: 1_700_000_000,
@@ -1400,7 +1400,10 @@ describe("BatchBacktestService analysis lifecycle", () => {
         expect(restored.assetSwitch?.directionalBelowMinimumPolicy).to.equal("exit_next_open");
         expect(restored.assetSwitch?.directionalVoteDelayBars).to.equal(3);
         const html = svc().topMean.renderTopMeanOpenScoreEventDetails(restored, "TOP_RAW_DIRECTIONAL");
-        expect(html).to.include("SHORT").and.include("NVDA").and.include("TOP_RAW_DIRECTIONAL");
+        expect(html).to.include("NVDA").and.include("TOP_RAW_DIRECTIONAL");
+        expect(html).to.include("Entry Price").and.include("Exit Price");
+        // The open short's entry fill (100) and its current mark (90) as the exit price.
+        expect(html).to.include("<td>100</td>").and.include("<td>90</td>");
         expect(svc().topMean.renderTopMeanOpenScoreEventDetails(topMeanResultFixture(), "TOP_RAW_DIRECTIONAL")).to.include("requires Hold until switch");
         const dom = setupForAnalysis();
         svc().topMean.renderTopMeanResults(dom, restored);

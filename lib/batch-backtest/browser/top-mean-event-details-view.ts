@@ -13,6 +13,7 @@ import type {
 import type { TopMeanResultSummary } from "../sp500-top-mean-coordinator-engine";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import { escapeHtml } from "../../html-escape";
+import { formatDisplayPrice } from "../../price-format";
 import { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM, type AssetSwitchArmField } from "../open-score-replay/arm-contract";
 import { formatCausalArmAvailabilityLines } from "./top-mean-results-view";
 
@@ -351,7 +352,7 @@ function renderAssetSwitchTradeDetails(
     const total = section?.tradeCount ?? section?.trades?.length ?? 0;
     const shipped = section?.trades?.length ?? 0;
     let html = `<div class="batch-open-score-details-heading">Asset-Switch Trade Details — ${escapeHtml(selector)}</div>`;
-    html += `<div class="batch-open-score-details-note">These are filled position records from an independent path-dependent replay. TOP_RAW_DIRECTIONAL supports long and short, with at most one position at a time. Each entry uses fixed $1,000 notional; net P&amp;L includes entry and exit costs. An open row is marked at the last closed candle available at that replay window's end. No horizon or random-control comparison is implied.</div>`;
+    html += `<div class="batch-open-score-details-note">These are filled position records from an independent path-dependent replay. TOP_RAW_DIRECTIONAL supports long and short, with at most one position at a time. Each entry uses fixed $1,000 notional; net P&amp;L includes entry and exit costs. An open row is marked at the last closed candle available at that replay window's end; its Exit Price shows that mark as the current price. No horizon or random-control comparison is implied.</div>`;
     if (selector === "TOP_RAW_DIRECTIONAL" && !section?.arms.topRawDirectional) {
         return html + `<div class="batch-report-warning">Rerun required: TOP_RAW_DIRECTIONAL is available in new Hold until switch results.</div>`;
     }
@@ -381,13 +382,24 @@ function renderAssetSwitchTradeDetails(
             ? `Filtered Full-Window Preview — Calendar Year ${year}`
             : `Independent Calendar Year ${year}`;
     html += `<details open class="batch-open-score-details-section"><summary>${sectionLabel} | ${rows.length.toLocaleString()} trade records</summary>`;
-    html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table"><thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Side</th><th>Asset</th><th>Net P&amp;L</th><th>Costs</th><th>Holding</th><th>Status</th></tr></thead><tbody>`;
+    html += `<div class="batch-open-score-details-scroll"><table class="finder-table batch-open-score-details-table"><thead><tr><th>Decision UTC</th><th>Entry UTC</th><th>Exit UTC</th><th>Asset</th><th>Entry Price</th><th>Exit Price</th><th>Net P&amp;L</th><th>Holding</th><th>Status</th></tr></thead><tbody>`;
+    // At most one position per arm, so the arm's open position mark is the
+    // current price of the single status:"open" record; the entry-time match
+    // guards against a stale summary.
+    const openPosition = arm === null ? null : section?.arms?.[arm]?.openPosition ?? null;
+    const price = (value: number | null | undefined): string => value === null || value === undefined || !Number.isFinite(value)
+        ? "n/a"
+        : formatDisplayPrice(value);
     for (const trade of rows) {
-        const cost = trade.entryCost + trade.exitCost;
+        const exitPrice = trade.status === "closed"
+            ? price(trade.exitPrice)
+            : openPosition !== null && openPosition.entryTimeSec === trade.entryTimeSec
+                ? price(openPosition.markPrice)
+                : "n/a";
         const holding = trade.holdingDurationSec === null
             ? "open"
             : `${(trade.holdingDurationSec / 86400).toFixed(1)} days`;
-        html += `<tr><td>${escapeHtml(time(trade.decisionTimeSec))}</td><td>${escapeHtml(time(trade.entryTimeSec))}</td><td>${escapeHtml(time(trade.exitTimeSec))}</td><td>${escapeHtml((trade.direction ?? "long").toUpperCase())}</td><td><strong>${escapeHtml(trade.asset)}</strong></td><td>${escapeHtml(money(trade.netPnl))}</td><td>$${cost.toFixed(2)}</td><td>${escapeHtml(holding)}</td><td>${escapeHtml(trade.status.toUpperCase())}</td></tr>`;
+        html += `<tr><td>${escapeHtml(time(trade.decisionTimeSec))}</td><td>${escapeHtml(time(trade.entryTimeSec))}</td><td>${escapeHtml(time(trade.exitTimeSec))}</td><td><strong>${escapeHtml(trade.asset)}</strong></td><td>${escapeHtml(price(trade.entryPrice))}</td><td>${escapeHtml(exitPrice)}</td><td>${escapeHtml(money(trade.netPnl))}</td><td>${escapeHtml(holding)}</td><td>${escapeHtml(trade.status.toUpperCase())}</td></tr>`;
     }
     html += `</tbody></table></div></details>`;
     return html;
