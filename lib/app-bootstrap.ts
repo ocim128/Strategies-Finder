@@ -10,6 +10,7 @@ import { dataManager } from "./data-manager";
 import { uiManager } from "./ui-manager";
 import { backtestService } from "./backtest-service";
 import { debugLogger } from "./debug-logger";
+import { formatError } from "./error-format";
 import { nowMs } from "./perf-clock";
 import { settingsManager } from "./settings-manager";
 import { injectLayout } from "./layout-manager";
@@ -149,7 +150,7 @@ async function runBootstrapStep(
                 stage,
                 handler,
                 durationMs: roundedDurationMs(startedAt),
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                error: formatError(error),
             });
         } catch {
             // Bootstrap telemetry must never change bootstrap control flow.

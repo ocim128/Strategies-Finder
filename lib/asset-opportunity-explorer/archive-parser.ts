@@ -99,29 +99,29 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null;
 }
 
-export function asFiniteNumber(value: unknown): number | null {
+function asFiniteNumber(value: unknown): number | null {
     if (typeof value !== "number" || !Number.isFinite(value)) return null;
     return value;
 }
 
-export function asPositiveInteger(value: unknown): number | null {
+function asPositiveInteger(value: unknown): number | null {
     const number = asFiniteNumber(value);
     if (number === null || !Number.isInteger(number) || number < 1) return null;
     return number;
 }
 
-export function asNonNegativeInteger(value: unknown): number | null {
+function asNonNegativeInteger(value: unknown): number | null {
     const number = asFiniteNumber(value);
     if (number === null || !Number.isInteger(number) || number < 0) return null;
     return number;
 }
 
-export function asHour(value: unknown): number | null {
+function asHour(value: unknown): number | null {
     const number = asNonNegativeInteger(value);
     return number !== null && number <= 23 ? number : null;
 }
 
-export function parseArchiveBaseline(value: unknown, sourceFile: string): AssetOpportunityForwardOosBaseline | null {
+function parseArchiveBaseline(value: unknown, sourceFile: string): AssetOpportunityForwardOosBaseline | null {
     if (value === undefined) return null;
     if (!isRecord(value) || !Array.isArray(value.horizons)) {
         throw new Error(`Invalid archive baseline in ${sourceFile}`);
@@ -157,7 +157,7 @@ export function parseArchiveBaseline(value: unknown, sourceFile: string): AssetO
     return { eligibleCandidateCount, horizons };
 }
 
-export function parseNextExitBaseline(value: unknown, sourceFile: string): AssetOpportunityNextExitOosBaseline | null {
+function parseNextExitBaseline(value: unknown, sourceFile: string): AssetOpportunityNextExitOosBaseline | null {
     if (value === undefined) return null;
     if (!isRecord(value) || !isRecord(value.exitReasonCounts)) {
         throw new Error(`Invalid next-exit archive baseline in ${sourceFile}`);
@@ -202,7 +202,7 @@ export function parseNextExitBaseline(value: unknown, sourceFile: string): Asset
     };
 }
 
-export function parseArchiveScalarRecord(value: unknown): Record<string, number | null> | undefined {
+function parseArchiveScalarRecord(value: unknown): Record<string, number | null> | undefined {
     if (!isRecord(value)) return undefined;
     const parsed: Record<string, number | null> = {};
     for (const [key, raw] of Object.entries(value)) {
@@ -233,7 +233,7 @@ function parsePoolDistributionPercentile(value: unknown, sourceFile: string): nu
  * shape. Unknown/malformed values fail the scan with its filename, like
  * invalid row JSON does today.
  */
-export function parseArchivePoolDistribution(
+function parseArchivePoolDistribution(
     value: unknown,
     sourceFile: string,
 ): AssetOpportunityPoolDistribution | null {

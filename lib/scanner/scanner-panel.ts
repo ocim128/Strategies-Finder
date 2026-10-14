@@ -379,13 +379,9 @@ export class ScannerPanel {
         const entryPrice = result.signal.price;
         const currentPrice = result.currentPrice;
 
-        if (result.direction === 'long') {
-            // Long: profit if price goes up
-            return ((currentPrice - entryPrice) / entryPrice) * 100;
-        } else {
-            // Short: profit if price goes down
-            return ((entryPrice - currentPrice) / entryPrice) * 100;
-        }
+        // Long profits when price rises, short when it falls.
+        const directionFactor = result.direction === 'long' ? 1 : -1;
+        return ((directionFactor * (currentPrice - entryPrice)) / entryPrice) * 100;
     }
 
     /**

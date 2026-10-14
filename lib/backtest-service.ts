@@ -10,6 +10,7 @@ import type { OHLCVData, Strategy } from "./strategies/index";
 import { loadBuiltInStrategyByKey, strategyRegistry } from "../strategyRegistry";
 import { paramManager } from "./param-manager";
 import { debugLogger } from "./debug-logger";
+import { formatError } from "./error-format";
 
 import { requiresTypescriptEngine as requiresTsEngine } from "./rust-settings-sanitizer";
 import {
@@ -233,7 +234,7 @@ export class BacktestService {
             }
             debugLogger.error('backtest.error', {
                 strategy: capturedRequest?.strategyKey ?? state.currentStrategyKey,
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                error: formatError(error),
                 durationMs: Date.now() - startedAt,
             });
             // Disable replay button on error

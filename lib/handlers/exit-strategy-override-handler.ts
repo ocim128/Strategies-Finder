@@ -6,6 +6,7 @@ import type { UiEventHandlersDom } from "./ui-event-handlers-dom";
 import { parseInputNumber } from "../dom-input-readers";
 import { buildStrategyOptions } from "../dom-utils";
 import { debugLogger } from "../debug-logger";
+import { formatError } from "../error-format";
 import { uiManager } from "../ui-manager";
 
 /**
@@ -122,13 +123,13 @@ export function setupExitStrategyOverride(dom: UiEventHandlersDom): void {
             if (generation !== renderGeneration) {
                 debugLogger.warn('settings.exit_strategy.render_superseded', {
                     key,
-                    error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                    error: formatError(error),
                 });
                 return;
             }
             debugLogger.error('settings.exit_strategy.render_failed', {
                 key,
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                error: formatError(error),
             });
             // Keep the last valid configuration fully coherent instead of
             // clearing the form under a dropdown that no longer matches it.
