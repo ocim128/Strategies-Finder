@@ -14,6 +14,7 @@ import { REPLAY_ARM_FIELDS, isCausalArm, replayArmFields, type ReplayArmField } 
 import type { StageOutcome } from "./internal-types";
 import type { ArtifactScanResult } from "./artifact-scan";
 import type { IndexedScoreDeltas } from "./event-sweep";
+import type { SwitchSeriesStore } from "./switch-series-store";
 import { TOP_MEAN_HORIZONS_MAX_VALUE } from "../sp500-top-mean-request-limits";
 
 // ============================================================================
@@ -962,4 +963,14 @@ export interface RunOpenScoreUsdReplayOptions {
      * from it. Entries are never mutated after insertion.
      */
     sharedTargetCache?: Map<string, OpenScoreUsdSharedTargetCacheEntry>;
+    /**
+     * Run-scoped compact series store for the asset-switch stage, shared by
+     * every replay pass. The switch stage's per-target series (times/opens/
+     * closes Float64Arrays) are cutoff-derived and window-independent, so a
+     * store shared across passes turns each later pass's switch lookups into
+     * cache hits instead of dataset loads + re-normalization. Per-pass
+     * coverage and hit/miss counters stay per-lookup. Callers size the store
+     * with `resolveSwitchSeriesCacheLimits`.
+     */
+    switchSeriesStore?: SwitchSeriesStore;
 }

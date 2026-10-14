@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { runAssetSwitchReplay, SwitchTargetLookup } from "../lib/batch-backtest/open-score-replay/asset-switch";
+import { resolveSwitchSeriesCacheLimits, SwitchSeriesStore } from "../lib/batch-backtest/open-score-replay/switch-series-store";
 import { pickRawDirectional, resolveRawDirectional } from "../lib/batch-backtest/open-score-replay/candidate-selection";
 import type { AssetSwitchArmField } from "../lib/batch-backtest/open-score-replay/arm-contract";
 import type { AssetSwitchDecision, Candidate, EventView } from "../lib/batch-backtest/open-score-replay/internal-types";
@@ -770,5 +771,77 @@ describe("OPEN_SCORE asset-switch replay", () => {
         expect(lookup.cacheStats.points).to.equal(0);
         await lookup.next("A", ORIGIN + 1, true);
         expect(loads).to.equal(4);
+    });
+
+    it("serves later-pass lookups from a shared series store without reloading", async () => {
+        const data = candles([[ORIGIN, 100, 101], [ORIGIN + HOUR, 102, 103]]);
+        const reads: string[] = [];
+        const store = new SwitchSeriesStore({ entries: 64, points: 1_000_000 });
+        const firstPass = new SwitchTargetLookup(async (asset) => { reads.push(asset); return data; },
+            ORIGIN + 5 * HOUR, HOUR, undefined, store);
+        expect(await firstPass.next("A", ORIGIN - 1, true)).to.deep.equal({
+            status: "ok", point: { timeSec: ORIGIN, open: 100, close: 101 },
+        });
+        expect(reads).to.deep.equal(["A"]);
+        // A second pass builds a FRESH lookup over the SAME store: series data
+        // is cutoff-derived and window-independent, so no reload happens.
+        const secondPass = new SwitchTargetLookup(async (asset) => { reads.push(asset); return data; },
+            ORIGIN + 9 * HOUR, HOUR, undefined, store);
+        expect(await secondPass.next("A", ORIGIN - 1, true)).to.deep.equal({
+            status: "ok", point: { timeSec: ORIGIN, open: 100, close: 101 },
+        });
+        expect(reads).to.deep.equal(["A"]);
+        expect(secondPass.cacheStats.hits).to.equal(1);
+        expect(secondPass.cacheStats.misses).to.equal(0);
+        expect(store.stats.entries).to.equal(1);
+        expect(store.stats.points).to.equal(2);
+    });
+
+    it("keeps coverage and per-pass counters isolated while sharing series data", async () => {
+        const data = candles([[ORIGIN, 100, 101]]);
+        const store = new SwitchSeriesStore({ entries: 64, points: 1_000_000 });
+        const firstPass = new SwitchTargetLookup(async () => data, ORIGIN + HOUR, HOUR, undefined, store);
+        await firstPass.next("A", ORIGIN - 1, true);
+        const secondPass = new SwitchTargetLookup(async () => data, ORIGIN + HOUR, HOUR, undefined, store);
+        await secondPass.next("B", ORIGIN - 1, true);
+        // Coverage is per-pass bookkeeping: each lookup only reports the
+        // assets IT was asked about, even though series data is shared.
+        expect(firstPass.coverage.requestedAssets).to.equal(1);
+        expect(secondPass.coverage.requestedAssets).to.equal(1);
+        expect(store.stats.entries).to.equal(2);
+        // Misses are per-lookup: the first pass's miss is not double-counted.
+        expect(firstPass.cacheStats.misses).to.equal(1);
+        expect(secondPass.cacheStats.misses).to.equal(1);
+    });
+
+    it("reports store-level entries, points, and evictions through the shared lookup", async () => {
+        const data = candles([[ORIGIN, 100, 101], [ORIGIN + HOUR, 102, 103]]);
+        const store = new SwitchSeriesStore({ entries: 2, points: 3 });
+        const lookup = new SwitchTargetLookup(async () => data, ORIGIN + HOUR, HOUR, undefined, store);
+        await lookup.next("A", ORIGIN - 1, true);
+        await lookup.next("B", ORIGIN - 1, true); // points 4 > 3 → evict A.
+        expect(lookup.cacheStats.entries).to.equal(1);
+        expect(lookup.cacheStats.points).to.equal(2);
+        expect(lookup.cacheStats.evictions).to.equal(1);
+        // The evicted series reloads through the lookup's own loader. A fresh
+        // boundary bypasses the per-lookup price-result cache so the load
+        // path (and its miss counter) is actually exercised.
+        await lookup.next("A", ORIGIN + 1, true);
+        expect(lookup.cacheStats.misses).to.equal(3);
+    });
+});
+
+describe("resolveSwitchSeriesCacheLimits", () => {
+    it("tiers the point budget with machine RAM and never goes below the floor", () => {
+        expect(resolveSwitchSeriesCacheLimits(10, 64 * 1024 ** 3).points).to.equal(192_000_000);
+        expect(resolveSwitchSeriesCacheLimits(10, 32 * 1024 ** 3).points).to.equal(64_000_000);
+        expect(resolveSwitchSeriesCacheLimits(10, 8 * 1024 ** 3).points).to.equal(8_000_000);
+    });
+
+    it("sizes entries to cover the target universe so the point budget evicts first", () => {
+        const limits = resolveSwitchSeriesCacheLimits(2_816, 64 * 1024 ** 3);
+        expect(limits.entries).to.equal(8_192);
+        const huge = resolveSwitchSeriesCacheLimits(20_000, 64 * 1024 ** 3);
+        expect(huge.entries).to.equal(20_064);
     });
 });

@@ -224,11 +224,18 @@ modes. The candidate stage checks at event boundaries, yields about every
 1,000 events, and exits before loading target datasets when cancellation is
 requested; partial candidate results are discarded.
 
-Asset-switch target prices use an LRU bounded by 8,192 series and 8 million
-candle points (about 192 MB in its three price/time arrays). This retains short
-daily series across decisions without raising the point-memory limit. Performance
-diagnostics expose switch-series hits, misses, evictions and peak points separately
-from the raw target-loader cache. Tie-digest reuse preserves the existing selection order. Only Stable Support
+Asset-switch target prices are retained in a run-scoped compact series store
+(`SwitchSeriesStore`, `open-score-replay/switch-series-store.ts`) shared by every
+replay pass: the per-target time/open/close arrays are derived from
+cutoff-trimmed data and are window-independent, so the full window and every
+annual window query the same store instead of reloading and re-normalizing each
+series. The store's point budget tiers with machine RAM (192M points on hosts
+with 48GB+, 64M at 24GB+, floor 8M) and its entry bound covers the run's target
+universe, so a multi-thousand-symbol universe no longer evicts within a pass —
+a 17-window 2,800-symbol 30m run previously re-loaded ~47.5k datasets through
+this path. Each pass still keeps its own coverage, hit/miss, and lookup caches;
+the store reports cumulative entries, points, peak points, and evictions through
+the same performance diagnostics. Tie-digest reuse preserves the existing selection order. Only Stable Support
 and Fresh Support remain as additional arms; graph scoring and the separate
 price-strength pass have been removed. Support scores require no target reads.
 

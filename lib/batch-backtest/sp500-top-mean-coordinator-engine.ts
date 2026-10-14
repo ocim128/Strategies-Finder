@@ -1,4 +1,5 @@
 import { removeRetiredCausalArms } from "./open-score-replay/retired-arm-compat";
+import { resolveSwitchSeriesCacheLimits, SwitchSeriesStore } from "./open-score-replay/switch-series-store";
 import { join } from "node:path";
 import { performance } from "node:perf_hooks";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
@@ -1306,6 +1307,16 @@ export class TopMeanCoordinatorEngine {
             const replayTargets = phase0bWriter !== null
                 ? enumRes.eligibleTargets
                 : await deriveReplayTargetsFromCompletedArtifacts(rawArtifactLoader(), () => this.isStopped);
+            // Run-scoped compact series store for the asset-switch stage
+            // (switch-thrash finding): the switch stage is the ONLY target
+            // consumer in asset_switch mode, and a fresh per-pass lookup with
+            // the historical 8M-point budget evicted continuously against a
+            // multi-thousand-symbol universe (~155M points at 30m), re-loading
+            // and re-normalizing the same series in every pass (~47.5k loads
+            // over 17 windows, measured). One store per run sized to the
+            // universe (RAM-tiered point budget) turns pass 2+ lookups into
+            // cache hits; the budgets only bound growth.
+            const switchSeriesStore = new SwitchSeriesStore(resolveSwitchSeriesCacheLimits(replayTargets.length));
             const requestInterval = this._request.interval;
             const isAssetSwitchReplay = this._request.replayMode === "asset_switch";
 
@@ -1568,6 +1579,7 @@ export class TopMeanCoordinatorEngine {
                         directionalTotalPairs: enumRes.canonicalPairs.length,
                         loadTargetDataset,
                         prefetchTargetDatasets,
+                        switchSeriesStore,
                         // finder_arm runs exactly ONE full-window pass, so a
                         // cross-window annual cache can never get a second
                         // hit; omitting it lets each per-target cache entry

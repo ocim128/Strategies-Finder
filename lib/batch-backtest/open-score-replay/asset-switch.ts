@@ -18,6 +18,12 @@ import type {
 import type { AssetSwitchDecision, ReplayPhaseCallback, StageOutcome } from "./internal-types";
 import { yieldLoop } from "./runtime";
 import { assetSwitchArmFields, type AssetSwitchArmField } from "./arm-contract";
+import {
+    seriesPointCount,
+    SwitchSeriesStore,
+    type CandleGapInterval,
+    type SwitchSeriesMeta,
+} from "./switch-series-store";
 import { DIRECTIONAL_VOTE_DELAY_BARS } from "../compact-pair-artifact";
 
 const NOTIONAL_PER_ENTRY = 1_000;
@@ -40,18 +46,7 @@ interface CandlePoint {
     close: number;
 }
 
-interface CandleGapInterval {
-    from: number;
-    to: number;
-}
-
-interface SeriesMeta {
-    status: "ok" | "missing" | "invalid";
-    gaps: CandleGapInterval[];
-    times?: Float64Array;
-    opens?: Float64Array;
-    closes?: Float64Array;
-}
+type SeriesMeta = SwitchSeriesMeta;
 
 interface LookupResult {
     status: "ok" | "missing" | "invalid";
@@ -210,10 +205,6 @@ function addDiagnostic(state: ArmState, key: keyof ArmState["diagnostics"]): voi
     state.failed = true;
 }
 
-function seriesPointCount(meta: SeriesMeta | undefined): number {
-    return meta?.status === "ok" ? meta.times?.length ?? 0 : 0;
-}
-
 function cappedGapSet(
     map: Map<string, Pick<SeriesMeta, "status" | "gaps">>,
     key: string,
@@ -233,6 +224,8 @@ function cappedLookup(map: Map<string, LookupResult>, key: string, value: Lookup
 /** Normalize once per lazy read and keep only a bounded set of compact results. */
 export class SwitchTargetLookup {
     private readonly seriesMeta = new Map<string, SeriesMeta>();
+    /** Run-scoped store: compact series survive across this run's passes. */
+    private readonly sharedStore: SwitchSeriesStore | null;
     /** Validation and gap data outlive the bounded full-price cache. */
     private readonly gapMeta = new Map<string, Pick<SeriesMeta, "status" | "gaps">>();
     private readonly lookupCache = new Map<string, LookupResult>();
@@ -241,19 +234,33 @@ export class SwitchTargetLookup {
     private readonly missing = new Set<string>();
     private readonly invalid = new Set<string>();
     private seriesMetaPoints = 0;
+    private seriesPeakPoints = 0;
     private seriesHits = 0;
     private seriesMisses = 0;
     private seriesEvictions = 0;
-    private seriesPeakPoints = 0;
 
     constructor(
         private readonly load: (asset: string) => Promise<OHLCVData[] | null>,
         private readonly endSec: number,
         private readonly intervalSec: number,
         private readonly cacheLimits = { entries: SERIES_META_CACHE_LIMIT, points: SERIES_META_CACHE_MAX_POINTS },
-    ) {}
+        sharedStore?: SwitchSeriesStore,
+    ) {
+        // With a run-scoped store the store owns retention (its own limits);
+        // the per-pass limits are inert so the local map only mirrors entries.
+        this.sharedStore = sharedStore ?? null;
+    }
+
+    private getSeriesMeta(asset: string): SeriesMeta | undefined {
+        if (this.sharedStore) return this.sharedStore.get(asset);
+        return this.seriesMeta.get(asset);
+    }
 
     private rememberSeriesMeta(asset: string, meta: SeriesMeta): void {
+        if (this.sharedStore) {
+            this.sharedStore.remember(asset, meta);
+            return;
+        }
         const previous = this.seriesMeta.get(asset);
         if (previous) {
             this.seriesMeta.delete(asset);
@@ -265,7 +272,7 @@ export class SwitchTargetLookup {
             || this.seriesMetaPoints > this.cacheLimits.points) {
             const oldestAsset = this.seriesMeta.keys().next().value;
             if (oldestAsset === undefined) break;
-            const oldest = this.seriesMeta.get(oldestAsset);
+            const oldest = this.seriesMeta.get(oldestAsset)!;
             this.seriesMeta.delete(oldestAsset);
             this.seriesMetaPoints -= seriesPointCount(oldest);
             this.seriesEvictions++;
@@ -274,8 +281,15 @@ export class SwitchTargetLookup {
     }
 
     get cacheStats() {
-        return { hits: this.seriesHits, misses: this.seriesMisses, evictions: this.seriesEvictions,
-            entries: this.seriesMeta.size, points: this.seriesMetaPoints, peakPoints: this.seriesPeakPoints };
+        const shared = this.sharedStore?.stats;
+        return {
+            hits: this.seriesHits,
+            misses: this.seriesMisses,
+            evictions: shared ? shared.evictions : this.seriesEvictions,
+            entries: shared ? shared.entries : this.seriesMeta.size,
+            points: shared ? shared.points : this.seriesMetaPoints,
+            peakPoints: shared ? shared.peakPoints : this.seriesPeakPoints,
+        };
     }
 
     get coverage(): AssetSwitchReplaySummary["coverage"] {
@@ -298,7 +312,7 @@ export class SwitchTargetLookup {
     }
 
     private async loadMeta(asset: string): Promise<SeriesMeta> {
-        const cached = this.seriesMeta.get(asset);
+        const cached = this.getSeriesMeta(asset);
         if (cached) {
             this.seriesHits++;
             this.seriesMeta.delete(asset);
@@ -706,7 +720,10 @@ export async function runAssetSwitchReplay(args: {
     const requestedEndSec = Number.isFinite(options.sampleToSec) ? options.sampleToSec! : cutoffSec;
     const windowEndSec = Math.min(requestedEndSec, cutoffSec);
     const windowStartSec = Number.isFinite(options.sampleFromSec) ? options.sampleFromSec! : null;
-    const lookup = new SwitchTargetLookup(options.loadTargetDataset, windowEndSec, intervalSec);
+    // The per-window end bound only filters point lookups; series meta is
+    // derived from cutoff-trimmed data and is window-independent, so an
+    // optional run-scoped store can share it across replay passes.
+    const lookup = new SwitchTargetLookup(options.loadTargetDataset, windowEndSec, intervalSec, undefined, options.switchSeriesStore);
     const selectedAssets = args.selectedAssets;
     if (!selectedAssets) {
         const scannedAssets = new Set<string>();

@@ -4,6 +4,42 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-14 — TOP_MEAN coordinator: shared asset-switch series store kills per-pass target reloads
+
+- **Evidence:** A 100k-pair asset_switch run (30m, 2,816 distinct targets,
+  2020–2026 → 17 replay windows) spent 604s of 748s in the replay phase with
+  `targetCache=4,960 hit / 47,549 miss` and 1,052s cumulative target-load wait.
+  Root cause: the switch stage is the ONLY target consumer in asset_switch
+  mode, and each pass built a fresh `SwitchTargetLookup` whose 8M-point budget
+  holds ~145 series of a ~155M-point working set — so it evicted continuously
+  within the full window (23,338 loads) AND discarded everything between
+  windows (~2,800 loads per pass). Each miss also re-ran `prepareMeta`, an
+  O(bars) normalize+gap scan (47.5k × ~55k bars ≈ 2.6B iterations hiding in
+  the switch phase timing).
+- **Change:** New leaf module `open-score-replay/switch-series-store.ts`:
+  `SwitchSeriesStore` retains the compact series once per RUN, and
+  `resolveSwitchSeriesCacheLimits` tiers its point budget with machine RAM
+  (192M points on 48GB+ hosts, 64M at 24GB+, floor 8M) with an entry bound
+  covering the run's target universe. `SwitchTargetLookup` optionally
+  delegates meta storage to the shared store (per-pass coverage, hit/miss,
+  and lookup caches stay per-lookup); the engine's
+  `RunOpenScoreUsdReplayOptions.switchSeriesStore` threads it through, and the
+  coordinator creates one store per run sized from the replay-target universe.
+  Lookups without a store behave exactly as before (tests unchanged).
+- **Measured (read-only replay profile over the same completed run, full
+  window + 2025 window):** full-pass loads 23,338 → 2,775 (−88%), load time
+  54.5s → 5.5s, switch phase 75.1s → 9.8s (−87%); 2025 pass wall 26.4s →
+  13.1s with switch 11.0s → 0.12s and +2 loads instead of +3,938. RSS growth
+  from the store ≈ 0.4–0.6GB. Extrapolated over the run's 17 windows this
+  removes roughly 4 minutes of the 748s total; the remaining replay cost is
+  per-window compute (events sweep), a candidate for window-level
+  parallelization as a follow-up.
+- **Focused checks:** `npm run test -- open-score-replay sp500-top-mean
+  batch-backtest-service-lifecycle.browser.spec.ts` (19 specs), new
+  store-sharing/coverage-isolation/limits cases in
+  `tests/open-score-replay-asset-switch.spec.ts`, `npm run typecheck`,
+  `npm run typecheck:tests`.
+
 ## 2026-10-14 — Unified the Batch / TOP_MEAN / Finder reattach poll loops on one shared module
 
 - **Evidence:** The same browser-side state machine (adopt a server run after
