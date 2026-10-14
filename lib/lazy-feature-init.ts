@@ -1,4 +1,5 @@
 import { debugLogger } from "./debug-logger";
+import { formatError } from "./error-format";
 import {
     clearLazyTabStatus,
     ensureStrategyPanelTabMarkup,
@@ -135,7 +136,7 @@ export async function activateLazyFeature(featureId: string): Promise<void> {
         .catch((error: unknown) => {
             debugLogger.error("lazy_feature.init_failed", {
                 featureId,
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                error: formatError(error),
             });
             console.error(`[LazyInit] Failed to initialize feature "${featureId}":`, error);
             if (tabId) {

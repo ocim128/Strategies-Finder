@@ -1,4 +1,5 @@
 import { debugLogger } from "../debug-logger";
+import { formatError } from "../error-format";
 import { nowMs } from "../perf-clock";
 
 type BacktestResultUiStep = {
@@ -11,7 +12,7 @@ const SLOW_UI_STEP_THRESHOLD_MS = 16;
 export function logBacktestResultUiFailure(step: string, error: unknown): void {
     debugLogger.warn("backtest.result_ui_step_failed", {
         step,
-        error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+        error: formatError(error),
     });
 }
 

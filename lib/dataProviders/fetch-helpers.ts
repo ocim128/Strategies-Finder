@@ -1,3 +1,4 @@
+import { formatError } from "../error-format";
 import { getIntervalSeconds } from "./utils";
 
 export const DEFAULT_PROVIDER_FETCH_TIMEOUT_MS = 15_000;
@@ -60,10 +61,7 @@ export function isTimeoutError(error: unknown): boolean {
 }
 
 export function formatProviderError(error: unknown): string {
-    if (error instanceof Error) {
-        return `${error.name}: ${error.message}`;
-    }
-    return String(error);
+    return formatError(error);
 }
 
 function parseRetryAfterMs(value: string | null): number | null {

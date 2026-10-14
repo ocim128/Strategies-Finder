@@ -1,4 +1,5 @@
 import { debugLogger } from "../debug-logger";
+import { formatError } from "../error-format";
 
 export function setupGlobalErrorHandlers() {
     if (typeof window === 'undefined') return;
@@ -12,14 +13,7 @@ export function setupGlobalErrorHandlers() {
     });
     window.addEventListener('unhandledrejection', (event) => {
         debugLogger.error('promise.rejection', {
-            reason: formatErrorReason(event.reason),
+            reason: formatError(event.reason),
         });
     });
-}
-
-function formatErrorReason(reason: unknown): string {
-    if (reason instanceof Error) {
-        return `${reason.name}: ${reason.message}`;
-    }
-    return String(reason);
 }

@@ -1,5 +1,6 @@
 import { state } from "../state";
 import { debugLogger } from "../debug-logger";
+import { formatError } from "../error-format";
 import { createUiEventHandlersDom } from "./ui-event-handlers-dom";
 
 import { backtestService } from "../backtest-service";
@@ -162,14 +163,14 @@ export function setupEventHandlers() {
             if (!uiManager.ownsStrategySelection(generation)) {
                 debugLogger.warn('ui.strategy.select_failed_superseded', {
                     key,
-                    error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                    error: formatError(error),
                 });
                 return;
             }
             uiManager.settleStrategySelection(generation);
             debugLogger.error('ui.strategy.select_failed', {
                 key,
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                error: formatError(error),
             });
             uiManager.showToast(
                 'Loading the selected strategy failed. The previous selection was kept.',
@@ -235,7 +236,7 @@ export function setupEventHandlers() {
             );
         } catch (error) {
             debugLogger.error('ui.backtest_endpoint.preview_failed', {
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                error: formatError(error),
             });
             uiManager.showToast(
                 error instanceof Error ? error.message : 'Failed to preview endpoint backtest.',
@@ -309,7 +310,7 @@ export function setupEventHandlers() {
             );
         } catch (error) {
             debugLogger.error('ui.backtest_endpoint.copy_failed', {
-                error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+                error: formatError(error),
             });
             uiManager.showToast(
                 error instanceof Error ? error.message : 'Failed to prepare endpoint request.',
