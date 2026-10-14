@@ -832,18 +832,22 @@ infer server ownership for another Finder mode from the shared result types.
 - If the initiating NDJSON stream breaks without a reload, the same tab polls
   the scoped status endpoint to terminal. It never promotes provisional
   streamed candidates to the final result.
-- Both entrypoints share one owned-run poll loop in
+- Both entrypoints share the repository-wide owned-run poll loop
+  `ServerRunPollLoop` (`lib/server-run-poll-loop.ts`) — the same loop the
+  Batch and TOP_MEAN reattach flows use — configured in
   `lib/finder/browser/finder-server-session.ts`
-  (`pollOwnedServerRunStatus`): it fetches and parses the scoped status
+  (`runOwnedServerRunStatusPoll`): it fetches and parses the scoped status
   snapshot, waits abort-aware between requests (Stop / a new run unblock a
-  pending sleep or backoff immediately), and returns an internal outcome
-  (terminal / job gone / rejected / cancelled / connection lost). Retry
+  pending sleep or backoff immediately), and returns an outcome
+  (terminal / not_found / rejected / cancelled / connection_lost). Retry
   cadence preserves each caller's pre-consolidation policy: recovery's first
   request is immediate and a retry follows the failure backoff (2s→15s)
   directly; adopted reattach waits the polling interval before each request,
   steps from 2s to 5s after 150 completed polls, and re-waits the interval
-  after every backoff before retrying. Both terminate after more than 20
-  consecutive failures. The callers keep their distinct responsibilities:
+  after every backoff before retrying. Finder has no low-cadence retry, so
+  the loop terminates with `connection_lost` after more than 20 consecutive
+  failures (Batch/TOP_MEAN instead keep polling every 60s while the run id
+  stays owned). The callers keep their distinct responsibilities:
   reattach owns the initial persisted-run probe, scope/UI adoption, and
   whether the persisted record is cleared (confirmed completion/Stop and
   confirmed missing jobs clear it; transient failures retain it); recovery

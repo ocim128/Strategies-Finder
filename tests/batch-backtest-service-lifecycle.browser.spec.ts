@@ -682,6 +682,48 @@ describe("BatchBacktestService analysis lifecycle", () => {
         }
     });
 
+    it("stop during a TOP_MEAN reattach clears the run state when the server confirms", async () => {
+        // Regression: Stop aborts the reattach poll loop, so the loop can no
+        // longer adopt the server's interrupted terminal. The confirmed stop
+        // answer must perform that terminal cleanup directly, or the Run
+        // button, busy gate, and persisted run id stay wedged.
+        const dom = setupForAnalysis();
+        persistTopMeanRunForTest("topmean-stop-reattach");
+        let statusCalls = 0;
+        let statusSeen!: () => void;
+        const statusSeenPromise = new Promise<void>((resolve) => { statusSeen = resolve; });
+        const prevTimeout = globalThis.setTimeout;
+        globalThis.setTimeout = ((fn: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) =>
+            prevTimeout(fn, ms === 2_000 || ms === 60_000 ? 1 : ms, ...args)) as typeof setTimeout;
+        try {
+            await withMockFetch((url) => {
+                if (String(url).includes("/sp500-top-mean/stop")) {
+                    return { ok: true, status: 200, text: JSON.stringify({ ok: true, stopped: true }) };
+                }
+                statusCalls += 1;
+                if (statusCalls === 1) statusSeen();
+                return {
+                    ok: true,
+                    status: 200,
+                    text: JSON.stringify({ status: "running", phase: "scanning", progressText: "50%" }),
+                };
+            }, async () => {
+                const reattach = svc().topMean.reattachToInProgressTopMeanRun();
+                await withTimeout(statusSeenPromise, 1000, "reattach status poll did not start");
+                await withTimeout(svc().topMean.stop(), 1000, "Stop did not settle");
+                await withTimeout(reattach, 1000, "reattach did not settle after Stop");
+            });
+            expect(readTopMeanActiveRun()).to.equal(null);
+            expect(svc().topMean.getActiveTopMeanRunId()).to.equal(null);
+            expect(dom.batchBacktestSp500TopMeanRunBtn.style.display).to.equal("block");
+            expect(dom.batchBacktestSp500TopMeanStopBtn.style.display).to.equal("none");
+            expect(dom.batchBacktestSp500TopMeanProgressText.textContent).to.equal("TOP_MEAN run stopped.");
+            expect(svc().topMean.isUiOwned()).to.equal(false);
+        } finally {
+            globalThis.setTimeout = prevTimeout;
+        }
+    });
+
     it("initializes the service successfully against the current Batch DOM contract", () => {
         // Intent: fakeDom must include every current BatchBacktestDom field so
         // service.bindEvents no longer fails during suite setup when TOP_MEAN

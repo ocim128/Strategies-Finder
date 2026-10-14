@@ -82,7 +82,7 @@ Run/Stop, reattach, persistence, and disposal assertions.
 | Module | Owns | Focused specs |
 | --- | --- | --- |
 | `batch-results-view.ts` | Result rows, sort header, coalesced live-render queue (run-token check injected), summary/progress presentation | `batch-backtest-service-lifecycle.browser.spec.ts`, `feature-dom-contracts.spec.ts` |
-| `batch-run-controller.ts` | Batch Run/Stop lifecycle, NDJSON stream consumption, status pagination/reconciliation/recovery, benchmark snapshot, result persistence, server reattach poll + timers/backoff | `batch-backtest-service-lifecycle.browser.spec.ts`, `batch-backtest-server-plugin.spec.ts` |
+| `batch-run-controller.ts` | Batch Run/Stop lifecycle, NDJSON stream consumption, status pagination/reconciliation/recovery, benchmark snapshot, result persistence, server reattach poll (shared `ServerRunPollLoop`) | `batch-backtest-service-lifecycle.browser.spec.ts`, `batch-backtest-server-plugin.spec.ts` |
 | `top-mean-controller.ts` | TOP_MEAN run/stop/reattach, diagnostic ring + debounces + durable log, latest result/arm, copy/download | lifecycle spec, `sp500-top-mean-*.spec.ts` |
 | `open-score-controller.ts` | Standalone replay request/stream, analysis lock + stale-cancel, copy | lifecycle spec |
 | `top-mean-results-view.ts` | Current-snapshot banner, latest-arm card, display tie-breaks, copy text | lifecycle spec |
@@ -247,7 +247,14 @@ is checked immediately before and after that sort.
   `GET /api/batch-backtest/status` every 2s on init and reattaches — it
   re-renders the rows accumulated server-side so far and continues updating
   until the run ends. The poll granularity is 2s (not per-symbol), which is
-  the same pattern IBKR sync uses for reattach.
+  the same pattern IBKR sync uses for reattach. Batch and TOP_MEAN reattach
+  both run on the shared browser poll loop `ServerRunPollLoop`
+  (`lib/server-run-poll-loop.ts`): a 2s→5s step-down after 150 completed
+  polls (Batch) or a fixed 2s (TOP_MEAN), transient-failure backoff
+  2s→5s→10s→15s, and after 20 consecutive failures a 60s low-cadence retry
+  that keeps the run id owned so Stop remains available. TOP_MEAN's scoped
+  status 404 clears its local run state; Batch's `runMismatch` status flag
+  restores the controls and clears the stale persisted ownership.
 - **Closing the tab**: the server keeps running. Reopening the tab triggers
   the same reattach poll. There is no stream-tap from a second connection —
   multi-subscriber writers are over-engineering for a single-user dev server.

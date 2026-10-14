@@ -3,7 +3,7 @@
  * durable diagnostic ring, and the result/copy/download actions for the
  * TOP_MEAN panel.
  *
- * Owns its mutable run state (active run id, reattach timers/backoff,
+ * Owns its mutable run state (active run id, the shared reattach poll loop,
  * diagnostic ring + debounces, latest result, selected arm). Presentation is
  * delegated to the browser view modules; persistence to the browser store.
  * Cross-workflow locks (batchActionInFlight, isBatchUiBusy) stay with the
@@ -34,7 +34,7 @@ import {
     type TopMeanDiagnosticEntry,
 } from "../sp500-top-mean-diagnostic-log";
 import { formatTopMeanPerformanceLines } from "../sp500-top-mean-performance";
-import { ReattachBackoffController } from "../reattach-backoff";
+import { ServerRunPollLoop } from "../../server-run-poll-loop";
 import type { TopMeanCurrentSnapshot, TopMeanStreamEvent } from "../sp500-top-mean-stream-types";
 import type { CoverageCounts } from "../sp500-pair-enumerator";
 import type { TopMeanResultSummary, TopMeanStatusResponse } from "../sp500-top-mean-coordinator-engine";
@@ -137,10 +137,9 @@ export class TopMeanController {
         this.reattachInFlight = value;
         this.onBusyStateChange();
     }
-    private topMeanReattachTimer: ReturnType<typeof setTimeout> | null = null;
-    private topMeanReattachTimerResolve: (() => void) | null = null;
-    // Audit Finding 1: shared transient-failure backoff state machine.
-    private readonly topMeanReattachBackoff = new ReattachBackoffController();
+    /** Active TOP_MEAN reattach poll loop; aborting it cancels the in-flight
+     *  status request and unblocks any pending delay. */
+    private topMeanReattachLoop: ServerRunPollLoop<TopMeanStatusResponse> | null = null;
 
     constructor(deps: { getDom: () => BatchBacktestDom; peekDom: () => BatchBacktestDom | null; onBusyStateChange?: () => void }) {
         this.getDom = deps.getDom;
@@ -502,10 +501,11 @@ export class TopMeanController {
             this.recordTopMeanDiagnostic("stop.ignored", { reason: "no active run id" });
             return;
         }
-        // Audit: cancel any in-flight reattach poll delay so the loop notices
-        // the Stop immediately instead of waiting up to the 15s backoff
-        // ceiling. The loop's post-await guard then sees activeTopMeanRunId
-        // change and exits cleanly.
+        // Audit: abort the reattach loop so the Stop takes effect immediately
+        // (in-flight status request cancelled, pending delay woken) instead of
+        // waiting out the 15s backoff ceiling. Because the aborted loop can no
+        // longer observe the server's interrupted terminal, every confirmed
+        // stop answer below performs the terminal cleanup directly.
         this.stopTopMeanReattachPoll();
         this.recordTopMeanDiagnostic("stop.request", { runId });
         try {
@@ -538,6 +538,12 @@ export class TopMeanController {
                     this.getDom(),
                     "TOP_MEAN run is no longer active; local run state cleared.",
                 );
+            } else if (stopped === true) {
+                // The server confirmed the run stopped. The aborted reattach
+                // loop can no longer adopt the interrupted terminal, so clear
+                // the local run state here — the same cleanup that loop's
+                // terminal branch would have performed.
+                this.clearTopMeanRunAfterServerLoss(this.getDom(), "TOP_MEAN run stopped.");
             }
         } catch (err) {
             if (this.activeTopMeanRunId !== runId) return;
@@ -549,6 +555,13 @@ export class TopMeanController {
             // A failed request does not prove the server stopped the run.
             this.getDom().batchBacktestSp500TopMeanProgressText.textContent =
                 "Stop could not reach the server; retry Stop. Server status will continue to recover.";
+            // The aborted reattach loop is gone; restart it so the promised
+            // recovery is real — the restarted loop polls the scoped status
+            // endpoint until the server reports the run interrupted (or a 404
+            // clears the local state after a server restart).
+            if (readTopMeanActiveRun()?.runId === runId) {
+                void this.reattachToInProgressTopMeanRun();
+            }
         }
     }
 
@@ -1019,26 +1032,21 @@ export class TopMeanController {
         setVisible(dom.batchBacktestSp500TopMeanRunBtn, false);
         setVisible(dom.batchBacktestSp500TopMeanStopBtn, true);
 
-        // Serialized polling (mirrors normal Batch reattach). Never use
-        // setInterval(async ...) — overlapping status callbacks can restore
-        // buttons or replace results from a stale terminal response.
+        // Serialized polling (mirrors normal Batch reattach): the shared
+        // ServerRunPollLoop never overlaps status callbacks, so a stale
+        // terminal response cannot restore buttons or replace results.
         //
         // Audit: this loop previously abandoned the reattach on the FIRST
         // non-2xx response or thrown fetch, clearing the persisted run marker
-        // so even a transient dev-server hiccup lost the entire reattach. It
-        // also used a bare setTimeout with no cancellation hook (Stop had to
-        // wait the full 2s delay before the loop noticed). Both gaps are
-        // closed below by sharing the consecutive-failure backoff state machine
-        // (2s -> 5s -> 10s -> 15s, then a 60s low-cadence retry) with
-        // the Batch reattach loop via ReattachBackoffController.
-        const healthyDelay = (): Promise<void> => new Promise<void>((resolve) => {
-            this.topMeanReattachTimerResolve = resolve;
-            this.topMeanReattachTimer = setTimeout(resolve, 2_000);
-        });
-        this.topMeanReattachBackoff.reset();
+        // so even a transient dev-server hiccup lost the entire reattach. The
+        // shared loop's consecutive-failure backoff (2s -> 5s -> 10s -> 15s,
+        // then a 60s low-cadence retry that preserves ownership) closes that
+        // gap for both Batch and TOP_MEAN.
+        let loop: ServerRunPollLoop<TopMeanStatusResponse> | null = null;
         try {
-            while (this.activeTopMeanRunId === runId) {
-                try {
+            loop = new ServerRunPollLoop<TopMeanStatusResponse>({
+                isOwned: () => this.activeTopMeanRunId === runId,
+                fetchStatus: async (signal) => {
                     const { res, status } = await requestBatchControl(
                         `/api/batch-backtest/sp500-top-mean/status?runId=${encodeURIComponent(runId)}`,
                         { cache: "no-store" },
@@ -1046,133 +1054,113 @@ export class TopMeanController {
                             res,
                             status: res.ok ? await res.json() as TopMeanStatusResponse : null,
                         }),
-                        { signal: this.controlAbort.signal },
+                        { signal },
                     );
-                    if (this.activeTopMeanRunId !== runId) return;
                     this.recordTopMeanDiagnostic("reattach.response", {
                         runId,
                         status: res.status,
                         ok: res.ok,
                     });
                     if (res.status === 404) {
-                        this.clearTopMeanRunAfterServerLoss(
-                            dom,
-                            "TOP_MEAN run was lost when the server restarted; local run state cleared.",
-                        );
-                        return;
+                        return { kind: "not_found" };
                     }
-                    // Audit: a non-2xx status is a transient failure, not a
-                    // reason to abandon the reattach. Treat it like a thrown
-                    // fetch so the backoff path engages; the prior behavior
-                    // cleared the persisted run marker and tore down the
-                    // reattach on a single hiccup.
-                    if (!res.ok) {
-                        throw new Error(`status ${res.status}`);
-                    }
+                    // A non-2xx status is a transient failure, not a reason to
+                    // abandon the reattach: the loop's backoff path engages.
+                    if (!res.ok) throw new Error(`status ${res.status}`);
                     if (!status) throw new Error("Server returned no TOP_MEAN status.");
-                    if (this.activeTopMeanRunId !== runId) return;
                     this.recordTopMeanDiagnostic("reattach.status", status);
+                    return { kind: "snapshot", snapshot: status };
+                },
+                isTerminal: (status) => status.status === "completed"
+                    || status.status === "failed"
+                    || status.status === "interrupted",
+                nextRequestDelayMs: () => 2_000,
+                connectionLostRetryMs: 60_000,
+                onProgress: (status) => {
                     dom.batchBacktestSp500TopMeanProgressText.textContent =
                         `[${status.phase}] ${status.progressText}`;
-
-                    const terminal = status.status === "completed"
-                        || status.status === "failed"
-                        || status.status === "interrupted";
-                    if (terminal) {
-                        setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
-                        setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
-                        if (status.resultError) {
-                            this.latestTopMeanResult = null;
-                            clearPersistedLatestTopMeanResult();
-                            dom.batchBacktestSp500TopMeanResults.replaceChildren();
-                            resetTopMeanOpenScoreDetails(dom);
-                            dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
-                            dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
-                            dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
-                            dom.batchBacktestSp500TopMeanProgressText.textContent =
-                                `${status.status === "completed" ? "Completed" : status.status}, but results could not be loaded: ${status.resultError}`;
-                        } else if (status.result) {
-                            const result = mergeTopMeanArchiveStatus(status.result, status);
-                            this.latestTopMeanResult = result;
-                            this.persistLatestTopMeanResult(result);
-                            this.renderTopMeanResults(dom, result);
-                            this.applyTopMeanResultActions(dom, result);
-                        }
-                        if (status.status === "completed" && !status.resultError) {
-                            dom.batchBacktestSp500TopMeanProgressText.textContent =
-                                formatTopMeanCompletionMessage(status.result
-                                    ? mergeTopMeanArchiveStatus(status.result, status)
-                                    : status);
-                        }
-                        clearTopMeanActiveRun();
-                        this.activeTopMeanRunId = null;
-                        return;
-                    }
-                    // Successful poll resets the transient-failure counter.
-                    this.topMeanReattachBackoff.recordSuccess();
-                } catch (err) {
-                    if (this.activeTopMeanRunId !== runId) return;
-                    const outcome = this.topMeanReattachBackoff.recordFailure();
+                },
+                onTransientFailure: (info) => {
                     this.recordTopMeanDiagnostic("reattach.error", {
                         runId,
-                        consecutive: outcome.consecutive,
-                        name: err instanceof Error ? err.name : typeof err,
-                        message: err instanceof Error ? err.message : String(err),
+                        consecutive: info.consecutive,
+                        name: info.error instanceof Error ? info.error.name : typeof info.error,
+                        message: info.error instanceof Error ? info.error.message : String(info.error),
                     });
-                    if (outcome.gaveUp) {
+                    if (info.gaveUp) {
                         // Preserve ownership across a prolonged transient
                         // outage. The server may still be running; only a
                         // terminal response or HTTP 404 clears this marker.
-                        this.topMeanReattachBackoff.reset();
                         dom.batchBacktestSp500TopMeanProgressText.textContent =
                             `Server connection lost — retrying status in 60s. Stop remains available.`;
-                        await new Promise<void>((resolve) => {
-                            this.topMeanReattachTimerResolve = resolve;
-                            this.topMeanReattachTimer = setTimeout(resolve, 60_000);
-                        });
-                        this.topMeanReattachTimer = null;
-                        this.topMeanReattachTimerResolve = null;
-                        continue;
+                        return;
                     }
                     dom.batchBacktestSp500TopMeanProgressText.textContent =
-                        `Server connection interrupted — retrying (${outcome.consecutive}/${outcome.max})`;
-                    await new Promise<void>((resolve) => {
-                        this.topMeanReattachTimerResolve = resolve;
-                        this.topMeanReattachTimer = setTimeout(resolve, outcome.backoffDelayMs);
-                    });
-                    this.topMeanReattachTimer = null;
-                    this.topMeanReattachTimerResolve = null;
-                    continue;
+                        `Server connection interrupted — retrying (${info.consecutive}/${info.max})`;
+                },
+            });
+            this.topMeanReattachLoop = loop;
+            const outcome = await loop.run();
+            if (outcome.kind === "not_found") {
+                this.clearTopMeanRunAfterServerLoss(
+                    dom,
+                    "TOP_MEAN run was lost when the server restarted; local run state cleared.",
+                );
+            } else if (outcome.kind === "terminal") {
+                const status = outcome.snapshot;
+                setVisible(dom.batchBacktestSp500TopMeanRunBtn, true);
+                setVisible(dom.batchBacktestSp500TopMeanStopBtn, false);
+                if (status.resultError) {
+                    this.latestTopMeanResult = null;
+                    clearPersistedLatestTopMeanResult();
+                    dom.batchBacktestSp500TopMeanResults.replaceChildren();
+                    resetTopMeanOpenScoreDetails(dom);
+                    dom.batchBacktestSp500TopMeanCopyBtn.disabled = true;
+                    dom.batchBacktestSp500TopMeanCopyOpenScoreBtn.disabled = true;
+                    dom.batchBacktestSp500TopMeanDownloadBtn.disabled = true;
+                    dom.batchBacktestSp500TopMeanProgressText.textContent =
+                        `${status.status === "completed" ? "Completed" : status.status}, but results could not be loaded: ${status.resultError}`;
+                } else if (status.result) {
+                    const result = mergeTopMeanArchiveStatus(status.result, status);
+                    this.latestTopMeanResult = result;
+                    this.persistLatestTopMeanResult(result);
+                    this.renderTopMeanResults(dom, result);
+                    this.applyTopMeanResultActions(dom, result);
                 }
-                await healthyDelay();
-                this.topMeanReattachTimer = null;
-                this.topMeanReattachTimerResolve = null;
+                if (status.status === "completed" && !status.resultError) {
+                    dom.batchBacktestSp500TopMeanProgressText.textContent =
+                        formatTopMeanCompletionMessage(status.result
+                            ? mergeTopMeanArchiveStatus(status.result, status)
+                            : status);
+                }
+                clearTopMeanActiveRun();
+                this.activeTopMeanRunId = null;
             }
+            // `connection_lost` cannot occur (connectionLostRetryMs keeps the
+            // loop alive); `cancelled` leaves the UI to Stop / a newer run /
+            // dispose, which cleared the run id before aborting the loop.
         } finally {
-            if (this.activeTopMeanRunId === runId) {
-                // Loop exited without a terminal status (e.g. Stop cleared id
-                // from another path). Leave button state to that path.
+            // Only unwind the loop this invocation owns: a Stop-failure
+            // restart may already have installed a successor loop, whose
+            // in-flight flag must survive.
+            if (loop !== null && this.topMeanReattachLoop === loop) {
+                this.topMeanReattachLoop = null;
+                this.topMeanReattachInFlight = false;
             }
-            this.stopTopMeanReattachPoll();
-            this.topMeanReattachInFlight = false;
         }
     }
 
     /**
-     * Cancel any in-flight TOP_MEAN reattach delay. Mirrors the Batch loop's
-     * stop: clears the timer + resolves the pending delay promise so the loop
-     * wakes immediately, checks `activeTopMeanRunId`, and exits when Stop has
-     * cleared the id.
+     * Cancel the TOP_MEAN reattach loop: aborts the in-flight status request
+     * and wakes any pending delay so the loop exits at its next check instead
+     * of waiting out the 15s backoff ceiling. Detach from server-owned work
+     * BEFORE the loop resolves, so a Stop clears the run id, the loop wakes,
+     * sees the cleared id, and does not schedule another poll.
      */
     public stopTopMeanReattachPoll(): void {
-        if (this.topMeanReattachTimer) {
-            clearTimeout(this.topMeanReattachTimer);
-            this.topMeanReattachTimer = null;
-        }
-        if (this.topMeanReattachTimerResolve) {
-            this.topMeanReattachTimerResolve();
-            this.topMeanReattachTimerResolve = null;
-        }
+        this.topMeanReattachLoop?.abort();
+        this.topMeanReattachLoop = null;
+        this.topMeanReattachInFlight = false;
     }
 
     /**

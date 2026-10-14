@@ -9,15 +9,17 @@
  * workflows/facade through the `interpretTerminal` callback; this module only
  * guarantees that interpretation runs for the run that still owns the id.
  *
- * Polling structure: `pollOwnedServerRunStatus` is the single request/retry/
- * wait mechanism for a run this session owns. Its callers —
- * `recoverActiveServerRun` (interrupted NDJSON stream recovery) and
- * `reattachToActiveServerRun` (reload adoption) — keep their distinct
- * responsibilities: what to adopt, what to present, and whether the persisted
- * active-run record may be cleared.
+ * Polling structure: the shared `ServerRunPollLoop`
+ * (lib/server-run-poll-loop.ts) is the single request/retry/wait mechanism
+ * for a run this session owns. Its callers — `recoverActiveServerRun`
+ * (interrupted NDJSON stream recovery) and `reattachToActiveServerRun`
+ * (reload adoption) — keep their distinct responsibilities: what to adopt,
+ * what to present, and whether the persisted active-run record may be
+ * cleared.
  */
 import { parseJsonPreservingNonFinite } from "../../json-utils";
 import { debugLogger } from "../../debug-logger";
+import { ServerRunPollLoop, type ServerRunPollOutcome } from "../../server-run-poll-loop";
 import {
 	clearFinderActiveServerRun,
 	readFinderActiveServerRun,
@@ -101,20 +103,11 @@ interface FinderPollTiming {
 }
 
 /**
- * Outcome of one owned-run poll loop (`pollOwnedServerRunStatus`). The
+ * Outcome of one owned-run poll loop (the shared `ServerRunPollLoop`). The
  * wrapper that started the loop owns every side effect: terminal adoption,
  * presentation, and whether the persisted active-run record is cleared.
  */
-type FinderOwnedRunPollOutcome =
-	| { kind: "terminal"; snapshot: FinderRunStatusSnapshot }
-	/** 404: the server has no such job (e.g. a dev-server restart). */
-	| { kind: "not_found" }
-	/** The server answered but rejected the run id (`ok: false`). */
-	| { kind: "rejected" }
-	/** Stop or a newer run took ownership; the loop must not touch anything. */
-	| { kind: "cancelled" }
-	/** More consecutive request failures than the budget allows. */
-	| { kind: "connection_lost" };
+type FinderOwnedRunPollOutcome = ServerRunPollOutcome<FinderRunStatusSnapshot>;
 
 function finderJobLabel(scope: FinderServerJobKind): string {
 	return scope === "asset_opportunity" || scope === "asset_opportunity_batch"
@@ -273,7 +266,7 @@ export class FinderServerSession {
 		this.abortController = abortController;
 		try {
 			const label = finderJobLabel(jobKind);
-			const outcome = await this.pollOwnedServerRunStatus({
+			const outcome = await this.runOwnedServerRunStatusPoll({
 				runId,
 				abortController,
 				logEvent: "finder.server.stream_recovery_poll_failed",
@@ -445,7 +438,7 @@ export class FinderServerSession {
 		if (!initial.terminal && this.isActive(runId)) host.interpretPreview?.(initial);
 
 		if (!clearPersistedRecord) {
-			const outcome = await this.pollOwnedServerRunStatus({
+			const outcome = await this.runOwnedServerRunStatusPoll({
 				runId,
 				abortController,
 				logEvent: "finder.server.reattach_poll_failed",
@@ -513,19 +506,23 @@ export class FinderServerSession {
 	}
 
 	/**
-	 * THE status poll loop for a run this session owns. Fetches and parses
-	 * the scoped summary snapshot, waits between requests (abort-aware, so
-	 * Stop / a new run unblock a pending sleep immediately), retries with the
-	 * failure backoff, and terminates on terminal / missing / cancellation /
-	 * connection exhaustion. It performs NO side effects beyond per-cycle
-	 * progress reporting: every adoption, terminal interpretation, status
-	 * message, and persisted-record decision belongs to the caller.
+	 * THE status poll loop for a run this session owns, on the shared
+	 * `ServerRunPollLoop`. Fetches and parses the scoped summary snapshot,
+	 * waits between requests (abort-aware, so Stop / a new run unblock a
+	 * pending sleep immediately), retries with the failure backoff, and
+	 * terminates on terminal / missing / cancellation / connection
+	 * exhaustion. It performs NO side effects beyond per-cycle progress
+	 * reporting: every adoption, terminal interpretation, status message, and
+	 * persisted-record decision belongs to the caller.
 	 *
-	 * Ownership (`activeRunId === runId`) is re-checked after every await and
-	 * before any progress update or terminal return, so a stale response can
-	 * never leak into a newer run's UI.
+	 * Ownership (`activeRunId === runId`) is re-checked by the loop after
+	 * every await and before any progress update or terminal return, so a
+	 * stale response can never leak into a newer run's UI. The loop
+	 * classifies a 404 as `not_found` and a snapshot whose `ok` is false or
+	 * whose run id does not match as `rejected`; per-request timeouts come
+	 * from `statusRequestTimeoutMs`.
 	 */
-	private async pollOwnedServerRunStatus(args: {
+	private runOwnedServerRunStatusPoll(args: {
 		runId: string;
 		abortController: AbortController;
 		/** debugLogger event name for a failed request cycle. */
@@ -551,105 +548,37 @@ export class FinderServerSession {
 		const { runId, abortController } = args;
 		// Once a run is adopted, Stop and a new Run both drop its run id, so
 		// the active id is the single ownership/cancellation signal here.
-		const owned = (): boolean => this.activeRunId === runId;
-
-		if (args.initialDelayMs !== null) {
-			if (!owned()) return { kind: "cancelled" };
-			if (!await this.waitWithAbort(args.initialDelayMs, abortController.signal)) {
-				return { kind: "cancelled" };
-			}
-		}
-		let consecutiveFailures = 0;
-		let pollIndex = 0;
-		for (;;) {
-			if (!owned()) return { kind: "cancelled" };
-			const statusRequest = createFinderStatusRequestSignal(abortController.signal, this.statusRequestTimeoutMs);
-			let snapshot: FinderRunStatusSnapshot | null = null;
-			try {
+		const loop = new ServerRunPollLoop<FinderRunStatusSnapshot>({
+			signal: abortController.signal,
+			isOwned: () => this.activeRunId === runId,
+			requestTimeoutMs: this.statusRequestTimeoutMs,
+			initialDelayMs: args.initialDelayMs,
+			nextRequestDelayMs: args.nextRequestDelayMs,
+			waitIntervalAfterFailure: args.waitIntervalAfterFailure,
+			failureBackoffMs: this.timing.failureBackoffMs,
+			maxConsecutiveFailures: this.timing.maxConsecutiveFailures,
+			fetchStatus: async (signal) => {
 				const response = await fetch(`/api/finder/status?runId=${encodeURIComponent(runId)}${args.includePreview ? '&includePreview=1' : ''}`, {
 					cache: "no-store",
-					signal: statusRequest.signal,
+					signal,
 				});
-				// Ownership check immediately after the await, BEFORE reading the
-				// HTTP status: a stale response of any kind (404 included) that
-				// lands after a new run (or Stop) took over must be discarded as
-				// cancellation, never mapped to a missing-job outcome that the
-				// caller would report or persist.
-				if (!owned()) return { kind: "cancelled" };
 				if (response.status === 404) return { kind: "not_found" };
 				if (!response.ok) throw new Error(`status ${response.status}`);
-				snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
-			} catch (error) {
-				// An abort from Stop / a new run is cancellation, not a
-				// transient failure — never count it against the backoff budget.
-				if (!owned()) return { kind: "cancelled" };
-				consecutiveFailures += 1;
+				const snapshot = parseJsonPreservingNonFinite(await response.text()) as FinderRunStatusSnapshot;
+				if (!snapshot || !snapshot.ok || snapshot.runId !== runId) return { kind: "rejected" };
+				return { kind: "snapshot", snapshot };
+			},
+			isTerminal: (snapshot) => snapshot.terminal,
+			onProgress: args.onProgress,
+			onTransientFailure: (info) => {
 				debugLogger.warn(args.logEvent, {
 					runId,
-					consecutive: consecutiveFailures,
-					error: error instanceof Error ? error.message : String(error),
+					consecutive: info.consecutive,
+					error: info.error instanceof Error ? info.error.message : String(info.error),
 				});
-				if (consecutiveFailures > this.timing.maxConsecutiveFailures) {
-					return { kind: "connection_lost" };
-				}
-				const backoffIndex = Math.min(consecutiveFailures - 1, this.timing.failureBackoffMs.length - 1);
-				if (!await this.waitWithAbort(this.timing.failureBackoffMs[backoffIndex]!, abortController.signal)) {
-					return { kind: "cancelled" };
-				}
-				// Per-caller retry cadence: recovery fetches right after the
-				// backoff; adopted reattach re-waits the polling interval first
-				// (its pre-consolidation sequence: backoff, then interval).
-				if (args.waitIntervalAfterFailure) {
-					if (!await this.waitWithAbort(args.nextRequestDelayMs(pollIndex), abortController.signal)) {
-						return { kind: "cancelled" };
-					}
-				}
-				// Retries never advance the interval step-down counter.
-				continue;
-			} finally {
-				// The request settled: drop its timeout timer and parent
-				// listener before any wait so nothing leaks across cycles.
-				statusRequest.cleanup();
-			}
-			// Belt-and-braces ownership re-check after the settle: the fetch
-			// path above already guards, so this only fires for future code
-			// added between them.
-			if (!owned()) return { kind: "cancelled" };
-			if (!snapshot || !snapshot.ok || snapshot.runId !== runId) return { kind: "rejected" };
-			consecutiveFailures = 0;
-			if (snapshot.terminal) {
-				return { kind: "terminal", snapshot };
-			}
-			args.onProgress(snapshot);
-			// Advance the counter BEFORE selecting the next delay so the wait
-			// before request N uses pollIndex = N-1 — exactly the pre-shared
-			// reattach semantics (long-poll step-down after fastPollCount
-			// completed polls, i.e. before request fastPollCount + 2).
-			pollIndex += 1;
-			if (!await this.waitWithAbort(args.nextRequestDelayMs(pollIndex), abortController.signal)) {
-				return { kind: "cancelled" };
-			}
-		}
-	}
-
-	/**
-	 * Abort-aware wait: resolves true after `ms`, false as soon as `signal`
-	 * aborts. Used for every poll interval and failure backoff so Stop / a
-	 * new run unblock a pending sleep immediately.
-	 */
-	private waitWithAbort(ms: number, signal: AbortSignal): Promise<boolean> {
-		if (signal.aborted) return Promise.resolve(false);
-		return new Promise<boolean>((resolve) => {
-			const onAbort = () => {
-				clearTimeout(timer);
-				resolve(false);
-			};
-			const timer = setTimeout(() => {
-				signal.removeEventListener("abort", onAbort);
-				resolve(true);
-			}, ms);
-			signal.addEventListener("abort", onAbort, { once: true });
+			},
 		});
+		return loop.run();
 	}
 
 	private setStatusHost(host: { setStatus(text: string): void }, text: string): void {

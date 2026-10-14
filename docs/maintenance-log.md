@@ -4,6 +4,81 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-14 — Unified the Batch / TOP_MEAN / Finder reattach poll loops on one shared module
+
+- **Evidence:** The same browser-side state machine (adopt a server run after
+  reload, poll `/status` with healthy cadence, retry transient failures with
+  backoff, terminate on terminal/loss/replacement, stay cancellable) was
+  hand-rolled three times: `BatchRunController.reattachToInProgressServerRun`,
+  `TopMeanController.reattachToInProgressTopMeanRun`, and
+  `FinderServerSession.pollOwnedServerRunStatus`. The partial extraction
+  `lib/batch-backtest/reattach-backoff.ts` covered only Batch + TOP_MEAN;
+  Finder re-implemented the failure counter inline, so a backoff change (e.g.
+  jitter) remained a three-file port. "Server lost the run" had three wire
+  vocabularies (Batch `runMismatch` flag, TOP_MEAN HTTP 404, Finder
+  `not_found`/`rejected`), and cancellable-delay plumbing was duplicated
+  (`reattachTimer`/`reattachTimerResolve`, `topMeanReattachTimer`/`...Resolve`,
+  Finder's abort-aware wait).
+- **Change:** New leaf-safe browser module `lib/server-run-poll-loop.ts`
+  (`ServerRunPollLoop`, generalizing Finder's proven loop): ownership predicate
+  re-checked after every await, abort-aware waits, parameterized healthy
+  cadence, absorbed backoff state machine (schedule + give-up threshold), a
+  `connectionLostRetryMs` policy for the Batch/TOP_MEAN 60s low-cadence retry
+  (Finder stays terminate-on-exhaustion), optional per-request timeout, and one
+  outcome taxonomy (`terminal | not_found | rejected | connection_lost |
+  cancelled`). All three call sites now pass declarative configuration and keep
+  only their fetch/classification, terminal adoption, copy, and ownership
+  state; the duplicated timer fields, `stopReattachPoll` timer halves, and
+  `ReattachBackoffController` are deleted (its spec cases moved into the new
+  spec). Per-cycle reporting (`onProgress`) rejections ride the same backoff as
+  a failed request — Batch's timed-out continuation-page recovery depends on
+  this and is pinned by `batch-backtest-service-lifecycle.browser.spec.ts`
+  ("reattach retries a timed-out continuation page..."). Two accepted behavior
+  deltas: TOP_MEAN's Stop now also cancels the in-flight status request
+  (dedicated loop AbortController instead of the shared `controlAbort`), and
+  TOP_MEAN's reattach diagnostics record before the ownership check instead of
+  after (diagnostic ring only).
+- **Audit fixes (same change set):** Two independent audits of the dirty
+  worktree found five real issues, all fixed here. (1) TOP_MEAN Stop during a
+  reattach wedged the UI: `stop()` relied on the old loop surviving to adopt
+  the server's interrupted terminal, but the aborted loop is gone — now every
+  confirmed stop answer performs the terminal cleanup directly
+  (`clearTopMeanRunAfterServerLoss`, "TOP_MEAN run stopped." copy), a
+  failed Stop POST restarts the reattach loop so the promised "status will
+  continue to recover" holds, and the loop's teardown only unwinds the loop
+  instance it owns (a restarted successor must survive). Pinned by
+  "stop during a TOP_MEAN reattach clears the run state when the server
+  confirms" in the lifecycle spec. (2) A healthy fetch reset the failure
+  counter before `onProgress`, so a persistently failing per-poll report
+  oscillated at 1 and never reached give-up — the reset moved to after a fully
+  healthy cycle (fetch + report), pinned by a loop-spec escalation case.
+  (3) The loop now re-checks ownership after `onProgress`'s own awaits
+  (contract: re-checked after every await), pinned by a loop-spec case.
+  (4) Batch's post-drain ownership guard (`reattachPollingStopped` check
+  between `drainStatusRows` and the progress writes) restored, and the 2s→5s
+  step-down off-by-one from the loop's 1-based pollIndex corrected.
+  (5) Finder's `!snapshot` null guard restored in `fetchStatus` (a `"null"`
+  body must map to `rejected`, not a TypeError); `request.cleanup()` now runs
+  before failure handling (the timeout timer no longer stays armed across the
+  backoff sleep, matching the comment); `scripts/validation-map.ts` gained a
+  `server-run-poll-loop` rule so the shared module routes to its focused specs
+  instead of the full-JS fallback. ~655 lines deleted across five files; the new
+  module plus call-site configuration add ~670 lines, including a 345-line spec
+  covering the full outcome matrix, backoff schedule/give-up/low-cadence
+  policy, the stale-response-is-cancellation rule, and the
+  retries-never-advance-step-down invariant.
+- **Focused checks:** `npm run test -- server-run-poll-loop.spec.ts`,
+  `npm run test -- finder-manager-lifecycle.browser.spec.ts`,
+  `npm run test -- batch-backtest-service-lifecycle.browser.spec.ts`,
+  `npm run test -- sp500-top-mean` (15 specs), `npm run typecheck`,
+  `npm run typecheck:tests`; full `npm run verify` green after the audit
+  fixes (288 specs + both typechecks).
+- **Follow-up:** Five Vite plugins still bypass `registerLocalJsonRoute`
+  (`crypto-data`, `backtest-endpoint`, `local-sqlite`, `strategy-library-admin`,
+  `ibkr-data`); the module-level mutable run state in
+  `batch-backtest-vite-plugin.ts` is still a candidate for a server-side
+  `BatchRunRegistry` extraction.
+
 ## 2026-10-13 — Un-red CI: standalone lockfile desync, and the e2e regression it masked
 
 - **Evidence:** Every "Strategies Finder test specs" run since 2026-10-12

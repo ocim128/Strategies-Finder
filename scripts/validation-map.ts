@@ -137,6 +137,19 @@ export const VALIDATION_RULES: readonly ValidationRule[] = [
         checks: FOCUSED_JS_CHECKS,
     },
     {
+        id: "server-run-poll-loop",
+        summary: "Shared server-run status poll loop changed; the loop spec and every reattach consumer's lifecycle specs select.",
+        files: ["lib/server-run-poll-loop.ts"],
+        guides: ["docs/finder-server-side.md", "docs/batch-backtest-server-side.md"],
+        testFilters: [
+            "server-run-poll-loop",
+            "finder-manager-lifecycle.browser",
+            "batch-backtest-service-lifecycle.browser",
+            "sp500-top-mean-",
+        ],
+        checks: FOCUSED_JS_CHECKS,
+    },
+    {
         id: "dom-partials",
         summary: "HTML partial changed; the DOM contract spec and browser E2E select.",
         directories: ["html-partials/"],
