@@ -55,6 +55,17 @@ npm run dev
 exports them before launching Vite. Optional server-side overrides are
 `ALPACA_DATA_HOST`, `ALPACA_FEED`, and `ALPACA_ADJUSTMENT`.
 
+### Download speed tuning
+
+`ALPACA_SYNC_CONCURRENCY` (default `3`, clamped to `1`–`10`) sets how many
+symbols a Download or Sync keeps in flight at once; per-symbol pagination
+stays sequential. The default is conservative because the free IEX feed
+rate-limits per API key — raising it on a free key trades speed for `429`
+retry backoffs. With a paid subscription the limit is far higher, so a value
+like `6` roughly doubles throughput on multi-symbol downloads. Add it to
+`.env` (forwarded by `run_playground.bat` like the credential keys) or export
+it in the shell before starting Vite manually.
+
 ## Download and sync
 
 1. Start the Vite server and open the **IBKR Data** tab.
@@ -140,8 +151,9 @@ seed CSVs take precedence and skip SQLite/IndexedDB fallback reads. See the
 
 ## Batch scheduling and settlement ownership
 
-`processSyncBatch` runs one bounded worker loop per slot: three for Alpaca
-(`ALPACA_SYNC_CONCURRENCY`, the sliding in-flight limit) and one for IBKR,
+`processSyncBatch` runs one bounded worker loop per slot: `ALPACA_SYNC_CONCURRENCY`
+slots for Alpaca (see [Download speed tuning](#download-speed-tuning), the
+sliding in-flight limit) and one for IBKR,
 whose session-based gateway pipeline is inherently serial. Each loop claims
 the next index from a shared cursor, updates the run snapshot's dispatch
 frontier, awaits its fetcher, converts the outcome (result / failed /

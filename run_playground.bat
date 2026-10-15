@@ -114,6 +114,7 @@ set "TUNNEL_NAME="
 set "LOCAL_PROXY_TOKEN="
 set "ALPACA_API_KEY="
 set "ALPACA_API_SECRET="
+set "ALPACA_SYNC_CONCURRENCY="
 if exist "%~dp0.env" (
     for /f "usebackq tokens=1,* delims==" %%a in ("%~dp0.env") do (
         set "_line=%%a"
@@ -122,6 +123,7 @@ if exist "%~dp0.env" (
             if /i "%%a"=="LOCAL_PROXY_TOKEN" set "LOCAL_PROXY_TOKEN=%%b"
             if /i "%%a"=="ALPACA_API_KEY" set "ALPACA_API_KEY=%%b"
             if /i "%%a"=="ALPACA_API_SECRET" set "ALPACA_API_SECRET=%%b"
+            if /i "%%a"=="ALPACA_SYNC_CONCURRENCY" set "ALPACA_SYNC_CONCURRENCY=%%b"
         )
     )
 )

@@ -1839,8 +1839,24 @@ type AlpacaSymbolWorker = (
  * Concurrent in-flight symbols for the Alpaca batch loop. Bounded so Alpaca's
  * per-key rate limits stay observable; pagination remains sequential WITHIN a
  * symbol (it lives inside syncOneAlpacaSymbol, untouched here).
+ *
+ * The bound is server-env tunable via `ALPACA_SYNC_CONCURRENCY` (the free IEX
+ * feed rate-limits per key, so the default stays conservative; paid plans can
+ * raise it to shorten multi-symbol downloads). Read per run, not at module
+ * load, so `.env`-forwarded values from the launcher apply without a rebuild.
  */
-const ALPACA_SYNC_CONCURRENCY = 3;
+const ALPACA_SYNC_CONCURRENCY_DEFAULT = 3;
+const ALPACA_SYNC_CONCURRENCY_MIN = 1;
+const ALPACA_SYNC_CONCURRENCY_MAX = 10;
+
+export function resolveAlpacaSyncConcurrency(env: NodeJS.ProcessEnv = process.env): number {
+    const rawValue = String(env.ALPACA_SYNC_CONCURRENCY ?? "").trim();
+    if (!rawValue) return ALPACA_SYNC_CONCURRENCY_DEFAULT;
+    const raw = Number(rawValue);
+    // `Number("")` is 0, not NaN — the blank check above must come first.
+    if (!Number.isFinite(raw)) return ALPACA_SYNC_CONCURRENCY_DEFAULT;
+    return Math.min(ALPACA_SYNC_CONCURRENCY_MAX, Math.max(ALPACA_SYNC_CONCURRENCY_MIN, Math.floor(raw)));
+}
 
 export async function syncOneAlpacaSymbol(
     catalog: IbkrCatalog,
@@ -2758,11 +2774,11 @@ export async function processSyncBatch(
     const lostOwnership = () => syncOwner !== owner;
     const wasCancelled = () => lostOwnership() || signal?.aborted === true;
 
-    // Alpaca only: bounded parallel dispatch (ALPACA_SYNC_CONCURRENCY in
-    // flight). IBKR keeps the sequential loop — its per-symbol worker talks
-    // to the gateway's session-based market data pipeline, which is inherently
-    // serial per authenticated session.
-    const concurrency = source === "alpaca" ? ALPACA_SYNC_CONCURRENCY : 1;
+    // Alpaca only: bounded parallel dispatch (resolveAlpacaSyncConcurrency()
+    // in flight, env-tunable). IBKR keeps the sequential loop — its per-symbol
+    // worker talks to the gateway's session-based market data pipeline, which
+    // is inherently serial per authenticated session.
+    const concurrency = source === "alpaca" ? resolveAlpacaSyncConcurrency() : 1;
 
     // Per-symbol work item. The release loop below emits `symbol` /
     // `symbol_warning` / `symbol_failed` events in ASCENDING original index

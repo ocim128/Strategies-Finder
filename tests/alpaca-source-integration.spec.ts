@@ -26,6 +26,7 @@ import {
     mapAlpacaStopReason,
     normalizeDataSource,
     processSyncBatch,
+    resolveAlpacaSyncConcurrency,
     resolveAlpacaWindow,
     syncOneAlpacaSymbol,
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
@@ -625,9 +626,52 @@ describe("alpaca syncOneAlpacaSymbol cross-source Download records source:mixed"
 
 
 
+describe("resolveAlpacaSyncConcurrency (env-tunable dispatch bound)", () => {
+    afterEach(() => {
+        delete process.env.ALPACA_SYNC_CONCURRENCY;
+    });
+
+    it("defaults to 3 when the env var is unset, blank, or non-numeric", () => {
+        delete process.env.ALPACA_SYNC_CONCURRENCY;
+        assert.equal(resolveAlpacaSyncConcurrency(), 3);
+        process.env.ALPACA_SYNC_CONCURRENCY = "";
+        assert.equal(resolveAlpacaSyncConcurrency(), 3);
+        process.env.ALPACA_SYNC_CONCURRENCY = "not-a-number";
+        assert.equal(resolveAlpacaSyncConcurrency(), 3);
+    });
+
+    it("clamps into [1, 10] and floors fractional values", () => {
+        process.env.ALPACA_SYNC_CONCURRENCY = "6";
+        assert.equal(resolveAlpacaSyncConcurrency(), 6);
+        process.env.ALPACA_SYNC_CONCURRENCY = "0";
+        assert.equal(resolveAlpacaSyncConcurrency(), 1);
+        process.env.ALPACA_SYNC_CONCURRENCY = "-4";
+        assert.equal(resolveAlpacaSyncConcurrency(), 1);
+        process.env.ALPACA_SYNC_CONCURRENCY = "999";
+        assert.equal(resolveAlpacaSyncConcurrency(), 10);
+        process.env.ALPACA_SYNC_CONCURRENCY = "4.7";
+        assert.equal(resolveAlpacaSyncConcurrency(), 4);
+    });
+
+    it("reads an explicit env object without touching process.env", () => {
+        process.env.ALPACA_SYNC_CONCURRENCY = "2";
+        assert.equal(resolveAlpacaSyncConcurrency({ ALPACA_SYNC_CONCURRENCY: "8" } as NodeJS.ProcessEnv), 8);
+        assert.equal(resolveAlpacaSyncConcurrency({} as NodeJS.ProcessEnv), 3);
+        assert.equal(resolveAlpacaSyncConcurrency(), 2);
+    });
+});
+
 describe("alpaca processSyncBatch bounded parallel dispatch", () => {
-    beforeEach(() => __resetIbkrSyncStateForTests());
-    afterEach(() => __resetIbkrSyncStateForTests());
+    beforeEach(() => {
+        __resetIbkrSyncStateForTests();
+        // Pin the built-in default: a developer's shell/.env may export
+        // ALPACA_SYNC_CONCURRENCY and would otherwise flip these assertions.
+        delete process.env.ALPACA_SYNC_CONCURRENCY;
+    });
+    afterEach(() => {
+        __resetIbkrSyncStateForTests();
+        delete process.env.ALPACA_SYNC_CONCURRENCY;
+    });
 
     it("keeps at most 3 symbols in flight and releases symbol events in ascending index order", async () => {
         // Deferred worker: each symbol's completion is held until the test
@@ -683,6 +727,52 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
             symbols,
             "symbol events must be emitted in ascending original index order",
         );
+        const done = events[events.length - 1]!;
+        assert.equal(done.type, "done");
+        assert.equal(done.ok, true);
+    });
+
+    it("raises the in-flight bound from ALPACA_SYNC_CONCURRENCY (paid-plan speedup)", async () => {
+        // Same deferred-worker probe as the default test, but with the env
+        // override at 5: the dispatch frontier must fill 5 slots and never
+        // exceed 5, proving the knob reaches the batch loop per run.
+        process.env.ALPACA_SYNC_CONCURRENCY = "5";
+        const symbols = ["T0", "T1", "T2", "T3", "T4", "T5", "T6", "T7"];
+        const events: Array<Record<string, unknown>> = [];
+        let inFlight = 0;
+        let maxInFlight = 0;
+        const deferred = new Map<string, () => void>();
+        const alpacaFetcher = (async (_cat: unknown, symbol: string) => {
+            inFlight += 1;
+            maxInFlight = Math.max(maxInFlight, inFlight);
+            await new Promise<void>((resolveFetch) => deferred.set(symbol, resolveFetch));
+            inFlight -= 1;
+            return alpacaResult(symbol);
+        }) as AlpacaFetcher;
+
+        const run = processSyncBatch(
+            { symbols, interval: "30m", period: "1m", source: "alpaca" },
+            false,
+            (event) => events.push(event as Record<string, unknown>),
+            __acquireIbkrSyncOwnerForTests(),
+            { alpacaFetcher: alpacaFetcher as never },
+        );
+
+        await waitFor(() => deferred.size === 5, 2000, "the dispatch frontier to fill 5 env-raised slots");
+        assert.equal(maxInFlight, 5, "env override must raise the in-flight bound to 5");
+
+        let resolved = 0;
+        while (resolved < symbols.length) {
+            await waitFor(() => deferred.size > 0, 2000, "in-flight work to resolve");
+            for (const [symbol, resolveFetch] of [...deferred]) {
+                deferred.delete(symbol);
+                resolveFetch();
+                resolved += 1;
+            }
+        }
+        await run;
+
+        assert.equal(maxInFlight, 5, "in-flight must never exceed the env-raised bound");
         const done = events[events.length - 1]!;
         assert.equal(done.type, "done");
         assert.equal(done.ok, true);
