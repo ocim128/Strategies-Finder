@@ -197,12 +197,22 @@ interface RustHealthResponse {
     capabilities?: Record<string, boolean> | string[];
 }
 
+/**
+ * True when a signal carries a field that changes execution semantics the
+ * generic Rust simulation does not implement: trigger-price entry, fractional
+ * sizing, exit-only orders, or confirmation-gated exits.
+ *
+ * `reason` is deliberately NOT gated: it is informational labeling (the
+ * standard signal factories attach a human-readable string to every signal),
+ * and the Rust `Signal` wire struct already parses it as
+ * `Option<String>` without reading it during simulation. Gating on it locked
+ * every standard-helper strategy out of the Rust engine.
+ */
 export function hasUnsupportedRustSignalShape(signals: readonly Signal[]): boolean {
     return signals.some((signal) => signal.triggerPrice !== undefined
         || signal.sizeFraction !== undefined
         || signal.exitOnly === true
-        || signal.confirmationExitOnly === true
-        || signal.reason !== undefined);
+        || signal.confirmationExitOnly === true);
 }
 
 function parseRustCapabilities(value: unknown, protocolVersion: unknown): Set<string> {

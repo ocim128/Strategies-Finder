@@ -382,14 +382,13 @@ that comparison turnkey:
 - `scripts/validate-finder-admission.ts` — end-to-end measurement driving the
   unchanged production Symbol Universe strategy-worker core (real registry,
   settings resolver, client, and fallback boundaries) with concurrent
-  strategy tasks. As of 2026-10-07 it cannot produce real Rust transport
-  traffic from the built-in catalog: every built-in strategy is
-  Rust-ineligible through the production gates (signal-shape rejection of
-  diagnostic `reason` fields, plus the `metadata.role` gate on the Universe
-  batch path), so all candidates complete on TypeScript and `engineUsage`
-  reports `rustAttemptedRuns: 0`. Real Finder validation of admission limits
-  therefore remains open until a Rust-eligible production workload exists;
-  admission stays opt-in until then.
+  strategy tasks. Since 2026-10-15 the signal-shape gate no longer rejects
+  diagnostic `reason` labels (the standard signal factories attach one to
+  every signal, and the Rust `Signal` struct parses `reason: Option<String>`
+  without reading it), so standard-helper strategies are shape-eligible and
+  reach the transport. The `metadata.role` gate on the Universe batch path
+  still applies; the admission report's `rustAttemptedRuns` counter shows
+  whether a given catalog produced real Rust traffic.
 
 Failure semantics for tuning: the cached client forgets its cache ID only
 when a cached batch reports `http_error`; connection-level resets surface as
@@ -415,8 +414,11 @@ registry, Finder parameter generator, or optimizer API.
 Rust trades include the authoritative camel-case `exitReason`. Protocol-v2
 generic responses are rejected when a returned trade omits that field. Signals
 with behavior-bearing `triggerPrice`, `sizeFraction`, or `exitOnly` fields
-are not sent to Rust until the wire contract implements them; a diagnostic-only
-`reason` remains safe to compact.
+are not sent to Rust until the wire contract implements them. A diagnostic-only
+`reason` is accepted: the Rust `Signal` struct parses it as an optional string
+and simulation never reads it, so the standard signal factories' labeled
+signals are shape-eligible (a former gate on `reason` locked every
+standard-helper strategy out of the engine).
 
 ### Simulation behavior
 

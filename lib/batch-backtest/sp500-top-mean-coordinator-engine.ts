@@ -12,6 +12,7 @@ import {
     resolveBacktestSettingsFromRaw,
 } from "../backtest-settings-resolver";
 import { getTypescriptEngineRequirementReasons } from "../rust-settings-sanitizer";
+import { rustEngine } from "../rust-engine-client";
 import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import type { CompactPairArtifact } from "./compact-pair-artifact";
 import {
@@ -741,7 +742,7 @@ export class TopMeanCoordinatorEngine {
         }
     }
 
-    private resolveTypescriptRequirementReasons(): string[] {
+    private async resolveTypescriptRequirementReasons(): Promise<string[]> {
         const settings = resolveBacktestSettingsFromRaw(
             {
                 ...(this._request.backtestSettings as Record<string, unknown>),
@@ -752,7 +753,15 @@ export class TopMeanCoordinatorEngine {
         settings.tradeDirection = settings.tradeDirection ?? EFFECTIVE_BACKTEST_DEFAULTS.tradeDirection;
         settings.executionModel = settings.executionModel ?? EFFECTIVE_BACKTEST_DEFAULTS.executionModel;
         this.resolvedBacktestSettings = settings;
-        const reasons = getTypescriptEngineRequirementReasons(settings);
+        // Probe the Rust handshake so capability-gated fields (next_open,
+        // max-hold, cooldown) are judged against the engine's advertised
+        // capabilities instead of a missing set. Without the probe the
+        // telemetry always claimed `rust_capability_missing` for next_open
+        // runs even when the engine was healthy and advertising them.
+        const capabilities = await rustEngine.checkHealth()
+            ? rustEngine.capabilities
+            : undefined;
+        const reasons = getTypescriptEngineRequirementReasons(settings, capabilities);
         const capital = resolveCapitalSettingsFromRaw(
             this._request.capitalSettings as unknown as Record<string, unknown>,
         );
@@ -926,7 +935,7 @@ export class TopMeanCoordinatorEngine {
             engine: {
                 requested: this._request.useRustEnginePreference ? "rust" : "typescript",
                 actual: this._request.useRustEnginePreference ? "rust" : "typescript",
-                typescriptRequirementReasons: this.resolveTypescriptRequirementReasons(),
+                typescriptRequirementReasons: await this.resolveTypescriptRequirementReasons(),
             },
             phases: {
                 preflightMs: 0,

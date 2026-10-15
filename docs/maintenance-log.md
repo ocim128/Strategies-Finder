@@ -4,6 +4,43 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-15 — Rust engine gate fix, and the measured reason TOP_MEAN should keep TypeScript
+
+- **Evidence:** A slippage-0 TOP_MEAN run still reported
+  `actual=typescript, fallback=rust_capability_missing`. Tracing found two
+  stacked defects. (1) `hasUnsupportedRustSignalShape`
+  (`lib/rust-engine-client.ts`) treated `signal.reason !== undefined` as an
+  unsupported shape, but `reason` is informational labeling that the standard
+  signal factories (`createSignal` in `strategy-helpers.ts`) attach to EVERY
+  signal, and the Rust `Signal` wire struct already parses it as
+  `Option<String>` without reading it in simulation — so every standard-helper
+  strategy was silently locked out of the Rust engine
+  (`signal_shape_unsupported` suppressed the probe, and the capability-less
+  reason list surfaced as `rust_capability_missing`). (2) The coordinator's
+  engine telemetry (`resolveTypescriptRequirementReasons`) called
+  `getTypescriptEngineRequirementReasons` WITHOUT capabilities, so
+  capability-gated fields always claimed missing even against a healthy,
+  advertising engine (verified live: `/api/health` reported
+  `backtest.next_open.v1`/`backtest.exit_reason.v1`).
+- **Change:** Dropped the `reason` clause from the shape gate (the four
+  behavior-bearing fields stay gated); the coordinator now probes the Rust
+  handshake once per run and judges telemetry against advertised capabilities.
+  Single-pair verification on a real 55k-bar pair: `engineUsed: rust`,
+  `rustAttempted: true`, and byte-identical trade lists (769 trades, same
+  entry/exit/type/pnl) versus forced TypeScript.
+- **Measured caveat (keep TypeScript for TOP_MEAN):** steady-state per-pair
+  wall on that pair: Rust path ~285ms vs TypeScript ~124ms. The per-pair
+  single-run transport (serialize 55k candles to JSON + HTTP round trip)
+  swamps the ~20ms simulation saving; Rust wins only when transport amortizes
+  (batch endpoints with many pairs per request, per the engine guide's
+  workload table). The preference toggle stays the user's; the fix removes the
+  false blocker and the misleading `rust_capability_missing` label rather than
+  changing which engine serves TOP_MEAN.
+- **Focused checks:** `npm run test -- rust backtest-executor` (8 specs,
+  including rewritten shape-gate cases: behavior-bearing fields still rejected,
+  labeled reasons now reach transport), `npm run typecheck`,
+  `npm run typecheck:tests`.
+
 ## 2026-10-14 — TOP_MEAN coordinator: shared asset-switch series store kills per-pass target reloads
 
 - **Evidence:** A 100k-pair asset_switch run (30m, 2,816 distinct targets,

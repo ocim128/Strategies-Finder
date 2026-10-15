@@ -257,14 +257,14 @@ describe("Rust generic backtest output options", () => {
         expect(result).to.deep.include({ ok: false, reason: "cancelled" });
     });
 
-    it("rejects behavior-bearing reasons at every generic batch endpoint boundary", async () => {
+    it("rejects behavior-bearing signal fields at every generic batch endpoint boundary", async () => {
         let transportCalls = 0;
         const client = createClient(() => { transportCalls += 1; });
         const signal: Signal = {
             time: 1 as Time,
             type: "sell",
             price: 100,
-            reason: "legacy_reason" as Signal["reason"],
+            triggerPrice: 99,
         };
         const items = [{ id: "behavior", signals: [signal] }];
         const results = await Promise.all([
@@ -276,6 +276,34 @@ describe("Rust generic backtest output options", () => {
             expect(result).to.deep.include({ ok: false, reason: "unsupported_signal_shape" });
         }
         expect(transportCalls).to.equal(0);
+    });
+
+    it("accepts informational signal reasons at the generic batch boundary", async () => {
+        // The standard signal factories label every signal with a human
+        // readable `reason`; the Rust Signal wire struct parses it as an
+        // optional string without reading it during simulation, so a labeled
+        // signal must reach transport instead of being rejected as an
+        // unsupported shape (which locked every standard-helper strategy out
+        // of the Rust engine).
+        let transportCalls = 0;
+        const client = createClient(() => {
+            transportCalls += 1;
+            throw new Error("transport reached: the shape gate passed");
+        });
+        const signal: Signal = {
+            time: 1 as Time,
+            type: "sell",
+            price: 100,
+            reason: "Close above lookback close",
+        };
+        const result = await client.runBatchBacktestWithStatus(
+            data,
+            [{ id: "labeled", signals: [signal] }],
+            10_000, 100, 0.1, settings, undefined, false,
+        );
+        expect(transportCalls).to.equal(1);
+        // The stub transport throws; reaching it is the assertion.
+        expect(result.ok).to.equal(false);
     });
 
     it("gives cancellation precedence over unsupported batch signal shapes", async () => {
@@ -292,7 +320,7 @@ describe("Rust generic backtest output options", () => {
                     time: 1 as Time,
                     type: "sell",
                     price: 100,
-                    reason: "legacy_reason" as Signal["reason"],
+                    triggerPrice: 99,
                 }],
             }],
             10_000,
