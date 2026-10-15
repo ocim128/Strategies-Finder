@@ -2,6 +2,13 @@ import { Worker } from "node:worker_threads";
 import { resolveServerWorkerEntryPath, resolveTopMeanWorkerCount } from "./sp500-top-mean-worker-pool";
 import type { ScanWorkerTask } from "./top-raw-scan-worker";
 
+/** Rejection for tasks cancelled by pool teardown. The engine prefers any
+ * other rejection over this sentinel so the root cause of a halt is the
+ * error that gets reported, never the stop itself. */
+export class ScanPoolStoppedError extends Error {
+    constructor() { super("Scan stopped."); }
+}
+
 /** A fixed set of persistent workers; the owner dispatches at most one task per slot. */
 export class ScanWorkerPool {
     private workers: Worker[] = [];
@@ -12,7 +19,7 @@ export class ScanWorkerPool {
     public workerPath = "";
     async initialize(count?: number): Promise<void> {
         this.workerPath = await resolveServerWorkerEntryPath("top-raw-scan-worker.ts");
-        if (this.stopped) throw new Error("Scan stopped.");
+        if (this.stopped) throw new ScanPoolStoppedError();
         for (let i = 0; i < resolveTopMeanWorkerCount(count); i++) {
             const worker = new Worker(this.workerPath, { execArgv: [] });
             worker.on("error", error => { this.dead.add(worker); this.pending.get(worker)?.(error instanceof Error ? error : new Error(String(error))); });
@@ -22,7 +29,7 @@ export class ScanWorkerPool {
     }
     get size(): number { return this.workers.length; }
     task<T>(index: number, task: ScanWorkerTask): Promise<T> {
-        if (this.stopped) return Promise.reject(new Error("Scan stopped."));
+        if (this.stopped) return Promise.reject(new ScanPoolStoppedError());
         const worker = this.workers[index];
         if (!worker || this.dead.has(worker) || this.pending.has(worker)) return Promise.reject(new Error("Scan worker unavailable."));
         return new Promise<T>((resolve, reject) => {
@@ -35,7 +42,7 @@ export class ScanWorkerPool {
     stop(): void {
         if (this.stopped) return;
         this.stopped = true;
-        for (const [worker, reject] of this.pending) { reject(new Error("Scan stopped.")); void worker; }
+        for (const [worker, reject] of this.pending) { reject(new ScanPoolStoppedError()); void worker; }
         for (const worker of this.workers) this.terminations.push(worker.terminate());
     }
     async dispose(): Promise<void> { this.stop(); await Promise.allSettled(this.terminations); this.workers = []; }

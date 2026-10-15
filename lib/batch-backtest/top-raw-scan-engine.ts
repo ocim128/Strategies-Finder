@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { parseIntervalSeconds } from "../interval-utils";
 import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import { enumerateSp500Pairs } from "./sp500-pair-enumerator";
-import { ScanWorkerPool } from "./top-raw-scan-pool";
+import { ScanWorkerPool, ScanPoolStoppedError } from "./top-raw-scan-pool";
 import { ScanStore, scanFileRevision, scanHash, type ScanManifest, type ScanReservation } from "./top-raw-scan-store";
 import { parseScanAssets, scanBudget, TOP_RAW_SCAN_ORIENTATION, TOP_RAW_SCAN_SAMPLING, TOP_RAW_SCAN_TIES, type ScanPair, type ScanRequest, type ScanResult, type ScanStatus, type ScanVote, type ScanAssetCoverage } from "./top-raw-scan-contract";
 import { chooseScanFinalists, planScanDiscovery, planScanRefinement, reduceScanDiscovery, reduceScanFinalists } from "./top-raw-scan-sampling";
@@ -232,7 +232,10 @@ export class TopRawScanEngine {
                     }
                     } catch (error) { this.halted = true; this.pool.stop(); throw error; }
                 }));
-                const failure = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+                const rejections = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+                // Pool teardown cancels sibling slots; the root cause that
+                // halted the scan outranks the stop sentinel.
+                const failure = rejections.find(outcome => !(outcome.reason instanceof ScanPoolStoppedError)) ?? rejections[0];
                 if (failure) throw failure.reason;
                 result.timings[`${phase}Ms`] = performance.now() - phaseStart;
                 await this.checkpoint();

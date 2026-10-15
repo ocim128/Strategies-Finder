@@ -41,7 +41,9 @@ export async function processScanWorkerTask(task: ScanWorkerTask): Promise<numbe
     const votes: ScanVote[] = [];
     for (const pair of task.pairs) {
         try { votes.push(await executeScanPair(pair, task.engineIdentity === "typescript_only" ? { ...task.request, useRustEnginePreference: false } : task.request, task.asOf, task.cutoff)); }
-        catch (error) { votes.push({ key: pair.key, vote: 0, active: 0, engine: "typescript", error: error instanceof Error ? error.message : String(error) }); }
+        // A failed pair contributes zero to every arm; the error stays on the
+        // record for coverage and failure diagnostics.
+        catch (error) { votes.push({ key: pair.key, vote: 0, active: 0, engine: "typescript", profitNow: 0, profitNowConf: 0, error: error instanceof Error ? error.message : String(error) }); }
     }
     await check();
     return votes;

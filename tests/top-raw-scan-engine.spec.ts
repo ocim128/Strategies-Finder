@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { TopRawScanEngine } from "../lib/batch-backtest/top-raw-scan-engine";
-import { ScanWorkerPool } from "../lib/batch-backtest/top-raw-scan-pool";
+import { ScanWorkerPool, ScanPoolStoppedError } from "../lib/batch-backtest/top-raw-scan-pool";
 import { ScanStore, scanHash } from "../lib/batch-backtest/top-raw-scan-store";
 import { scanSourceIntervals } from "../lib/batch-backtest/top-raw-scan-preflight";
 import { summarizeScanFailures, SCAN_FAILURE_LIMITS } from "../lib/batch-backtest/top-raw-scan-diagnostics";
@@ -252,6 +252,35 @@ describe("TOP_RAW orchestration and recovery", () => {
         const tolerant = new FixturePool(root); tolerant.omitProfitNow = true;
         const accepted = await new TopRawScanEngine(request("arm_raw_stale", { opponentsPerAsset: 64 }), store, tolerant, root).run();
         assert.equal(accepted.phase, "completed", accepted.message);
+        // A failing pair is a recorded error vote under every arm, never a
+        // shard-rejection cause.
+        const gap = new FixturePool(root);
+        gap.failReason = "Pair does not contain frozen endpoint.";
+        gap.onTask = task => { if (task.type === "pairs" && !gap.failKey) gap.failKey = task.pairs[0]!.key; };
+        const gapped = await new TopRawScanEngine(request("arm_conf_gap", { arm: "top_raw_profit_now_conf", opponentsPerAsset: 64 }), store, gap, root).run();
+        assert.equal(gapped.phase, "failed", gapped.message);
+        assert.match(gapped.message, /incomplete_coverage/);
+        assert.equal(gapped.result!.pairCounts.failed, 1);
+        assert.equal(gapped.result!.failureDiagnostics!.total, 1);
+        assert.match(gapped.result!.failureDiagnostics!.groups[0]!.reason, /frozen endpoint/);
+    }));
+    it("reports the root-cause failure instead of the pool's stop sentinel", async () => fixture(async (root, store) => {
+        class MaskedPool extends FixturePool {
+            override async task<T>(slot: number, task: ScanWorkerTask): Promise<T> {
+                await this.onTask?.(task);
+                if (task.type === "engine_identity") return "typescript_only" as T;
+                if (task.type === "preflight") return Array.from({ length: 300 }, (_, i) => 1700006400 + i * 14400) as T;
+                if (slot === 1) throw new Error("Source revision changed during execution.");
+                throw new ScanPoolStoppedError();
+            }
+        }
+        // More than one shard (45 pairs over two slots): the slot that hits the
+        // real error must outrank the sibling stop-sentinel rejections.
+        const status = await new TopRawScanEngine(request("masked_failure", { opponentsPerAsset: 64 }), store, new MaskedPool(root), root).run();
+        assert.equal(status.phase, "failed"); assert.match(status.message, /Source revision changed/);
+        assert.equal(status.result!.error, "Source revision changed during execution.");
+        const restored = await readScanStatus("masked_failure", store);
+        assert.equal(restored!.phase, "failed"); assert.match(restored!.message, /Source revision changed/);
     }));
     it("withholds completed rankings for failed discovery and refinement edges", async () => fixture(async (root, store) => {
         for (const phase of ["discovery", "refinement"]) {
