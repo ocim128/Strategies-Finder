@@ -1,6 +1,7 @@
 import { createSeededRandom } from "../param-math-utils";
 import { generateRelationships } from "./balanced-pair-list-generator";
 import { scanBudget, TOP_RAW_SCAN_ORIENTATION, TOP_RAW_SCAN_SAMPLING, TOP_RAW_SCAN_TIES, type ScanOptions, type ScanPair, type ScanRow, type ScanVote, type ScanFinalist } from "./top-raw-scan-contract";
+import { scanArmEstimatedValue, type ScanArm } from "./top-raw-scan-arms";
 
 export function scanDomainSeed(seed: number, domain: string): number {
     let hash = 2166136261;
@@ -31,26 +32,37 @@ export function planScanDiscovery(assets: readonly string[], options: ScanOption
     return generateRelationships(sample.length, budget.discovery).map(edge => population.pair(sample[edge.aIdx]!, sample[edge.bIdx]!));
 }
 export function reduceScanDiscovery(assets: readonly string[], pairs: readonly ScanPair[], votes: ReadonlyMap<string, ScanVote>): ScanRow[] {
-    const rows = new Map(assets.map(asset => [asset, { asset, sampledRaw: 0, estimatedRaw: null, sampledDegree: 0, evaluatedDegree: 0, failedDegree: 0, activePositions: 0, flatDegree: 0, coverageComplete: true } as ScanRow]));
+    const rows = new Map(assets.map(asset => [asset, { asset, sampledRaw: 0, estimatedRaw: null, sampledDegree: 0, evaluatedDegree: 0, failedDegree: 0, activePositions: 0, flatDegree: 0, coverageComplete: true, activeDegree: 0, estimatedActiveDegree: null, sampledProfitNow: 0, sampledProfitNowActiveDegree: 0, sampledProfitNowConf: 0, estimatedProfitNow: null, estimatedProfitNowActiveDegree: null, estimatedProfitNowConf: null } as ScanRow]));
     for (const pair of pairs) {
         const vote = votes.get(pair.key);
         for (const [asset, sign] of [[pair.base, 1], [pair.quote, -1]] as const) {
             const row = rows.get(asset)!; row.sampledDegree++;
             if (!vote || vote.error) { row.failedDegree++; row.coverageComplete = false; continue; }
             row.evaluatedDegree++; row.sampledRaw += sign * vote.vote; row.activePositions += vote.active;
+            if (vote.vote !== 0) row.activeDegree++;
+            const profitNow = vote.profitNow ?? 0;
+            row.sampledProfitNow += sign * profitNow;
+            if (profitNow !== 0) row.sampledProfitNowActiveDegree++;
+            row.sampledProfitNowConf += sign * (vote.profitNowConf ?? 0);
             if (vote.active === 0) row.flatDegree++;
         }
     }
-    for (const row of rows.values()) row.estimatedRaw = row.evaluatedDegree ? (assets.length - 1) * row.sampledRaw / row.evaluatedDegree : null;
+    for (const row of rows.values()) {
+        row.estimatedRaw = row.evaluatedDegree ? (assets.length - 1) * row.sampledRaw / row.evaluatedDegree : null;
+        row.estimatedActiveDegree = row.evaluatedDegree ? (assets.length - 1) * row.activeDegree / row.evaluatedDegree : null;
+        row.estimatedProfitNow = row.evaluatedDegree ? (assets.length - 1) * row.sampledProfitNow / row.evaluatedDegree : null;
+        row.estimatedProfitNowActiveDegree = row.evaluatedDegree ? (assets.length - 1) * row.sampledProfitNowActiveDegree / row.evaluatedDegree : null;
+        row.estimatedProfitNowConf = row.evaluatedDegree ? (assets.length - 1) * row.sampledProfitNowConf / row.evaluatedDegree : null;
+    }
     return [...rows.values()];
 }
-export function chooseScanFinalists(rows: readonly ScanRow[], count: number, seed: number) {
+export function chooseScanFinalists(rows: readonly ScanRow[], count: number, seed: number, arm: ScanArm = "top_raw") {
     const ties = new Map(scanPermutation(rows.map(r => r.asset), seed, TOP_RAW_SCAN_TIES).map((asset, index) => [asset, index]));
-    const sorted = [...rows].sort((a, b) => (b.estimatedRaw ?? -Infinity) - (a.estimatedRaw ?? -Infinity) || ties.get(a.asset)! - ties.get(b.asset)!);
-    const selected = sorted.slice(0, count), cutoff = selected.at(-1)?.estimatedRaw;
-    const tied = sorted.filter(r => r.estimatedRaw === cutoff).map(r => r.asset);
+    const sorted = [...rows].sort((a, b) => (scanArmEstimatedValue(arm, b) ?? -Infinity) - (scanArmEstimatedValue(arm, a) ?? -Infinity) || ties.get(a.asset)! - ties.get(b.asset)!);
+    const selected = sorted.slice(0, count), cutoff = scanArmEstimatedValue(arm, selected.at(-1)!);
+    const tied = sorted.filter(r => scanArmEstimatedValue(arm, r) === cutoff).map(r => r.asset);
     const cutoffTies = tied.length > 1 ? tied : [];
-    return { selected: selected.map(r => r.asset), cutoffTies, omittedCutoffTies: sorted.slice(count).filter(r => r.estimatedRaw === cutoff).map(r => r.asset) };
+    return { selected: selected.map(r => r.asset), cutoffTies, omittedCutoffTies: sorted.slice(count).filter(r => scanArmEstimatedValue(arm, r) === cutoff).map(r => r.asset) };
 }
 export function planScanRefinement(assets: readonly string[], finalists: readonly string[], seed: number, existing: ReadonlySet<string>): ScanPair[] {
     const population = createScanPopulation(assets, seed), seen = new Set(existing), out: ScanPair[] = [];
@@ -64,14 +76,21 @@ export function planScanRefinement(assets: readonly string[], finalists: readonl
 export function reduceScanFinalists(assets: readonly string[], finalists: readonly string[], seed: number, votes: ReadonlyMap<string, ScanVote>): ScanFinalist[] {
     const population = createScanPopulation(assets, seed);
     return finalists.map((asset, index) => {
-        let raw = 0, evaluated = 0, failed = 0;
+        let raw = 0, evaluated = 0, failed = 0, activeDegree = 0, profitNow = 0, profitNowActiveDegree = 0, profitNowConf = 0;
         for (const opponent of assets) {
             if (asset === opponent) continue;
             const pair = population.pair(asset, opponent), vote = votes.get(pair.key);
             if (!vote || vote.error) { failed++; continue; }
-            evaluated++; raw += (pair.base === asset ? 1 : -1) * vote.vote;
+            evaluated++;
+            const sign = pair.base === asset ? 1 : -1;
+            raw += sign * vote.vote;
+            if (vote.vote !== 0) activeDegree++;
+            const gated = sign * (vote.profitNow ?? 0);
+            profitNow += gated;
+            if (gated !== 0) profitNowActiveDegree++;
+            profitNowConf += sign * (vote.profitNowConf ?? 0);
         }
         const complete = evaluated === assets.length - 1 && failed === 0;
-        return { asset, candidateRank: index + 1, exactRaw: complete ? raw : null, evaluatedOpponents: evaluated, expectedOpponents: assets.length - 1, failedOpponents: failed, complete };
+        return { asset, candidateRank: index + 1, exactRaw: complete ? raw : null, evaluatedOpponents: evaluated, expectedOpponents: assets.length - 1, failedOpponents: failed, complete, exactActiveDegree: complete ? activeDegree : null, exactProfitNow: complete ? profitNow : null, exactProfitNowActiveDegree: complete ? profitNowActiveDegree : null, exactProfitNowConf: complete ? profitNowConf : null };
     });
 }

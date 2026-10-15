@@ -1,18 +1,53 @@
 import { executeBacktest, prepareClosedCandleData } from "../backtest-executor";
 import { selectClosedCandleWindow } from "../alert-evaluation-window";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { computeProfitNowConfidenceWeight } from "./open-score-replay/statistics";
 import { strategies } from "../strategies/library";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
 import type { ScanPair, ScanRequest, ScanVote } from "./top-raw-scan-contract";
 import type { OHLCVData, Trade } from "../types/strategies";
 
-/** All end-of-data positions count, including offsetting/multiple positions. */
-export function scanEndpointVote(trades: ReadonlyArray<Pick<Trade, "type" | "exitReason">>): { vote: number; active: number } {
-    let vote = 0, active = 0;
-    for (const trade of trades) if (trade.exitReason === "end_of_data" && (trade.type === "long" || trade.type === "short")) {
-        vote += trade.type === "long" ? 1 : -1; active++;
+/** All end-of-data positions count, including offsetting/multiple positions.
+ *
+ * profitNow/profitNowConf reproduce the OPEN_SCORE causal PROFIT_NOW semantics
+ * (open-score-replay/artifact-scan.ts): each trade's vote applies only when the
+ * pair's realized net PnL from trades closed BEFORE its entry was strictly
+ * positive (all PnL known; exits at a timestamp count before entries at that
+ * timestamp), and the confidence weight of that closed history is
+ * n/(n+1) × realizedNet/Σ|pnl| clamped to [0,1]. */
+export function scanEndpointVote(trades: ReadonlyArray<Pick<Trade, "type" | "exitReason" | "pnl" | "entryTime" | "exitTime">>): { vote: number; active: number; profitNow: number; profitNowConf: number } {
+    const ledger: Array<{ t: number; out: boolean; idx: number }> = [];
+    trades.forEach((trade, idx) => {
+        const entrySec = parseTimeToUnixSeconds(trade.entryTime);
+        if (entrySec === null) return;
+        ledger.push({ t: entrySec, out: false, idx });
+        if (trade.exitReason === "end_of_data") return;
+        const exitSec = parseTimeToUnixSeconds(trade.exitTime);
+        if (exitSec === null) return;
+        ledger.push({ t: exitSec, out: true, idx });
+    });
+    ledger.sort((a, b) => a.t - b.t || (a.out === b.out ? 0 : a.out ? -1 : 1));
+    let realized = 0, grossAbsPnl = 0, closedTradeCount = 0, pnlKnown = true;
+    const applied = new Array<boolean>(trades.length).fill(false), weights = new Array<number>(trades.length).fill(0);
+    for (const step of ledger) {
+        const pnl = trades[step.idx]!.pnl;
+        if (!Number.isFinite(pnl)) pnlKnown = false;
+        if (step.out) {
+            if (Number.isFinite(pnl)) { realized += pnl!; grossAbsPnl += Math.abs(pnl!); closedTradeCount += 1; }
+        } else {
+            applied[step.idx] = pnlKnown && realized > 0;
+            weights[step.idx] = pnlKnown ? computeProfitNowConfidenceWeight(closedTradeCount, realized, grossAbsPnl) : 0;
+        }
     }
-    return { vote, active };
+    let vote = 0, active = 0, profitNow = 0, profitNowConf = 0;
+    trades.forEach((trade, idx) => {
+        if (trade.exitReason !== "end_of_data" || (trade.type !== "long" && trade.type !== "short")) return;
+        const sign = trade.type === "long" ? 1 : -1;
+        vote += sign; active++;
+        if (applied[idx]!) profitNow += sign;
+        profitNowConf += sign * weights[idx]!;
+    });
+    return { vote, active, profitNow, profitNowConf };
 }
 export async function executeScanPair(
     pair: ScanPair, request: ScanRequest, asOf: number, evaluationCutoff: number,

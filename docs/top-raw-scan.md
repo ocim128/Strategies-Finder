@@ -1,8 +1,10 @@
 # Fast TOP_RAW asset scans
 
-Fast TOP_RAW in Batch Backtest estimates the current **unweighted open-position
-score** of individual local IBKR stocks, then fully scores leading candidates.
-Enable **Fast TOP_RAW (asset list)** beside Pairs. The same textarea becomes
+Fast TOP_RAW in Batch Backtest estimates current NOW-arm scores of individual
+local IBKR stocks, then fully scores leading candidates. The **Ranking arm**
+select chooses the quantity leaders are ranked by — raw open-position votes by
+default, or mean/max-active/open-profit arms. Enable **Fast TOP_RAW (asset
+list)** beside Pairs. The same textarea becomes
 Assets; use the maintained Nasdaq/S&P500 templates or enter one marked stock
 per line, such as `AAPL•`. The entered list defines the universe. Templates are
 not refreshed or substituted during a scan.
@@ -48,6 +50,38 @@ the signs. Flat relationships contribute zero. Multiple open positions are
 summed, including offsetting positions. The ordinary engine's forced
 `end_of_data` closes represent positions active at the evaluation boundary;
 genuine strategy/risk exits do not contribute.
+
+## Ranking arms
+
+The **Ranking arm** select chooses which Batch NOW quantity ranks discovery
+estimates, finalist selection and the verified winners. The profit-now arms
+reproduce the OPEN_SCORE causal semantics exactly
+(`open-score-replay/artifact-scan.ts`): walking a pair's trade ledger
+chronologically (exits at a timestamp count before entries at that timestamp),
+a trade's vote applies only when every PnL is known and the pair's realized net
+PnL from trades closed **before that entry** was strictly positive. The
+confidence weight of that closed history is
+`n/(n+1) × realizedNet / Σ|pnl|`, clamped to `[0,1]` — zero without closed
+history. Only positions still open at the frozen candle E contribute.
+
+| Arm | Asset value | Positive pool |
+| --- | --- | --- |
+| `top_raw` (default) | Signed sum of open endpoint votes | raw > 0 |
+| `top_mean` | Raw divided by pairs with a nonzero vote | raw > 0 |
+| `max_active` | Count of pairs with a nonzero vote | raw > 0 |
+| `top_raw_profit_now` | Signed gated open votes | gated score > 0 |
+| `top_mean_profit_now` | Gated score divided by pairs with a nonzero gated vote | gated score > 0 |
+| `top_raw_profit_now_conf` | Confidence-weighted gated open votes | weighted score > 0 |
+
+The positivity pools mirror the Batch NOW selectors: the vote arms qualify on
+positive raw while ranking by their own quantity, so a top `max_active` asset
+always also carries a positive raw score. The selected `arm` is part of the
+request hash and data fingerprint, so Resume accepts only the original arm.
+Votes persist additive per-pair `profitNow`/`profitNowConf` values; the
+profit-now arms reject shards that lack them, and a changed arm is a new run.
+Discovery estimates extrapolate the sampled sums to N−1 opponents; the mean
+arms divide the extrapolated sums, which reduces to the sampled ratio. Exact
+finalist values sum every opponent.
 
 The scan executes the ordinary full-history `executeBacktest` path with the
 selected strategy, parameters, capital, execution model, exits and sizing.
@@ -226,8 +260,10 @@ them. They currently have no automatic retention sweep.
 `top-raw-scan-{sampling,preflight,execution,engine,routes}.spec.ts` and
 `top-raw-scan-controller.browser.spec.ts` cover input/template limits,
 orientation/symmetric inclusion, 5,000-asset bounded planning, flat denominators,
-exhaustive finalist parity, failures, phase Stop/resume, source/persistence
-failures, authenticated routes and browser persistence/disposal. Execution
+exhaustive finalist parity, per-arm sums/estimates/positivity, profit-parity of
+the endpoint profit vote, profit-arm shard enforcement and selector persistence,
+failures, phase Stop/resume, source/persistence failures, authenticated routes
+and browser persistence/disposal. Execution
 fixtures compare ordinary backtests for long/short/both/combined directions,
 three execution models, overlapping positions, exits and exit overrides.
 The E2E helper uses deterministic transport to exercise real controls, Nasdaq,

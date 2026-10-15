@@ -6,6 +6,7 @@ import type { Sp500TopMeanRouteDeps } from "./sp500-top-mean-vite-routes";
 import { TopRawScanEngine } from "./top-raw-scan-engine";
 import { ScanStore } from "./top-raw-scan-store";
 import { parseScanAssets, scanBudget, validateScanOptions, TOP_RAW_SCAN_MAX_BYTES, type ScanRequest, type ScanStatus } from "./top-raw-scan-contract";
+import { validateScanArm } from "./top-raw-scan-arms";
 
 let active: TopRawScanEngine | null = null;
 let pendingStop: string | null = null;
@@ -17,8 +18,9 @@ export function stopActiveTopRawScan(runId: string | null): boolean {
 export function validateScanRequest(body: unknown): ScanRequest {
     if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("Expected a JSON request object.");
     const input = body as Record<string, unknown>;
-    const allowed = new Set(["runId", "strategyKey", "strategyParams", "backtestSettings", "capitalSettings", "interval", "assetListText", "opponentsPerAsset", "finalistCount", "seed", "workerCount", "useRustEnginePreference", "resume"]);
+    const allowed = new Set(["runId", "strategyKey", "strategyParams", "backtestSettings", "capitalSettings", "interval", "assetListText", "opponentsPerAsset", "finalistCount", "seed", "workerCount", "useRustEnginePreference", "resume", "arm"]);
     for (const key of Object.keys(input)) if (!allowed.has(key)) throw new Error(`Unsupported scan option: ${key}. Historical replay and cap tilt are unavailable.`);
+    validateScanArm(input.arm);
     if (typeof input.runId !== "string" || !isValidRunId(input.runId)) throw new Error("Invalid runId.");
     if (typeof input.strategyKey !== "string" || !Object.hasOwn(strategies, input.strategyKey) || !strategies[input.strategyKey]) throw new Error("A built-in strategy is required.");
     if (typeof input.interval !== "string" || !parseIntervalSeconds(input.interval)) throw new Error("Invalid interval.");

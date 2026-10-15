@@ -1,6 +1,7 @@
 import { canonicalizeLegIdentity, dedupeWithinProviderAliases } from "../synthetic-leg-identity";
 import type { BacktestSettings, StrategyParams } from "../types/strategies";
 import type { CapitalSettings } from "../types/backtest";
+import type { ScanArm } from "./top-raw-scan-arms";
 
 export const TOP_RAW_SCAN_VERSION = "top_raw_scan.v1";
 export const TOP_RAW_SCAN_ORIENTATION = "top_raw_scan_orientation_v1";
@@ -42,22 +43,28 @@ export function parseScanAssets(text: string): { assets: string[]; rawCount: num
 export interface ScanRequest extends ScanOptions {
     runId: string; strategyKey: string; strategyParams: StrategyParams; backtestSettings: BacktestSettings;
     capitalSettings: CapitalSettings; interval: string; assetListText: string; workerCount?: number;
-    useRustEnginePreference?: boolean; resume?: boolean;
+    useRustEnginePreference?: boolean; resume?: boolean; arm?: ScanArm;
 }
 export interface ScanPair { key: string; base: string; quote: string; symbol: string }
-export interface ScanVote { key: string; vote: number; active: number; engine: "typescript" | "rust"; error?: string }
+/** profitNow: signed open-vote count under the causal realized-profit gate;
+ * profitNowConf: the same votes weighted by the closed-history confidence. */
+export interface ScanVote { key: string; vote: number; active: number; engine: "typescript" | "rust"; profitNow?: number; profitNowConf?: number; error?: string }
 export interface ScanRow {
     asset: string; sampledRaw: number; estimatedRaw: number | null; sampledDegree: number;
     evaluatedDegree: number; failedDegree: number; activePositions: number; flatDegree: number; coverageComplete: boolean;
+    activeDegree: number; estimatedActiveDegree: number | null;
+    sampledProfitNow: number; sampledProfitNowActiveDegree: number; sampledProfitNowConf: number;
+    estimatedProfitNow: number | null; estimatedProfitNowActiveDegree: number | null; estimatedProfitNowConf: number | null;
 }
 export interface ScanFinalist {
     asset: string; candidateRank: number; exactRaw: number | null; evaluatedOpponents: number;
-    expectedOpponents: number; failedOpponents: number; complete: boolean;
+    expectedOpponents: number; failedOpponents: number; complete: boolean; exactActiveDegree: number | null;
+    exactProfitNow: number | null; exactProfitNowActiveDegree: number | null; exactProfitNowConf: number | null;
 }
 export interface ScanResult {
     schema: "top_raw_scan.result.v1"; mode: "fast_top_raw"; runId: string; status: ScanPhase;
     cutoff: number; asOf: number; fingerprint: string; universeHash: string; sourceRevisions: Record<string, string>; legEndpoints: Record<string, number>;
-    scoreContract: "unweighted_open_position_sum_v1"; orientationVersion: typeof TOP_RAW_SCAN_ORIENTATION;
+    arm: ScanArm; scoreContract: "unweighted_open_position_sum_v1"; orientationVersion: typeof TOP_RAW_SCAN_ORIENTATION;
     samplingVersion: typeof TOP_RAW_SCAN_SAMPLING; tieVersion: typeof TOP_RAW_SCAN_TIES;
     seedDerivation: "fnv1a32_domain_xor_seed_v1"; requested: ScanOptions; effective: ScanOptions;
     configuration: Pick<ScanRequest, "strategyKey" | "strategyParams" | "backtestSettings" | "capitalSettings" | "interval" | "useRustEnginePreference">;

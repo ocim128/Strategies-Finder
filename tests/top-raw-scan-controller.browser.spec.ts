@@ -35,7 +35,7 @@ async function fixture(run: (controller: TopRawScanController, dom: ReturnType<t
 }
 describe("TOP_RAW browser workflow", () => {
     it("cancels delayed strategy loading without dispatch and resets cancellation for the next Run", async () => fixture(async (controller, dom) => {
-        saveScanPreferences({ enabled: true, assetListText: "AAPL•\nMSFT•", opponentsPerAsset: 1, finalistCount: 1, seed: 1 });
+        saveScanPreferences({ enabled: true, assetListText: "AAPL•\nMSFT•", opponentsPerAsset: 1, finalistCount: 1, seed: 1, arm: "top_raw" });
         controller.initialize();
         const key = state.currentStrategyKey, loader = builtInStrategyLoaders[key]!;
         const strategy = strategyRegistry.get(key)!;
@@ -55,7 +55,7 @@ describe("TOP_RAW browser workflow", () => {
         } finally { finish(strategy); builtInStrategyLoaders[key] = loader; }
     }));
     it("sends a scoped Stop while admission is pending without aborting the Run connection", async () => fixture(async controller => {
-        saveScanPreferences({ enabled: true, assetListText: "AAPL•\nMSFT•", opponentsPerAsset: 1, finalistCount: 1, seed: 1 });
+        saveScanPreferences({ enabled: true, assetListText: "AAPL•\nMSFT•", opponentsPerAsset: 1, finalistCount: 1, seed: 1, arm: "top_raw" });
         controller.initialize(); let runId = "", finish!: (value: Response) => void, runSignal: AbortSignal | null = null;
         const admission = new Promise<Response>(resolve => { finish = resolve; });
         let started!: () => void; const ready = new Promise<void>(resolve => { started = resolve; });
@@ -83,7 +83,7 @@ describe("TOP_RAW browser workflow", () => {
         assert.equal(normalizeScanResult({ schema: "old_top_mean", completed: true }), null);
     }));
     it("rejects HTTP errors without polling nonexistent runs or leaving busy ownership", async () => fixture(async (controller, dom) => {
-        saveScanPreferences({ enabled: true, assetListText: "AAPL•\nMSFT•", opponentsPerAsset: 64, finalistCount: 20, seed: 1 });
+        saveScanPreferences({ enabled: true, assetListText: "AAPL•\nMSFT•", opponentsPerAsset: 64, finalistCount: 20, seed: 1, arm: "top_raw" });
         controller.initialize(); const calls: string[] = [];
         globalThis.fetch = async input => { calls.push(String(input)); return new Response(JSON.stringify({ error: "shared operation busy" }), { status: 409 }); };
         await controller.run(); assert.equal(controller.isBusy(), false); assert.equal(readScanActive(), null);
@@ -93,12 +93,12 @@ describe("TOP_RAW browser workflow", () => {
         const assets = ["AAPL•", "MSFT•", "NVDA•", "AMD•"], options = { opponentsPerAsset: 1, finalistCount: 1, seed: 1 };
         const result: ScanResult = {
             schema: "top_raw_scan.result.v1", mode: "fast_top_raw", runId: "previous_scan", status: "completed", cutoff: 1700014400, asOf: 1700000000,
-            fingerprint: "fixture", universeHash: "fixture", sourceRevisions: {}, legEndpoints: {}, scoreContract: "unweighted_open_position_sum_v1",
+            fingerprint: "fixture", universeHash: "fixture", sourceRevisions: {}, legEndpoints: {}, arm: "top_raw", scoreContract: "unweighted_open_position_sum_v1",
             orientationVersion: "top_raw_scan_orientation_v1", samplingVersion: "top_raw_scan_round_robin_v1", tieVersion: "top_raw_scan_ties_v1", seedDerivation: "fnv1a32_domain_xor_seed_v1",
             requested: options, effective: options, configuration: { strategyKey: state.currentStrategyKey, strategyParams: {}, backtestSettings: {}, capitalSettings: makeCapitalSettings(), interval: "4h" },
             rawCount: 4, canonicalCount: 4, duplicateCount: 0, eligibleAssets: assets, exclusions: [],
-            discovery: assets.map((asset, i) => ({ asset, sampledRaw: i === 0 ? 1 : i === 1 ? -1 : 0, estimatedRaw: i === 0 ? 3 : i === 1 ? -3 : 0, sampledDegree: 1, evaluatedDegree: 1, failedDegree: 0, activePositions: i < 2 ? 1 : 0, flatDegree: i < 2 ? 0 : 1, coverageComplete: true })),
-            finalists: [{ asset: assets[0]!, candidateRank: 1, exactRaw: 1, evaluatedOpponents: 3, expectedOpponents: 3, failedOpponents: 0, complete: true }],
+            discovery: assets.map((asset, i) => ({ asset, sampledRaw: i === 0 ? 1 : i === 1 ? -1 : 0, estimatedRaw: i === 0 ? 3 : i === 1 ? -3 : 0, sampledDegree: 1, evaluatedDegree: 1, failedDegree: 0, activePositions: i < 2 ? 1 : 0, flatDegree: i < 2 ? 0 : 1, coverageComplete: true, activeDegree: i < 2 ? 1 : 0, estimatedActiveDegree: i < 2 ? 3 : 0, sampledProfitNow: 0, sampledProfitNowActiveDegree: 0, sampledProfitNowConf: 0, estimatedProfitNow: 0, estimatedProfitNowActiveDegree: 0, estimatedProfitNowConf: 0 })),
+            finalists: [{ asset: assets[0]!, candidateRank: 1, exactRaw: 1, evaluatedOpponents: 3, expectedOpponents: 3, failedOpponents: 0, complete: true, exactActiveDegree: 3, exactProfitNow: 0, exactProfitNowActiveDegree: 0, exactProfitNowConf: 0 }],
             cutoffTies: [], omittedCutoffTies: [], globalRankingExact: false, bestVerifiedCandidates: [assets[0]!], reason: "highest_score_among_fully_evaluated_candidates_global_ranking_estimated",
             pairCounts: { discovery: 2, refinement: 2, reused: 1, successful: 4, failed: 0 }, engineUsage: { typescript: 4, rust: 0 }, timings: {},
         };
@@ -115,7 +115,7 @@ describe("TOP_RAW browser workflow", () => {
         assert.match(dom.batchBacktestScanResults.innerHTML, /Missing &lt;endpoint&gt; candle/);
         assert.match(dom.batchBacktestScanResults.innerHTML, /AAPL•\+MSFT•/);
         assert.equal(normalizeScanResult({ ...failed, failureDiagnostics: { ...failureDiagnostics, total: 2 } })!.failureDiagnostics, undefined);
-        saveScanResult(result); saveScanPreferences({ ...options, enabled: true, assetListText: assets.join("\n") });
+        saveScanResult(result); saveScanPreferences({ ...options, arm: "top_raw", enabled: true, assetListText: assets.join("\n") });
         controller.initialize();
         assert.match(dom.batchBacktestScanResults.innerHTML, /Estimated leaders/); assert.match(dom.batchBacktestScanResults.innerHTML, /Fully scored candidates/);
         assert.match(dom.batchBacktestScanResults.innerHTML, /global ranking estimated/); assert.equal(dom.batchBacktestScanDownload.disabled, false);
@@ -152,6 +152,30 @@ describe("TOP_RAW browser workflow", () => {
         assert.equal(readScanResult(), null, "reload must not restore the previous run as the failed run's result");
         assert.match(dom.batchBacktestScanProgress.textContent!, /No common endpoint/);
     }));
+    it("persists the ranking arm, sends it on the request and renders older results as raw", async () => fixture(async (controller, dom) => {
+        dom.batchBacktestSymbols.value = "AAPL•\nMSFT•\nNVDA•";
+        controller.initialize();
+        dom.batchBacktestFastTopRaw.checked = true;
+        dom.batchBacktestFastTopRaw.dispatchEvent(new Event("change"));
+        dom.batchBacktestScanArm.value = "top_raw_profit_now";
+        dom.batchBacktestScanArm.dispatchEvent(new Event("input"));
+        assert.equal(readScanPreferences().arm, "top_raw_profit_now");
+        assert.match(dom.batchBacktestScanBudget.textContent!, /ranking by TOP_RAW_PROFIT_NOW/);
+        let submitted: Record<string, unknown> | null = null;
+        globalThis.fetch = async (_input, init) => {
+            submitted = JSON.parse(String(init?.body));
+            return new Response(JSON.stringify({ type: "done", runId: submitted!.runId, phase: "completed", completed: 0, total: 0, message: "done" }) + "\n");
+        };
+        await controller.run();
+        assert.equal(submitted!.arm, "top_raw_profit_now");
+        const older = { status: "completed", reason: "exact_global_ranking", globalRankingExact: true, discovery: [], finalists: [], cutoffTies: [], omittedCutoffTies: [], bestVerifiedCandidates: [], exclusions: [], eligibleAssets: ["AAPL•", "MSFT•"], pairCounts: { discovery: 0, refinement: 0, reused: 0, successful: 0, failed: 0 }, asOf: 1700000000, cutoff: 1700014400, effective: { seed: 1, opponentsPerAsset: 1, finalistCount: 1 }, duplicateCount: 0 } as unknown as ScanResult;
+        renderScanResults(dom.batchBacktestScanResults, older);
+        assert.match(dom.batchBacktestScanResults.innerHTML, /Estimated TOP_RAW/);
+        assert.match(dom.batchBacktestScanResults.innerHTML, /Exact TOP_RAW in eligible universe/);
+        controller.dispose();
+        controller.initialize();
+        assert.equal(dom.batchBacktestScanArm.value, "top_raw_profit_now", "the selected arm restores from preferences");
+    }));
     it("restores active mode, sends scoped Stop, and disposal detaches without cancelling", async () => fixture(async (controller, dom) => {
         let requests: string[] = [];
         globalThis.fetch = async (input, init) => {
@@ -171,7 +195,7 @@ describe("TOP_RAW browser workflow", () => {
     }));
     it("retains every input asset and enables an exportable sync report after failure", async () => fixture(async (controller, dom) => {
         const full = "AAPL•\nMSFT•\nNVDA•";
-        saveScanPreferences({ enabled: true, assetListText: full, opponentsPerAsset: 64, finalistCount: 20, seed: 1 });
+        saveScanPreferences({ enabled: true, assetListText: full, opponentsPerAsset: 64, finalistCount: 20, seed: 1, arm: "top_raw" });
         controller.initialize(); let submissions = 0;
         globalThis.fetch = async (_input, init) => {
             submissions++; const request = JSON.parse(String(init?.body));

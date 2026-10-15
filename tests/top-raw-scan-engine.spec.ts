@@ -11,7 +11,7 @@ import { summarizeScanFailures, SCAN_FAILURE_LIMITS } from "../lib/batch-backtes
 import { withTimeout } from "./helpers/with-timeout";
 import { createScanPopulation } from "../lib/batch-backtest/top-raw-scan-sampling";
 import { readScanStatus, validateScanRequest } from "../lib/batch-backtest/top-raw-scan-vite-routes";
-import type { ScanRequest, ScanVote } from "../lib/batch-backtest/top-raw-scan-contract";
+import type { ScanPair, ScanRequest, ScanVote } from "../lib/batch-backtest/top-raw-scan-contract";
 import type { ScanWorkerTask } from "../lib/batch-backtest/top-raw-scan-worker";
 import { makeBacktestSettings, makeCapitalSettings } from "./helpers/backtest-settings-fixtures";
 
@@ -23,6 +23,9 @@ class FixturePool extends ScanWorkerPool {
     flat = false;
     disjoint = false;
     individual = false;
+    profitNow?: (pair: ScanPair) => number;
+    profitNowConf?: (pair: ScanPair) => number;
+    omitProfitNow = false;
     onTask?: (task: ScanWorkerTask) => void | Promise<void>;
     constructor(private readonly root: string) { super(); }
     override get size() { return 2; }
@@ -35,7 +38,7 @@ class FixturePool extends ScanWorkerPool {
             return Array.from({ length: 300 }, (_, i) => 1700006400 + offset + i * 14400) as T;
         }
         this.calls += task.pairs.length;
-        return task.pairs.map(pair => ({ key: pair.key, vote: this.flat ? 0 : pair.base.includes("3") ? 2 : pair.quote.includes("3") ? -2 : pair.base.includes("1") ? -1 : 0, active: this.flat ? 0 : 2, engine: "typescript", ...(pair.key === this.failKey ? { error: this.failReason } : {}) })) as T;
+        return task.pairs.map(pair => ({ key: pair.key, vote: this.flat ? 0 : pair.base.includes("3") ? 2 : pair.quote.includes("3") ? -2 : pair.base.includes("1") ? -1 : 0, active: this.flat ? 0 : 2, engine: "typescript", ...(this.omitProfitNow ? {} : { profitNow: this.profitNow ? this.profitNow(pair) : 0, profitNowConf: this.profitNowConf ? this.profitNowConf(pair) : 0 }), ...(pair.key === this.failKey ? { error: this.failReason } : {}) })) as T;
     }
     override stop() { this.released = true; }
     override async dispose() { this.stop(); }
@@ -215,6 +218,41 @@ describe("TOP_RAW orchestration and recovery", () => {
         const flat = await new TopRawScanEngine(request("flat"), store, flatPool, root).run();
         assert.equal(flat.phase, "completed"); assert.equal(flat.result!.reason, "no_positive_fully_evaluated_candidates"); assert.deepEqual(flat.result!.bestVerifiedCandidates, []);
     }));
+    it("ranks leaders by the selected arm and enforces profit-now votes only for profit-now arms", async () => fixture(async (root, store) => {
+        const raw = await new TopRawScanEngine(request("arm_raw", { opponentsPerAsset: 64 }), store, new FixturePool(root), root).run();
+        assert.equal(raw.phase, "completed", raw.message); assert.equal(raw.result!.arm, "top_raw");
+        const profitHook = (pair: ScanPair) => pair.base === universe[1] ? 50 : pair.quote === universe[1] ? -50 : 0;
+        const profitPool = new FixturePool(root); profitPool.profitNow = profitHook;
+        const profitReq = request("arm_profit", { arm: "top_raw_profit_now", opponentsPerAsset: 64 });
+        const profit = await new TopRawScanEngine(profitReq, store, profitPool, root).run();
+        assert.equal(profit.phase, "completed", profit.message);
+        assert.equal(profit.result!.arm, "top_raw_profit_now");
+        assert.deepEqual(profit.result!.bestVerifiedCandidates, [universe[1]]);
+        const winner = profit.result!.finalists.find(row => row.asset === universe[1])!;
+        assert.equal(winner.complete, true); assert.equal(winner.exactProfitNow, 50 * (universe.length - 1));
+        // activeDegree counts pairs with a nonzero vote, so mirror the vote mock.
+        const population = createScanPopulation(universe, profitReq.seed);
+        const expectedActive = universe.filter(opponent => opponent !== universe[1]).filter(opponent => {
+            const pair = population.pair(universe[1], opponent);
+            return (pair.base.includes("3") ? 2 : pair.quote.includes("3") ? -2 : pair.base.includes("1") ? -1 : 0) !== 0;
+        }).length;
+        assert.equal(winner.exactActiveDegree, expectedActive);
+        const confPool = new FixturePool(root); confPool.profitNow = profitHook; confPool.profitNowConf = pair => profitHook(pair) / 4;
+        const conf = await new TopRawScanEngine(request("arm_conf", { arm: "top_raw_profit_now_conf", opponentsPerAsset: 64 }), store, confPool, root).run();
+        assert.equal(conf.phase, "completed", conf.message);
+        assert.equal(conf.result!.arm, "top_raw_profit_now_conf");
+        assert.deepEqual(conf.result!.bestVerifiedCandidates, [universe[1]]);
+        assert.equal(conf.result!.finalists.find(row => row.asset === universe[1])!.exactProfitNowConf, 12.5 * (universe.length - 1));
+        const stale = new FixturePool(root); stale.omitProfitNow = true;
+        const rejected = await new TopRawScanEngine(request("arm_profit_stale", { arm: "top_raw_profit_now", opponentsPerAsset: 64 }), store, stale, root).run();
+        assert.equal(rejected.phase, "failed"); assert.match(rejected.message, /Invalid shard coverage/);
+        const rejectedConf = new FixturePool(root); rejectedConf.omitProfitNow = true;
+        const rejectedByConf = await new TopRawScanEngine(request("arm_conf_stale", { arm: "top_raw_profit_now_conf", opponentsPerAsset: 64 }), store, rejectedConf, root).run();
+        assert.equal(rejectedByConf.phase, "failed"); assert.match(rejectedByConf.message, /Invalid shard coverage/);
+        const tolerant = new FixturePool(root); tolerant.omitProfitNow = true;
+        const accepted = await new TopRawScanEngine(request("arm_raw_stale", { opponentsPerAsset: 64 }), store, tolerant, root).run();
+        assert.equal(accepted.phase, "completed", accepted.message);
+    }));
     it("withholds completed rankings for failed discovery and refinement edges", async () => fixture(async (root, store) => {
         for (const phase of ["discovery", "refinement"]) {
             const pool = new FixturePool(root);
@@ -261,7 +299,10 @@ describe("TOP_RAW orchestration and recovery", () => {
     }));
     it("validates API limits and rejects stale replay settings", () => {
         assert.equal(validateScanRequest(request("valid")).seed, 7);
-        for (const patch of [{ horizons: [12] }, { replayMode: "horizon" }, { capTiltWeight: "off" }, { sampleFrom: "2025-01-01" }, { workerCount: 33 }, { resume: "true" }, { runId: "../oops" }, { strategyKey: "constructor" }, { strategyKey: "toString" }, { strategyKey: "__proto__" }]) assert.throws(() => validateScanRequest({ ...request("invalid"), ...patch }));
+        assert.equal(validateScanRequest(request("valid")).arm, undefined);
+        assert.equal(validateScanRequest({ ...request("armed"), arm: "top_raw_profit_now" }).arm, "top_raw_profit_now");
+        assert.equal(validateScanRequest({ ...request("armed"), arm: "top_raw_profit_now_conf" }).arm, "top_raw_profit_now_conf");
+        for (const patch of [{ horizons: [12] }, { replayMode: "horizon" }, { capTiltWeight: "off" }, { sampleFrom: "2025-01-01" }, { workerCount: 33 }, { resume: "true" }, { runId: "../oops" }, { strategyKey: "constructor" }, { strategyKey: "toString" }, { strategyKey: "__proto__" }, { arm: "bogus" }, { arm: 7 }]) assert.throws(() => validateScanRequest({ ...request("invalid"), ...patch }));
     });
     it("restores failed preflight and malformed reservations as terminal failures", async () => fixture(async (root, store) => {
         const req = request("preflight_failure", { assetListText: "MISSING•\nASSET0•" });

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { executeScanPair, scanEndpointVote } from "../lib/batch-backtest/top-raw-scan-execution";
 import { executeBacktest } from "../lib/backtest-executor";
 import { strategies } from "../lib/strategies/library";
-import type { BacktestSettings, OHLCVData, Time } from "../lib/types/strategies";
+import type { BacktestSettings, OHLCVData, Time, Trade } from "../lib/types/strategies";
 import type { ScanRequest } from "../lib/batch-backtest/top-raw-scan-contract";
 import { makeBacktestSettings, makeCapitalSettings } from "./helpers/backtest-settings-fixtures";
 import { rustEngine } from "../lib/rust-engine-client";
@@ -18,10 +18,19 @@ const candles: OHLCVData[] = Array.from({ length: 341 }, (_, i) => {
 const asOf = Number(candles[339]!.time), cutoff = asOf + 14400;
 const request = (settings: BacktestSettings = {}): ScanRequest => ({ runId: "execution", strategyKey: "dema_confirmation", strategyParams: { lookback: 20 }, backtestSettings: makeBacktestSettings(settings), capitalSettings: makeCapitalSettings(), interval: "4h", assetListText: "AAPL•\nMSFT•", opponentsPerAsset: 1, finalistCount: 2, seed: 1, useRustEnginePreference: false });
 describe("TOP_RAW endpoint execution", () => {
-    it("sums every forced endpoint close and excludes real exits", () => {
-        assert.deepEqual(scanEndpointVote([{ type: "long", exitReason: "end_of_data" }, { type: "long", exitReason: "end_of_data" }, { type: "short", exitReason: "end_of_data" }, { type: "long", exitReason: "signal" }, { type: "short", exitReason: "stop_loss" }]), { vote: 1, active: 3 });
-        assert.deepEqual(scanEndpointVote([]), { vote: 0, active: 0 });
-        assert.deepEqual(scanEndpointVote([{ type: "long", exitReason: "time_stop" }]), { vote: 0, active: 0 });
+    it("sums every forced endpoint close, excludes real exits and applies the causal profit-now gate", () => {
+        const trade = (type: "long" | "short", exitReason: Trade["exitReason"], entryTime: number, exitTime?: number, pnl = 0): Pick<Trade, "type" | "exitReason" | "pnl" | "entryTime" | "exitTime"> =>
+            ({ type, exitReason, entryTime: entryTime as Time, exitTime: (exitTime ?? entryTime) as Time, pnl });
+        // Exits at a timestamp count before entries at that timestamp; a vote
+        // applies only when realized net PnL from earlier closed trades > 0.
+        const closedWinner = trade("long", "signal", 100, 200, 50);
+        const earlyOpen = trade("short", "end_of_data", 150);
+        const gatedOpen = trade("long", "end_of_data", 300, undefined, 7);
+        assert.deepEqual(scanEndpointVote([closedWinner, earlyOpen, gatedOpen]), { vote: 0, active: 2, profitNow: 1, profitNowConf: 0.5 });
+        assert.deepEqual(scanEndpointVote([]), { vote: 0, active: 0, profitNow: 0, profitNowConf: 0 });
+        // No closed history: open votes never apply and carry zero confidence.
+        assert.deepEqual(scanEndpointVote([trade("long", "end_of_data", 100, undefined, 50)]), { vote: 1, active: 1, profitNow: 0, profitNowConf: 0 });
+        assert.deepEqual(scanEndpointVote([trade("long", "time_stop", 100, 200, -5)]), { vote: 0, active: 0, profitNow: 0, profitNowConf: 0 });
     });
     it("matches ordinary full configured backtests across directions, exits, sizing and execution models", async () => {
         let referencesWithPositions = 0, referencesWithExits = 0, multiplePositions = 0;
@@ -40,8 +49,11 @@ describe("TOP_RAW endpoint execution", () => {
                         else referencesWithExits++;
                     }
                     if (active) referencesWithPositions++; if (active > 1) multiplePositions++;
+                    const expectedGate = scanEndpointVote(reference.result.trades);
                     const actual = await executeScanPair(pair, req, asOf, cutoff, async () => candles);
                     assert.equal(actual.vote, vote, `${executionModel}/${tradeDirection}/${JSON.stringify(variant)}`); assert.equal(actual.active, active);
+                    assert.equal(actual.profitNow, expectedGate.profitNow, `profitNow ${executionModel}/${tradeDirection}/${JSON.stringify(variant)}`);
+                    assert.ok(actual.profitNowConf !== undefined && Math.abs(actual.profitNowConf - expectedGate.profitNowConf) < 1e-9, `profitNowConf ${executionModel}/${tradeDirection}/${JSON.stringify(variant)}`);
                     assert.equal(actual.engine, "typescript");
                 }
             }

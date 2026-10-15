@@ -8,6 +8,7 @@ import { ScanStore, scanFileRevision, scanHash, type ScanManifest, type ScanRese
 import { parseScanAssets, scanBudget, TOP_RAW_SCAN_ORIENTATION, TOP_RAW_SCAN_SAMPLING, TOP_RAW_SCAN_TIES, type ScanPair, type ScanRequest, type ScanResult, type ScanStatus, type ScanVote, type ScanAssetCoverage } from "./top-raw-scan-contract";
 import { chooseScanFinalists, planScanDiscovery, planScanRefinement, reduceScanDiscovery, reduceScanFinalists } from "./top-raw-scan-sampling";
 import { ScanEndpointCoverage, hasScanEndpointHistory, scanSourceIntervals, scanPrimarySourceInterval, scanSyncReference } from "./top-raw-scan-preflight";
+import { validateScanArm, scanArmLabel, scanArmVoteRequirements, scanArmExactValue, scanArmExactPositive } from "./top-raw-scan-arms";
 import { TOP_RAW_SCAN_SHARD_SIZE } from "./top-raw-scan-contract";
 import { summarizeScanFailures } from "./top-raw-scan-diagnostics";
 
@@ -64,6 +65,7 @@ export class TopRawScanEngine {
         const progress = () => emit({ ...this.status });
         try {
             const parsed = parseScanAssets(this.request.assetListText);
+            const arm = validateScanArm(this.request.arm), voteRequirements = scanArmVoteRequirements(arm);
             const intervalSeconds = parseIntervalSeconds(this.request.interval);
             if (!intervalSeconds) throw new Error("Invalid interval.");
             // Resume is a transport flag; every semantic input remains part of the hash.
@@ -172,7 +174,7 @@ export class TopRawScanEngine {
                 const fingerprint = scanHash({ requestHash, implementationHash, sourceRevisions, asOf, assets, orientation: TOP_RAW_SCAN_ORIENTATION, sampling: TOP_RAW_SCAN_SAMPLING, ties: TOP_RAW_SCAN_TIES });
                 const result: ScanResult = {
                     schema: "top_raw_scan.result.v1", mode: "fast_top_raw", runId: this.request.runId, status: "preflight", cutoff, asOf, fingerprint,
-                    universeHash: scanHash(assets), sourceRevisions, scoreContract: "unweighted_open_position_sum_v1", orientationVersion: TOP_RAW_SCAN_ORIENTATION,
+                    universeHash: scanHash(assets), sourceRevisions, arm, scoreContract: "unweighted_open_position_sum_v1", orientationVersion: TOP_RAW_SCAN_ORIENTATION,
                     samplingVersion: TOP_RAW_SCAN_SAMPLING, tieVersion: TOP_RAW_SCAN_TIES, seedDerivation: "fnv1a32_domain_xor_seed_v1",
                     requested: { opponentsPerAsset: this.request.opponentsPerAsset, finalistCount: this.request.finalistCount, seed: this.request.seed }, effective: budget.effective,
                     configuration: { strategyKey: this.request.strategyKey, strategyParams: this.request.strategyParams, backtestSettings: this.request.backtestSettings, capitalSettings: this.request.capitalSettings, interval: this.request.interval, useRustEnginePreference: this.request.useRustEnginePreference },
@@ -183,11 +185,11 @@ export class TopRawScanEngine {
                 };
                 this.manifest = { schema: "top_raw_scan.manifest.v1", request: this.request, requestHash, implementationHash, cutoff, asOf, evaluationCutoff: asOf + intervalSeconds, assets, sources, result, completedShards: [], status: this.status };
                 await this.checkSources(); await this.checkpoint(); this.checkStop();
-                this.status.message = `${assets.length} eligible assets, ${exclusions.length} exclusions. Frozen evaluation ${new Date(asOf * 1000).toISOString()}.`;
+                this.status.message = `${assets.length} eligible assets, ${exclusions.length} exclusions. Ranking by ${scanArmLabel(arm)}. Frozen evaluation ${new Date(asOf * 1000).toISOString()}.`;
                 emit({ ...this.status, result });
             }
             const manifest = this.manifest, result = manifest.result;
-            delete result.error; result.status = "discovery"; result.globalRankingExact = false; result.bestVerifiedCandidates = [];
+            delete result.error; result.arm = arm; result.status = "discovery"; result.globalRankingExact = false; result.bestVerifiedCandidates = [];
             result.discovery = []; result.finalists = [];
             result.pairCounts = { discovery: 0, refinement: 0, reused: 0, successful: 0, failed: 0 };
             result.failureDiagnostics = summarizeScanFailures([]);
@@ -208,7 +210,9 @@ export class TopRawScanEngine {
                         let records = await this.store.readShard(this.request.runId, index, result.fingerprint);
                         if (manifest.completedShards.includes(index) && !records) throw new Error(`Completed scan shard ${index} is missing.`);
                         const validate = (values: ScanVote[], expected: ScanPair[]) => {
-                            if (values.length !== expected.length || values.some((v, i) => !v || v.key !== expected[i]!.key || !Number.isInteger(v.vote) || !Number.isInteger(v.active) || v.active < 0 || Math.abs(v.vote) > v.active || !["typescript", "rust"].includes(v.engine) || (v.error !== undefined && typeof v.error !== "string"))) throw new Error(`Invalid shard coverage ${index}.`);
+                            if (values.length !== expected.length || values.some((v, i) => !v || v.key !== expected[i]!.key || !Number.isInteger(v.vote) || !Number.isInteger(v.active) || v.active < 0 || Math.abs(v.vote) > v.active || !["typescript", "rust"].includes(v.engine) || (v.error !== undefined && typeof v.error !== "string")
+                                || (v.profitNow !== undefined && !Number.isInteger(v.profitNow)) || (voteRequirements.profitNow && !Number.isInteger(v.profitNow))
+                                || (v.profitNowConf !== undefined && !Number.isFinite(v.profitNowConf)) || (voteRequirements.profitNowConf && !Number.isFinite(v.profitNowConf)))) throw new Error(`Invalid shard coverage ${index}.`);
                         };
                         if (records) { validate(records, batch); for (const record of records) votes.set(record.key, record); }
                         const retry = records ? batch.filter((_, i) => this.request.resume && records![i]!.error) : batch;
@@ -236,7 +240,7 @@ export class TopRawScanEngine {
             await runPairs(discovery, 0, "discovery"); this.checkStop();
             result.discovery = reduceScanDiscovery(manifest.assets, discovery, votes);
             const allPairs = manifest.assets.length * (manifest.assets.length - 1) / 2;
-            const selection = chooseScanFinalists(result.discovery, discovery.length === allPairs ? manifest.assets.length : result.effective.finalistCount, this.request.seed);
+            const selection = chooseScanFinalists(result.discovery, discovery.length === allPairs ? manifest.assets.length : result.effective.finalistCount, this.request.seed, arm);
             result.cutoffTies = selection.cutoffTies; result.omittedCutoffTies = selection.omittedCutoffTies;
             if (result.discovery.every(row => row.coverageComplete)) {
                 const refinement = planScanRefinement(manifest.assets, selection.selected, this.request.seed, new Set(votes.keys()));
@@ -253,8 +257,8 @@ export class TopRawScanEngine {
             for (const vote of votes.values()) if (!vote.error) result.engineUsage[vote.engine]++;
             const complete = result.discovery.every(r => r.coverageComplete) && result.finalists.every(r => r.complete);
             result.globalRankingExact = complete && (discovery.length === allPairs || result.finalists.length === manifest.assets.length);
-            const verified = result.finalists.filter(r => r.complete && r.exactRaw! > 0).sort((a, b) => b.exactRaw! - a.exactRaw!);
-            result.bestVerifiedCandidates = complete && verified.length ? verified.filter(r => r.exactRaw === verified[0]!.exactRaw).map(r => r.asset) : [];
+            const verified = result.finalists.filter(r => scanArmExactPositive(arm, r)).sort((a, b) => (scanArmExactValue(arm, b) ?? -Infinity) - (scanArmExactValue(arm, a) ?? -Infinity));
+            result.bestVerifiedCandidates = complete && verified.length ? verified.filter(r => scanArmExactValue(arm, r) === scanArmExactValue(arm, verified[0]!)).map(r => r.asset) : [];
             result.reason = !complete ? "incomplete_coverage" : !verified.length ? result.globalRankingExact ? "no_positive_candidates" : "no_positive_fully_evaluated_candidates" : result.globalRankingExact ? "exact_global_ranking" : "highest_score_among_fully_evaluated_candidates_global_ranking_estimated";
             result.status = complete ? "completed" : "failed";
             result.timings.totalMs = performance.now() - start;

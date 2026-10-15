@@ -93,4 +93,33 @@ describe("TOP_RAW scan input and bounded sampling", () => {
         const ties = chooseScanFinalists(flat, 3, 3);
         assert.equal(ties.cutoffTies.length, 8); assert.equal(ties.omittedCutoffTies.length, 5);
     });
+    it("accumulates per-arm sums and ranks finalists by the selected arm", () => {
+        const universe = assets(6), seed = 5, options = { opponentsPerAsset: 64, finalistCount: 3, seed };
+        const sample = planScanDiscovery(universe, options), population = createScanPopulation(universe, seed);
+        const votes = new Map<string, ScanVote>();
+        // ASSET2 wins raw votes, ASSET1 wins both profit-now arms. The gated
+        // vote and its confidence are antisymmetric, so the side sign and the
+        // vote sign cancel: each pair contributes a constant to its asset.
+        for (let i = 0; i < universe.length; i++) for (let j = i + 1; j < universe.length; j++) {
+            const pair = population.pair(universe[i]!, universe[j]!);
+            const raw = pair.base === universe[2] ? 3 : pair.quote === universe[2] ? -3 : 1;
+            const gated = pair.base === universe[1] ? 40 : pair.quote === universe[1] ? -40 : pair.base === universe[2] ? -2 : 2;
+            votes.set(pair.key, { key: pair.key, vote: raw, active: Math.abs(raw), engine: "typescript", profitNow: gated, profitNowConf: gated / 4 });
+        }
+        const rows = reduceScanDiscovery(universe, sample, votes);
+        assert.equal(chooseScanFinalists(rows, 1, seed, "top_raw").selected[0]!, universe[2]);
+        assert.equal(chooseScanFinalists(rows, 1, seed, "top_raw_profit_now").selected[0]!, universe[1]);
+        assert.equal(chooseScanFinalists(rows, 1, seed, "top_mean_profit_now").selected[0]!, universe[1]);
+        assert.equal(chooseScanFinalists(rows, 1, seed, "top_raw_profit_now_conf").selected[0]!, universe[1]);
+        const maxActiveRows = reduceScanDiscovery(universe, planScanDiscovery(universe, { opponentsPerAsset: 1, finalistCount: 1, seed }), votes);
+        assert.ok(maxActiveRows.every(row => row.activeDegree <= row.sampledDegree && row.estimatedActiveDegree! <= (universe.length - 1)));
+        const finalist = reduceScanFinalists(universe, [universe[1], universe[2]], seed, votes);
+        const byAsset = new Map(finalist.map(row => [row.asset, row]));
+        assert.ok(byAsset.get(universe[1])!.complete);
+        assert.equal(byAsset.get(universe[1])!.exactProfitNow, 40 * (universe.length - 1));
+        assert.equal(byAsset.get(universe[1])!.exactProfitNowConf, 10 * (universe.length - 1));
+        assert.equal(byAsset.get(universe[1])!.exactProfitNowActiveDegree, universe.length - 1);
+        // Mean arms divide sums; with every pair active the mean equals the raw value.
+        assert.equal(byAsset.get(universe[2])!.exactRaw! / byAsset.get(universe[2])!.exactActiveDegree!, 3);
+    });
 });

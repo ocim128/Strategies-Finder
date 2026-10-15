@@ -9,6 +9,7 @@ import { ServerRunPollLoop } from "../../server-run-poll-loop";
 import { postBatchNdjson } from "../batch-ndjson-post";
 import { requestBatchControl } from "./batch-control-request";
 import { parseScanAssets, scanBudget, validateScanOptions, type ScanRequest, type ScanResult, type ScanStatus, type ScanPreflightDiagnostics } from "../top-raw-scan-contract";
+import { validateScanArm, scanArmLabel, type ScanArm } from "../top-raw-scan-arms";
 import { escapeHtml } from "../../html-escape";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
 import { readScanActive, readScanPreferences, readScanRequest, readScanResult, saveScanActive, saveScanPreferences, saveScanRequest, saveScanResult } from "./top-raw-scan-store";
@@ -37,7 +38,7 @@ export class TopRawScanController {
     initialize(): void {
         const dom = this.getDom(), prefs = readScanPreferences();
         dom.batchBacktestFastTopRaw.checked = prefs.enabled;
-        dom.batchBacktestScanOpponents.value = String(prefs.opponentsPerAsset); dom.batchBacktestScanFinalists.value = String(prefs.finalistCount); dom.batchBacktestScanSeed.value = String(prefs.seed);
+        dom.batchBacktestScanOpponents.value = String(prefs.opponentsPerAsset); dom.batchBacktestScanArm.value = prefs.arm; dom.batchBacktestScanFinalists.value = String(prefs.finalistCount); dom.batchBacktestScanSeed.value = String(prefs.seed);
         if (prefs.enabled && prefs.assetListText) dom.batchBacktestSymbols.value = prefs.assetListText;
         this.result = readScanResult(); this.lastRequest = readScanRequest();
         this.showPreflight(null);
@@ -49,7 +50,7 @@ export class TopRawScanController {
             if (this.busy || this.isOtherBusy()) { dom.batchBacktestFastTopRaw.checked = this.modeWasEnabled; return; }
             this.syncUi(); this.refresh(); this.changed();
         });
-        for (const input of [dom.batchBacktestScanOpponents, dom.batchBacktestScanFinalists, dom.batchBacktestScanSeed]) listen(input, "input", () => this.refresh());
+        for (const input of [dom.batchBacktestScanOpponents, dom.batchBacktestScanArm, dom.batchBacktestScanFinalists, dom.batchBacktestScanSeed]) listen(input, "input", () => this.refresh());
         listen(dom.batchBacktestSymbols, "input", () => { if (!this.busy) { this.showPreflight(null); this.refresh(); } });
         listen(dom.batchBacktestScanRun, "click", () => { void this.run(false); });
         listen(dom.batchBacktestScanResume, "click", () => { void this.run(true); });
@@ -69,10 +70,10 @@ export class TopRawScanController {
         const active = readScanActive();
         if (active) { dom.batchBacktestFastTopRaw.checked = true; this.adopt(active); void this.poll(); }
     }
-    private options() {
+    private options(): ReturnType<typeof validateScanOptions> & { arm: ScanArm } {
         const dom = this.getDom();
         const parse = (text: string) => /^\d+$/.test(text.trim()) ? Number(text) : NaN;
-        return validateScanOptions({ opponentsPerAsset: parse(dom.batchBacktestScanOpponents.value), finalistCount: parse(dom.batchBacktestScanFinalists.value), seed: parse(dom.batchBacktestScanSeed.value) });
+        return { ...validateScanOptions({ opponentsPerAsset: parse(dom.batchBacktestScanOpponents.value), finalistCount: parse(dom.batchBacktestScanFinalists.value), seed: parse(dom.batchBacktestScanSeed.value) }), arm: validateScanArm(dom.batchBacktestScanArm.value) };
     }
     refresh(): void {
         if (this.disposed || this.busy) return;
@@ -82,8 +83,8 @@ export class TopRawScanController {
             const options = this.options();
             saveScanPreferences({ ...options, enabled: this.enabled(), assetListText: dom.batchBacktestSymbols.value });
             if (this.enabled()) {
-                const parsed = parseScanAssets(dom.batchBacktestSymbols.value), budget = scanBudget(parsed.assets.length, options);
-                dom.batchBacktestScanBudget.textContent = `${parsed.assets.length} assets (${parsed.duplicateCount} duplicates); effective opponents ${budget.effective.opponentsPerAsset}, finalists ${budget.effective.finalistCount}; ${budget.discovery.toLocaleString()} discovery pairs, at most ${budget.upper.toLocaleString()} unique pairs. Assets without sufficient local data are excluded; at least two must share the evaluation candle.`;
+                const parsed = parseScanAssets(dom.batchBacktestSymbols.value), options = this.options(), budget = scanBudget(parsed.assets.length, options);
+                dom.batchBacktestScanBudget.textContent = `${parsed.assets.length} assets (${parsed.duplicateCount} duplicates); ranking by ${scanArmLabel(options.arm)}; effective opponents ${budget.effective.opponentsPerAsset}, finalists ${budget.effective.finalistCount}; ${budget.discovery.toLocaleString()} discovery pairs, at most ${budget.upper.toLocaleString()} unique pairs. Assets without sufficient local data are excluded; at least two must share the evaluation candle.`;
             }
         } catch (error) {
             saveScanPreferences({ ...readScanPreferences(), enabled: this.enabled(), assetListText: dom.batchBacktestSymbols.value });
@@ -107,7 +108,7 @@ export class TopRawScanController {
         dom.batchBacktestScanRun.disabled = busy;
         dom.batchBacktestScanResume.disabled = busy || !this.lastRequest || this.result?.status === "completed";
         dom.batchBacktestScanStop.disabled = !this.busy;
-        for (const input of [dom.batchBacktestScanOpponents, dom.batchBacktestScanFinalists, dom.batchBacktestScanSeed]) input.disabled = busy;
+        for (const input of [dom.batchBacktestScanOpponents, dom.batchBacktestScanArm, dom.batchBacktestScanFinalists, dom.batchBacktestScanSeed]) input.disabled = busy;
         if (enabled) dom.batchBacktestSp500TopMeanWorkers.disabled = busy;
         dom.batchBacktestScanCopy.disabled = busy || !(this.result ?? this.preflight); dom.batchBacktestScanDownload.disabled = busy || !(this.result ?? this.preflight);
         dom.batchBacktestScanCopy.textContent = this.preflight && !this.result ? "Copy sync report" : "Copy Result";

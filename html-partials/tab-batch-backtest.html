@@ -218,15 +218,26 @@
 
     <section class="batch-section batch-coordinator-section" aria-label="TOP_MEAN coordinator">
         <div id="batchBacktestScanPanel" hidden>
-            <h3>Fast TOP_RAW Scan</h3>
+            <h3>Fast asset scan</h3>
             <div class="batch-form-grid">
                 <label class="batch-field">Opponents per asset <input class="batch-field-input" id="batchBacktestScanOpponents" type="number" min="1" max="256" step="1" value="64"></label>
+                <div class="batch-field">
+                    <label class="batch-field-label" for="batchBacktestScanArm">Ranking arm</label>
+                    <select class="batch-field-input" id="batchBacktestScanArm">
+                        <option value="top_raw" selected>Raw votes (TOP_RAW NOW)</option>
+                        <option value="top_mean">Mean per active pair (TOP_MEAN NOW)</option>
+                        <option value="max_active">Active pairs (MAX_ACTIVE NOW)</option>
+                        <option value="top_raw_profit_now">Profit-gated open votes (TOP_RAW_PROFIT_NOW)</option>
+                        <option value="top_mean_profit_now">Mean profit-gated open votes (TOP_MEAN_PROFIT_NOW)</option>
+                        <option value="top_raw_profit_now_conf">Confidence-weighted open votes (TOP_RAW_PROFIT_NOW_CONF)</option>
+                    </select>
+                </div>
                 <label class="batch-field">Finalists <input class="batch-field-input" id="batchBacktestScanFinalists" type="number" min="1" max="100" step="1" value="20"></label>
                 <details><summary>Advanced</summary><label>Seed <input class="batch-field-input" id="batchBacktestScanSeed" type="number" min="0" max="4294967295" step="1" value="1"></label></details>
             </div>
             <p id="batchBacktestScanBudget" class="batch-miner-status" aria-live="polite"></p>
             <div class="batch-coordinator-actions">
-                <button class="btn btn-primary" id="batchBacktestScanRun" type="button">Run TOP_RAW Scan</button>
+                <button class="btn btn-primary" id="batchBacktestScanRun" type="button">Run Scan</button>
                 <button class="btn btn-secondary" id="batchBacktestScanResume" type="button" disabled>Resume saved scan</button>
                 <button class="btn btn-danger" id="batchBacktestScanStop" type="button" disabled>Stop</button>
                 <button class="btn btn-secondary" id="batchBacktestScanCopy" type="button" disabled>Copy Result</button>
