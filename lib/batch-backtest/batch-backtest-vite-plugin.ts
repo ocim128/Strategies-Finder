@@ -59,6 +59,7 @@ import { CAP_TILT_WEIGHTS, isActiveCapTiltWeight } from "./cap-tilt-contract";
 import { createEmptyBacktestResult } from "../strategies/backtest/position-stats";
 import { parseOptionalReplayDateWindow } from "./top-mean-date-window";
 import { registerSp500TopMeanRoutes, type BatchOwnerLocks } from "./sp500-top-mean-vite-routes";
+import { registerTopRawScanRoutes, stopActiveTopRawScan } from "./top-raw-scan-vite-routes";
 import { getActiveTopMeanCoordinatorEngine } from "./sp500-top-mean-coordinator-engine";
 import { cleanOldArtifactsAsync, isValidRunId, reconcileInterruptedManifestsOnStartup } from "./sp500-top-mean-artifact-store";
 import { getV8HeapLimitMb, resolveServerHeapWarning } from "../server-heap-guard";
@@ -1509,6 +1510,7 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     const requestedRunId = parseBatchRunId(rawRunId);
     const runWasActive = runOwner !== RUN_OWNER_NONE;
     const analysisWasActive = analysisOwner !== RUN_OWNER_NONE;
+    if (stopActiveTopRawScan(requestedRunId ?? null)) return { ok: true, stopped: true };
 
     if (runWasActive && runOwnerKind === "finder_sweep") {
         if (!runOwnerRunId || requestedRunId !== runOwnerRunId) {
@@ -2247,6 +2249,11 @@ function registerBatchRoutes(middlewares: any): void {
         // simultaneously; that coupling is expressed through the BatchOwnerLocks
         // adapter below instead of reaching across module scope.
     const batchOwnerLocks = createBatchOwnerLocksAdapter();
+        registerTopRawScanRoutes(middlewares, {
+            maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
+            rememberLocalApiOriginFromRequest: (req) => rememberLocalApiOriginFromRequest(req),
+            ownerLocks: batchOwnerLocks,
+        });
         registerSp500TopMeanRoutes(middlewares, {
             maxBodyBytes: FINDER_BATCH_MAX_BODY_BYTES,
             rememberLocalApiOriginFromRequest: (req) => rememberLocalApiOriginFromRequest(req),

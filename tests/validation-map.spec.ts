@@ -30,6 +30,7 @@ const INVENTORY = [
     "tests/batch-backtest-runner.spec.ts",
     "tests/batch-backtest-server-loader-parity.spec.ts",
     "tests/sp500-top-mean-worker.spec.ts",
+    "tests/top-raw-scan-engine.spec.ts",
     "tests/trade-ledger-checker.spec.ts",
     "tests/strategy-manifest-sync.spec.ts",
     "tests/new-strategy-lib-smoke.spec.ts",
@@ -160,6 +161,11 @@ describe("validation plan routing", () => {
         assert.ok(plan.selectedSpecs.includes("tests/finder-server-loader-parity.spec.ts"));
         assert.ok(plan.selectedSpecs.includes("tests/batch-backtest-server-loader-parity.spec.ts"));
     });
+    it("routes Fast TOP_RAW implementation changes to its semantic specs", () => {
+        const plan = planFor(["lib/batch-backtest/top-raw-scan-engine.ts"]);
+        assert.ok(plan.testFilters.includes("top-raw-scan-"));
+        assert.ok(plan.selectedSpecs.includes("tests/top-raw-scan-engine.spec.ts"));
+    });
 
     it("keeps complete match metadata in catalogue order across overlapping rules", () => {
         const changed = [
@@ -232,6 +238,7 @@ describe("validation plan routing", () => {
                 assert.deepEqual(error.issues, [
                     'Rule "batch" filter "batch-" matches zero known specs.',
                     'Rule "batch" filter "sp500-top-mean-" matches zero known specs.',
+                    'Rule "batch" filter "top-raw-scan-" matches zero known specs.',
                     'Rule "batch" filter "trade-ledger-" matches zero known specs.',
                     'Rule "finder" filter "finder-" matches zero known specs.',
                 ]);

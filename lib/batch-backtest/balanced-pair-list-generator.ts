@@ -325,7 +325,7 @@ interface Relationship {
  * decomposition (odd N). The cap is split into full rounds/cycles plus at
  * most ONE partial round/cycle, so the emitted subset is degree-balanced.
  */
-function generateRelationships(n: number, cap: number): Relationship[] {
+export function generateRelationships(n: number, cap: number): Relationship[] {
     if (n < 2 || cap <= 0) return [];
     return n % 2 === 0 ? emitEvenCircle(n, cap) : emitOddWalecki(n, cap);
 }

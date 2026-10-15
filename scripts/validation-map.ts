@@ -130,10 +130,10 @@ export const VALIDATION_RULES: readonly ValidationRule[] = [
     },
     {
         id: "batch",
-        summary: "Batch Backtest module changed; Batch guide and batch-, sp500-top-mean-, and trade-ledger specs select.",
+        summary: "Batch Backtest module changed; Batch guide and batch-, sp500-top-mean-, top-raw-scan-, and trade-ledger specs select.",
         directories: ["lib/batch-backtest/"],
         guides: ["docs/batch-backtest-server-side.md", "docs/trade-ledger.md"],
-        testFilters: ["batch-", "sp500-top-mean-", "trade-ledger-"],
+        testFilters: ["batch-", "sp500-top-mean-", "top-raw-scan-", "trade-ledger-"],
         checks: FOCUSED_JS_CHECKS,
     },
     {

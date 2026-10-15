@@ -1302,3 +1302,34 @@
         transition: none;
     }
 }
+.batch-scan-table-scroll {
+    max-width: 100%;
+    overflow-x: auto;
+    margin: 8px 0 16px;
+}
+
+.batch-scan-table-scroll table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
+.batch-scan-table-scroll th,
+.batch-scan-table-scroll td {
+    padding: 5px 8px;
+    text-align: left;
+    border-bottom: 1px solid var(--border-color, #333);
+}
+
+#batchBacktestScanResults pre {
+    max-height: 240px;
+    overflow: auto;
+    font-size: 11px;
+}
+.batch-scan-sync-report {
+    max-height: 20rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}

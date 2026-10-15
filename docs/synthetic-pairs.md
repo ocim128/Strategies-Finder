@@ -147,6 +147,7 @@ Once synthetic data is loaded as the active chart, these features work normally:
 | Batch Backtest | Works | Replays the current strategy/settings across pasted real or synthetic pairs |
 | OPEN_SCORE USD (Batch) | Works | Historical open-position score replay over Batch synthetic/real pair artifacts |
 | TOP_MEAN (Batch) | Works | Explicit IBKR/crypto pair-list coordinator with historical replay and current snapshot output |
+| Fast TOP_RAW (Batch) | Works | Marked local stock assets; sampled ratios and full finalist scoring at one frozen endpoint; see [scan guide](top-raw-scan.md) |
 | Walk Forward | Works | Operates on active chart data |
 | Monte Carlo | Works | Uses backtest results |
 | Data Mining export | Works | Export CSV/JSON from loaded synthetic data |

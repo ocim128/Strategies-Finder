@@ -27,6 +27,8 @@
             <button class="btn btn-secondary btn-compact" id="batchBacktestClear" type="button">Clear</button>
         </div>
         <div class="param-group">
+            <label><input id="batchBacktestFastTopRaw" type="checkbox"> Fast TOP_RAW (asset list)</label>
+            <p class="batch-section-note">Paste individual stocks, e.g. AAPL•. Estimates scores from sampled opponents, then fully scores leading candidates.</p>
             <label class="param-label" for="batchBacktestSymbols">Pairs</label>
             <textarea class="param-input" id="batchBacktestSymbols" rows="8"
                 placeholder="BTCUSDT&#10;ZEC+APT&#10;PAXGUSDT&#10;TSLAUSDT"></textarea>
@@ -215,6 +217,25 @@
     </section>
 
     <section class="batch-section batch-coordinator-section" aria-label="TOP_MEAN coordinator">
+        <div id="batchBacktestScanPanel" hidden>
+            <h3>Fast TOP_RAW Scan</h3>
+            <div class="batch-form-grid">
+                <label class="batch-field">Opponents per asset <input class="batch-field-input" id="batchBacktestScanOpponents" type="number" min="1" max="256" step="1" value="64"></label>
+                <label class="batch-field">Finalists <input class="batch-field-input" id="batchBacktestScanFinalists" type="number" min="1" max="100" step="1" value="20"></label>
+                <details><summary>Advanced</summary><label>Seed <input class="batch-field-input" id="batchBacktestScanSeed" type="number" min="0" max="4294967295" step="1" value="1"></label></details>
+            </div>
+            <p id="batchBacktestScanBudget" class="batch-miner-status" aria-live="polite"></p>
+            <div class="batch-coordinator-actions">
+                <button class="btn btn-primary" id="batchBacktestScanRun" type="button">Run TOP_RAW Scan</button>
+                <button class="btn btn-secondary" id="batchBacktestScanResume" type="button" disabled>Resume saved scan</button>
+                <button class="btn btn-danger" id="batchBacktestScanStop" type="button" disabled>Stop</button>
+                <button class="btn btn-secondary" id="batchBacktestScanCopy" type="button" disabled>Copy Result</button>
+                <button class="btn btn-secondary" id="batchBacktestScanDownload" type="button" disabled>Download Result</button>
+            </div>
+            <p id="batchBacktestScanProgress" role="status"></p>
+            <div id="batchBacktestScanPreflight" hidden></div>
+            <div id="batchBacktestScanResults"></div>
+        </div>
         <div class="batch-section-heading">
             <h3 class="batch-section-title">TOP_MEAN Coordinator</h3>
             <p class="batch-section-note">Enter a Pairs list to evaluate direct or synthetic IBKR and crypto markets at the current timeframe. Hold until switch includes TOP_RAW_DIRECTIONAL: one long or short position from the strongest absolute raw score (minimum 25% of total pairs). Pair votes start on the third subsequent candle if the pair trade is still open.</p>

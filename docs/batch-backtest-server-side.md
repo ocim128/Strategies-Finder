@@ -1020,3 +1020,13 @@ npm run typecheck
 ..\..\..\node_modules\.bin\esno tests\feature-dom-contracts.spec.ts
 ..\..\..\node_modules\.bin\esno tests\server-worker-entry.spec.ts
 ```
+
+## Fast TOP_RAW asset lists
+
+Batch also supports the default-off **Fast TOP_RAW (asset list)** workflow.
+It uses the existing Pairs/Assets textarea and maintained templates, samples
+opponents, then fully evaluates finalists at one common closed candle. It has
+dedicated result/persistence schemas and shares this feature's authenticated
+routes, single-flight ownership, engine semantics and worker resource policy.
+See [Fast TOP_RAW scans](top-raw-scan.md) for score exactness, input limits,
+source revisions, Stop/reload/resume and measured validation.

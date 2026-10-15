@@ -25,6 +25,7 @@ import { getBatchSymbolTemplate, type BatchSymbolTemplateKey } from "./batch-sym
 import { isBatchResultSortKey } from "./batch-results-sort";
 import type { OpenScoreUsdReplayResult } from "./batch-open-score-usd-replay-engine";
 import { TopMeanController } from "./browser/top-mean-controller";
+import { TopRawScanController } from "./browser/top-raw-scan-controller";
 import { BatchRunController } from "./browser/batch-run-controller";
 import { OpenScoreController } from "./browser/open-score-controller";
 import { BalancedPairListControls } from "./browser/balanced-pair-list-controls";
@@ -176,6 +177,9 @@ export class BatchBacktestService {
         peekDom: () => this.dom,
         onBusyStateChange: () => this.syncPairListControls(),
     });
+    private readonly topRawScan = new TopRawScanController(
+        () => this.getDom(), () => this.isBatchUiBusy(), () => this.syncPairListControls(),
+    );
 
     private getDom(): BatchBacktestDom {
         return this.dom ??= createBatchBacktestDom();
@@ -183,7 +187,7 @@ export class BatchBacktestService {
 
     private refreshPairSummary(dom: BatchBacktestDom): void {
         this.updatePairCountDebounced.cancel();
-        if (!this.disposed) this.batchRun.updateSummary(dom);
+        if (!this.disposed) { this.batchRun.updateSummary(dom); this.topRawScan.refresh(); }
     }
 
     public init(): void {
@@ -206,6 +210,7 @@ export class BatchBacktestService {
         this.batchRun.setServerRunActive(this.activeServerRunId !== null);
         this.batchRun.updateSummary(dom);
         this.initialized = true;
+        this.topRawScan.initialize();
         // Reattach to a server-side run that started before page load.
         void this.batchRun.reattachToInProgressServerRun();
         void this.topMean.reattachToInProgressTopMeanRun();
@@ -235,6 +240,7 @@ export class BatchBacktestService {
             }
         });
         this.listen(dom.batchBacktestRunBtn, "click", () => {
+            if (this.topRawScan.enabled()) return;
             this.refreshPairSummary(dom);
             void this.batchRun.runBatch();
         });
@@ -256,6 +262,7 @@ export class BatchBacktestService {
             void this.batchRun.copyBenchmarkPerformance();
         });
         this.listen(dom.batchBacktestOpenScoreUsdBtn, "click", () => {
+            if (this.topRawScan.enabled()) return;
             void this.openScore.run();
         });
         this.listen(dom.batchBacktestCopyOpenScoreUsdBtn, "click", () => {
@@ -373,6 +380,7 @@ export class BatchBacktestService {
             || this.batchRun.isBusy()
             || this.pendingStopPromise !== null
             || this.topMean.isUiOwned()
+            || this.topRawScan.isBusy()
         );
     }
 
@@ -387,13 +395,14 @@ export class BatchBacktestService {
         dom.batchBacktestSymbolTemplate.disabled = busy;
         dom.batchBacktestUseCurrent.disabled = busy;
         dom.batchBacktestClear.disabled = busy;
+        this.topRawScan.syncUi();
         this.resultsView.updateBalancedGeneratorButtons(dom, this.balancedGeneratorLockState());
     }
 
     /** Balanced-generator lock inputs, computed from shared facade state. */
     private balancedGeneratorLockState(): { blocked: boolean; hasResult: boolean } {
         return {
-            blocked: this.isBatchUiBusy(),
+            blocked: this.isBatchUiBusy() || this.topRawScan.enabled(),
             hasResult: this.balanced.hasResult(),
         };
     }
@@ -443,7 +452,7 @@ export class BatchBacktestService {
      * single-flight discipline the rest of the service uses.
      */
     private balancedGeneratorActionGuard(): boolean {
-        return this.isBatchUiBusy();
+        return this.isBatchUiBusy() || this.topRawScan.enabled();
     }
 
     /** Server-side access to the active provenance (Phase 3 Batch run submission). */
@@ -524,6 +533,7 @@ export class BatchBacktestService {
 
     public async runSp500TopMeanCoordinator(): Promise<void> {
         if (this.disposed) return;
+        if (this.topRawScan.enabled()) { await this.topRawScan.run(); return; }
         const dom = this.getDom();
         // Shared single-flight: must run before the first await so rapid clicks
         // cannot stack multiple coordinator POSTs or replace activeTopMeanRunId.
@@ -541,6 +551,7 @@ export class BatchBacktestService {
     }
 
     public async stopSp500TopMeanCoordinator(): Promise<void> {
+        if (this.topRawScan.enabled()) { await this.topRawScan.stop(); return; }
         await this.topMean.stop();
     }
 
@@ -573,6 +584,7 @@ export class BatchBacktestService {
         // its reattach loop wakes without rescheduling), then the Batch
         // reattach poll stops, then pending render work is cancelled.
         this.topMean.dispose();
+        this.topRawScan.dispose();
         this.openScore.dispose();
         this.batchRun.dispose();
     }

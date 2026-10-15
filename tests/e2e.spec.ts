@@ -7,6 +7,8 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { withTimeout } from './helpers/with-timeout';
+import { verifyTopRawScanWorkflow } from './helpers/top-raw-scan-e2e';
+import { createEmptyAssetSwitchSummary } from '../lib/batch-backtest/open-score-replay/asset-switch';
 
 const requireFromHere = createRequire(import.meta.url);
 const vitePackagePath = requireFromHere.resolve('vite/package.json');
@@ -926,16 +928,14 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
             if (Array.from(selector.options).some((option) => option.value === arm)) throw new Error('Retired Batch arm still exposed: ' + arm);
         }
     });
-    await page.evaluate(async () => {
+    await page.evaluate(async (emptyAssetSwitchSummary) => {
         const servicePath = '/lib/batch-backtest/batch-backtest-service.ts';
         const contractPath = '/lib/batch-backtest/open-score-replay/arm-contract.ts';
         const definitionsPath = '/lib/batch-backtest/open-score-replay/causal-arm-constants.ts';
-        const switchPath = '/lib/batch-backtest/open-score-replay/asset-switch.ts';
         const storePath = '/lib/batch-backtest/browser/batch-browser-store.ts';
         const { batchBacktestService: service } = await import(servicePath);
         const { CAUSAL_ARM_FIELDS, REPLAY_ARM_TO_FINDER_ARM } = await import(contractPath);
         const { FINDER_SUPPORT_ARMS_V2 } = await import(definitionsPath);
-        const { createEmptyAssetSwitchSummary } = await import(switchPath);
         const { persistLatestTopMeanResult, readLatestTopMeanResult } = await import(storePath);
         service.init();
         const comparison = { events: 1, topMean: 0.01, randomMean: 0, delta: 0.01, topMedian: 0.01,
@@ -954,7 +954,7 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
                     decisionTime: 1_700_000_000, entryTime: 1_700_000_060, exitTime: 1_700_000_360, horizonBars: 5, direction: 'long', asset: field,
                     selectedReturn: 0.01, controlReturn: 0, delta: 0.01, eligibleCandidates: 6 })) : undefined };
             if (mode === 'asset_switch') {
-                summary.assetSwitch = createEmptyAssetSwitchSummary({ enableCausalArms: true, evaluationCutoffSec: 1_700_001_000 });
+                summary.assetSwitch = structuredClone(emptyAssetSwitchSummary);
                 summary.assetSwitch.trades = CAUSAL_ARM_FIELDS.map((field: string) => ({ arm: field, asset: field, decisionTimeSec: 1_700_000_000,
                     entryTimeSec: 1_700_000_060, entryPrice: 100, exitTimeSec: 1_700_000_360, exitPrice: 101, holdingDurationSec: 300,
                     netPnl: 10, entryCost: 0, exitCost: 0, status: 'closed' }));
@@ -1038,7 +1038,7 @@ const verifyBatchCausalArms = async (page: Page): Promise<void> => {
                 if (mode === 'horizon' ? !recovered.horizons[0].armComparisons[REPLAY_ARM_TO_FINDER_ARM[field]] : !recovered.assetSwitch.arms[field]) throw new Error('Batch causal summary lost on reload');
             }
         }
-    });
+    }, createEmptyAssetSwitchSummary({ enableCausalArms: true, evaluationCutoffSec: 1_700_001_000 }));
     console.log('Batch causal arm selectors, details and saved results passed.');
     await page.evaluate(async () => {
         const servicePath = '/lib/batch-backtest/batch-backtest-service.ts';
@@ -1988,6 +1988,7 @@ async function runTest() {
             await verifyRankingCards(page);
             await verifyFinderWorkspace(page);
             await verifyBatchCausalArms(page);
+            await verifyTopRawScanWorkflow(page);
             await verifyMonteCarlo(page);
 
             console.log('Performing layout verification...');
