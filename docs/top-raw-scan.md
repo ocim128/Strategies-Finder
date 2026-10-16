@@ -153,7 +153,7 @@ diagnostics. An unexpected pair failure makes coverage incomplete and withholds
 a completed ranking. Partial rows remain available for diagnosis.
 
 The **Estimated leaders** and **Fully scored candidates** tables are separate,
-with 100 rows per page. Discovery estimates stay frozen during refinement.
+with 100 rows per page, and both order rows by the selected arm's value. Discovery estimates stay frozen during refinement.
 Each finalist is evaluated against every other eligible stock, reusing sampled
 votes and counting finalist-finalist relationships once. Only complete
 N−1-opponent coverage earns **Exact score in eligible universe**. Candidate rank
@@ -196,7 +196,10 @@ including explicitly supplied historical replay options, fail validation.
 Shared Batch/TOP_MEAN/Finder-sweep ownership is reserved before asynchronous
 preflight. Stop is scoped to its runId; a preownership Stop tombstone prevents
 a delayed Run from starting. A matching generic Batch Stop also routes to the
-scan without releasing ownership before workers finish.
+scan without releasing ownership before workers finish. The engine logs run
+admission, preflight, phase-completion and terminal lines to the server
+console prefixed `[top-raw-scan <runId>]`; artifacts remain the score and
+coverage source of truth.
 
 Phases are preflight, discovery, refinement, completed, interrupted and failed.
 Run streams bounded NDJSON status events; status supports reload/stream-loss
@@ -247,8 +250,13 @@ Resume retains E and refuses changed source revisions. Failed coverage continues
 to withhold a completed ranking.
 
 Browser keys use the versioned `playground_top_raw_scan_{preferences,active,
-request,result}` persisted-JSON contracts. Absent/invalid older preferences
+request,result}` persisted-JSON contracts. Preference writes are debounced and
+flushed on pagehide, so reload keeps the entered list without a localStorage
+write per keystroke. Absent/invalid older preferences
 restore mode off and validated defaults; results are normalized defensively.
+A terminal result that is missing locally, for example after a localStorage
+quota failure, is reported in the progress line and re-fetched from the saved
+run's server result at startup.
 Starting a different run clears the prior saved result, including when the new
 run fails before producing scores, so reload/export cannot present an older ranking.
 Legacy TOP_MEAN schemas/keys are untouched. Server artifacts are local durable

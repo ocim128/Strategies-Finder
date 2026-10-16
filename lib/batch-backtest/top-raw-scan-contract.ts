@@ -45,6 +45,9 @@ export interface ScanRequest extends ScanOptions {
     capitalSettings: CapitalSettings; interval: string; assetListText: string; workerCount?: number;
     useRustEnginePreference?: boolean; resume?: boolean; arm?: ScanArm;
 }
+/** Fields pair execution consumes. Shard tasks send only this subset, so the
+ * request text and run identity are never re-cloned per shard message. */
+export type ScanExecutionRequest = Pick<ScanRequest, "strategyKey" | "strategyParams" | "backtestSettings" | "capitalSettings" | "interval" | "useRustEnginePreference">;
 export interface ScanPair { key: string; base: string; quote: string; symbol: string }
 /** profitNow: signed open-vote count under the causal realized-profit gate;
  * profitNowConf: the same votes weighted by the closed-history confidence. */

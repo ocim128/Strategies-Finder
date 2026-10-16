@@ -210,6 +210,21 @@ describe("TOP_RAW orchestration and recovery", () => {
         assert.deepEqual(recovered.result!.finalists, result.finalists);
         assert.equal(disk.schema, "top_raw_scan.result.v1"); assert.ok(!JSON.stringify(disk).includes('"trades"'));
     }));
+    it("sends workers the slim execution request without asset text or run identity", async () => fixture(async (root, store) => {
+        const seen: Array<Record<string, unknown>> = [], pool = new FixturePool(root);
+        pool.onTask = task => { if (task.type === "pairs") seen.push(task.request as Record<string, unknown>); };
+        const status = await new TopRawScanEngine(request("slim_request"), store, pool, root).run();
+        assert.equal(status.phase, "completed", status.message);
+        assert.ok(seen.length > 0);
+        for (const executionRequest of seen) {
+            assert.equal(executionRequest.assetListText, undefined);
+            assert.equal(executionRequest.runId, undefined);
+            assert.equal(executionRequest.workerCount, undefined);
+            assert.equal(executionRequest.strategyKey, "dema_confirmation");
+            assert.equal(executionRequest.interval, "4h");
+            assert.equal(executionRequest.useRustEnginePreference, false);
+        }
+    }));
     it("marks exhaustive mode global exact and handles flat/no-positive results", async () => fixture(async (root, store) => {
         const pool = new FixturePool(root), status = await new TopRawScanEngine(request("all", { opponentsPerAsset: 64 }), store, pool, root).run();
         assert.equal(status.result!.globalRankingExact, true); assert.equal(status.result!.finalists.length, 10);

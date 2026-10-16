@@ -5,7 +5,7 @@ import { canonicalizeLegIdentity } from "../synthetic-leg-identity";
 import { enumerateSp500Pairs } from "./sp500-pair-enumerator";
 import { ScanWorkerPool, ScanPoolStoppedError } from "./top-raw-scan-pool";
 import { ScanStore, scanFileRevision, scanHash, type ScanManifest, type ScanReservation } from "./top-raw-scan-store";
-import { parseScanAssets, scanBudget, TOP_RAW_SCAN_ORIENTATION, TOP_RAW_SCAN_SAMPLING, TOP_RAW_SCAN_TIES, type ScanPair, type ScanRequest, type ScanResult, type ScanStatus, type ScanVote, type ScanAssetCoverage } from "./top-raw-scan-contract";
+import { parseScanAssets, scanBudget, TOP_RAW_SCAN_ORIENTATION, TOP_RAW_SCAN_SAMPLING, TOP_RAW_SCAN_TIES, type ScanExecutionRequest, type ScanPair, type ScanRequest, type ScanResult, type ScanStatus, type ScanVote, type ScanAssetCoverage } from "./top-raw-scan-contract";
 import { chooseScanFinalists, planScanDiscovery, planScanRefinement, reduceScanDiscovery, reduceScanFinalists } from "./top-raw-scan-sampling";
 import { ScanEndpointCoverage, hasScanEndpointHistory, scanSourceIntervals, scanPrimarySourceInterval, scanSyncReference } from "./top-raw-scan-preflight";
 import { validateScanArm, scanArmLabel, scanArmVoteRequirements, scanArmExactValue, scanArmExactPositive } from "./top-raw-scan-arms";
@@ -13,6 +13,7 @@ import { TOP_RAW_SCAN_SHARD_SIZE } from "./top-raw-scan-contract";
 import { summarizeScanFailures } from "./top-raw-scan-diagnostics";
 
 const SHARD_SIZE = TOP_RAW_SCAN_SHARD_SIZE;
+const errorText = (error: unknown): string => error instanceof Error ? error.message : String(error);
 export class TopRawScanEngine {
     private stopped = false;
     private halted = false;
@@ -25,10 +26,41 @@ export class TopRawScanEngine {
         this.status = { runId: request.runId, phase: "preflight", completed: 0, total: 0, message: "Checking local assets and data." };
     }
     getStatus(): ScanStatus { return { ...this.status, ...(this.manifest ? { result: this.manifest.result } : {}) }; }
-    stop(): void { this.stopped = true; this.pool.stop(); }
+    stop(): void { this.stopped = true; this.pool.stop(); this.log("stop requested"); }
     private checkStop(): void { if (this.stopped || this.halted) throw new Error("Scan stopped or failed."); }
+    private log(action: string, detail: Record<string, unknown> = {}): void {
+        // Server-side lifecycle evidence: artifacts cover results, but a crash
+        // before terminal persistence or an admission rejection leaves no trace.
+        console.info(`[top-raw-scan ${this.request.runId}] ${action}${Object.keys(detail).length ? ` ${JSON.stringify(detail)}` : ""}`);
+    }
+    /** Concurrent revision stats: identical checks, without serializing
+     * every filesystem round-trip behind the coordinator's event loop. */
+    private async verifySourceRevisions(revisions: ScanManifest["sources"], message: string): Promise<void> {
+        const current = await Promise.all(revisions.map(source => scanFileRevision(source.path)));
+        for (let index = 0; index < current.length; index++) if (current[index] !== revisions[index]!.revision) throw new Error(message);
+    }
     private async checkSources(): Promise<void> {
-        for (const source of this.manifest!.sources) { this.checkStop(); if (await scanFileRevision(source.path) !== source.revision) throw new Error(`Source changed: ${source.asset}. Resume requires the original data snapshot. Start a new Run after syncing.`); }
+        const sources = this.manifest!.sources;
+        for (let start = 0; start < sources.length; start += 256) {
+            this.checkStop();
+            const batch = sources.slice(start, start + 256);
+            const current = await Promise.all(batch.map(source => scanFileRevision(source.path)));
+            for (let index = 0; index < batch.length; index++) if (current[index] !== batch[index]!.revision) throw new Error(`Source changed: ${batch[index]!.asset}. Resume requires the original data snapshot. Start a new Run after syncing.`);
+        }
+    }
+    /** Dispatch per-item units across every pool slot. The first genuine unit
+     * or slot failure halts siblings and outranks the pool's stop sentinel. */
+    private async scatter(count: number, unit: (index: number, slot: number) => Promise<void>): Promise<void> {
+        let next = 0;
+        const failures: unknown[] = [];
+        const outcomes = await Promise.allSettled(Array.from({ length: this.pool.size }, async (_, slot) => {
+            try {
+                while (next < count) { this.checkStop(); const index = next; next++; await unit(index, slot); }
+            } catch (error) { this.halted = true; this.pool.stop(); if (!failures.length) failures.push(error); throw error; }
+        }));
+        if (failures.length) throw failures[0];
+        const rejections = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+        if (rejections.length) throw rejections[0]!.reason;
     }
     private checkpoint(): Promise<void> {
         const snapshot = structuredClone(this.manifest!);
@@ -41,6 +73,7 @@ export class TopRawScanEngine {
         await this.writer.catch(() => undefined);
         if (this.stopped && terminal.phase === "completed") {
             terminal.phase = "interrupted"; terminal.message = "Scan stopped during teardown.";
+            this.log("scan interrupted during teardown");
             if (this.manifest) {
                 const result = this.manifest.result;
                 result.status = "interrupted"; result.reason = "incomplete"; result.error = terminal.message;
@@ -68,6 +101,7 @@ export class TopRawScanEngine {
             const arm = validateScanArm(this.request.arm), voteRequirements = scanArmVoteRequirements(arm);
             const intervalSeconds = parseIntervalSeconds(this.request.interval);
             if (!intervalSeconds) throw new Error("Invalid interval.");
+            this.log("run admitted", { resume: this.request.resume === true, interval: this.request.interval, strategy: this.request.strategyKey, arm, requestedAssets: parsed.assets.length, opponentsPerAsset: this.request.opponentsPerAsset, finalistCount: this.request.finalistCount, seed: this.request.seed });
             // Resume is a transport flag; every semantic input remains part of the hash.
             const { resume: _resume, assetListText: _text, ...semantic } = this.request;
             const requestHash = scanHash({ ...semantic, assets: parsed.assets });
@@ -103,20 +137,32 @@ export class TopRawScanEngine {
                 this.status.total = canonical.length; progress();
                 const catalogPath = resolve(this.baseDir, "price-data", "ibkr", "catalog.json");
                 sources.push({ asset: "catalog", path: catalogPath, revision: await scanFileRevision(catalogPath) });
-                for (const asset of canonical) {
-                    this.checkStop();
+                // Per-asset preflight scatters across every pool slot; results
+                // assemble in canonical order so exclusions stay deterministic.
+                const outcomes: Array<{ ok: true; times: number[]; revisions: ScanManifest["sources"] } | { ok: false; error: unknown } | null> = new Array(canonical.length).fill(null);
+                await this.scatter(canonical.length, async (index, slot) => {
+                    const asset = canonical[index]!;
                     const ticker = canonicalizeLegIdentity(asset)!.scoringAsset;
                     const paths = scanSourceIntervals(asset, this.request.interval).map(interval => resolve(this.baseDir, "price-data", "ibkr", "csv", interval, `${ticker}.csv`));
                     try {
                         const revisions = await Promise.all(paths.map(async path => ({ asset, path, revision: await scanFileRevision(path) })));
-                        const times = await this.pool.task<number[]>(0, { type: "preflight", asset, interval: this.request.interval, cutoff });
+                        const times = await this.pool.task<number[]>(slot, { type: "preflight", asset, interval: this.request.interval, cutoff });
                         details.set(asset, { asset, closedBars: times.length, firstTime: times[0] ?? null, lastTime: times.at(-1) ?? null });
-                        for (const revision of revisions) if (await scanFileRevision(revision.path) !== revision.revision) throw new Error("Source changed during preflight.");
+                        await this.verifySourceRevisions(revisions, "Source changed during preflight.");
                         if (!hasScanEndpointHistory(times, times.at(-1)!)) throw new Error(`Only ${times.length} closed ${this.request.interval} bars; at least 200 are required. Sync a longer source history.`);
-                        coverage.add(times);
-                        endpoints[asset] = times.at(-1)!; assets.push(asset); sources.push(...revisions);
-                    } catch (error) { this.checkStop(); if (!details.has(asset)) details.set(asset, { asset, closedBars: null, firstTime: null, lastTime: null }); exclusions.push({ asset, reason: error instanceof Error ? error.message : String(error) }); }
+                        outcomes[index] = { ok: true, times, revisions };
+                    } catch (error) { this.checkStop(); outcomes[index] = { ok: false, error }; }
                     this.status.completed++; progress();
+                });
+                for (let index = 0; index < canonical.length; index++) {
+                    const asset = canonical[index]!, outcome = outcomes[index];
+                    if (outcome?.ok) {
+                        coverage.add(outcome.times);
+                        endpoints[asset] = outcome.times.at(-1)!; assets.push(asset); sources.push(...outcome.revisions);
+                    } else {
+                        if (!details.has(asset)) details.set(asset, { asset, closedBars: null, firstTime: null, lastTime: null });
+                        exclusions.push({ asset, reason: outcome ? errorText(outcome.error) : "Scan stopped or failed." });
+                    }
                 }
                 const selection = coverage.select();
                 // Price-data problems shrink the scanned universe instead of
@@ -125,19 +171,24 @@ export class TopRawScanEngine {
                 if (selection && !selection.complete) {
                     this.status.message = `Selecting the best-supported common candle across ${assets.length} usable assets.`; progress(); this.checkStop();
                     const staleReason = `Missing a closed ${this.request.interval} candle with 200 bars of history at ${new Date(selection.asOf * 1000).toISOString()}; excluded so the remaining assets can be scanned. Sync/check the source history.`;
-                    const retained: string[] = [];
-                    for (const asset of assets) {
-                        this.checkStop();
+                    const keep = new Array<boolean>(assets.length).fill(false);
+                    await this.scatter(assets.length, async (index, slot) => {
+                        const asset = assets[index]!;
                         let missing = endpoints[asset]! < selection.asOf;
                         if (!missing) {
                             const revisions = sources.filter(source => source.asset === asset);
-                            for (const source of revisions) if (await scanFileRevision(source.path) !== source.revision) throw new Error("Source changed during preflight.");
-                            const times = await this.pool.task<number[]>(0, { type: "preflight", asset, interval: this.request.interval, cutoff });
-                            for (const source of revisions) if (await scanFileRevision(source.path) !== source.revision) throw new Error("Source changed during preflight.");
+                            const verify = () => this.verifySourceRevisions(revisions, "Source changed during preflight.");
+                            await verify();
+                            const times = await this.pool.task<number[]>(slot, { type: "preflight", asset, interval: this.request.interval, cutoff });
+                            await verify();
                             missing = !hasScanEndpointHistory(times, selection.asOf);
                         }
-                        if (missing) exclusions.push({ asset, reason: staleReason });
-                        else retained.push(asset);
+                        keep[index] = !missing;
+                    });
+                    const retained: string[] = [];
+                    for (let index = 0; index < assets.length; index++) {
+                        if (keep[index]) retained.push(assets[index]!);
+                        else exclusions.push({ asset: assets[index]!, reason: staleReason });
                     }
                     const kept = new Set(retained);
                     assets.length = 0; assets.push(...retained);
@@ -148,19 +199,24 @@ export class TopRawScanEngine {
                     this.status.message = "Building sync report; preserving the full asset list."; progress(); this.checkStop();
                     const referenceAsOf = scanSyncReference(Object.values(endpoints), intervalSeconds);
                     const assetsToSync = exclusions.map(row => ({ ...details.get(row.asset)!, asset: row.asset, reason: row.reason }));
-                    if (referenceAsOf !== null) for (const asset of assets) {
-                        this.checkStop();
-                        const detail = details.get(asset)!;
-                        if (detail.lastTime === referenceAsOf) continue;
-                        let missing = detail.lastTime! < referenceAsOf;
-                        if (!missing) {
-                            const revisions = sources.filter(source => source.asset === asset);
-                            for (const source of revisions) if (await scanFileRevision(source.path) !== source.revision) throw new Error("Source changed during sync diagnostics.");
-                            const times = await this.pool.task<number[]>(0, { type: "preflight", asset, interval: this.request.interval, cutoff });
-                            for (const source of revisions) if (await scanFileRevision(source.path) !== source.revision) throw new Error("Source changed during sync diagnostics.");
-                            missing = !hasScanEndpointHistory(times, referenceAsOf);
-                        }
-                        if (missing) assetsToSync.push({ ...detail, reason: `Missing a closed ${this.request.interval} candle with 200 bars of history at ${new Date(referenceAsOf * 1000).toISOString()}. Sync/check the source history.` });
+                    if (referenceAsOf !== null) {
+                        const referenceReason = `Missing a closed ${this.request.interval} candle with 200 bars of history at ${new Date(referenceAsOf * 1000).toISOString()}. Sync/check the source history.`;
+                        const staleReasons = new Map<string, string>();
+                        await this.scatter(assets.length, async (index, slot) => {
+                            const asset = assets[index]!, detail = details.get(asset)!;
+                            if (detail.lastTime === referenceAsOf) return;
+                            let missing = detail.lastTime! < referenceAsOf;
+                            if (!missing) {
+                                const revisions = sources.filter(source => source.asset === asset);
+                                const verify = () => this.verifySourceRevisions(revisions, "Source changed during sync diagnostics.");
+                                await verify();
+                                const times = await this.pool.task<number[]>(slot, { type: "preflight", asset, interval: this.request.interval, cutoff });
+                                await verify();
+                                missing = !hasScanEndpointHistory(times, referenceAsOf);
+                            }
+                            if (missing) staleReasons.set(asset, referenceReason);
+                        });
+                        for (const asset of assets) { const reason = staleReasons.get(asset); if (reason) assetsToSync.push({ ...details.get(asset)!, asset, reason }); }
                     }
                     if (await scanFileRevision(catalogPath) !== sources[0]!.revision) throw new Error("Catalog source changed during preflight.");
                     this.status.preflight = { schema: "top_raw_scan.preflight.v1", runId: this.request.runId, interval: this.request.interval, cutoff,
@@ -186,6 +242,7 @@ export class TopRawScanEngine {
                 this.manifest = { schema: "top_raw_scan.manifest.v1", request: this.request, requestHash, implementationHash, cutoff, asOf, evaluationCutoff: asOf + intervalSeconds, assets, sources, result, completedShards: [], status: this.status };
                 await this.checkSources(); await this.checkpoint(); this.checkStop();
                 this.status.message = `${assets.length} eligible assets, ${exclusions.length} exclusions. Ranking by ${scanArmLabel(arm)}. Frozen evaluation ${new Date(asOf * 1000).toISOString()}.`;
+                this.log("preflight complete", { eligible: assets.length, excluded: exclusions.length, asOf: new Date(asOf * 1000).toISOString(), preflightMs: Math.round(performance.now() - start) });
                 emit({ ...this.status, result });
             }
             const manifest = this.manifest, result = manifest.result;
@@ -197,8 +254,12 @@ export class TopRawScanEngine {
             const discovery = planScanDiscovery(manifest.assets, this.request);
             discoveryPlan = discovery;
             result.pairCounts.discovery = discovery.length;
+            // Shard tasks carry only the execution fields; the asset text and
+            // run identity stay coordinator-side instead of re-cloning per shard.
+            const executionRequest: ScanExecutionRequest = { strategyKey: this.request.strategyKey, strategyParams: this.request.strategyParams, backtestSettings: this.request.backtestSettings, capitalSettings: this.request.capitalSettings, interval: this.request.interval, useRustEnginePreference: this.request.useRustEnginePreference };
             const runPairs = async (pairs: ScanPair[], offset: number, phase: "discovery" | "refinement") => {
                 const phaseStart = performance.now(); let next = 0;
+                const doneShards = new Set(manifest.completedShards);
                 this.status = { runId: this.request.runId, phase, completed: 0, total: pairs.length, message: `${phase}: evaluating frozen relationships.` };
                 result.status = phase;
                 manifest.status = this.status; progress();
@@ -207,8 +268,10 @@ export class TopRawScanEngine {
                     while (next < pairs.length) {
                         this.checkStop(); const begin = next; next += SHARD_SIZE;
                         const batch = pairs.slice(begin, begin + SHARD_SIZE), index = offset + Math.floor(begin / SHARD_SIZE);
-                        let records = await this.store.readShard(this.request.runId, index, result.fingerprint);
-                        if (manifest.completedShards.includes(index) && !records) throw new Error(`Completed scan shard ${index} is missing.`);
+                        // Fresh runs have no shards on disk (admission rejects a
+                        // reused runId), so only resume discovers unlisted shards.
+                        let records = this.request.resume || doneShards.has(index) ? await this.store.readShard(this.request.runId, index, result.fingerprint) : null;
+                        if (doneShards.has(index) && !records) throw new Error(`Completed scan shard ${index} is missing.`);
                         const validate = (values: ScanVote[], expected: ScanPair[]) => {
                             if (values.length !== expected.length || values.some((v, i) => !v || v.key !== expected[i]!.key || !Number.isInteger(v.vote) || !Number.isInteger(v.active) || v.active < 0 || Math.abs(v.vote) > v.active || !["typescript", "rust"].includes(v.engine) || (v.error !== undefined && typeof v.error !== "string")
                                 || (v.profitNow !== undefined && !Number.isInteger(v.profitNow)) || (voteRequirements.profitNow && !Number.isInteger(v.profitNow))
@@ -218,7 +281,7 @@ export class TopRawScanEngine {
                         const retry = records ? batch.filter((_, i) => this.request.resume && records![i]!.error) : batch;
                         if (retry.length) {
                             const used = new Set(retry.flatMap(p => [p.base, p.quote]));
-                            const fresh = await this.pool.task<ScanVote[]>(slot, { type: "pairs", pairs: retry, request: this.request, asOf: manifest.asOf, cutoff: manifest.evaluationCutoff, sources: manifest.sources.filter(s => used.has(s.asset) || s.asset === "catalog"), engineIdentity });
+                            const fresh = await this.pool.task<ScanVote[]>(slot, { type: "pairs", pairs: retry, request: executionRequest, asOf: manifest.asOf, cutoff: manifest.evaluationCutoff, sources: manifest.sources.filter(s => used.has(s.asset) || s.asset === "catalog"), engineIdentity });
                             validate(fresh, retry);
                             const recovered = new Map(fresh.map(vote => [vote.key, vote]));
                             records = records ? records.map(vote => recovered.get(vote.key) ?? vote) : fresh;
@@ -226,7 +289,7 @@ export class TopRawScanEngine {
                             await this.store.saveShard(this.request.runId, index, result.fingerprint, records); this.checkStop();
                         }
                         this.checkStop();
-                        if (!manifest.completedShards.includes(index)) manifest.completedShards.push(index);
+                        if (!doneShards.has(index)) { doneShards.add(index); manifest.completedShards.push(index); }
                         for (const record of records!) votes.set(record.key, record);
                         this.status.completed += batch.length; progress();
                     }
@@ -239,6 +302,7 @@ export class TopRawScanEngine {
                 if (failure) throw failure.reason;
                 result.timings[`${phase}Ms`] = performance.now() - phaseStart;
                 await this.checkpoint();
+                this.log(`${phase} complete`, { pairs: pairs.length, ms: Math.round(result.timings[`${phase}Ms`]!) });
             };
             await runPairs(discovery, 0, "discovery"); this.checkStop();
             result.discovery = reduceScanDiscovery(manifest.assets, discovery, votes);
@@ -268,11 +332,14 @@ export class TopRawScanEngine {
             await this.store.saveResult(result); this.checkStop();
             const terminal: ScanStatus = { ...this.status, phase: result.status, message: result.reason, result };
             manifest.status = terminal; await this.checkpoint(); this.checkStop();
+            this.log("scan terminal", { phase: terminal.phase, reason: result.reason, successful: result.pairCounts.successful, failed: result.pairCounts.failed, totalMs: Math.round(result.timings.totalMs ?? 0) });
             return terminal;
         } catch (error) {
             // Drain outstanding tasks/writers before publishing a terminal state.
             this.halted = true; this.pool.stop(); await this.pool.dispose(); await this.writer.catch(() => undefined);
             const phase = this.stopped ? "interrupted" : "failed", message = error instanceof Error ? error.message : String(error);
+            if (this.stopped) this.log("scan interrupted", { message });
+            else console.error(`[top-raw-scan ${this.request.runId}] scan failed: ${message}`);
             const terminal: ScanStatus = { ...this.status, phase, message };
             if (this.manifest) {
                 const result = this.manifest.result;

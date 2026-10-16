@@ -12,7 +12,7 @@ import { parseScanAssets, scanBudget, validateScanOptions, type ScanRequest, typ
 import { validateScanArm, scanArmLabel, type ScanArm } from "../top-raw-scan-arms";
 import { escapeHtml } from "../../html-escape";
 import type { BatchBacktestDom } from "../batch-backtest-dom";
-import { readScanActive, readScanPreferences, readScanRequest, readScanResult, saveScanActive, saveScanPreferences, saveScanRequest, saveScanResult } from "./top-raw-scan-store";
+import { normalizeScanResult, readScanActive, readScanPreferences, readScanRequest, readScanResult, saveScanActive, saveScanPreferences, saveScanRequest, saveScanResult, type ScanPreferences } from "./top-raw-scan-store";
 import { renderScanResults } from "./top-raw-scan-results-view";
 
 const API = "/api/batch-backtest/top-raw-scan/";
@@ -32,6 +32,8 @@ export class TopRawScanController {
     private legacy: HTMLElement[] = [];
     private legacyVisibility = new Map<HTMLElement, boolean>();
     private modeWasEnabled = false;
+    private pendingPreferences: ScanPreferences | null = null;
+    private preferenceTimer: ReturnType<typeof setTimeout> | null = null;
     constructor(private readonly getDom: () => BatchBacktestDom, private readonly isOtherBusy: () => boolean, private readonly changed: () => void) {}
     isBusy(): boolean { return this.busy; }
     enabled(): boolean { return this.getDom().batchBacktestFastTopRaw.checked; }
@@ -65,10 +67,14 @@ export class TopRawScanController {
             const page = (event.target as HTMLElement).closest<HTMLElement>("[data-scan-page]")?.dataset.scanPage;
             if (page !== undefined && this.result) renderScanResults(dom.batchBacktestScanResults, this.result, Number(page));
         });
+        // Reload must not drop the still-debounced asset list; the original
+        // persistence contract wrote it synchronously on every keystroke.
+        if (typeof window !== "undefined") listen(window, "pagehide", () => this.flushPreferenceSave());
         this.syncUi(); this.refresh();
         if (this.result) renderScanResults(dom.batchBacktestScanResults, this.result);
         const active = readScanActive();
         if (active) { dom.batchBacktestFastTopRaw.checked = true; this.adopt(active); void this.poll(); }
+        else if (!this.result && this.lastRequest) void this.restoreServerResult();
     }
     private options(): ReturnType<typeof validateScanOptions> & { arm: ScanArm } {
         const dom = this.getDom();
@@ -79,17 +85,52 @@ export class TopRawScanController {
         if (this.disposed || this.busy) return;
         const dom = this.getDom();
         if (this.preflight && this.preflightText !== dom.batchBacktestSymbols.value) this.showPreflight(null);
+        const enabled = this.enabled(), text = dom.batchBacktestSymbols.value;
         try {
             const options = this.options();
-            saveScanPreferences({ ...options, enabled: this.enabled(), assetListText: dom.batchBacktestSymbols.value });
-            if (this.enabled()) {
-                const parsed = parseScanAssets(dom.batchBacktestSymbols.value), options = this.options(), budget = scanBudget(parsed.assets.length, options);
+            this.queuePreferenceSave({ ...options, enabled, assetListText: text });
+            if (enabled) {
+                const parsed = parseScanAssets(text), budget = scanBudget(parsed.assets.length, options);
                 dom.batchBacktestScanBudget.textContent = `${parsed.assets.length} assets (${parsed.duplicateCount} duplicates); ranking by ${scanArmLabel(options.arm)}; effective opponents ${budget.effective.opponentsPerAsset}, finalists ${budget.effective.finalistCount}; ${budget.discovery.toLocaleString()} discovery pairs, at most ${budget.upper.toLocaleString()} unique pairs. Assets without sufficient local data are excluded; at least two must share the evaluation candle.`;
             }
         } catch (error) {
-            saveScanPreferences({ ...readScanPreferences(), enabled: this.enabled(), assetListText: dom.batchBacktestSymbols.value });
+            this.queuePreferenceSave({ ...readScanPreferences(), enabled, assetListText: text });
             dom.batchBacktestScanBudget.textContent = error instanceof Error ? error.message : String(error);
         }
+    }
+    /** Preference writes are trailing-debounced: typing or pasting a large
+     * asset list must not serialize the full text into localStorage on every
+     * keystroke. The payload is captured at queue time; later queues win. */
+    private queuePreferenceSave(preferences: ScanPreferences): void {
+        this.pendingPreferences = preferences;
+        if (this.preferenceTimer !== null) clearTimeout(this.preferenceTimer);
+        this.preferenceTimer = setTimeout(() => {
+            this.preferenceTimer = null;
+            if (!this.pendingPreferences) return;
+            saveScanPreferences(this.pendingPreferences); this.pendingPreferences = null;
+        }, 200);
+    }
+    private flushPreferenceSave(): void {
+        if (this.preferenceTimer === null) return;
+        clearTimeout(this.preferenceTimer); this.preferenceTimer = null;
+        if (!this.pendingPreferences) return;
+        saveScanPreferences(this.pendingPreferences); this.pendingPreferences = null;
+    }
+    /** A completed scan whose result missed the localStorage quota still lives
+     * on the server; restore it so reload keeps the ranking and exports. */
+    private async restoreServerResult(): Promise<void> {
+        const runId = this.lastRequest?.runId;
+        if (!runId || this.disposed || this.activeId) return;
+        try {
+            const status = await requestBatchControl<ScanStatus | null>(API + `result?runId=${encodeURIComponent(runId)}`, {}, async response => response.ok ? await response.json() as ScanStatus : null, { signal: this.abort.signal });
+            const result = normalizeScanResult(status?.result ?? null);
+            if (this.disposed || this.activeId || !result || this.result) return;
+            this.result = result;
+            const persisted = saveScanResult(result);
+            renderScanResults(this.getDom().batchBacktestScanResults, result);
+            this.syncUi();
+            this.message(`Restored saved scan result ${runId} from the server${persisted ? "." : "; local persistence failed, use Download Result."}`);
+        } catch { /* Local-only route; without a server there is nothing to restore. */ }
     }
     syncUi(): void {
         if (this.disposed) return;
@@ -145,7 +186,7 @@ export class TopRawScanController {
         if (status.preflight) this.showPreflight(status.preflight);
         if (status.result) {
             this.result = status.result;
-            if (terminal(status)) saveScanResult(this.result);
+            if (terminal(status) && !saveScanResult(this.result)) this.message("Result saved on the server; local persistence failed. Use Download Result to keep a copy.");
             if (terminal(status) || status.phase === "preflight") renderScanResults(this.getDom().batchBacktestScanResults, this.result);
         }
         if (terminal(status)) this.release();
@@ -224,5 +265,5 @@ export class TopRawScanController {
             await requestBatchControl(API + "stop", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ runId }) }, async response => { if (!response.ok) throw new Error(`Stop HTTP ${response.status}`); await response.json(); }, { signal: this.abort.signal });
         } catch (error) { this.message(`Stop failed: ${String(error)}. Retry Stop.`); }
     }
-    dispose(): void { this.disposed = true; this.abort.abort(); this.loop?.abort(); for (const cleanup of this.cleanup.splice(0)) cleanup(); }
+    dispose(): void { this.flushPreferenceSave(); this.disposed = true; this.abort.abort(); this.loop?.abort(); for (const cleanup of this.cleanup.splice(0)) cleanup(); }
 }

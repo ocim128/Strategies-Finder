@@ -41,7 +41,7 @@ export function normalizeScanResult(data: unknown): ScanResult | null {
         failureDiagnostics: normalizeScanFailureDiagnostics(value.failureDiagnostics, value.pairCounts.failed) };
 }
 export function readScanResult(): ScanResult | null { return readPersistedJson({ ...storage("result"), fallback: null, migrate: ({ data, version }) => version === 1 ? normalizeScanResult(data) : null }); }
-export function saveScanResult(data: ScanResult | null): void { writePersistedJson({ ...storage("result"), data }); }
+export function saveScanResult(data: ScanResult | null): boolean { return writePersistedJson({ ...storage("result"), data }); }
 export function saveScanActive(runId: string | null): void { writePersistedJson({ ...storage("active"), data: runId }); }
 export function readScanActive(): string | null { return readPersistedJson({ ...storage("active"), fallback: null, migrate: ({ data, version }) => version === 1 && typeof data === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(data) ? data : null }); }
 export function saveScanRequest(data: ScanRequest): void { writePersistedJson({ ...storage("request"), data }); }

@@ -5,7 +5,7 @@ import { selectClosedCandleWindow } from "../alert-evaluation-window";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { executeScanPair } from "./top-raw-scan-execution";
 import { rustEngine } from "../rust-engine-client";
-import type { ScanPair, ScanRequest, ScanVote } from "./top-raw-scan-contract";
+import type { ScanExecutionRequest, ScanPair, ScanVote } from "./top-raw-scan-contract";
 
 export async function scanSourceRevision(path: string): Promise<string> {
     try { const s = await stat(path); return `${s.size}:${s.mtimeMs}:${s.ctimeMs}`; }
@@ -14,7 +14,7 @@ export async function scanSourceRevision(path: string): Promise<string> {
 export type ScanWorkerTask =
     | { type: "engine_identity"; useRust: boolean }
     | { type: "preflight"; asset: string; interval: string; cutoff: number }
-    | { type: "pairs"; pairs: ScanPair[]; request: ScanRequest; asOf: number; cutoff: number; sources: Array<{ path: string; revision: string }>; engineIdentity?: string };
+    | { type: "pairs"; pairs: ScanPair[]; request: ScanExecutionRequest; asOf: number; cutoff: number; sources: Array<{ path: string; revision: string }>; engineIdentity?: string };
 async function engineIdentity(useRust: boolean): Promise<string> {
     if (!useRust || !await rustEngine.checkHealth()) return "typescript_only";
     return JSON.stringify({ version: rustEngine.version, protocol: rustEngine.protocolVersion, capabilities: [...rustEngine.capabilities].sort(), build: rustEngine.buildProfile });
@@ -35,7 +35,8 @@ export async function processScanWorkerTask(task: ScanWorkerTask): Promise<numbe
             // Rust producer must still match the frozen version/capabilities.
             if (current !== "typescript_only" && current !== task.engineIdentity) throw new Error("Engine version/capability changed during scan.");
         }
-        for (const source of task.sources) if (await scanSourceRevision(source.path) !== source.revision) throw new Error("Source revision changed during execution.");
+        const revisions = await Promise.all(task.sources.map(source => scanSourceRevision(source.path)));
+        if (revisions.some((revision, index) => revision !== task.sources[index]!.revision)) throw new Error("Source revision changed during execution.");
     };
     await check();
     const votes: ScanVote[] = [];

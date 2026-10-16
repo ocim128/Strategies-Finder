@@ -4,7 +4,7 @@ import { parseTimeToUnixSeconds } from "../time-normalization";
 import { computeProfitNowConfidenceWeight } from "./open-score-replay/statistics";
 import { strategies } from "../strategies/library";
 import { loadServerBatchDataset } from "./server-batch-data-loader";
-import type { ScanPair, ScanRequest, ScanVote } from "./top-raw-scan-contract";
+import type { ScanExecutionRequest, ScanPair, ScanVote } from "./top-raw-scan-contract";
 import type { OHLCVData, Trade } from "../types/strategies";
 
 /** All end-of-data positions count, including offsetting/multiple positions.
@@ -50,7 +50,7 @@ export function scanEndpointVote(trades: ReadonlyArray<Pick<Trade, "type" | "exi
     return { vote, active, profitNow, profitNowConf };
 }
 export async function executeScanPair(
-    pair: ScanPair, request: ScanRequest, asOf: number, evaluationCutoff: number,
+    pair: ScanPair, request: ScanExecutionRequest, asOf: number, evaluationCutoff: number,
     load: typeof loadServerBatchDataset = loadServerBatchDataset,
     execute: typeof executeBacktest = executeBacktest,
 ): Promise<ScanVote> {

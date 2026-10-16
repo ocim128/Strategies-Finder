@@ -9,7 +9,9 @@ export function renderScanResults(container: HTMLElement, result: ScanResult, pa
     const rows = [...result.discovery].sort((a, b) => (scanArmEstimatedValue(arm, b) ?? -Infinity) - (scanArmEstimatedValue(arm, a) ?? -Infinity) || a.asset.localeCompare(b.asset));
     const pages = Math.max(1, Math.ceil(rows.length / 100)); page = Math.max(0, Math.min(page, pages - 1));
     const table = (headers: string[], body: string) => `<div class="batch-scan-table-scroll"><table><thead><tr>${headers.map(h => `<th>${h}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></div>`;
-    const candidates = [...result.finalists].sort((a, b) => (b.exactRaw ?? -Infinity) - (a.exactRaw ?? -Infinity) || a.candidateRank - b.candidateRank);
+    // Rank by the selected arm, matching the displayed exact-score column;
+    // raw is only the ordering for the default arm.
+    const candidates = [...result.finalists].sort((a, b) => (scanArmExactValue(arm, b) ?? -Infinity) - (scanArmExactValue(arm, a) ?? -Infinity) || a.candidateRank - b.candidateRank);
     const candidatePage = candidates.length <= 100 ? candidates : candidates.slice(page * 100, (page + 1) * 100);
     const number = (value: number | null) => value === null ? "Unavailable" : Number.isInteger(value) ? String(value) : value.toFixed(2);
     const failures = normalizeScanFailureDiagnostics(result.failureDiagnostics, result.pairCounts.failed);

@@ -2,7 +2,7 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { TopRawScanController } from "../lib/batch-backtest/browser/top-raw-scan-controller";
 import { createFakeBatchBacktestDom } from "./helpers/fake-batch-backtest-dom";
-import { readScanActive, readScanPreferences, readScanResult, saveScanActive, saveScanPreferences, saveScanResult, normalizeScanResult } from "../lib/batch-backtest/browser/top-raw-scan-store";
+import { readScanActive, readScanPreferences, readScanResult, saveScanActive, saveScanPreferences, saveScanRequest, saveScanResult, normalizeScanResult } from "../lib/batch-backtest/browser/top-raw-scan-store";
 import type { ScanResult } from "../lib/batch-backtest/top-raw-scan-contract";
 import { state } from "../lib/state";
 import { strategyRegistry } from "../strategyRegistry";
@@ -159,6 +159,8 @@ describe("TOP_RAW browser workflow", () => {
         dom.batchBacktestFastTopRaw.dispatchEvent(new Event("change"));
         dom.batchBacktestScanArm.value = "top_raw_profit_now";
         dom.batchBacktestScanArm.dispatchEvent(new Event("input"));
+        assert.equal(readScanPreferences().arm, "top_raw", "preference persistence is debounced, not synchronous");
+        await withTimeout(new Promise<void>(resolve => setTimeout(resolve, 250)), 1000, "debounced preference save");
         assert.equal(readScanPreferences().arm, "top_raw_profit_now");
         assert.match(dom.batchBacktestScanBudget.textContent!, /ranking by TOP_RAW_PROFIT_NOW/);
         let submitted: Record<string, unknown> | null = null;
@@ -216,4 +218,49 @@ describe("TOP_RAW browser workflow", () => {
         dom.batchBacktestSymbols.value += "\nGOOG•"; controller.refresh();
         assert.equal(dom.batchBacktestScanPreflight.hidden, true); assert.equal(dom.batchBacktestScanDownload.disabled, true);
     }));
+    it("restores a server-side completed result when the local copy is missing", async () => fixture(async (controller, dom) => {
+        const assets = ["AAPL•", "MSFT•"], options = { opponentsPerAsset: 1, finalistCount: 1, seed: 1 };
+        const result: ScanResult = {
+            schema: "top_raw_scan.result.v1", mode: "fast_top_raw", runId: "server_result", status: "completed", cutoff: 1700014400, asOf: 1700000000,
+            fingerprint: "fixture", universeHash: "fixture", sourceRevisions: {}, legEndpoints: {}, arm: "top_raw", scoreContract: "unweighted_open_position_sum_v1",
+            orientationVersion: "top_raw_scan_orientation_v1", samplingVersion: "top_raw_scan_round_robin_v1", tieVersion: "top_raw_scan_ties_v1", seedDerivation: "fnv1a32_domain_xor_seed_v1",
+            requested: options, effective: options, configuration: { strategyKey: state.currentStrategyKey, strategyParams: {}, backtestSettings: {}, capitalSettings: makeCapitalSettings(), interval: "4h" },
+            rawCount: 2, canonicalCount: 2, duplicateCount: 0, eligibleAssets: assets, exclusions: [],
+            discovery: assets.map((asset, i) => ({ asset, sampledRaw: i === 0 ? 1 : -1, estimatedRaw: i === 0 ? 1 : -1, sampledDegree: 1, evaluatedDegree: 1, failedDegree: 0, activePositions: i === 0 ? 1 : 0, flatDegree: i === 0 ? 0 : 1, coverageComplete: true, activeDegree: i === 0 ? 1 : 0, estimatedActiveDegree: i === 0 ? 1 : 0, sampledProfitNow: 0, sampledProfitNowActiveDegree: 0, sampledProfitNowConf: 0, estimatedProfitNow: 0, estimatedProfitNowActiveDegree: 0, estimatedProfitNowConf: 0 })),
+            finalists: [], cutoffTies: [], omittedCutoffTies: [], globalRankingExact: false, bestVerifiedCandidates: [], reason: "highest_score_among_fully_evaluated_candidates_global_ranking_estimated",
+            pairCounts: { discovery: 2, refinement: 0, reused: 0, successful: 2, failed: 0 }, engineUsage: { typescript: 2, rust: 0 }, timings: {},
+        };
+        saveScanRequest({ runId: "server_result", strategyKey: state.currentStrategyKey, strategyParams: {}, backtestSettings: {}, capitalSettings: makeCapitalSettings(), interval: "4h", assetListText: "AAPL•\nMSFT•", ...options, arm: "top_raw" });
+        let requested = "";
+        globalThis.fetch = async input => {
+            requested = String(input);
+            return new Response(JSON.stringify({ runId: "server_result", phase: "completed", completed: 2, total: 2, message: "exact_global_ranking", result }));
+        };
+        controller.initialize();
+        await withTimeout(new Promise<void>(resolve => setTimeout(resolve, 10)), 1000, "server result restore");
+        assert.match(requested, /top-raw-scan\/result\?runId=server_result/);
+        assert.match(dom.batchBacktestScanResults.innerHTML, /Estimated leaders/);
+        assert.equal(readScanResult()!.runId, "server_result");
+        assert.equal(dom.batchBacktestScanDownload.disabled, false);
+    }));
+    it("orders fully scored candidates by the displayed arm, not always raw", () => {
+        const assets = ["RAWLEAD•", "ACTIVELEAD•"], options = { opponentsPerAsset: 1, finalistCount: 2, seed: 1 };
+        const finalists = [
+            { asset: assets[0]!, candidateRank: 1, exactRaw: 10, evaluatedOpponents: 1, expectedOpponents: 1, failedOpponents: 0, complete: true, exactActiveDegree: 1, exactProfitNow: 0, exactProfitNowActiveDegree: 0, exactProfitNowConf: 0 },
+            { asset: assets[1]!, candidateRank: 2, exactRaw: 1, evaluatedOpponents: 1, expectedOpponents: 1, failedOpponents: 0, complete: true, exactActiveDegree: 9, exactProfitNow: 0, exactProfitNowActiveDegree: 0, exactProfitNowConf: 0 },
+        ];
+        const result = {
+            schema: "top_raw_scan.result.v1", mode: "fast_top_raw", runId: "arm_sort", status: "completed", cutoff: 1700014400, asOf: 1700000000,
+            fingerprint: "fixture", universeHash: "fixture", sourceRevisions: {}, legEndpoints: {}, arm: "max_active", scoreContract: "unweighted_open_position_sum_v1",
+            orientationVersion: "top_raw_scan_orientation_v1", samplingVersion: "top_raw_scan_round_robin_v1", tieVersion: "top_raw_scan_ties_v1", seedDerivation: "fnv1a32_domain_xor_seed_v1",
+            requested: options, effective: options, configuration: { strategyKey: "fixture", strategyParams: {}, backtestSettings: {}, capitalSettings: {}, interval: "4h" },
+            rawCount: 2, canonicalCount: 2, duplicateCount: 0, eligibleAssets: assets, exclusions: [], discovery: [],
+            cutoffTies: [], omittedCutoffTies: [], globalRankingExact: false, bestVerifiedCandidates: [], reason: "exact_global_ranking",
+            pairCounts: { discovery: 0, refinement: 0, reused: 0, successful: 2, failed: 0 }, engineUsage: { typescript: 2, rust: 0 }, timings: {}, finalists,
+        } as unknown as ScanResult;
+        const container = { innerHTML: "" } as unknown as HTMLElement;
+        renderScanResults(container, result);
+        const candidatesSection = container.innerHTML.slice(container.innerHTML.indexOf("Fully scored candidates"));
+        assert.ok(candidatesSection.indexOf("ACTIVELEAD•") < candidatesSection.indexOf("RAWLEAD•"), "max_active leads the table even with a lower raw score");
+    });
 });
