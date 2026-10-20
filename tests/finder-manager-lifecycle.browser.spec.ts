@@ -608,6 +608,78 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("FinderServerSession reattach lifecycle (fresh instances)", () => {
+    it("pages a withheld terminal inventory into the reattach snapshot", async () => {
+        // Regression: an inventory above V8's ~536MB single-string limit cannot
+        // ride inside one /status response. The snapshot reports the count and
+        // withholds the array; the session must page it back so the completed
+        // run still lands in the store with its full re-sort inventory.
+        const settle = async (): Promise<void> => {
+            await new Promise((resolve) => setTimeout(resolve, 0));
+        };
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        const runId = "chunked-run";
+        persistActiveServerRun(runId);
+        const reattach = session.reattachToActiveServerRun(host);
+
+        const rows = [
+            makeCandidate({ threshold: 1 }),
+            makeCandidate({ threshold: 2 }),
+            makeCandidate({ threshold: 3 }),
+        ];
+        mockFetch.resolveFirst({
+            ...terminalDoneSnapshot(runId, []),
+            terminalCandidates: null,
+            terminalCandidateCount: rows.length,
+            terminalInventoryChunked: true,
+        });
+
+        // First page: 2 of 3.
+        await settle();
+        expect(mockFetch.requests[0]?.url).to.contain("/api/finder/terminal-candidates");
+        expect(mockFetch.requests[0]?.url).to.contain(`runId=${runId}`);
+        expect(mockFetch.requests[0]?.url).to.contain("offset=0");
+        mockFetch.resolveFirst({
+            ok: true, runId, offset: 0, total: rows.length, candidates: rows.slice(0, 2),
+        });
+
+        // Second page: the remaining row.
+        await settle();
+        expect(mockFetch.requests[0]?.url).to.contain("offset=2");
+        mockFetch.resolveFirst({
+            ok: true, runId, offset: 2, total: rows.length, candidates: rows.slice(2),
+        });
+
+        await reattach;
+
+        const adopted = host.calls.interpretTerminal.at(-1)?.snapshot;
+        expect(adopted, "the terminal snapshot is still adopted").to.not.equal(undefined);
+        expect(adopted!.terminalCandidates?.map((row) => row.params)).to.deep.equal(rows.map((row) => row.params));
+    });
+
+    it("keeps an adopted run when paging its withheld inventory fails", async () => {
+        // Losing the results is bad; discarding an otherwise finished run is
+        // worse. A page failure must not throw out of the reattach path.
+        const session = new FinderServerSession();
+        const host = makeRecordingSessionHost();
+        const runId = "chunked-run-failed";
+        persistActiveServerRun(runId);
+        const reattach = session.reattachToActiveServerRun(host);
+        mockFetch.resolveFirst({
+            ...terminalDoneSnapshot(runId, []),
+            terminalCandidates: null,
+            terminalCandidateCount: 5,
+            terminalInventoryChunked: true,
+        });
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        mockFetch.resolveFirst({ ok: false, error: "boom" }, 500);
+
+        await reattach;
+        const adopted = host.calls.interpretTerminal.at(-1)?.snapshot;
+        expect(adopted?.terminalCandidates).to.equal(null);
+        expect(host.calls.status.at(-1)).to.contain("Done");
+    });
+
     it("does not clear a newer run's persisted record when an older Stop succeeds", async () => {
         const session = new FinderServerSession();
         persistActiveServerRun("old-run");
@@ -2338,6 +2410,69 @@ describe("Copy Diagnostics availability transitions", () => {
         const completed = await run;
         expect(completed).to.equal(true);
         expect(store.latestResults.results).to.have.length(1);
+        expect(host.calls.availability).to.deep.equal([true]);
+    });
+
+    it("reassembles a chunked terminal inventory from terminal_candidates batches", async () => {
+        // Regression: an inventory above V8's ~536MB single-string limit cannot
+        // be one `done.candidates` array. The server streams bounded
+        // `terminal_candidates` batches first, then a `done` that only reports
+        // the count. The workflow must rebuild the full inventory from them.
+        const host = makeRecordingRunHost();
+        const session = new FinderServerSession();
+        const store = new FinderResultStore(() => {});
+        const strategy = makeFakeStrategy("Universe Test");
+        const options: any = {
+            scope: "symbol_universe",
+            mode: "random",
+            topN: 2,
+            universe: { symbols: ["AAA"], sortPriority: [], minActiveSymbols: 1, minTotalTrades: 0, minProfitableActiveRatio: 0 },
+            dataSlice: "all",
+            oosValidationEnabled: false,
+        };
+        const rows = [
+            makeCandidate({ threshold: 1 }, 30),
+            makeCandidate({ threshold: 2 }, 20),
+            makeCandidate({ threshold: 3 }, 10),
+        ];
+        const diagnostics = { runId: "diag-chunked", bottlenecks: [] } as unknown as FinderDiagnostics;
+
+        const run = runUniverseFinder({
+            host, store, session,
+            strategies: {
+                getSelectedStrategies: async () => [],
+                getUniverseSelectedStrategies: async () => [{ key: "universe_test", name: "Universe Test", strategy }],
+                resolveExitStrategyCandidates: async () => undefined,
+            },
+            options,
+            startTime: performance.now(),
+            getUniverseSelectedStrategies: async () => [{ key: "universe_test", name: "Universe Test", strategy }],
+            onDiagnostics: (value) => { expect(value).to.deep.equal(diagnostics); },
+        });
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        mockFetch.resolveFirst(makeNdjsonResponse([
+            { type: "terminal_candidates", runId: session.activeRunId, offset: 0, total: rows.length, candidates: rows.slice(0, 2) },
+            { type: "terminal_candidates", runId: session.activeRunId, offset: 2, total: rows.length, candidates: rows.slice(2) },
+            {
+                type: "done",
+                ok: true,
+                cancelled: false,
+                runId: session.activeRunId,
+                interval: "5m",
+                totals: { loadedSymbols: 1, failedSymbols: 0, survivors: rows.length, oosRemoved: 0 },
+                summary: "done",
+                candidates: [],
+                candidateCount: rows.length,
+                inventoryChunked: true,
+                diagnostics,
+            },
+        ]));
+
+        const completed = await run;
+        expect(completed).to.equal(true);
+        // Every batched row is retained for re-sort, in run order (net profit).
+        expect(store.symbolUniverseRunResults.map((row) => row.params)).to.deep.equal(rows.map((row) => row.params));
+        expect(store.latestResults.results).to.have.length(2);
         expect(host.calls.availability).to.deep.equal([true]);
     });
 

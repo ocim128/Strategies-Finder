@@ -234,6 +234,10 @@ async function runPlugin(args: {
     onEvent?: (event: FinderStreamEvent, events: FinderStreamEvent[]) => void;
     /** Route abort signal (Stop). Omitted when a test never stops the run. */
     abortSignal?: AbortSignal;
+    /** Lowers the inline terminal-inventory budget to force chunking. */
+    terminalInventoryInlineMaxChars?: number;
+    /** Lowers the per-batch budget to get several batches from a small run. */
+    terminalInventoryChunkChars?: number;
 }): Promise<FinderStreamEvent[]> {
     const {
         symbols, datasets, owner,
@@ -247,6 +251,8 @@ async function runPlugin(args: {
         onEvent,
         onUnderlyingLoad,
         abortSignal,
+        terminalInventoryInlineMaxChars,
+        terminalInventoryChunkChars,
     } = args;
     setRunOwnerForTests(owner);
     const loadDataset = loadDatasetImpl ?? (loadDatasetThrows
@@ -281,6 +287,8 @@ async function runPlugin(args: {
                 // real workers cannot see test-registered strategies or the
                 // stub loaders used here.
                 strategyWorkerCount: 1,
+                ...(terminalInventoryInlineMaxChars !== undefined ? { terminalInventoryInlineMaxChars } : {}),
+                ...(terminalInventoryChunkChars !== undefined ? { terminalInventoryChunkChars } : {}),
             },
             (event) => {
                 events.push(event);
@@ -541,8 +549,152 @@ describe("finder server plugin processFinderUniverseRun", () => {
         expect(status.totals?.survivors).to.equal(status.candidateCount);
     });
 
-    it("status returns 404-style error for a mismatched run id", async () => {
-        const owner = 7006;
+    // --- Terminal inventory transport (V8 single-string limit) ---
+    //
+    // A terminal Symbol Universe inventory can exceed V8's ~536MB maximum
+    // string length. `JSON.stringify` then throws `RangeError: Invalid string
+    // length`, the best-effort stream writer swallowed it, and the whole
+    // completed run was lost (the browser saw EOF without a terminal event and
+    // then failed the same way on the /status fallback). These tests pin the
+    // replacement: an oversized inventory ships as bounded
+    // `terminal_candidates` batches and `done` still arrives.
+
+    it("streams an oversized terminal inventory as bounded batches before done", async () => {
+        const owner = 7100;
+        const runId = "run-chunked-inventory";
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner,
+            runId,
+            // Force the chunked path with any non-empty inventory.
+            terminalInventoryInlineMaxChars: 1,
+            // Force several batches from a tiny fixture.
+            terminalInventoryChunkChars: 200,
+        });
+
+        const batches = events.filter(
+            (event): event is Extract<FinderStreamEvent, { type: "terminal_candidates" }> =>
+                event.type === "terminal_candidates",
+        );
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+
+        expect(done.type).to.equal("done", "the terminal event must never be lost");
+        expect(batches.length).to.be.greaterThan(1, "expected several bounded batches");
+        // Every batch precedes the terminal event.
+        expect(events.indexOf(batches[batches.length - 1]!)).to.be.lessThan(events.length - 1);
+
+        const inventory = batches.flatMap((batch) => batch.candidates);
+        expect(inventory.length).to.be.greaterThan(1);
+        // Contiguous, ordered coverage of the whole inventory.
+        let expectedOffset = 0;
+        for (const batch of batches) {
+            expect(batch.offset).to.equal(expectedOffset);
+            expect(batch.runId).to.equal(runId);
+            expect(batch.total).to.equal(inventory.length);
+            expectedOffset += batch.candidates.length;
+        }
+        expect(expectedOffset).to.equal(inventory.length);
+
+        // `done` carries the count but no inventory array (it cannot hold one).
+        expect(done.inventoryChunked).to.equal(true);
+        expect(done.candidates).to.have.length(0);
+        expect(done.candidateCount).to.equal(inventory.length);
+        expect(done.totals.survivors).to.equal(inventory.length);
+        // The reassembled inventory is the same scalar shape as an inline one.
+        for (const candidate of inventory) {
+            assertCandidateIsScalar(candidate);
+        }
+    });
+
+    it("inlines a small terminal inventory and reports it as complete", async () => {
+        const owner = 7101;
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner,
+            runId: "run-inline-inventory",
+        });
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.inventoryChunked).to.equal(false);
+        expect(done.candidateCount).to.equal(done.candidates.length);
+        expect(done.totals.survivors).to.equal(done.candidates.length);
+        expect(events.some((event) => event.type === "terminal_candidates")).to.equal(false);
+    });
+
+    it("withholds an oversized terminal inventory from status and serves it as pages", async () => {
+        const candidate = buildFinderUniverseCandidate({ strategyKey: "chunked", strategyName: "Chunked",
+            params: {}, symbols: [] });
+        const candidates = Array.from({ length: 40 }, (_, threshold) => ({
+            ...candidate,
+            params: { threshold },
+            symbols: [{ symbol: `S${threshold}`, status: "no_trades" as const, barCount: 10 }],
+        }));
+        const state = { runId: "chunked-status", startedAt: 1, finishedAt: 2, interval: "4h",
+            jobKind: "symbol_universe" as const, strategyKeys: ["chunked"], strategyIndex: 0, strategyCount: 1,
+            phase: "done" as const, totalSymbols: 40, progressPercent: 100, statusText: "Done",
+            loadedSymbols: 40, failedSymbols: 0, candidates, candidateInventoryChunked: true,
+            diagnostics: null, cancelled: false, summary: "Done", error: null,
+            totals: { loadedSymbols: 40, failedSymbols: 0, survivors: 40, oosRemoved: 0 } };
+        __testInternals.setRunStateForTests(state);
+        setRunOwnerForTests(0);
+
+        // The status snapshot reports the count instead of an unusable array.
+        const snapshot = handleStatusRequest("chunked-status") as {
+            terminalCandidates: unknown;
+            terminalCandidateCount: number | null | undefined;
+            terminalInventoryChunked: boolean | undefined;
+        };
+        assert.equal(snapshot.terminalCandidates, null);
+        assert.equal(snapshot.terminalCandidateCount, 40);
+        assert.equal(snapshot.terminalInventoryChunked, true);
+
+        // Pages cover the inventory exactly once, in order.
+        const first = __testInternals.handleTerminalCandidatesRequest("chunked-status", "0", "25");
+        if (!first.ok) throw new Error(first.error);
+        assert.equal(first.offset, 0);
+        assert.equal(first.total, 40);
+        assert.equal(first.candidates.length, 25);
+        const second = __testInternals.handleTerminalCandidatesRequest("chunked-status", "25", "25");
+        if (!second.ok) throw new Error(second.error);
+        assert.equal(second.offset, 25);
+        assert.equal(second.candidates.length, 15);
+        assert.deepEqual(
+            [...first.candidates, ...second.candidates].map((row) => row.params),
+            candidates.map((row) => row.params),
+        );
+
+        // Ownership: another run id, or a non-terminal/non-universe run, is 404.
+        assert.equal(__testInternals.handleTerminalCandidatesRequest("other-run", "0", "25").ok, false);
+        assert.equal(__testInternals.handleTerminalCandidatesRequest(null, "0", "25").ok, false);
+
+        // Route-level read pages the same inventory and reports 404 for a
+        // mismatched run id (so a stale tab cannot page another tab's results).
+        const routes = captureFinderRoutes();
+        const okResponse = makeRouteResponse();
+        await routes.get("/api/finder/terminal-candidates")!({
+            method: "GET",
+            url: "/api/finder/terminal-candidates?runId=chunked-status&offset=0&limit=10",
+            socket: { remoteAddress: "127.0.0.1" },
+            headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+        }, okResponse);
+        assert.equal(okResponse.statusCode, 200);
+        const body = JSON.parse(okResponse.body) as { ok: boolean; offset: number; total: number; candidates: unknown[] };
+        assert.equal(body.ok, true);
+        assert.equal(body.total, 40);
+        assert.equal(body.candidates.length, 10);
+
+        const missingResponse = makeRouteResponse();
+        await routes.get("/api/finder/terminal-candidates")!({
+            method: "GET",
+            url: "/api/finder/terminal-candidates?runId=nope&offset=0&limit=10",
+            socket: { remoteAddress: "127.0.0.1" },
+            headers: { host: "127.0.0.1:5173", "sec-fetch-site": "same-origin" },
+        }, missingResponse);
+        assert.equal(missingResponse.statusCode, 404);
+    });
+
+    it("status returns 404-style error for a mismatched run id", async () => {        const owner = 7006;
         await runPlugin({
             symbols: ["UP", "DOWN"],
             datasets: upDownDatasets(),
@@ -2193,6 +2345,7 @@ describe("finder server plugin route-level authorization (audit Finding 1)", () 
         { path: "/api/finder/arm-performance-run", method: "POST" },
         { path: "/api/finder/stop", method: "POST" },
         { path: "/api/finder/status", method: "GET" },
+        { path: "/api/finder/terminal-candidates", method: "GET" },
         { path: "/api/finder/arm-performance-diagnostics", method: "GET" },
         { path: "/api/finder/invalidate-cache", method: "POST" },
     ];

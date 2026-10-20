@@ -5,6 +5,7 @@ import {
     parseJsonPreservingNonFinite,
     safeJsonParse,
     serializeJsonPreservingNonFinite,
+    serializeJsonPreservingNonFiniteChunks,
     stableNormalize,
     stableStringify,
 } from '../lib/json-utils';
@@ -90,5 +91,89 @@ describe('json-utils: cloneJsonCompatible', () => {
         expect(clone).to.deep.equal(source);
         expect(clone).to.not.equal(source);
         expect(clone.a).to.not.equal(source.a);
+    });
+});
+
+/**
+ * The chunked serializer exists because one `JSON.stringify` of a large Finder
+ * result inventory throws `RangeError: Invalid string length` above V8's
+ * ~536MB single-string limit. These tests pin the two properties that make it
+ * a safe replacement: identical text, and a bounded chunk size.
+ */
+describe('json-utils: chunked non-finite serialization', () => {
+    const joinChunks = (value: unknown, maxChunkChars?: number): { text: string; chunks: string[] } => {
+        const chunks = [...serializeJsonPreservingNonFiniteChunks(value, maxChunkChars)];
+        return { text: chunks.join(''), chunks };
+    };
+
+    const assertSameJson = (value: unknown, maxChunkChars?: number): void => {
+        expect(joinChunks(value, maxChunkChars).text).to.equal(serializeJsonPreservingNonFinite(value));
+    };
+
+    it('matches the string form for primitives and boundary numbers', () => {
+        for (const value of [null, true, false, 0, -0, 1, -1.5, 1e21, -1e-7, '', 'a', 'quote"and\\slash', 'ünïcødé 🚀', '\n\t\u0001']) {
+            assertSameJson(value);
+        }
+    });
+
+    it('matches the string form for arrays, objects, and nesting', () => {
+        assertSameJson([]);
+        assertSameJson([1, 2, 3]);
+        assertSameJson({});
+        assertSameJson({ a: 1, b: 'two', c: [3, { d: null }] });
+        assertSameJson([[[]], [{}], [{ a: [{ b: 1 }] }]]);
+        assertSameJson({ list: Array.from({ length: 50 }, (_v, i) => ({ i, name: `s${i}` })) });
+    });
+
+    it('matches the string form for non-finite numbers at the root and nested', () => {
+        assertSameJson(Number.NaN);
+        assertSameJson(Number.POSITIVE_INFINITY);
+        assertSameJson(Number.NEGATIVE_INFINITY);
+        assertSameJson({ a: Number.NaN, b: Number.POSITIVE_INFINITY, c: Number.NEGATIVE_INFINITY, d: 1 });
+        assertSameJson({ list: [1, Number.NaN, { deep: Number.POSITIVE_INFINITY }] });
+        assertSameJson([Number.NaN, [Number.NEGATIVE_INFINITY]]);
+    });
+
+    it('round-trips non-finite markers through the parser', () => {
+        const { text } = joinChunks({ a: Number.NaN, b: Number.POSITIVE_INFINITY });
+        const parsed = parseJsonPreservingNonFinite(text) as { a: number; b: number };
+        expect(parsed.a).to.be.NaN;
+        expect(parsed.b).to.equal(Number.POSITIVE_INFINITY);
+    });
+
+    it('follows JSON.stringify for toJSON, undefined members, and array holes', () => {
+        assertSameJson({ at: new Date(Date.UTC(2020, 0, 2)) });
+        assertSameJson({ kept: 1, dropped: undefined, alsoDropped: () => 1 });
+        assertSameJson([1, undefined, () => 1, null, 2]);
+        // Sparse arrays serialize holes as null, same as JSON.stringify.
+        assertSameJson([1, , 3]); // eslint-disable-line no-sparse-arrays
+        assertSameJson(undefined);
+    });
+
+    it('throws the JSON.stringify errors for BigInt and circular structures', () => {
+        expect(() => joinChunks({ big: BigInt(1) as unknown })).to.throw(TypeError);
+        const circular: Record<string, unknown> = { name: 'root' };
+        circular.self = circular;
+        expect(() => joinChunks(circular)).to.throw(TypeError, /circular/i);
+    });
+
+    it('splits into bounded chunks that never exceed the requested size', () => {
+        const candidates = Array.from({ length: 400 }, (_v, index) => ({
+            strategyKey: 'ema_confirmation',
+            params: { fastPeriod: index },
+            symbols: Array.from({ length: 5 }, (_s, s) => ({ symbol: `SYM${s}`, netProfit: s * 1.5 })),
+        }));
+        const maxChunkChars = 2048;
+        const { text, chunks } = joinChunks({ type: 'done', candidates }, maxChunkChars);
+        expect(text).to.equal(serializeJsonPreservingNonFinite({ type: 'done', candidates }));
+        expect(chunks.length).to.be.greaterThan(1);
+        // A single chunk is the unit that must stay under V8's string limit.
+        expect(Math.max(...chunks.map((chunk) => chunk.length))).to.be.at.most(maxChunkChars * 2);
+    });
+
+    it('yields one chunk when the payload fits the budget', () => {
+        const { chunks } = joinChunks({ type: 'done', ok: true });
+        expect(chunks).to.have.length(1);
+        expect(chunks[0]).to.equal('{"type":"done","ok":true}');
     });
 });

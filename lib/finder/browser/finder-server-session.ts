@@ -26,9 +26,17 @@ import {
 	type FinderServerRunScope,
 } from "./finder-persistence";
 import type { FinderRunStatusSnapshot } from "../server/finder-stream-types";
-import type { FinderScope } from "../../types/finder";
+import type { FinderScope, FinderUniverseCandidate } from "../../types/finder";
 
 export const FINDER_STATUS_REQUEST_TIMEOUT_MS = 15_000;
+
+/**
+ * Candidates requested per page when reload reattach has to rebuild a terminal
+ * inventory the status snapshot withheld (too large for one JSON string). Kept
+ * in sync with the server's own default page size by intent, not by import:
+ * browser modules must not pull in the Vite server plugin.
+ */
+const FINDER_TERMINAL_CANDIDATE_PAGE_LIMIT = 200;
 
 export type FinderServerJobKind = FinderServerRunScope;
 
@@ -293,6 +301,80 @@ export class FinderServerSession {
 	}
 
 	/**
+	 * Rebuild a terminal inventory the status snapshot withheld because one
+	 * JSON string cannot hold it (`terminalInventoryChunked`).
+	 *
+	 * A terminal Finder inventory can exceed V8's ~536MB single-string limit, so
+	 * `GET /api/finder/status` reports `terminalCandidateCount` and leaves
+	 * `terminalCandidates` null instead of failing to serialize. Paging
+	 * `GET /api/finder/terminal-candidates` keeps every response bounded and
+	 * preserves the documented contract that the terminal Symbol Universe
+	 * snapshot is the authoritative, complete inventory needed by Re-Sort.
+	 *
+	 * Hydration MUTATES the snapshot so every caller keeps the single
+	 * "hydrated terminal snapshot" shape. A failure is logged and leaves
+	 * `terminalCandidates` null: losing results is bad, but discarding an
+	 * otherwise complete run is worse, and the caller still reports the run.
+	 */
+	private async hydrateTerminalInventory(
+		snapshot: FinderRunStatusSnapshot,
+		signal: AbortSignal | undefined,
+	): Promise<void> {
+		if (snapshot.terminalInventoryChunked !== true) return;
+		const total = snapshot.terminalCandidateCount ?? 0;
+		if (!Number.isFinite(total) || total <= 0) return;
+		// Already complete (a server that inlined it anyway): nothing to page.
+		if ((snapshot.terminalCandidates?.length ?? 0) >= total) return;
+		const candidates: FinderUniverseCandidate[] = [];
+		try {
+			let offset = 0;
+			while (offset < total) {
+				const response = await fetch(
+					`/api/finder/terminal-candidates?runId=${encodeURIComponent(snapshot.runId)}`
+					+ `&offset=${offset}&limit=${FINDER_TERMINAL_CANDIDATE_PAGE_LIMIT}`,
+					{ cache: "no-store", signal },
+				);
+				if (!response.ok) throw new Error(`status ${response.status}`);
+				const page = parseJsonPreservingNonFinite(await response.text()) as {
+					ok?: unknown;
+					runId?: unknown;
+					offset?: unknown;
+					total?: unknown;
+					candidates?: unknown;
+				};
+				if (page?.ok !== true || page.runId !== snapshot.runId) {
+					throw new Error("inventory page rejected");
+				}
+				const rows = Array.isArray(page.candidates) ? page.candidates as FinderUniverseCandidate[] : [];
+				if (rows.length === 0) break;
+				for (const row of rows) candidates.push(row);
+				const pageOffset = typeof page.offset === "number" ? page.offset : offset;
+				offset = pageOffset + rows.length;
+			}
+			snapshot.terminalCandidates = candidates;
+			debugLogger.event("finder.server.terminal_inventory_hydrated", {
+				runId: snapshot.runId,
+				candidates: candidates.length,
+				expected: total,
+			});
+			if (candidates.length !== total) {
+				debugLogger.warn("finder.server.terminal_inventory_short", {
+					runId: snapshot.runId,
+					candidates: candidates.length,
+					expected: total,
+				});
+			}
+		} catch (error) {
+			// Stop / a newer run aborts the signal: not a failure worth reporting.
+			if (signal?.aborted === true) return;
+			debugLogger.warn("finder.server.terminal_inventory_page_failed", {
+				runId: snapshot.runId,
+				error: error instanceof Error ? error.message : String(error),
+			});
+		}
+	}
+
+	/**
 	 * Shared "the stream died — recover through the status endpoint" scaffold
 	 * used by every server-backed Finder workflow. It owns the one honest
 	 * decision common to all of them:
@@ -434,6 +516,11 @@ export class FinderServerSession {
 				arms: snapshot.terminalArmPerformanceResults?.length ?? 0,
 			});
 		};
+		if (initial.terminal) {
+			// Complete a withheld terminal inventory before adoption: it was
+			// too large to ride inside one status response.
+			await this.hydrateTerminalInventory(initial, abortController.signal);
+		}
 		applyTerminalSnapshot(initial);
 		if (!initial.terminal && this.isActive(runId)) host.interpretPreview?.(initial);
 
@@ -522,7 +609,7 @@ export class FinderServerSession {
 	 * whose run id does not match as `rejected`; per-request timeouts come
 	 * from `statusRequestTimeoutMs`.
 	 */
-	private runOwnedServerRunStatusPoll(args: {
+	private async runOwnedServerRunStatusPoll(args: {
 		runId: string;
 		abortController: AbortController;
 		/** debugLogger event name for a failed request cycle. */
@@ -578,7 +665,14 @@ export class FinderServerSession {
 				});
 			},
 		});
-		return loop.run();
+		const outcome = await loop.run();
+		// A terminal snapshot whose inventory was withheld (too large for one
+		// JSON string) is completed here, before any caller adopts it, so both
+		// stream recovery and reload reattach receive one hydrated snapshot.
+		if (outcome.kind === "terminal") {
+			await this.hydrateTerminalInventory(outcome.snapshot, abortController.signal);
+		}
+		return outcome;
 	}
 
 	private setStatusHost(host: { setStatus(text: string): void }, text: string): void {

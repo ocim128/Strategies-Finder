@@ -26,7 +26,7 @@ import {
 } from "../lib/ibkr-data/ibkr-data-vite-plugin";
 import type { IbkrSyncRunSnapshot } from "../lib/ibkr-data/ibkr-data-stream-types";
 import { isAllowedLocalRequest } from "../lib/local-route-authorization";
-import { beginNdjsonStream, HttpStatusError } from "../lib/vite-http-utils";
+import { beginNdjsonStream, HttpStatusError, sendJson } from "../lib/vite-http-utils";
 import type { OHLCVData } from "../lib/types/strategies";
 import { appendUniqueIbkrSymbols, findStaleIbkrSymbols } from "../lib/ibkr-data/ibkr-stale-symbols";
 
@@ -649,6 +649,98 @@ describe("ibkr resolveFromCatalog", () => {
     });
 });
 
+describe("sendJson bounded body writing", () => {
+    // `sendJson` is shared by every local JSON route, so its behavior for an
+    // ordinary payload must not change: ONE native `JSON.stringify` result,
+    // ended in ONE call. Chunked writing is only the fallback for a body V8
+    // refuses to make into a single string (`RangeError: Invalid string length`
+    // above ~536MB), which used to lose an entire completed Finder run.
+    type Captured = {
+        writes: string[];
+        statusCode: number;
+        headers: Record<string, string>;
+        ended: string | null;
+        endCalls: number;
+        write: (body: string) => boolean;
+        end: (body: string) => void;
+        setHeader: (name: string, value: string) => void;
+    };
+
+    function makeFakeRes(withWrite = true): Captured {
+        const captured: Captured = {
+            writes: [],
+            statusCode: 0,
+            headers: {},
+            ended: null,
+            endCalls: 0,
+            write: (body: string) => { captured.writes.push(body); return true; },
+            end: (body: string) => {
+                captured.endCalls += 1;
+                captured.ended = (captured.ended ?? "") + body;
+            },
+            setHeader: (name: string, value: string) => { captured.headers[name] = value; },
+        };
+        if (!withWrite) {
+            delete (captured as { write?: unknown }).write;
+        }
+        return captured;
+    }
+
+    it("ends an ordinary body in one call with no intermediate writes", () => {
+        const res = makeFakeRes();
+        const payload = { ok: true, rows: Array.from({ length: 200 }, (_v, index) => ({ index, name: `row-${index}` })) };
+        sendJson(res as never, 200, payload);
+
+        assert.deepEqual(res.writes, [], "a small body must not be split");
+        assert.equal(res.endCalls, 1);
+        assert.deepEqual(JSON.parse(res.ended!), payload);
+        assert.equal(res.statusCode, 200);
+        assert.equal(res.headers["Content-Type"], "application/json");
+        assert.equal(res.headers["Cache-Control"], "no-store");
+    });
+
+    it("writes a body in bounded chunks when a chunk size is given", () => {
+        const res = makeFakeRes();
+        const payload = { candidates: Array.from({ length: 400 }, (_v, index) => ({ index, symbol: `SYM${index}` })) };
+        sendJson(res as never, 200, payload, { maxChunkChars: 1024 });
+
+        assert.ok(res.writes.length > 1, "expected several body chunks");
+        assert.equal(res.endCalls, 1, "the last chunk still closes the response once");
+        const body = res.writes.join("") + res.ended!;
+        assert.deepEqual(JSON.parse(body), payload);
+    });
+
+    it("falls back to chunks when V8 refuses the single-string result", () => {
+        // A one-shot RangeError mimics the real `Invalid string length` failure
+        // so the fallback is exercised without a 512MB fixture.
+        let reads = 0;
+        const payload: Record<string, unknown> = {};
+        Object.defineProperty(payload, "value", {
+            enumerable: true,
+            get() {
+                reads += 1;
+                if (reads === 1) throw new RangeError("Invalid string length");
+                return 42;
+            },
+        });
+
+        const res = makeFakeRes();
+        sendJson(res as never, 200, payload);
+
+        assert.equal(reads, 2, "the native attempt failed, then the chunked walk succeeded");
+        assert.deepEqual(JSON.parse(res.writes.join("") + res.ended!), { value: 42 });
+        assert.equal(res.endCalls, 1);
+    });
+
+    it("ends the whole body directly when the response has no write method", () => {
+        const res = makeFakeRes(false);
+        sendJson(res as never, 201, { ok: true });
+        assert.equal(res.endCalls, 1);
+        assert.deepEqual(JSON.parse(res.ended!), { ok: true });
+        assert.equal(res.statusCode, 201);
+    });
+});
+
 describe("beginNdjsonStream", () => {
     // `captured` is the single source of truth. The fake `res` exposes array
     // and object fields by reference (so they stay in sync), and primitive
@@ -719,6 +811,27 @@ describe("beginNdjsonStream", () => {
         // Simulate a one-shot-only response object.
         const res = { statusCode: 0, setHeader() { /* noop */ }, end() { /* noop */ } };
         assert.throws(() => beginNdjsonStream(res as any), /NDJSON streaming requires/);
+    });
+
+    it("writes one oversized event as one line across several chunk writes", () => {
+        // V8 refuses to build a single string above ~536MB; a terminal Finder
+        // event can exceed that. The line must therefore be streamed in pieces
+        // while remaining ONE newline-terminated record.
+        const res = makeFakeRes();
+        const stream = beginNdjsonStream(res, { maxChunkChars: 1024 });
+        const candidates = Array.from({ length: 500 }, (_v, index) => ({
+            strategyKey: "s",
+            symbols: [{ symbol: `SYM${index}`, netProfit: index * 0.5 }],
+        }));
+        stream.write({ type: "done", candidates });
+        stream.end();
+
+        const line = res.writes.join("");
+        assert.equal(line.endsWith("\n"), true);
+        assert.equal((line.match(/\n/g) ?? []).length, 1, "one event is exactly one line");
+        assert.deepEqual(JSON.parse(line), { type: "done", candidates });
+        // The whole line is not produced by a single write.
+        assert.ok(res.writes.length > 1, "expected multiple chunk writes");
     });
 });
 

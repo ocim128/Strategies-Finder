@@ -836,7 +836,9 @@ infer server ownership for another Finder mode from the shared result types.
   candidates, at most 200 scalar symbol rows per candidate), so existing rows
   return after reload and continue updating without starting another run.
   The preview never becomes the full run inventory; terminal adoption replaces
-  it with the authoritative final candidates once. Reattach
+  it with the authoritative final candidates once. An inventory too large for
+  one JSON string is paged back over `terminal-candidates` during that
+  adoption, so reattach stays complete. Reattach
   only survives a browser reload while the same Vite process remains alive
   — a Vite restart loses the in-memory job (the reattach clears its record).
 
@@ -907,7 +909,8 @@ exhaust the host.
 | `progress` | Updates bounded progress, status, phase (`loading`/`evaluating`/`oos`), and current strategy index/count. |
 | `candidate` | Streams a scalar survivor (merged job-level survivors, deduped by identity). |
 | `symbol_failed` | Reports one dataset failure. |
-| `done` | Authoritative final slice, combined diagnostics, totals (incl. `oosRemoved`), and the matching `runId`. |
+| `terminal_candidates` | One bounded batch of the terminal inventory (`offset`, `total`, `candidates`). Only for an inventory too large to inline. |
+| `done` | Authoritative final slice, combined diagnostics, totals (incl. `oosRemoved`), `candidateCount`, `inventoryChunked`, and the matching `runId`. |
 | `fatal` | Terminates the run with an error and the matching `runId`. |
 
 The terminal `done.candidates` slice is authoritative. `/status` in-progress
@@ -916,6 +919,49 @@ the bounded Universe `previewResults` with `includePreview=1`; unscoped
 requests cannot retrieve a preview. It uses the existing snapshot compactor
 and carries no candles, trades or signals. Terminal responses omit the preview;
 the terminal snapshot is the one place that carries the final candidate slice.
+
+### Terminal inventory transport (V8 single-string limit)
+
+V8 caps ONE string at 2^29 - 24 = 536,870,888 UTF-16 code units, so
+`JSON.stringify` of a large result inventory throws
+`RangeError: Invalid string length` long before memory runs out. A few thousand
+survivors over a large universe is enough (one 200-symbol candidate serializes
+to roughly 120 KB). That failure used to be swallowed by the best-effort stream
+writer: the terminal event was dropped, the browser saw EOF without `done`, and
+its `/status` fallback threw the same error, losing a finished run.
+
+The inventory is therefore shipped one of two ways, decided per candidate by
+serialized size (never by materializing one big string):
+
+- **Inlined** — the inventory fits the inline budget (16M chars). It rides
+  inside `done.candidates` exactly as before, and `inventoryChunked` is `false`.
+- **Chunked** — it does not fit. Bounded `terminal_candidates` batches (target
+  4M chars each, cut between candidates) arrive BEFORE `done`, which then
+  carries `candidates: []`, `inventoryChunked: true`, and the authoritative
+  `candidateCount`. The browser concatenates the batches in `offset` order.
+
+The terminal `/status` snapshot follows the same decision. A chunked inventory
+is withheld (`terminalCandidates: null`) with `terminalCandidateCount` and
+`terminalInventoryChunked: true`, because returning it would make the status
+response itself unserializable. Clients page
+`GET /api/finder/terminal-candidates?runId=&offset=&limit=` instead (server page
+default 200, max 500) and the browser session hydrates the snapshot before
+adoption, so reattach still adopts the complete authoritative inventory. A
+paging failure logs and leaves the run adopted without results rather than
+discarding a finished run.
+
+Response bodies and NDJSON lines are written natively when V8 can build the
+string, and fall back to bounded chunks
+(`lib/json-utils.ts` `serializeJsonPreservingNonFiniteChunks`) only when it
+cannot — so no transport path ever DROPS a body to `Invalid string length`, and
+ordinary payloads keep their single-string, single-write behavior.
+
+`FINDER_TERMINAL_INLINE_MAX_CHARS` overrides the inline budget (serialized
+characters); `0` forces the chunked path for any non-empty inventory, which is
+how the path is exercised end-to-end without a multi-hundred-megabyte run.
+
+Arm Performance's terminal `arm_done.results` is not chunked yet; its results
+are bounded by the candidate/pair caps instead.
 
 Copied diagnostics report job-cache requests, hits, misses, unique bars,
 candidate plans versus symbol evaluations, and actual Rust/TypeScript executor
@@ -935,6 +981,12 @@ running), loaded/failed totals, and — when terminal — the authoritative
 returns 404 and must never be adopted. A request without `runId` returns the
 legacy ad-hoc introspection object for `curl` debugging; the browser reattach
 path must pass a `runId`.
+
+When the terminal inventory is too large for one JSON string, `terminalCandidates`
+is `null` and the snapshot instead carries `terminalCandidateCount` plus
+`terminalInventoryChunked: true`; the client pages
+`GET /api/finder/terminal-candidates` to rebuild it (see the wire contract).
+That keeps a completed large run reattachable instead of returning 500.
 
 With `includePreview=1`, a matching running Universe job also returns
 `previewResults`, a compact display checkpoint. Default polling and other

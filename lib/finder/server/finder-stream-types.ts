@@ -169,6 +169,21 @@ export type FinderStreamEvent =
         error: string | null;
     }
     | {
+        type: "terminal_candidates";
+        runId: string;
+        /** 0-based index of this batch's first candidate in the inventory. */
+        offset: number;
+        /** Total candidates in the terminal inventory (all batches). */
+        total: number;
+        /**
+         * Bounded slice of the terminal inventory. Emitted only when the whole
+         * inventory cannot ride inside `done` without exceeding a single JSON
+         * string (V8 caps one string at ~536MB). Batches precede `done`, which
+         * then sets `inventoryChunked` and carries no candidates.
+         */
+        candidates: FinderUniverseCandidate[];
+    }
+    | {
         type: "done";
         ok: boolean;
         cancelled: boolean;
@@ -188,8 +203,17 @@ export type FinderStreamEvent =
          * because the 750ms results throttle means the final survivors may
          * never have been emitted as `candidate` events (the last flush before
          * `done` can miss late passers). Carries the same scalar-only contract.
+         *
+         * EMPTY when `inventoryChunked` is true: the inventory arrived in the
+         * preceding `terminal_candidates` batches and the browser must
+         * concatenate them. A single JSON string cannot exceed V8's ~536MB
+         * limit, so an inventory that large can never be an inline array here.
          */
         candidates: FinderUniverseCandidate[];
+        /** Always the authoritative inventory size, chunked or inline. */
+        candidateCount?: number;
+        /** True when `candidates` was replaced by `terminal_candidates` batches. */
+        inventoryChunked?: boolean;
         /** Terminal diagnostics for the run (engine mode, timing, bottlenecks). */
         diagnostics: FinderDiagnostics | null;
         /** Server-side loader cache counters captured at run completion. */
@@ -415,6 +439,18 @@ export type FinderRunStatusSnapshot = {
     cancelled: boolean;
     /** Present and authoritative only on the terminal symbol_universe snapshot. */
     terminalCandidates: FinderUniverseCandidate[] | null;
+    /**
+     * Authoritative terminal inventory size. Always set on a terminal
+     * symbol_universe snapshot, including when `terminalCandidates` is null
+     * because the inventory is too large for one JSON response.
+     */
+    terminalCandidateCount?: number | null;
+    /**
+     * True when the terminal inventory was withheld from this response because
+     * one JSON string cannot hold it (V8 caps a string at ~536MB). The client
+     * pages it from `GET /api/finder/terminal-candidates` instead.
+     */
+    terminalInventoryChunked?: boolean;
     /** Opt-in bounded display preview while running; never the terminal inventory. */
     previewResults?: FinderLatestResults | null;
     /** Present and authoritative only on the terminal asset_opportunity snapshot. */

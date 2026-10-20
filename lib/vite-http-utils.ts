@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { createFetchTimeoutSignal, isAbortError } from "./dataProviders/fetch-helpers";
 import { isAllowedLocalRequest } from "./local-route-authorization";
-import { serializeJsonPreservingNonFinite } from "./json-utils";
+import { serializeJsonPreservingNonFinite, serializeJsonPreservingNonFiniteChunks } from "./json-utils";
 
 export { serializeJsonPreservingNonFinite as serializeJsonForTransport } from "./json-utils";
 
@@ -51,11 +51,62 @@ export class HttpStatusError extends Error {
     }
 }
 
-export function sendJson(res: ViteHttpResponse, status: number, payload: unknown): void {
+/**
+ * Bounded chunk size for one serialized response body. Tests pass it to prove
+ * chunking without building a multi-megabyte fixture; production callers omit
+ * it and get the native single-string path whenever V8 can produce the string.
+ */
+export interface ChunkedJsonWriteOptions {
+    maxChunkChars?: number;
+}
+
+/**
+ * The serialized pieces of one body, in order.
+ *
+ * Prefer ONE native `JSON.stringify` result: it is ~4x faster than the chunked
+ * walker and produces the exact bytes every existing caller expects. Only when
+ * V8 refuses the string — `RangeError: Invalid string length`, raised above
+ * ~536MB of UTF-16 — does it fall back to bounded chunks, which is the case that
+ * used to lose a whole Finder run. Passing `maxChunkChars` forces the chunked
+ * path (used by tests).
+ */
+function* boundedJsonPieces(
+    payload: unknown,
+    options?: ChunkedJsonWriteOptions,
+): Generator<string, void, undefined> {
+    if (options?.maxChunkChars === undefined) {
+        try {
+            yield serializeJsonPreservingNonFinite(payload);
+            return;
+        } catch (error) {
+            if (!(error instanceof RangeError)) throw error;
+        }
+    }
+    yield* serializeJsonPreservingNonFiniteChunks(payload, options?.maxChunkChars);
+}
+
+export function sendJson(
+    res: ViteHttpResponse,
+    status: number,
+    payload: unknown,
+    options?: ChunkedJsonWriteOptions,
+): void {
     res.statusCode = status;
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Cache-Control", "no-store");
-    res.end(serializeJsonPreservingNonFinite(payload));
+    if (typeof res.write !== "function") {
+        res.end(serializeJsonPreservingNonFinite(payload));
+        return;
+    }
+    // Hold one piece back so the LAST one lands in `end`, which closes the
+    // response. A body that fits one piece (every ordinary response) therefore
+    // still ends in exactly one call, unchanged from the pre-chunking behavior.
+    let pending: string | null = null;
+    for (const piece of boundedJsonPieces(payload, options)) {
+        if (pending !== null) res.write(pending);
+        pending = piece;
+    }
+    res.end(pending ?? "null");
 }
 
 export function sendBinary(res: ViteHttpResponse, status: number, payload: Buffer): void {
@@ -75,7 +126,7 @@ export function sendBinary(res: ViteHttpResponse, status: number, payload: Buffe
  * `res` through async loops. `end` accepts an optional final event for
  * convenience, then ends the response.
  */
-export function beginNdjsonStream(res: ViteHttpResponse): {
+export function beginNdjsonStream(res: ViteHttpResponse, options?: ChunkedJsonWriteOptions): {
     write: (event: unknown) => void;
     end: (event?: unknown) => void;
 } {
@@ -93,13 +144,24 @@ export function beginNdjsonStream(res: ViteHttpResponse): {
     res.statusCode = 200;
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
     res.setHeader("Cache-Control", "no-store");
+    // One event is ONE line, but it is not necessarily one string: a terminal
+    // Finder event can carry a result inventory far above V8's ~536MB
+    // single-string limit. Pieces are written in order and the newline folds
+    // into the last one, so an event that serializes natively — every ordinary
+    // event — still costs exactly one write.
+    const writeLine = (event: unknown): void => {
+        let pending: string | null = null;
+        for (const piece of boundedJsonPieces(event, options)) {
+            if (pending !== null) res.write!(pending);
+            pending = piece;
+        }
+        res.write!(`${pending ?? "null"}\n`);
+    };
     return {
-        write: (event: unknown) => {
-            res.write!(`${serializeJsonPreservingNonFinite(event)}\n`);
-        },
+        write: writeLine,
         end: (event?: unknown) => {
             if (event !== undefined) {
-                res.write!(`${serializeJsonPreservingNonFinite(event)}\n`);
+                writeLine(event);
             }
             res.end("");
         },

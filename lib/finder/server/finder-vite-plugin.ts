@@ -100,6 +100,7 @@ import {
     type FinderStreamEvent,
 } from "./finder-stream-types";
 import { resolveFinderUniverseHeapWarning } from "./finder-server-heap-guard";
+import { serializeJsonPreservingNonFinite } from "../../json-utils";
 import { rememberLoopbackOriginFromRequest } from "../../local-api-transport";
 import {
     clampFinderOptions,
@@ -241,6 +242,53 @@ const ASSET_OPPORTUNITY_BATCH_MIN_CHUNKED_ASSETS = 32;
 const ASSET_OPPORTUNITY_SINGLE_RUN_WORK_THRESHOLD = 64;
 /** Chunked workers retain only their partition; the resolver still clamps to cores/memory. */
 const ASSET_OPPORTUNITY_BATCH_CHUNK_WORKER_TARGET = ASSET_OPPORTUNITY_BATCH_WORKER_COUNT_MAX;
+
+/**
+ * Serialized-character budget for inlining the terminal Symbol Universe
+ * inventory inside the `done` event (and inside the `/api/finder/status`
+ * terminal snapshot). Above it the inventory ships in bounded
+ * `terminal_candidates` batches instead.
+ *
+ * Why a budget at all: V8 caps ONE string at 2^29 - 24 = 536,870,888 UTF-16
+ * code units, so `JSON.stringify` of a large inventory throws
+ * `RangeError: Invalid string length`. That failure used to be swallowed by
+ * the best-effort stream writer, which dropped the terminal event and lost an
+ * otherwise complete run. The inline budget is far below the hard limit so both
+ * the server and the browser have headroom.
+ */
+const FINDER_TERMINAL_INVENTORY_INLINE_MAX_CHARS = 16 * 1024 * 1024;
+/**
+ * Target size of one `terminal_candidates` batch. Batches are cut between
+ * candidates, so a batch can overshoot by at most one candidate.
+ */
+const FINDER_TERMINAL_INVENTORY_CHUNK_CHARS = 4 * 1024 * 1024;
+/** Candidates returned per page by `GET /api/finder/terminal-candidates`. */
+const FINDER_TERMINAL_CANDIDATE_PAGE_SIZE = 200;
+/** Hard ceiling on a requested page size (keeps one response bounded). */
+const FINDER_TERMINAL_CANDIDATE_PAGE_MAX = 500;
+/**
+ * Env override for the inline terminal-inventory budget, in serialized
+ * characters. `0` forces the chunked path for any non-empty inventory, which is
+ * the only practical way to exercise it end-to-end without a multi-hundred-
+ * megabyte run.
+ */
+export const FINDER_TERMINAL_INLINE_MAX_CHARS_ENV = "FINDER_TERMINAL_INLINE_MAX_CHARS";
+
+/**
+ * Inline budget resolution order: the explicit input seam (tests), then the env
+ * override (manual verification / operator tuning), then the constant.
+ */
+function resolveTerminalInventoryInlineMaxChars(override?: number): number {
+    if (typeof override === "number" && Number.isFinite(override) && override >= 0) {
+        return Math.floor(override);
+    }
+    const raw = process.env[FINDER_TERMINAL_INLINE_MAX_CHARS_ENV];
+    if (raw !== undefined && raw !== "") {
+        const parsed = Number(raw);
+        if (Number.isFinite(parsed) && parsed >= 0) return Math.floor(parsed);
+    }
+    return FINDER_TERMINAL_INVENTORY_INLINE_MAX_CHARS;
+}
 
 function resolveAssetOpportunityChunkWorkerCount(
     totalIterations: number,
@@ -587,6 +635,13 @@ export type FinderRunSnapshot = {
     failedSymbols: number;
     /** Surviving candidates accumulated so far (scalar-only). */
     candidates: FinderUniverseCandidate[];
+    /**
+     * Set when the terminal inventory is too large to inline in one JSON
+     * string, so the stream shipped it as `terminal_candidates` batches and
+     * `/api/finder/status` reports the count instead of the array. Clients page
+     * it from `GET /api/finder/terminal-candidates`.
+     */
+    candidateInventoryChunked?: boolean;
     /** All Asset Opportunity rows accumulated so far (scalar-only). */
     assetResults?: FinderAssetOpportunityResult[];
     /** Terminal diagnostics once the run finishes; null while in flight. */
@@ -711,6 +766,67 @@ export interface FinderUniverseServerRunInput {
     strategyWorkerCount?: number;
     /** Runner factory override for tests (in-process fakes, no real threads). */
     strategyRunnerFactory?: FinderUniverseStrategyRunnerFactory;
+    /**
+     * Test seam: serialized-character budget for inlining the terminal
+     * inventory in `done`. Production uses
+     * {@link FINDER_TERMINAL_INVENTORY_INLINE_MAX_CHARS}; tests lower it to
+     * exercise the chunked path without a multi-megabyte fixture.
+     */
+    terminalInventoryInlineMaxChars?: number;
+    /** Test seam: per-batch budget for `terminal_candidates` events. */
+    terminalInventoryChunkChars?: number;
+}
+
+/**
+ * Per-candidate serialized sizes, measured ONE CANDIDATE AT A TIME so no single
+ * string approaches V8's length limit. Summing them decides inline vs chunked
+ * placement and, once chunked, where the batch boundaries go.
+ *
+ * A candidate is bounded by its own scalar row set (a few hundred chars per
+ * symbol row), so individual measurement always succeeds where whole-inventory
+ * `JSON.stringify` would throw `RangeError: Invalid string length`.
+ */
+function measureTerminalInventory(
+    candidates: readonly FinderUniverseCandidate[],
+): { sizes: number[]; chars: number } {
+    const sizes: number[] = new Array<number>(candidates.length);
+    let chars = 0;
+    for (let index = 0; index < candidates.length; index += 1) {
+        const size = serializeJsonPreservingNonFinite(candidates[index]).length;
+        sizes[index] = size;
+        // +1 for the separating comma in the wire array.
+        chars += size + 1;
+    }
+    return { sizes, chars };
+}
+
+/**
+ * Cut the inventory into contiguous batches whose serialized size stays under
+ * `maxChars`. A single candidate larger than the budget forms its own batch, so
+ * every batch holds at least one candidate and offsets always cover the whole
+ * inventory in order.
+ */
+function planTerminalInventoryBatches(
+    sizes: readonly number[],
+    maxChars: number,
+): { offset: number; count: number }[] {
+    const budget = Math.max(1, Math.floor(maxChars));
+    const batches: { offset: number; count: number }[] = [];
+    let offset = 0;
+    let chars = 0;
+    for (let index = 0; index < sizes.length; index += 1) {
+        const size = sizes[index]! + 1;
+        if (chars > 0 && chars + size > budget) {
+            batches.push({ offset, count: index - offset });
+            offset = index;
+            chars = 0;
+        }
+        chars += size;
+    }
+    if (offset < sizes.length) {
+        batches.push({ offset, count: sizes.length - offset });
+    }
+    return batches;
 }
 
 /**
@@ -1321,6 +1437,16 @@ export async function processFinderUniverseRun(
             assertCandidateIsScalar(scalar);
         }
         snapshot.candidates = terminalScalar;
+        // A single JSON string cannot exceed V8's ~536MB limit, so an inventory
+        // that large cannot ride inside one `done` event (that is what used to
+        // throw `Invalid string length` and silently drop the terminal event).
+        // Measure per candidate, then either inline or ship bounded batches.
+        // Measured BEFORE the phase flips so no status poll observes a terminal
+        // snapshot whose placement decision is still unknown.
+        const inventory = measureTerminalInventory(terminalScalar);
+        const inlineMaxChars = resolveTerminalInventoryInlineMaxChars(input.terminalInventoryInlineMaxChars);
+        const inventoryChunked = inventory.chars > Math.max(0, inlineMaxChars);
+        snapshot.candidateInventoryChunked = inventoryChunked;
         snapshot.phase = cancelled ? "cancelled" : "done";
         snapshot.finishedAt = Date.now();
 
@@ -1356,6 +1482,27 @@ export async function processFinderUniverseRun(
             oosRemoved,
         };
 
+        // Ship the inventory in bounded batches when it cannot be inlined. They
+        // precede `done`, which then carries only the count.
+        if (inventoryChunked) {
+            const chunkChars = input.terminalInventoryChunkChars ?? FINDER_TERMINAL_INVENTORY_CHUNK_CHARS;
+            for (const batch of planTerminalInventoryBatches(inventory.sizes, chunkChars)) {
+                writer({
+                    type: "terminal_candidates",
+                    runId: input.runId,
+                    offset: batch.offset,
+                    total: terminalScalar.length,
+                    candidates: terminalScalar.slice(batch.offset, batch.offset + batch.count),
+                });
+            }
+            debugLogger.event("finder.server.terminal_inventory_chunked", {
+                runId: input.runId,
+                candidates: terminalScalar.length,
+                chars: inventory.chars,
+                inlineMaxChars,
+            });
+        }
+
         writer({
             type: "done",
             ok: !cancelled,
@@ -1368,7 +1515,9 @@ export async function processFinderUniverseRun(
                 survivors: terminalScalar.length,
                 oosRemoved,
             },
-            candidates: terminalScalar,
+            candidates: inventoryChunked ? [] : terminalScalar,
+            candidateCount: terminalScalar.length,
+            inventoryChunked,
             summary,
             diagnostics: combinedDiagnostics,
             cacheStats: getServerFinderDatasetCacheStats(),
@@ -1409,6 +1558,13 @@ export async function processFinderUniverseRun(
             oosRemoved,
         };
         debugLogger.warn("finder.server.run.fatal", { runId: input.runId, error: message });
+        // A fatal run keeps whatever survivors it had. Withhold them from the
+        // status snapshot when they cannot be one JSON string, so the failure
+        // report itself stays serializable (the client pages them instead).
+        if (snapshot.candidates.length > 0) {
+            snapshot.candidateInventoryChunked = measureTerminalInventory(snapshot.candidates).chars
+                > FINDER_TERMINAL_INVENTORY_INLINE_MAX_CHARS;
+        }
         writer({ type: "fatal", runId: input.runId, error: message });
     } finally {
         jobDatasetCache.clear();
@@ -3795,6 +3951,55 @@ function handleStatusRequest(runIdFilter: string | null, includePreview = false)
     return buildStatusSnapshot();
 }
 
+/** One page of the terminal Symbol Universe inventory, or a 404-able error. */
+export type FinderTerminalCandidatesPage =
+    | { ok: true; runId: string; offset: number; total: number; candidates: FinderUniverseCandidate[] }
+    | { ok: false; error: string };
+
+/**
+ * Page the terminal inventory for a completed Symbol Universe run
+ * (`GET /api/finder/terminal-candidates?runId=&offset=&limit=`).
+ *
+ * Only needed when the terminal snapshot reported `terminalInventoryChunked`:
+ * such an inventory is too large for one JSON string, so it cannot ship inside
+ * `/status` or a single stream event and has to be read in bounded slices. A
+ * run id mismatch is the same 404 the status route reports, so a stale tab can
+ * never page another tab's inventory.
+ */
+function handleTerminalCandidatesRequest(
+    runIdFilter: string | null,
+    offsetRaw: string | null,
+    limitRaw: string | null,
+): FinderTerminalCandidatesPage {
+    const state = runState;
+    if (!state || state.finishedAt === null) {
+        return { ok: false, error: "No terminal Finder run state available." };
+    }
+    const runId = typeof runIdFilter === "string" ? runIdFilter.trim() : "";
+    if (runId !== state.runId) {
+        return { ok: false, error: "Run id does not match the active or last Finder run." };
+    }
+    if ((state.jobKind ?? "symbol_universe") !== "symbol_universe") {
+        return { ok: false, error: "Run is not a Symbol Universe job." };
+    }
+    const total = state.candidates.length;
+    const parsedOffset = Number.parseInt(offsetRaw ?? "0", 10);
+    const start = Number.isFinite(parsedOffset) && parsedOffset > 0
+        ? Math.min(Math.floor(parsedOffset), total)
+        : 0;
+    const parsedLimit = Number.parseInt(limitRaw ?? "", 10);
+    const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(Math.floor(parsedLimit), FINDER_TERMINAL_CANDIDATE_PAGE_MAX)
+        : FINDER_TERMINAL_CANDIDATE_PAGE_SIZE;
+    return {
+        ok: true,
+        runId: state.runId,
+        offset: start,
+        total,
+        candidates: state.candidates.slice(start, start + limit),
+    };
+}
+
 function handleArmDiagnosticsRequest(runId: string | null) {
     const state = runState;
     if (!runId || !state || state.runId !== runId || state.jobKind !== "arm_performance" || !state.armPerformanceRunContext) {
@@ -3851,7 +4056,19 @@ function buildStatusSnapshot(includePreview = false): FinderRunStatusSnapshot {
         // large universe runs. Asset-opportunity terminal snapshots (single
         // and batch) carry the full scalar asset result set of the run / last
         // completed iteration on `terminalAssets` instead.
-        terminalCandidates: terminal && jobKind === "symbol_universe" ? state.candidates : null,
+        //
+        // An inventory too large for one JSON string is withheld entirely (see
+        // `candidateInventoryChunked`): returning it would make `JSON.stringify`
+        // throw here, so a client reattaching to a large completed run would get
+        // a 500 instead of its results. Those clients page
+        // `GET /api/finder/terminal-candidates`.
+        terminalCandidates: terminal && jobKind === "symbol_universe" && !state.candidateInventoryChunked
+            ? state.candidates
+            : null,
+        ...(terminal && jobKind === "symbol_universe" ? {
+            terminalCandidateCount: state.candidates.length,
+            terminalInventoryChunked: state.candidateInventoryChunked === true,
+        } : {}),
         ...(includePreview && !terminal && jobKind === "symbol_universe" ? {
             previewResults: compactFinderLatestResults({ scope: "symbol_universe", results: state.candidates }),
         } : {}),
@@ -4185,6 +4402,24 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string, batchOwnerL
         },
     });
 
+    registerLocalJsonRoute(middlewares, "/api/finder/terminal-candidates", {
+        methods: ["GET"],
+        unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
+        onAuthorized: ({ res, url }) => {
+            // Paged read of a terminal inventory too large for one JSON string.
+            const page = handleTerminalCandidatesRequest(
+                url.searchParams.get("runId"),
+                url.searchParams.get("offset"),
+                url.searchParams.get("limit"),
+            );
+            if (!page.ok) {
+                sendJson(res, 404, page);
+                return;
+            }
+            sendJson(res, 200, page);
+        },
+    });
+
     registerLocalJsonRoute(middlewares, "/api/finder/arm-performance-diagnostics", {
         methods: ["GET"],
         unauthorizedMessage: "Unauthorized: Finder routes are local-only.",
@@ -4218,6 +4453,7 @@ function registerFinderRoutes(middlewares: any, serverRoot?: string, batchOwnerL
 export const __testInternals = {
     handleStopRequest,
     handleStatusRequest,
+    handleTerminalCandidatesRequest,
     handleArmDiagnosticsRequest,
     resolveAssetOpportunityChunkWorkerCount,
     clearServerFinderDatasetCaches,

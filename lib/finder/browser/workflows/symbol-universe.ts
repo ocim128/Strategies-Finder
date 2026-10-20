@@ -178,6 +178,14 @@ export async function runUniverseFinderServer(args: {
 	const sortPriority = options.universe?.sortPriority ?? [];
 	let terminalDiagnostics: FinderDiagnostics | null = null;
 	let terminalCandidates: FinderUniverseCandidate[] | null = null;
+	/**
+	 * Inventory reassembly for a run whose terminal inventory is too large to
+	 * ride inside `done` as one array. Such a run streams bounded
+	 * `terminal_candidates` batches first and `done` carries
+	 * `inventoryChunked: true` with an empty `candidates` array; the batches are
+	 * concatenated in arrival order to rebuild the authoritative inventory.
+	 */
+	const streamedTerminalCandidates: FinderUniverseCandidate[] = [];
 	let loadedSymbols = 0;
 	let failedSymbolCount = 0;
 	let oosRemoved = 0;
@@ -237,6 +245,13 @@ export async function runUniverseFinderServer(args: {
 			onSymbolFailed: (event) => {
 				debugLogger.warn('finder.server.symbol_failed', { symbol: event.symbol, error: event.error });
 			},
+			onTerminalCandidates: (event) => {
+				// Bounded terminal inventory batch (only for inventories too
+				// large for one JSON string). Arrives before `done`.
+				for (const candidate of event.candidates) {
+					streamedTerminalCandidates.push(candidate);
+				}
+			},
 			onDone: (event) => {
 				terminalDiagnostics = event.diagnostics;
 				loadedSymbols = event.totals?.loadedSymbols ?? 0;
@@ -244,8 +259,28 @@ export async function runUniverseFinderServer(args: {
 				oosRemoved = event.totals?.oosRemoved ?? 0;
 				// Adopt the authoritative terminal slice (server-owned IS
 				// + OOS). The merged map is provisional; done.candidates is
-				// the source of truth including OOS fields.
-				terminalCandidates = event.candidates ?? null;
+				// the source of truth including OOS fields — except for a
+				// chunked inventory, which arrived in the preceding batches.
+				terminalCandidates = event.inventoryChunked
+					? streamedTerminalCandidates
+					: event.candidates ?? null;
+				const expectedCount = event.candidateCount ?? event.totals?.survivors;
+				if (
+					event.inventoryChunked
+					&& typeof expectedCount === "number"
+					&& streamedTerminalCandidates.length !== expectedCount
+				) {
+					// A completed run must not be discarded for a partial
+					// inventory; surface the discrepancy and keep what arrived.
+					debugLogger.warn('finder.server.terminal_inventory_incomplete', {
+						runId,
+						received: streamedTerminalCandidates.length,
+						expected: expectedCount,
+					});
+					host.setStatus(
+						`Universe Finder finished, but only ${streamedTerminalCandidates.length} of ${expectedCount} results arrived.`,
+					);
+				}
 				if (terminalCandidates && isStillActive()) {
 					const displayed = sortFinderUniverseCandidates(terminalCandidates, sortPriority, {
 						useOosValues: terminalCandidates.some((candidate) => candidate.oosAggregate !== undefined),

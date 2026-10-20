@@ -219,7 +219,10 @@ Implementation invariants:
 - Live progress snapshots may be bounded to `Top Results`; they are not the
   authoritative terminal inventory.
 - The server terminal `done` event and terminal `/status` snapshot must carry
-  the authoritative full candidate inventory needed for re-sort.
+  the authoritative full candidate inventory needed for re-sort. An inventory
+  too large for one JSON string is carried in bounded `terminal_candidates`
+  batches (and paged from `/api/finder/terminal-candidates` on reattach)
+  instead of being truncated or dropped.
 - `Run Sort` restores the run-time order and then reapplies the display limit.
 - A re-sort must not mutate or discard the full source needed by a later
   re-sort.
@@ -854,6 +857,8 @@ the short version needed when changing the menu or its client/server wiring.
   strategy keys and a browser-generated `runId`.
 - `GET /api/finder/status?runId=...` reports progress or the retained terminal
   snapshot for reattachment.
+- `GET /api/finder/terminal-candidates?runId=...&offset=&limit=` pages a
+  terminal inventory that was too large to inline in one JSON response.
 - `POST /api/finder/stop` stops only the active matching `runId`.
 - `POST /api/finder/invalidate-cache` clears or defers dataset-cache invalidation
   at a safe run boundary.
@@ -889,6 +894,12 @@ run's status, even after that newer run completes.
 - Live progress is bounded for responsiveness and memory.
 - The terminal Symbol Universe snapshot is authoritative and retains the full
   scalar inventory required by Re-Sort.
+- That inventory may be too large for one JSON string (V8 caps a string at
+  ~536MB). It then arrives as bounded `terminal_candidates` batches before
+  `done`, and `/status` withholds it so the browser can page it back on
+  reattach. Re-Sort still ranks the complete inventory; only the transport is
+  chunked. See the terminal inventory transport rules in
+  [Finder server guide](finder-server-side.md#terminal-inventory-transport-v8-single-string-limit).
 - The server job dataset cache is per-job and cleared in the job `finally`
   path. Failed or empty loads remain retryable. In the parallel strategy
   sweep each worker keeps a private per-job cache (one dataset copy per
