@@ -45,12 +45,22 @@ function createHandler(): MockHandler {
     return handler;
 }
 
-function makeRequest(path: string, method: string, body?: unknown, headers: Record<string, string> = {}) {
+function makeRequest(
+    path: string,
+    method: string,
+    body?: unknown,
+    headers: Record<string, string> = {},
+    remoteAddress = "127.0.0.1",
+) {
     const payload = body === undefined ? [] : [JSON.stringify(body)];
     const request = Readable.from(payload) as MockRequest;
     request.method = method;
     request.url = path;
-    request.headers = headers;
+    // Loopback peer + Host: `/api/backtest` is gated by the shared
+    // `isAllowedLocalRequest` policy like every other mutating dev-server route,
+    // so a request must look like a same-origin browser call to be admitted.
+    request.headers = { host: "127.0.0.1:5173", ...headers };
+    (request as MockRequest & { socket: { remoteAddress: string } }).socket = { remoteAddress };
     return request;
 }
 
@@ -59,7 +69,8 @@ async function invoke(
     path: string,
     method: string,
     body?: unknown,
-    headers?: Record<string, string>
+    headers?: Record<string, string>,
+    remoteAddress?: string,
 ): Promise<{
     statusCode: number;
     json: any;
@@ -83,7 +94,7 @@ async function invoke(
             },
         };
 
-        Promise.resolve(handler(makeRequest(path, method, body, headers), response)).catch(reject);
+        Promise.resolve(handler(makeRequest(path, method, body, headers, remoteAddress), response)).catch(reject);
     });
 }
 
@@ -135,6 +146,29 @@ describe("backtest endpoint plugin", () => {
         assert.ok(response.json.manifest.strategyCount > 0);
         assert.ok(typeof response.json.manifest.hash === "string");
         assert.ok(!("strategyKeys" in response.json.manifest));
+    });
+
+    it("rejects a non-loopback caller before any work is dispatched", async () => {
+        // Security regression class: this endpoint accepts a 100 MB dataset
+        // upload and up to 5 000 random-search runs, so it must honor the same
+        // loopback/bearer policy as the Batch, Finder, IBKR, and Crypto routes.
+        // A remote peer address is the one signal a caller cannot forge.
+        const handler = createHandler();
+        const remote = await invoke(handler, "/health", "GET", undefined, undefined, "203.0.113.9");
+
+        assert.strictEqual(remote.statusCode, 401);
+        assert.match(String(remote.json.error), /local-only/);
+
+        // No token is configured in this spec, so a spoofed Origin cannot help.
+        const spoofedOrigin = await invoke(
+            handler,
+            "/health",
+            "GET",
+            undefined,
+            { origin: "http://127.0.0.1:5173" },
+            "203.0.113.9",
+        );
+        assert.strictEqual(spoofedOrigin.statusCode, 401);
     });
 
     it("accepts inline candle datasets for single-run backtests", async () => {

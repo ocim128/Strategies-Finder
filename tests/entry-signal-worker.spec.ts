@@ -1,13 +1,77 @@
 import { expect } from 'chai';
+import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import worker, {
     buildLatestActionableEntrySignalQuery,
     buildScheduledCronSummary,
+    candleFetchCacheKey,
     decideCommitteeAlert,
+    loadCandlesOnce,
+    type CandleFetchCache,
 } from '../workers/entry-signal-worker';
 import { registerLoadedBuiltInStrategy, unregisterLoadedBuiltInStrategy } from '../lib/strategies/built-in-catalog';
 import '../lib/strategies/library';
 import type { OHLCVData, Signal, Strategy } from '../lib/strategies/index';
+
+describe('Per-tick candle fetch coalescing', () => {
+    it('keys a request by instrument, interval, and limit so near-misses do not collide', () => {
+        expect(candleFetchCacheKey('btcusdt', '5m', 350)).to.equal('BTCUSDT|5m|350');
+        expect(candleFetchCacheKey('BTCUSDT', '5M', 350.9)).to.equal(candleFetchCacheKey('btcusdt', '5m', 350));
+        expect(candleFetchCacheKey('BTCUSDT', '5m', 350)).not.to.equal(candleFetchCacheKey('BTCUSDT', '15m', 350));
+        expect(candleFetchCacheKey('BTCUSDT', '5m', 350)).not.to.equal(candleFetchCacheKey('BTCUSDT', '5m', 500));
+        expect(candleFetchCacheKey('BTCUSDT', '5m', 0)).to.equal('BTCUSDT|5m|1');
+    });
+
+    it('runs one loader for concurrent identical requests and reuses the result', async () => {
+        const cache: CandleFetchCache = new Map();
+        let loads = 0;
+        const load = async (): Promise<OHLCVData[]> => {
+            loads += 1;
+            return [{ time: 1 as OHLCVData['time'], open: 1, high: 1, low: 1, close: 1, volume: 0 }];
+        };
+
+        const [first, second] = await Promise.all([
+            loadCandlesOnce(cache, 'BTCUSDT|5m|350', load),
+            loadCandlesOnce(cache, 'BTCUSDT|5m|350', load),
+        ]);
+        const third = await loadCandlesOnce(cache, 'BTCUSDT|5m|350', load);
+
+        expect(loads).to.equal(1);
+        expect(first).to.equal(second, 'concurrent callers must share the in-flight promise');
+        expect(third).to.equal(first, 'a settled value is reused for the rest of the tick');
+    });
+
+    it('skips the cache when no tick scope is supplied', async () => {
+        let loads = 0;
+        const load = async (): Promise<OHLCVData[]> => {
+            loads += 1;
+            return [];
+        };
+        await loadCandlesOnce(undefined, 'BTCUSDT|5m|350', load);
+        await loadCandlesOnce(undefined, 'BTCUSDT|5m|350', load);
+        expect(loads).to.equal(2, 'manual run-now requests must always read fresh candles');
+    });
+
+    it('evicts a failed fetch so a later subscription can retry instead of inheriting the error', async () => {
+        const cache: CandleFetchCache = new Map();
+        let attempts = 0;
+        const flaky = async (): Promise<OHLCVData[]> => {
+            attempts += 1;
+            if (attempts === 1) throw new Error('binance unavailable');
+            return [];
+        };
+
+        await assert.rejects(
+            loadCandlesOnce(cache, 'BTCUSDT|5m|350', flaky),
+            /binance unavailable/,
+        );
+        expect(cache.has('BTCUSDT|5m|350')).to.equal(false, 'the failed key must not stay cached');
+
+        const recovered = await loadCandlesOnce(cache, 'BTCUSDT|5m|350', flaky);
+        expect(recovered).to.deep.equal([]);
+        expect(attempts).to.equal(2);
+    });
+});
 
 describe('Entry signal worker queries', () => {
     it('filters pending-entry placeholders out of latest-entry lookups', () => {

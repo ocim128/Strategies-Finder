@@ -78,9 +78,11 @@ Behavior:
 - For each enabled subscription, worker fetches market candles from Binance-compatible endpoints.
 - Exact parity with the app requires the symbol to use Binance data as well; non-Binance chart providers are not exact-match Worker inputs.
 - `2h` subscriptions are composed from `1h` source candles inside the worker so close-hour parity (`odd`/`even`) stays deterministic across providers.
-- It only evaluates when a **new closed candle** exists (`last_processed_closed_candle_time` guard).
+- It only evaluates when a **new closed candle** exists (`last_processed_candle_open_time` guard).
 - This avoids duplicate alerts between candle closes.
 - Worker queries configured Binance-compatible hosts in configured order and uses the first successful response. Keep the fastest/reliable proxy first.
+- Candle history is fetched **once per instrument per tick**: `runScheduledSubscriptions` creates one `CandleFetchCache` for the whole tick, so N subscriptions on the same `symbol`/`interval`/`limit` share a single upstream download (synthetic pairs are keyed by their `BASE/QUOTE` legs, not the display symbol). The cache is deliberately per tick — the next tick must see fresh candles. Manual `run-now` / `run-with-candles` path bypasses it entirely. Each subscription then only reads from `latest_state_json`/its own state row.
+- The subscription query selects its columns explicitly (19 known columns) rather than `SELECT *`, so a future migration cannot silently shift result shapes.
 
 Live Positions / Last Trade parity notes:
 - Local verification now trims to the latest closed candle before comparing against the Worker.

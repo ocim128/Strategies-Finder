@@ -819,10 +819,14 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
         try {
             await waitFor(() => pendingFetches.size === 3, 2000, "the first 3 symbols to dispatch");
             for (const symbol of ["C0", "C1", "C2"]) pendingFetches.get(symbol)!();
+            // Wait on the RELEASE signal (the run snapshot's completed counter),
+            // not on the catalog write count: catalog persistence is coalesced
+            // into at most one write per 2 s window, so the write counter no
+            // longer tracks per-symbol releases.
             await waitFor(
-                () => __getIbkrCatalogWriteCountForTests() === 3,
+                () => __getIbkrSyncRunStateForTests()?.completed === 3,
                 2000,
-                "one catalog write per completed symbol",
+                "the first three results to be released",
             );
 
             // Stop mid-flight, but keep C5 gated across a later turn: the drain
@@ -853,17 +857,21 @@ describe("alpaca processSyncBatch bounded parallel dispatch", () => {
             );
             // Completion boundary, verified against the implementation: the
             // worker computes each outcome and releases it synchronously in the
-            // same continuation that resumes after `await fetcher(...)`, and a
-            // released "result" outcome enqueues its catalog write on the
-            // writeCatalogSerialized chain, whose bodies also run as microtasks.
-            // One macrotask checkpoint after the last fetch completion therefore
-            // runs strictly after all outcome releases and any queued catalog
-            // writes.
+            // same continuation that resumes after `await fetcher(...)`.
+            // Catalog persistence is now coalesced, so the invariant is NOT
+            // "one write per completed symbol" — it is "no write attributed to
+            // a cancelled symbol", i.e. the write count can never exceed the
+            // number of completed symbols (here 3) and must have landed at
+            // least once for them.
             await new Promise((resolve) => setTimeout(resolve, 0));
-            assert.equal(
-                __getIbkrCatalogWriteCountForTests(),
-                3,
-                "cancelled symbols must not add catalog writes",
+            const catalogWrites = __getIbkrCatalogWriteCountForTests();
+            assert.ok(
+                catalogWrites <= 3,
+                `coalesced catalog writes must not exceed one per completed symbol (saw ${catalogWrites})`,
+            );
+            assert.ok(
+                catalogWrites >= 1,
+                "completed symbols must reach the catalog even when the batch is cancelled",
             );
             const symbolEvents = events.filter((e) => e.type === "symbol");
             assert.deepEqual(symbolEvents.map((e) => e.symbol), ["C0", "C1", "C2"]);
@@ -1248,13 +1256,15 @@ describe("alpaca processSyncBatch settlement characterization", () => {
         assert.equal(runState?.failed, 1);
         assert.deepEqual(runState?.failedSymbols, [{ symbol: "M2", error: "provider exploded" }]);
         assert.equal(runState?.currentSymbol, null);
-        // Catalog writes are fire-and-forget through the serialized chain;
-        // wait for the chain to flush before counting.
-        await waitFor(
-            () => __getIbkrCatalogWriteCountForTests() === 5,
-            2000,
-            "one serialized catalog checkpoint per landed result (including the warned one)",
-        );
+        // Catalog persistence is coalesced (at most one write per 2 s window,
+        // plus one mandatory flush before `done`), so the durable guarantee is
+        // "every landed result is in the file", not "one write per result".
+        // The run boundary flush has already happened by the time `done`
+        // arrived, so at least one write must be observable and the count can
+        // never exceed the number of landed results.
+        const catalogWrites = __getIbkrCatalogWriteCountForTests();
+        assert.ok(catalogWrites >= 1, "landed results must be flushed to the catalog");
+        assert.ok(catalogWrites <= 5, `coalesced writes must not exceed one per result (saw ${catalogWrites})`);
     });
 
     it("treats a bare AbortError from a fetcher as batch cancellation: the run settles early and strands later outcomes", async () => {

@@ -7,10 +7,53 @@ import {
     isAbortError,
     readJsonOrText,
     extractApiError,
+    resolveRetryWaitMs,
+    MAX_RETRY_WAIT_MS,
 } from '../lib/dataProviders/fetch-helpers';
 import { fetchLocalApiWithBody } from '../lib/local-api-transport';
 
 const originalFetch = globalThis.fetch;
+
+describe('retry pacing', () => {
+    it('grows exponentially and never exceeds the policy ceiling', () => {
+        // random=1 pins the jittered value at the ceiling of its window.
+        const wait = (attempt: number, baseDelayMs = 250) =>
+            resolveRetryWaitMs({ attempt, baseDelayMs, random: () => 1 });
+
+        assert.equal(wait(1), 250);
+        assert.equal(wait(2), 500);
+        assert.equal(wait(3), 1000);
+        // The exponent is capped, so a far-out attempt stops doubling instead
+        // of overflowing into an unbounded wait.
+        assert.equal(wait(20), 16_000);
+        assert.ok(wait(20) < MAX_RETRY_WAIT_MS);
+    });
+
+    it('jitters within the upper half of the window so concurrent workers do not resume in lockstep', () => {
+        const schedule = [0, 0.25, 0.5, 0.75, 0.999].map(
+            (value) => resolveRetryWaitMs({ attempt: 1, baseDelayMs: 1000, random: () => value }),
+        );
+        // The floor is half the ceiling: a draw near zero must not retry a
+        // rate-limited provider immediately.
+        assert.deepEqual(schedule, [500, 625, 750, 875, 999]);
+        assert.equal(new Set(schedule).size, schedule.length, 'distinct random draws must produce distinct waits');
+    });
+
+    it('clamps an upstream Retry-After hint instead of parking the run for an hour', () => {
+        const clamped = resolveRetryWaitMs({ attempt: 1, baseDelayMs: 250, retryAfterMs: 3_600_000, random: () => 1 });
+        assert.equal(clamped, MAX_RETRY_WAIT_MS);
+
+        // A small hint is honored (jittered downward only), never ignored.
+        const honored = resolveRetryWaitMs({ attempt: 1, baseDelayMs: 250, retryAfterMs: 4000, random: () => 1 });
+        assert.equal(honored, 4000);
+        const jittered = resolveRetryWaitMs({ attempt: 1, baseDelayMs: 250, retryAfterMs: 4000, random: () => 0.5 });
+        assert.equal(jittered, 3000);
+    });
+
+    it('keeps a zero base delay at zero so tests and callers can opt out of waiting', () => {
+        assert.equal(resolveRetryWaitMs({ attempt: 5, baseDelayMs: 0, random: () => 0.99 }), 0);
+    });
+});
 
 describe('price response body deadlines', () => {
     afterEach(() => { globalThis.fetch = originalFetch; });

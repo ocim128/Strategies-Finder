@@ -163,7 +163,17 @@ the awaited batch promise for `handleSyncRequest`'s fatal path.
 
 Event emission stays ordered: outcomes buffer in `pending` and release in
 ascending original index order as `symbol` / `symbol_warning` /
-`symbol_failed`, with one serialized catalog checkpoint per landed result.
+`symbol_failed`. Catalog persistence is **coalesced**: a landed result marks the
+catalog dirty and a debounced writer (`scheduleCatalogWrite`, 2 s window)
+persists it, with an unconditional `flushCatalogWrites()` before the terminal
+`done` event. Rewriting the whole catalog per symbol was O(symbols × catalog)
+synchronous work — ~3.5 MB of `JSON.stringify` + `writeFileSync` per completed
+symbol inside the release continuation — and the catalog is a derived snapshot
+that nothing reads mid-run, so at most one write per window preserves the
+"completed symbols survive a crash" guarantee for all but the last two seconds.
+`readCatalog()` is memoized on the file's `(mtimeMs, size)` so the catalog route,
+the Alpaca refresh scan, and the sync bootstrap share one parse instead of
+re-parsing 3.8k entries per call, and the persisted JSON is compact.
 A cancelled outcome's release settles the batch promise immediately — it
 does not wait for sibling fetches — and leaves a permanent index gap:
 outcomes behind the gap never release and never emit. Cancellation only

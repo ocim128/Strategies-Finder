@@ -416,7 +416,55 @@ export interface RegisterLocalJsonRouteOptions {
     maxBodyBytes?: number;
     onAuthorizedRequest?: (req: IncomingMessage) => void;
     unauthorizedMessage?: string;
+    /**
+     * Optional structured logger for the per-request telemetry line. Defaults
+     * to {@link consoleRouteLogger}; tests inject a capturing fake.
+     */
+    logger?: ViteHttpLogger;
 }
+
+/**
+ * Duration above which a route is reported as slow even when it is a GET, so a
+ * status-poll endpoint that silently grew an O(n) snapshot rebuild surfaces in
+ * the terminal instead of only as "the UI feels janky".
+ */
+export const API_SLOW_REQUEST_WARN_MS = 2_000;
+
+function readSlowRequestWarnMs(): number {
+    const raw = Number(process.env.API_SLOW_REQUEST_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : API_SLOW_REQUEST_WARN_MS;
+}
+
+function readApiRequestLogMode(): "off" | "mutations" | "all" {
+    const raw = String(process.env.API_REQUEST_LOG ?? "").trim().toLowerCase();
+    if (raw === "0" || raw === "off" || raw === "false") return "off";
+    if (raw === "1" || raw === "all" || raw === "true") return "all";
+    return "mutations";
+}
+
+function writeConsoleLog(level: "info" | "warn", event: string, data: Record<string, unknown>): void {
+    try {
+        const line = JSON.stringify({ event, ...data });
+        if (level === "warn") console.warn(line);
+        else console.info(line);
+    } catch {
+        // Telemetry must never fail a request.
+    }
+}
+
+/**
+ * Default route logger: one JSON line per request, filtered so polling does not
+ * drown the dev-server terminal.
+ *
+ * - `API_REQUEST_LOG=1` logs every request (GET polls included).
+ * - `API_REQUEST_LOG=0` disables request logging entirely.
+ * - Unset logs mutations plus any slow request ({@link API_SLOW_REQUEST_WARN_MS},
+ *   override with `API_SLOW_REQUEST_MS`).
+ */
+const consoleRouteLogger: ViteHttpLogger = {
+    info: (message, data) => writeConsoleLog("info", message, (data ?? {}) as Record<string, unknown>),
+    warn: (message, data) => writeConsoleLog("warn", message, (data ?? {}) as Record<string, unknown>),
+};
 
 /**
  * Register one local-only JSON route on a Connect-style middleware stack,
@@ -438,6 +486,10 @@ export interface RegisterLocalJsonRouteOptions {
  *   - `sendCaughtErrorJson` on any thrown error inside `onAuthorized` (and
  *     inside `readJsonBody` when `readBody` is true)
  *
+ * Every request additionally emits one `api.request` / `api.request.slow`
+ * telemetry line (route, method, status, durationMs), which is the only
+ * per-route latency signal this dev server has.
+ *
  * Leaf-safe: only imports from `vite-http-utils` itself + the leaf
  * `local-route-authorization` gate, so this module is safe to import from any
  * Vite config plugin (no transitive `lightweight-charts` reach).
@@ -454,25 +506,59 @@ export function registerLocalJsonRoute(
         maxBodyBytes,
         onAuthorizedRequest,
         unauthorizedMessage = "Unauthorized: this route is local-only.",
+        logger = consoleRouteLogger,
     } = options;
     const handler = async (req: IncomingMessage, res: ViteHttpResponse): Promise<void> => {
-        if (!methods.includes(req.method as "GET" | "POST")) {
-            sendJson(res, 405, { ok: false, error: "Method not allowed" });
-            return;
-        }
-        if (!isAllowedLocalRequest(req)) {
-            sendJson(res, 401, { ok: false, error: unauthorizedMessage });
-            return;
-        }
+        const startedAt = Date.now();
+        const method = req.method ?? "UNKNOWN";
         try {
+            if (!methods.includes(method as "GET" | "POST")) {
+                sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: unauthorizedMessage });
+                return;
+            }
             if (onAuthorizedRequest) onAuthorizedRequest(req);
             const url = new URL(req.url ?? path, "http://localhost");
             const body = readBody ? await readJsonBody(req, maxBodyBytes) : {};
             await onAuthorized({ req, res, url, body });
         } catch (error) {
             sendCaughtErrorJson(res, error);
+        } finally {
+            emitRouteTelemetry({ logger, path, method, res, startedAt });
         }
     };
     middlewares.use(path, handler);
     return handler;
+}
+
+function emitRouteTelemetry(args: {
+    logger: ViteHttpLogger;
+    path: string;
+    method: string;
+    res: ViteHttpResponse;
+    startedAt: number;
+}): void {
+    try {
+        const mode = readApiRequestLogMode();
+        if (mode === "off") return;
+        const durationMs = Date.now() - args.startedAt;
+        const record = {
+            route: args.path,
+            method: args.method,
+            status: args.res.statusCode,
+            durationMs,
+        };
+        if (durationMs >= readSlowRequestWarnMs()) {
+            args.logger.warn("api.request.slow", record);
+            return;
+        }
+        if (mode === "all" || args.method !== "GET") {
+            args.logger.info("api.request", record);
+        }
+    } catch {
+        // Telemetry must never fail a request.
+    }
 }

@@ -616,6 +616,52 @@ async function fetchMarketCandles(
 }
 
 /**
+ * Candle fetches shared for the duration of ONE cron tick.
+ *
+ * Several subscriptions routinely watch the same instrument on the same
+ * interval with the same candle limit (e.g. two configs on BTCUSDT 5m). The
+ * scheduled pass used to fetch that history once per subscription — each fetch
+ * walks up to `MAX_BINANCE_KLINES_PER_REQUEST`-sized pages and burns CPU
+ * minutes plus public-API rate limit for identical bytes. The cache stores the
+ * in-flight promise, so concurrent workers join the same request instead of
+ * racing, and it is scoped to a single tick so the next minute re-reads the
+ * market.
+ */
+export type CandleFetchCache = Map<string, Promise<OHLCVData[]>>;
+
+/** Stable identity of a candle request within one tick. */
+export function candleFetchCacheKey(
+    symbol: string,
+    interval: string,
+    limit: number,
+): string {
+    return `${symbol.toUpperCase()}|${interval.toLowerCase()}|${Math.max(1, Math.floor(limit))}`;
+}
+
+/**
+ * Resolve a candle request through `cache` (one fetch per key per tick).
+ *
+ * A rejection removes the key before propagating: one subscription's failed leg
+ * must not permanently poison every sibling that shares the instrument — the
+ * later subscription retries on its own and can still succeed.
+ */
+export function loadCandlesOnce(
+    cache: CandleFetchCache | undefined,
+    key: string,
+    load: () => Promise<OHLCVData[]>,
+): Promise<OHLCVData[]> {
+    if (!cache) return load();
+    const cached = cache.get(key);
+    if (cached) return cached;
+    const pending = load().catch((error: unknown) => {
+        cache.delete(key);
+        throw error;
+    });
+    cache.set(key, pending);
+    return pending;
+}
+
+/**
  * Try the user's local candle proxy (cloudflared tunnel → Vite dev server's
  * /api/sqlite/load-ohlcv). Returns the candles on success, or null when the
  * proxy is unconfigured, unreachable, returns an error, or has no bars for
@@ -1652,7 +1698,8 @@ async function evaluateSubscriptionWithCandles(
 
 async function buildSubscriptionCandleContext(
     env: Env,
-    subscription: SubscriptionRow
+    subscription: SubscriptionRow,
+    candleCache?: CandleFetchCache,
 ): Promise<
     | { ok: true; context: SubscriptionCandleContext }
     | { ok: false; reason: string; closedCandleTimeSec: null }
@@ -1664,14 +1711,20 @@ async function buildSubscriptionCandleContext(
     const minClosedCandles = readMinClosedCandles(env);
     const syntheticPair = readSyntheticPairSettings(parsedBacktestSettings);
     const candleLimit = subscription.candle_limit || DEFAULT_SUBSCRIPTION_CANDLE_LIMIT;
-    const candles = syntheticPair
-        ? await fetchSyntheticMarketCandles(syntheticPair, subscription.interval, candleLimit, env)
-        : await fetchMarketCandles(
-            subscription.symbol,
-            subscription.interval,
-            candleLimit,
-            env
-        );
+    // One fetch per (instrument, interval, limit) per cron tick — see
+    // `CandleFetchCache`. Synthetic pairs key on the pair, not the venue.
+    const requestKey = candleFetchCacheKey(
+        syntheticPair
+            ? `synthetic:${syntheticPair.baseSymbol}/${syntheticPair.quoteSymbol}`
+            : subscription.symbol,
+        subscription.interval,
+        candleLimit,
+    );
+    const candles = await loadCandlesOnce(candleCache, requestKey, () => (
+        syntheticPair
+            ? fetchSyntheticMarketCandles(syntheticPair, subscription.interval, candleLimit, env)
+            : fetchMarketCandles(subscription.symbol, subscription.interval, candleLimit, env)
+    ));
 
     const nowSec = Math.floor(Date.now() / 1000);
     const closed = selectClosedCandleWindow(candles, subscription.interval, nowSec, minClosedCandles);
@@ -1703,7 +1756,8 @@ async function buildSubscriptionCandleContext(
 async function runSubscription(
     env: Env,
     subscription: SubscriptionRow,
-    force = false
+    force = false,
+    candleCache?: CandleFetchCache,
 ): Promise<Record<string, unknown>> {
     const streamId = subscription.stream_id;
     const lastExitAlertKey = extractExitAlertKey(subscription.last_status);
@@ -1730,7 +1784,7 @@ async function runSubscription(
     ) !== null;
 
     try {
-        const prepared = await buildSubscriptionCandleContext(env, subscription);
+        const prepared = await buildSubscriptionCandleContext(env, subscription, candleCache);
         if (!prepared.ok) {
             const status = composeSubscriptionStatus(prepared.reason, persistedExitAlertKey);
             await updateSubscriptionStatus(env, streamId, status);
@@ -2476,8 +2530,34 @@ async function runScheduledSubscriptions(env: Env): Promise<Record<string, unkno
         return { ok: false, error: "Missing SIGNALS_DB binding" };
     }
 
+    // Explicit column list instead of `SELECT *`: the row shape is a cross-file
+    // contract (`SubscriptionRow` ↔ workers/migrations/0002 + 0003 + 0004 +
+    // 0006), and a wildcard silently changes that shape when a migration adds a
+    // column. Naming the columns keeps the worker honest about what it reads and
+    // avoids pulling future wide TEXT columns it never touches.
+    const SUBSCRIPTION_COLUMNS = [
+        "id",
+        "stream_id",
+        "enabled",
+        "symbol",
+        "interval",
+        "strategy_key",
+        "strategy_params_json",
+        "backtest_settings_json",
+        "freshness_bars",
+        "notify_telegram",
+        "notify_exit",
+        "candle_limit",
+        "last_processed_candle_open_time",
+        "last_run_at",
+        "last_status",
+        "created_at",
+        "updated_at",
+        "latest_state_json",
+        "committee_tag",
+    ].join(", ");
     const result = await env.SIGNALS_DB.prepare(
-        `SELECT * FROM signal_subscriptions WHERE enabled = 1 ORDER BY updated_at DESC`
+        `SELECT ${SUBSCRIPTION_COLUMNS} FROM signal_subscriptions WHERE enabled = 1 ORDER BY updated_at DESC`
     ).all<SubscriptionRow>();
 
     const subscriptions = result.results ?? [];
@@ -2485,6 +2565,9 @@ async function runScheduledSubscriptions(env: Env): Promise<Record<string, unkno
     const nowSec = Math.floor(Date.now() / 1000);
     let skippedNotDue = 0;
     const dueIndexes: number[] = [];
+    // Shared for this tick only: subscriptions watching the same instrument and
+    // interval must download one candle history, not one per subscription.
+    const candleCache: CandleFetchCache = new Map();
 
     for (let i = 0; i < subscriptions.length; i++) {
         const subscription = subscriptions[i];
@@ -2510,7 +2593,7 @@ async function runScheduledSubscriptions(env: Env): Promise<Record<string, unkno
             const index = dueIndexes[current];
             const subscription = subscriptions[index];
             try {
-                runs[index] = await runSubscription(env, subscription, false);
+                runs[index] = await runSubscription(env, subscription, false, candleCache);
             } catch (error) {
                 const detail = error instanceof Error ? error.message : String(error);
                 runs[index] = {

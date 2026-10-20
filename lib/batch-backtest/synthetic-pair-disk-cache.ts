@@ -35,21 +35,19 @@
  * §"synthetic-pair disk cache").
  */
 
-import { randomUUID } from "node:crypto";
 import {
     existsSync,
     mkdirSync,
     readdirSync,
-    renameSync,
     statSync,
     unlinkSync,
-    writeFileSync,
 } from "node:fs";
-import { mkdir, open, readdir, readFile, rename, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, open, readdir, readFile, stat, unlink, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import { dirname, resolve, sep } from "node:path";
 import { serialize as v8Serialize, deserialize as v8Deserialize } from "node:v8";
 import { isMainThread } from "node:worker_threads";
+import { atomicWriteBytes, atomicWriteBytesSync } from "../atomic-write";
 import type { OHLCVData } from "../types/strategies";
 import {
     isIbkrSymbol,
@@ -608,63 +606,18 @@ export async function storeSyntheticPair(
 }
 
 /**
- * Sibling temp path for one atomic write. The name must be unique per WRITE,
- * not per process: concurrent writers to the same pair (worker threads share
- * the process id) previously shared `<file>.<pid>.tmp`, so one writer's
- * rename could steal or delete another's in-flight temp file and fail the
- * write. `randomUUID()` makes collisions practically impossible; each failed
- * writer cleans up only the temp path it created.
- */
-function atomicTempPath(filePath: string): string {
-    return `${filePath}.${process.pid}.${randomUUID()}.tmp`;
-}
-
-/**
  * Concurrent publication of the same pair races on the RENAME, not the temp
  * file: on Windows a rename onto a destination another writer is concurrently
- * replacing fails with EPERM/EACCES even though every writer uses its own
- * temp path. The competing rename finishes in microseconds, so a short
- * bounded retry makes same-key publication reliable without changing the
- * rename-based durability contract. Other errors (missing temp, permissions)
- * are not transient and surface immediately.
+ * replacing fails with EPERM/EACCES/EBUSY even though every writer uses its own
+ * temp path. The competing rename finishes in microseconds, so a short bounded
+ * retry makes same-key publication reliable without changing the rename-based
+ * durability contract. This cache uses a smaller budget than the artifact
+ * writers because its files are disposable (a miss rebuilds the pair); the
+ * temp name, cleanup, and retry loop themselves come from the shared
+ * `lib/atomic-write.ts` core (unique per write, so worker threads sharing a pid
+ * never collide on a staged file).
  */
 const ATOMIC_RENAME_ATTEMPTS = 4;
-const ATOMIC_RENAME_RETRY_DELAY_MS = 5;
-
-function isTransientRenameError(error: unknown): boolean {
-    const code = (error as NodeJS.ErrnoException)?.code;
-    return code === "EPERM" || code === "EACCES";
-}
-
-async function renameWithRetry(tmp: string, filePath: string): Promise<void> {
-    for (let attempt = 1; ; attempt += 1) {
-        try {
-            await rename(tmp, filePath);
-            return;
-        } catch (error) {
-            if (attempt >= ATOMIC_RENAME_ATTEMPTS || !isTransientRenameError(error)) {
-                throw error;
-            }
-            await new Promise((resolve) => setTimeout(resolve, ATOMIC_RENAME_RETRY_DELAY_MS * attempt));
-        }
-    }
-}
-
-function renameWithRetrySync(tmp: string, filePath: string): void {
-    for (let attempt = 1; ; attempt += 1) {
-        try {
-            renameSync(tmp, filePath);
-            return;
-        } catch (error) {
-            if (attempt >= ATOMIC_RENAME_ATTEMPTS || !isTransientRenameError(error)) {
-                throw error;
-            }
-            // The sync writer only runs inside workers (see storeSyntheticPair),
-            // where a bounded blocking wait is allowed.
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ATOMIC_RENAME_RETRY_DELAY_MS * attempt);
-        }
-    }
-}
 
 /**
  * Write `buffer` to `filePath` atomically via a sibling temp file + rename.
@@ -676,25 +629,11 @@ function renameWithRetrySync(tmp: string, filePath: string): void {
  * producer promise.
  */
 async function writeAtomic(filePath: string, buffer: Buffer): Promise<void> {
-    const tmp = atomicTempPath(filePath);
-    try {
-        await writeFile(tmp, buffer);
-        await renameWithRetry(tmp, filePath);
-    } catch (error) {
-        try { await unlink(tmp); } catch { /* best-effort cleanup */ }
-        throw error;
-    }
+    await atomicWriteBytes(filePath, buffer, { attempts: ATOMIC_RENAME_ATTEMPTS });
 }
 
 function writeAtomicSync(filePath: string, buffer: Buffer): void {
-    const tmp = atomicTempPath(filePath);
-    try {
-        writeFileSync(tmp, buffer);
-        renameWithRetrySync(tmp, filePath);
-    } catch (error) {
-        try { unlinkSync(tmp); } catch { /* best-effort cleanup */ }
-        throw error;
-    }
+    atomicWriteBytesSync(filePath, buffer, { attempts: ATOMIC_RENAME_ATTEMPTS });
 }
 
 /** Exposed for tests so they can inspect path resolution without re-deriving. */

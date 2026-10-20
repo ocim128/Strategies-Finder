@@ -1,6 +1,7 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import {
     analyzeAssetOpportunityArchive,
@@ -1446,7 +1447,10 @@ describe("Asset Opportunity holdout analysis", () => {
     });
 
     it("does not analyze matching files inside archive subfolders", () => {
-        const directory = mkdtempSync(path.join(process.cwd(), "asset-opportunity-analysis-"));
+        // Per-spec tempdir (not the repo root): an aborted run used to leave
+        // `asset-opportunity-analysis-*` trees behind and keep them inside the
+        // Vite watcher's root forever.
+        const directory = mkdtempSync(path.join(tmpdir(), "asset-opportunity-analysis-"));
         try {
             const archiveText = block({
                 timestamp: "2026-08-11T00:00:00.000Z",

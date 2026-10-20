@@ -20,10 +20,11 @@
  * `Failed to resolve "lightweight-charts". This package is ESM only`.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import dns from "node:dns";
-import { dirname, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { Plugin } from "vite";
+import { atomicWriteTextSync } from "../atomic-write";
 import { debugLogger } from "../debug-logger";
 import { resolveBinanceApiBases } from "../binance-api-bases";
 import type { BinanceMarketType } from "../binance-market";
@@ -119,7 +120,6 @@ export function getCryptoCsvPath(symbol: string, interval: string, root: string 
  */
 export function writeCryptoCsv(symbol: string, interval: string, candles: readonly CryptoCandle[], root: string = CRYPTO_CSV_DIR): void {
     const filePath = getCryptoCsvPath(symbol, interval, root);
-    mkdirSync(dirname(filePath), { recursive: true });
     const rows = ["time,open,high,low,close,volume"];
     for (const candle of candles) {
         rows.push([
@@ -131,9 +131,13 @@ export function writeCryptoCsv(symbol: string, interval: string, candles: readon
             candle.volume ?? 0,
         ].join(","));
     }
-    const tempPath = `${filePath}.tmp`;
-    writeFileSync(tempPath, `${rows.join("\n")}\n`);
-    renameSync(tempPath, filePath);
+    // Shared atomic writer. This used to stage into a FIXED `<file>.tmp` with a
+    // bare `renameSync`: two overlapping syncs (the run lock is per-target, and
+    // the "download all" pass writes many targets) could overwrite each other's
+    // staged bytes, and a Windows lock on the destination left the temp file
+    // behind forever. `atomicWriteTextSync` uses a unique temp name, retries a
+    // transient Windows lock, and always cleans its own temp file up.
+    atomicWriteTextSync(filePath, `${rows.join("\n")}\n`);
 }
 
 /**
@@ -920,6 +924,13 @@ export function cryptoDataVitePlugin(): Plugin {
         middlewares.use("/api/crypto/sync/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            // Audit Finding 2 (parity): the read side is gated too so the whole
+            // /api/crypto surface answers one policy. A remote caller must not be
+            // able to enumerate sync progress / completed targets.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: crypto routes are local-only." });
                 return;
             }
             sendJson(res, 200, {

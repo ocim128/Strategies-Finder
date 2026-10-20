@@ -2,14 +2,18 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import { afterEach, describe, it } from "node:test";
 import {
+    API_SLOW_REQUEST_WARN_MS,
     createDisconnectSafeStream,
     DEFAULT_MAX_BODY_BYTES,
     HttpStatusError,
     proxyUpstreamJson,
     readBodyBuffer,
     readJsonBody,
+    registerLocalJsonRoute,
     sendJson,
     serializeJsonForTransport,
+    type LocalRouteMiddlewareStack,
+    type ViteHttpLogger,
     type ViteHttpResponse,
 } from "../lib/vite-http-utils";
 import type { IncomingMessage } from "node:http";
@@ -211,6 +215,150 @@ describe("proxyUpstreamJson", () => {
         assert.equal(errored, true);
         assert.equal(capture.status, 0);
         assert.equal(capture.body, "");
+    });
+});
+
+describe("registerLocalJsonRoute telemetry", () => {
+    type Captured = { level: "info" | "warn"; message: string; data: Record<string, unknown> };
+
+    function setup(options: {
+        method?: string;
+        remoteAddress?: string;
+        handler?: (ctx: { res: ViteHttpResponse }) => Promise<void> | void;
+        extraEnv?: Record<string, string | undefined>;
+    } = {}) {
+        const captured: Captured[] = [];
+        const logger: ViteHttpLogger = {
+            info: (message, data) => captured.push({ level: "info", message, data: (data ?? {}) as Record<string, unknown> }),
+            warn: (message, data) => captured.push({ level: "warn", message, data: (data ?? {}) as Record<string, unknown> }),
+        };
+        let registered: ((req: IncomingMessage, res: ViteHttpResponse) => void | Promise<void>) | null = null;
+        const middlewares: LocalRouteMiddlewareStack = {
+            use(_path, handler) { registered = handler; },
+        };
+
+        const restore: Array<() => void> = [];
+        for (const [key, value] of Object.entries(options.extraEnv ?? {})) {
+            const previous = process.env[key];
+            if (value === undefined) delete process.env[key];
+            else process.env[key] = value;
+            restore.push(() => {
+                if (previous === undefined) delete process.env[key];
+                else process.env[key] = previous;
+            });
+        }
+
+        registerLocalJsonRoute(middlewares, "/api/test-telemetry", {
+            methods: ["GET", "POST"],
+            logger,
+            onAuthorized: options.handler ?? (async ({ res }) => { sendJson(res, 200, { ok: true }); }),
+        });
+        assert.ok(registered, "route must register");
+
+        const response = {
+            statusCode: 200,
+            setHeader: () => undefined,
+            end: () => undefined,
+        };
+        const request = {
+            method: options.method ?? "POST",
+            url: "/api/test-telemetry",
+            headers: { host: "127.0.0.1:5173" },
+            socket: { remoteAddress: options.remoteAddress ?? "127.0.0.1" },
+        } as unknown as IncomingMessage;
+
+        return {
+            captured,
+            response,
+            restore: () => { for (const undo of restore) undo(); },
+            invoke: async () => {
+                await registered!(request, response);
+                return response;
+            },        };
+    }
+
+    it("emits one structured line per mutating request", async () => {
+        const ctx = setup();
+        try {
+            await ctx.invoke();
+            assert.equal(ctx.captured.length, 1);
+            const [entry] = ctx.captured;
+            assert.equal(entry!.level, "info");
+            assert.equal(entry!.message, "api.request");
+            assert.equal(entry!.data.route, "/api/test-telemetry");
+            assert.equal(entry!.data.method, "POST");
+            assert.equal(entry!.data.status, 200);
+            assert.equal(typeof entry!.data.durationMs, "number");
+        } finally {
+            ctx.restore();
+        }
+    });
+
+    it("keeps silent for a fast GET poll unless verbose logging is enabled", async () => {
+        const quiet = setup({ method: "GET" });
+        try {
+            await quiet.invoke();
+            assert.equal(quiet.captured.length, 0, "a fast GET must not flood the terminal");
+        } finally {
+            quiet.restore();
+        }
+
+        const verbose = setup({ method: "GET", extraEnv: { API_REQUEST_LOG: "1" } });
+        try {
+            await verbose.invoke();
+            assert.equal(verbose.captured.length, 1);
+            assert.equal(verbose.captured[0]!.data.method, "GET");
+        } finally {
+            verbose.restore();
+        }
+    });
+
+    it("reports a slow request as a warning", async () => {
+        const ctx = setup({
+            method: "GET",
+            extraEnv: { API_SLOW_REQUEST_MS: "1" },
+            handler: async ({ res }) => {
+                await new Promise((resolve) => setTimeout(resolve, 5));
+                sendJson(res, 200, { ok: true });
+            },
+        });
+        try {
+            await ctx.invoke();
+            assert.equal(ctx.captured.length, 1);
+            assert.equal(ctx.captured[0]!.level, "warn");
+            assert.equal(ctx.captured[0]!.message, "api.request.slow");
+            // `Date.now()` granularity means a 5 ms sleep can round to 4; the
+            // invariant under test is "crossed the configured threshold".
+            assert.ok(Number(ctx.captured[0]!.data.durationMs) >= 1);
+        } finally {
+            ctx.restore();
+        }
+    });
+
+    it("can be switched off entirely", async () => {
+        const ctx = setup({ extraEnv: { API_REQUEST_LOG: "0" } });
+        try {
+            await ctx.invoke();
+            assert.equal(ctx.captured.length, 0);
+        } finally {
+            ctx.restore();
+        }
+    });
+
+    it("still records the rejection status of an unauthorized request", async () => {
+        const ctx = setup({ remoteAddress: "203.0.113.9" });
+        try {
+            const response = await ctx.invoke();
+            assert.equal(response.statusCode, 401);
+            assert.equal(ctx.captured.length, 1);
+            assert.equal(ctx.captured[0]!.data.status, 401);
+        } finally {
+            ctx.restore();
+        }
+    });
+
+    it("defaults the slow threshold to a documented value", () => {
+        assert.equal(API_SLOW_REQUEST_WARN_MS, 2_000);
     });
 });
 

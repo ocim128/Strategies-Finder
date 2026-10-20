@@ -1,4 +1,4 @@
-import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import type { Plugin } from "vite";
@@ -7,6 +7,7 @@ import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parseTimeToUnixSeconds } from "../time-normalization";
 import { filterIbkrDailyPlaceholders } from "../data/data-interval-utils";
 import type { OHLCVData } from "../types/strategies";
+import { replaceFileWithRetrySync } from "../atomic-write";
 import { beginNdjsonStream, createDisconnectSafeStream, HttpStatusError, readJsonBody, sendCaughtErrorJson, sendJson, type ViteHttpResponse } from "../vite-http-utils";
 import { isAllowedLocalRequest } from "../local-route-authorization";
 import { createFetchTimeoutSignal, isAbortError } from "../dataProviders/fetch-helpers";
@@ -660,8 +661,27 @@ async function enrichHistoricalMarketDataError(error: HttpStatusError): Promise<
 }
 
 function readCatalog(): IbkrCatalog {
+    const emptyCatalog = (): IbkrCatalog => ({ updatedAt: new Date(0).toISOString(), entries: [] });
     if (!existsSync(IBKR_CATALOG_PATH)) {
-        return { updatedAt: new Date(0).toISOString(), entries: [] };
+        catalogReadCache = null;
+        return emptyCatalog();
+    }
+    // The catalog is ~3.5 MB / ~3.8k entries on a warmed checkout. Parsing it is
+    // an ~8 ms synchronous stall, and this accessor is reached from the catalog
+    // route, the Alpaca refresh route, and the sync bootstrap. Cache the parsed
+    // value and validate it against (mtime, size) — one `statSync` instead of a
+    // full parse per call. The cached object is intentionally shared: the sync
+    // run mutates it in place and `writeCatalog` re-pins the cache afterwards.
+    let stats: { mtimeMs: number; size: number } | null = null;
+    try {
+        const info = statSync(IBKR_CATALOG_PATH);
+        stats = { mtimeMs: info.mtimeMs, size: info.size };
+    } catch {
+        catalogReadCache = null;
+        return emptyCatalog();
+    }
+    if (catalogReadCache && catalogReadCache.mtimeMs === stats.mtimeMs && catalogReadCache.size === stats.size) {
+        return catalogReadCache.catalog;
     }
     try {
         const parsed = JSON.parse(readFileSync(IBKR_CATALOG_PATH, "utf8")) as Partial<IbkrCatalog>;
@@ -682,22 +702,88 @@ function readCatalog(): IbkrCatalog {
                 intervals: (e.intervals && typeof e.intervals === "object") ? e.intervals : {},
             };
         });
-        return {
+        const catalog: IbkrCatalog = {
             updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date(0).toISOString(),
             entries,
         };
+        catalogReadCache = { ...stats, catalog };
+        return catalog;
     } catch {
-        return { updatedAt: new Date(0).toISOString(), entries: [] };
+        catalogReadCache = null;
+        return emptyCatalog();
     }
 }
+
+/** Parsed-catalog cache keyed by the file's (mtime, size); see {@link readCatalog}. */
+let catalogReadCache: { mtimeMs: number; size: number; catalog: IbkrCatalog } | null = null;
 
 // Serializes per-symbol catalog writes: parallel workers each mutate the
 // shared in-memory catalog and write it, so the writes must not interleave
 // (temp+rename is per-write atomic, but two concurrent writers could still
 // rename out of order and drop the other's entries from the final file).
 let catalogWriteChain: Promise<void> = Promise.resolve();
-/** Test seam: total `writeCatalog` calls (bounded-parallel specs assert once-per-symbol). */
+/** Test seam: total `writeCatalog` calls (bounded-parallel specs assert coalescing). */
 let catalogWriteCountForTests = 0;
+/**
+ * Coalescing window for catalog persistence.
+ *
+ * Every completed symbol used to trigger a FULL catalog rewrite: the file is
+ * ~3.5 MB / 3.8k entries, so a 500-symbol sync wrote ~1.8 GB and spent
+ * ~8-12 s of synchronous `JSON.stringify` + `writeFileSync` on the event loop;
+ * a full-universe sync wrote ~13 GB. The catalog is a *derived snapshot* —
+ * nothing reads the file mid-run — so persisting it at most once per window
+ * (plus an unconditional flush at the run boundary) preserves the
+ * "completed symbols survive a crash" guarantee for all but the last 2 s.
+ */
+const CATALOG_WRITE_COALESCE_MS = 2_000;
+let catalogDirty = false;
+let catalogFlushTimer: NodeJS.Timeout | null = null;
+let pendingCatalogWrite: IbkrCatalog | null = null;
+
+/** Persist the catalog soon; repeated calls inside one window collapse into one write. */
+function scheduleCatalogWrite(catalog: IbkrCatalog): void {
+    pendingCatalogWrite = catalog;
+    catalogDirty = true;
+    if (catalogFlushTimer) return;
+    catalogFlushTimer = setTimeout(() => {
+        catalogFlushTimer = null;
+        void flushCatalogWrites();
+    }, CATALOG_WRITE_COALESCE_MS);
+    // Never hold the process open just to flush a derived snapshot.
+    catalogFlushTimer.unref?.();
+}
+
+/**
+ * Drain any pending catalog write. Awaited at the end of `processSyncBatch` so
+ * the terminal `done` event is only emitted once the catalog on disk includes
+ * every symbol the event reports as complete.
+ */
+async function flushCatalogWrites(): Promise<void> {
+    if (catalogFlushTimer) {
+        clearTimeout(catalogFlushTimer);
+        catalogFlushTimer = null;
+    }
+    if (!catalogDirty || !pendingCatalogWrite) return;
+    catalogDirty = false;
+    const catalog = pendingCatalogWrite;
+    pendingCatalogWrite = null;
+    await writeCatalogSerialized(catalog).catch(() => {
+        // Matches the historical best-effort contract: a failed catalog write
+        // never fails a run, and the next completed symbol retries.
+    });
+}
+
+function __resetIbkrCatalogWriteStateForTests(): void {
+    if (catalogFlushTimer) {
+        clearTimeout(catalogFlushTimer);
+        catalogFlushTimer = null;
+    }
+    catalogDirty = false;
+    pendingCatalogWrite = null;
+    catalogReadCache = null;
+    catalogWriteCountForTests = 0;
+    catalogWriteChain = Promise.resolve();
+}
 
 function writeCatalogSerialized(catalog: IbkrCatalog): Promise<void> {
     const write = catalogWriteChain.then(() => {
@@ -715,8 +801,23 @@ function writeCatalog(catalog: IbkrCatalog): void {
     // mid-batch, and `readCatalog` would silently swallow it as empty.
     mkdirSync(dirname(IBKR_CATALOG_PATH), { recursive: true });
     const tempPath = `${IBKR_CATALOG_PATH}.tmp`;
-    writeFileSync(tempPath, JSON.stringify(catalog, null, 2));
-    replaceFileWithRetry(tempPath, IBKR_CATALOG_PATH);
+    // Compact serialization: the pretty-printed form was 3.56 MB vs 2.34 MB
+    // compact (-34% bytes) for a file no human reads directly.
+    writeFileSync(tempPath, JSON.stringify(catalog));
+    try {
+        replaceFileWithRetry(tempPath, IBKR_CATALOG_PATH);
+    } catch (error) {
+        // The on-disk file no longer matches the cache; force a re-read so the
+        // next caller sees what is actually persisted.
+        catalogReadCache = null;
+        throw error;
+    }
+    try {
+        const info = statSync(IBKR_CATALOG_PATH);
+        catalogReadCache = { mtimeMs: info.mtimeMs, size: info.size, catalog };
+    } catch {
+        catalogReadCache = null;
+    }
 }
 
 type FileReplaceDependencies = {
@@ -727,41 +828,33 @@ type FileReplaceDependencies = {
 };
 
 /**
+ * Rename attempts on Windows for IBKR data files. Higher than the shared
+ * default (10) because these targets live under `price-data/`, which the Vite
+ * watcher reads on every change — a longer lock window than build artifacts.
+ */
+const IBKR_REPLACE_ATTEMPTS = 20;
+
+/**
  * Keeps same-directory temp-file replacement atomic while tolerating the
  * brief destination locks Windows antivirus scanners and file watchers can
  * create. Non-Windows failures still surface immediately.
+ *
+ * Delegates to the shared `lib/atomic-write.ts` core — this module keeps its own
+ * 20-attempt budget because its CSV targets live inside the Vite watcher, whose
+ * lock windows are longer than the SP500 artifact trees'.
  */
 export function replaceFileWithRetry(
     sourcePath: string,
     targetPath: string,
     dependencies: FileReplaceDependencies = {},
 ): void {
-    const platform = dependencies.platform ?? process.platform;
-    const rename = dependencies.rename ?? renameSync;
-    const wait = dependencies.wait ?? ((delayMs: number) => {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+    replaceFileWithRetrySync(sourcePath, targetPath, {
+        ...dependencies,
+        // The shared core names the seam `renameSync`; this module's historical
+        // (and spec-visible) option name is `rename`.
+        renameSync: dependencies.rename,
+        attempts: IBKR_REPLACE_ATTEMPTS,
     });
-    const attempts = platform === "win32" ? 20 : 1;
-    let lastError: unknown = null;
-
-    for (let attempt = 0; attempt < attempts; attempt += 1) {
-        try {
-            rename(sourcePath, targetPath);
-            return;
-        } catch (error) {
-            lastError = error;
-            const code = (error as NodeJS.ErrnoException).code;
-            const retryable = platform === "win32"
-                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
-            if (!retryable || attempt === attempts - 1) break;
-            wait(Math.min(25 * (attempt + 1), 100));
-        }
-    }
-
-    if (dependencies.fallback?.(sourcePath, targetPath, lastError)) {
-        return;
-    }
-    throw lastError;
 }
 
 function summarizeCandles(
@@ -2812,15 +2905,16 @@ export async function processSyncBatch(
                             runState.completedSymbols!.push(marked);
                         }
                     }
-                    // Per-symbol catalog write: ensures completed symbols appear
+                    // Coalesced catalog persistence: completed symbols must appear
                     // in the catalog even if the batch is interrupted (reload,
-                    // crash, fatal on a later symbol). Writes are serialized by
-                    // catalogWriteChain so parallel workers cannot interleave
-                    // them; the atomic temp+rename keeps each write safe.
-                    void writeCatalogSerialized(catalog).catch(() => {
-                        // The sequential path ignored write failures too — the
-                        // event was still emitted. Swallow here to match.
-                    });
+                    // crash, fatal on a later symbol), but rewriting the full
+                    // ~3.5 MB catalog per symbol was O(N) synchronous work inside
+                    // an O(N) loop. `scheduleCatalogWrite` collapses the burst
+                    // into at most one write per window; `flushCatalogWrites` at
+                    // the run boundary makes the terminal state durable before the
+                    // `done` event is emitted. Writes stay serialized by
+                    // `catalogWriteChain` and atomic via temp+rename.
+                    scheduleCatalogWrite(catalog);
                     writer({ type: "symbol", index, total: symbols.length, ...outcome.result });
                     // Partial-max warning: a landed dataset that didn't cover the
                     // full window still counts as success, but the UI must not
@@ -2988,6 +3082,12 @@ export async function processSyncBatch(
         }
     }
 
+    // Durability boundary: the coalesced writer may still be holding the final
+    // completed symbols. Flush before `done` so a reattaching reader (or a
+    // process that dies right after this event) sees every symbol the event
+    // reports as complete.
+    await flushCatalogWrites();
+
     writer({
         type: "done",
         ok: failed.length === 0 && !cancelled,
@@ -3152,6 +3252,12 @@ export function ibkrDataVitePlugin(): Plugin {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
                 return;
             }
+            // Same loopback/bearer gate as the mutating IBKR routes: this returns
+            // the full 3.8k-entry catalog, which is research data, not public.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
+                return;
+            }
             const assets = readCatalogAssets();
             sendJson(res, 200, {
                 ok: true,
@@ -3164,6 +3270,14 @@ export function ibkrDataVitePlugin(): Plugin {
         middlewares.use("/api/ibkr/status", async (req: any, res: any) => {
             if (req.method !== "GET") {
                 sendJson(res, 405, { ok: false, error: "Method not allowed" });
+                return;
+            }
+            // Gated because this route calls the Gateway (`ensureBrokerageSession`
+            // + `/tickle`) on every request and `?diagnostic=1` echoes the raw
+            // auth/tickle payloads. An unauthenticated remote caller must not be
+            // able to probe the trading session or read its internals.
+            if (!isAllowedLocalRequest(req)) {
+                sendJson(res, 401, { ok: false, error: "Unauthorized: IBKR routes are local-only." });
                 return;
             }
             // Raw auth/tickle payloads leak session internals; only include
@@ -3388,12 +3502,23 @@ export function __resetIbkrSyncStateForTests(): void {
     syncOwnerGen = 0;
     syncRunState = null;
     syncAbortController = null;
-    catalogWriteCountForTests = 0;
+    // Clears the pending coalesced write (and its timer), the parsed-catalog
+    // cache, and the write counter so specs never observe another spec's state.
+    __resetIbkrCatalogWriteStateForTests();
 }
 
 /** Test seam: number of `writeCatalog` calls since the last state reset. */
 export function __getIbkrCatalogWriteCountForTests(): number {
     return catalogWriteCountForTests;
+}
+
+/**
+ * Test seam: force the pending coalesced catalog write to land now. Specs that
+ * assert on-disk catalog contents after a run call this (the run boundary
+ * already flushes, but a spec may drive `processSyncBatch`'s pieces directly).
+ */
+export function __flushIbkrCatalogWritesForTests(): Promise<void> {
+    return flushCatalogWrites();
 }
 
 /**

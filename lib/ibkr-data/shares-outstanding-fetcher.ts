@@ -34,8 +34,9 @@
  *    They never reach URLs, the tickers disk cache, catalog JSON, CSV, NDJSON,
  *    or debug logs.
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { atomicWriteJsonSync } from "../atomic-write";
 import { debugLogger } from "../debug-logger";
 import { createFetchTimeoutSignal } from "../dataProviders/fetch-helpers";
 import { HttpStatusError } from "../vite-http-utils";
@@ -545,11 +546,12 @@ export async function loadCompanyTickersCached(options?: {
     if (Object.keys(tickers).length === 0) {
         throw new HttpStatusError(502, "EDGAR company_tickers payload was unrecognized (no valid ticker rows).");
     }
-    mkdirSync(dirname(cachePath), { recursive: true });
     const cache: TickersCache = { fetchedAt: new Date().toISOString(), tickers };
-    const tempPath = `${cachePath}.tmp`;
-    writeFileSync(tempPath, JSON.stringify(cache));
-    renameSync(tempPath, cachePath);
+    // Shared atomic writer: unique temp name, Windows lock retry, and cleanup on
+    // failure. The previous fixed `<file>.tmp` + bare `renameSync` could leave a
+    // stale staged file (and lose a concurrent cache refresh's write) whenever
+    // the destination was briefly locked.
+    atomicWriteJsonSync(cachePath, cache);
     debugLogger.info("marketcap.tickers.fetch", { target: "edgar", count: Object.keys(tickers).length });
     return tickers;
 }

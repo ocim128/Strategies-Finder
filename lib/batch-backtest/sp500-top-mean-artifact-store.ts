@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import { createHash } from "node:crypto";
 import type { CompactPairArtifact, TopMeanRunManifest, BatchSyntheticPairArtifactAdapter } from "./compact-pair-artifact";
 import { toBatchSyntheticPairAdapter } from "./compact-pair-artifact";
@@ -116,96 +116,16 @@ export function computeRunFingerprint(payload: {
     return createHash("sha256").update(jsonStr).digest("hex");
 }
 
-export function atomicWriteJsonSync(targetPath: string, data: unknown): void {
-    const dir = dirname(targetPath);
-    if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-    }
-    const tempPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
-    writeFileSync(tempPath, JSON.stringify(data), "utf8");
-
-    // Windows can briefly deny replacing an existing file while an antivirus
-    // scanner or the Vite watcher still has the destination open. The write
-    // is already staged in the same directory, so a short bounded retry keeps
-    // the operation atomic without falling back to delete-then-rename.
-    const attempts = process.platform === "win32" ? 10 : 1;
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-        try {
-            renameSync(tempPath, targetPath);
-            return;
-        } catch (error) {
-            lastError = error;
-            const code = (error as NodeJS.ErrnoException).code;
-            const retryable = process.platform === "win32"
-                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
-            if (!retryable || attempt === attempts - 1) break;
-
-            // This is a synchronous API, so use a small bounded wait between
-            // attempts rather than allowing overlapping manifest writes.
-            const delayMs = Math.min(25 * (attempt + 1), 100);
-            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-        }
-    }
-
-    try {
-        rmSync(tempPath, { force: true });
-    } catch {
-        // Preserve the original rename failure; cleanup is best effort.
-    }
-    throw lastError;
-}
-
 /**
- * Async twin of `atomicWriteJsonSync`. Same atomic-write semantics (temp file
- * in the same dir, then rename) and the same Windows retry policy, but uses
- * `fs/promises` so callers on the main thread of a hot server path do not
- * block the event loop on multi-hundred-KB shard artifacts. The retry wait
- * uses real `setTimeout` (no `Atomics.wait`) so other microtasks can run.
+ * Atomic write helpers. The implementation (temp file in the destination
+ * directory → `rename`, Windows lock retries, unique temp names, cleanup on
+ * failure) now lives in the shared `lib/atomic-write.ts` leaf so the five
+ * per-module copies cannot drift apart again. Re-exported here because existing
+ * callers and specs import these names from this module.
  */
-/**
- * Shared async atomic write/rename core (shard byte-transfer phase): same
- * temp-file placement, Windows retry policy, cleanup, and error propagation
- * as {@link atomicWriteJsonSync}, but writes raw bytes — the worker already
- * serialized the payload, so the coordinator never re-stringifies it.
- */
-export async function atomicWriteBytes(targetPath: string, bytes: Uint8Array): Promise<void> {
-    const dir = dirname(targetPath);
-    // Avoid an `existsSync` syscall roundtrip — `mkdir({ recursive: true })`
-    // is a no-op when the dir already exists and is cheaper than a separate
-    // existence check + mkdir in the common case.
-    await mkdir(dir, { recursive: true });
-    const tempPath = `${targetPath}.${Date.now()}.${Math.random().toString(36).substring(2, 8)}.tmp`;
-    await writeFile(tempPath, bytes);
+import { atomicWriteBytes, atomicWriteJson, atomicWriteJsonSync } from "../atomic-write";
 
-    const attempts = process.platform === "win32" ? 10 : 1;
-    let lastError: unknown = null;
-    for (let attempt = 0; attempt < attempts; attempt++) {
-        try {
-            await rename(tempPath, targetPath);
-            return;
-        } catch (error) {
-            lastError = error;
-            const code = (error as NodeJS.ErrnoException).code;
-            const retryable = process.platform === "win32"
-                && (code === "EPERM" || code === "EACCES" || code === "EBUSY");
-            if (!retryable || attempt === attempts - 1) break;
-            const delayMs = Math.min(25 * (attempt + 1), 100);
-            await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
-        }
-    }
-
-    try {
-        await rm(tempPath, { force: true });
-    } catch {
-        // Preserve the original rename failure; cleanup is best effort.
-    }
-    throw lastError;
-}
-
-export async function atomicWriteJson(targetPath: string, data: unknown): Promise<void> {
-    await atomicWriteBytes(targetPath, new TextEncoder().encode(JSON.stringify(data)));
-}
+export { atomicWriteBytes, atomicWriteJson, atomicWriteJsonSync };
 
 export function saveManifest(manifest: TopMeanRunManifest, baseDir?: string): void {
     manifest.updatedAt = Date.now();

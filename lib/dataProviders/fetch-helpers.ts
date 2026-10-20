@@ -4,6 +4,67 @@ import { getIntervalSeconds } from "./utils";
 export const DEFAULT_PROVIDER_FETCH_TIMEOUT_MS = 15_000;
 const DEFAULT_RETRY_STATUSES = new Set([418, 429, 500, 502, 503, 504]);
 
+/**
+ * Retry pacing policy shared by every provider retry path.
+ *
+ * Two properties matter for this codebase and are easy to get wrong:
+ *
+ * 1. **Ceiling.** `Retry-After` is server-controlled. An upstream that answers
+ *    `Retry-After: 3600` must not silently park a Finder/Batch arm for an hour
+ *    with no log; the wait is clamped to {@link MAX_RETRY_WAIT_MS}.
+ * 2. **Jitter.** Several workers (Finder arms, Batch pools, crypto sync,
+ *    IBKR/Alpaca symbol dispatch) hit the same provider concurrently. A fixed
+ *    `base * attempt` schedule makes every one of them retry in the same
+ *    millisecond, reproducing the collision that caused the 429. Full jitter
+ *    (`random in [0, ceiling)`) spreads them out.
+ *
+ * Exponential growth replaces the previous linear schedule so a burst-limited
+ * provider recovers instead of being hammered at a constant cadence.
+ */
+export const MAX_RETRY_WAIT_MS = 30_000;
+const MAX_BACKOFF_EXPONENT = 6;
+
+/** Upper bound for one retry wait, honoring a clamped `Retry-After`. */
+export function resolveRetryWaitMs(args: {
+    attempt: number;
+    baseDelayMs: number;
+    retryAfterMs?: number | null;
+    random?: () => number;
+}): number {
+    const random = args.random ?? Math.random;
+    const attempt = Math.max(1, Math.floor(args.attempt));
+    const retryAfterMs = Number.isFinite(args.retryAfterMs) ? Math.max(0, args.retryAfterMs as number) : null;
+    if (retryAfterMs !== null && retryAfterMs > 0) {
+        // Respect the upstream hint, but never beyond the policy ceiling, and
+        // still jitter so concurrent workers do not resume in lockstep.
+        const ceiling = Math.min(retryAfterMs, MAX_RETRY_WAIT_MS);
+        return Math.max(0, Math.floor(ceiling * (0.5 + random() * 0.5)));
+    }
+    const baseDelayMs = Math.max(0, Math.floor(args.baseDelayMs));
+    const exponential = baseDelayMs * 2 ** Math.min(attempt - 1, MAX_BACKOFF_EXPONENT);
+    const ceiling = Math.min(exponential, MAX_RETRY_WAIT_MS);
+    // Spread the herd within the upper half of the window instead of the whole
+    // window: a draw near zero would retry a 429'd provider immediately, which
+    // is exactly the burst the jitter exists to avoid.
+    return Math.max(0, Math.floor(ceiling / 2 + (random() * ceiling) / 2));
+}
+
+/**
+ * One structured line per retry decision.
+ *
+ * Deliberately import-free: this module is reachable from the Vite config
+ * bundle through `vite-http-utils`, so pulling `debug-logger` in here would
+ * re-introduce the browser/Vite-runtime assumptions that utility avoids.
+ * Logging must never throw into a provider retry path.
+ */
+function logProviderRetry(data: Record<string, unknown>): void {
+    try {
+        console.info(JSON.stringify({ event: "provider.retry", ...data }));
+    } catch {
+        // Logging is best effort.
+    }
+}
+
 export function findBestDivisibleInterval(
     targetSeconds: number,
     candidates: Iterable<string>
@@ -179,7 +240,16 @@ export async function fetchAndConsumeWithTimeoutAndRetry<T>(
 
             const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
             await response.body?.cancel();
-            const backoffMs = retryAfterMs ?? baseDelayMs * attempt;
+            const backoffMs = resolveRetryWaitMs({ attempt, baseDelayMs, retryAfterMs });
+            logProviderRetry({
+                url: typeof input === "string" ? input : String((input as Request).url ?? input),
+                status: response.status,
+                attempt,
+                maxAttempts,
+                retryAfterMs,
+                backoffMs,
+                cappedRetryAfter: retryAfterMs !== null && retryAfterMs > MAX_RETRY_WAIT_MS,
+            });
             await delayWithAbort(backoffMs, sourceSignal ?? undefined);
         } catch (error) {
             const timeoutReason: unknown = timeout.signal?.reason;
@@ -191,7 +261,15 @@ export async function fetchAndConsumeWithTimeoutAndRetry<T>(
             if (sourceSignal?.aborted || (isAbortError(error) && !timedOut) || attempt >= maxAttempts) {
                 throw sourceSignal?.aborted ? error : failure;
             }
-            await delayWithAbort(baseDelayMs * attempt, sourceSignal ?? undefined);
+            const backoffMs = resolveRetryWaitMs({ attempt, baseDelayMs });
+            logProviderRetry({
+                url: typeof input === "string" ? input : String((input as Request).url ?? input),
+                attempt,
+                maxAttempts,
+                backoffMs,
+                error: failure instanceof Error ? failure.message : String(failure),
+            });
+            await delayWithAbort(backoffMs, sourceSignal ?? undefined);
         } finally {
             timeout.cleanup();
         }

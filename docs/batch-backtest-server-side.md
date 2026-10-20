@@ -823,7 +823,16 @@ publications give every write its own sibling temporary file (a per-write
 UUID, not a per-process name that worker threads share) and retry the
 publishing rename a few times, because Windows renames onto a destination
 another writer is concurrently replacing fail transiently with EPERM; each
-failed writer cleans up only its own temporary file. The LRU-touch memo used
+failed writer cleans up only its own temporary file. That policy now lives in
+ONE leaf module, `lib/atomic-write.ts` (`replaceFileWithRetrySync/Async`,
+`atomicWriteJson{,Sync}`, `atomicWriteBytes{,Sync}`), which the TOP_MEAN
+artifact store, the synthetic-pair cache, the IBKR seed sidecars, the
+shares-outstanding cache, and the crypto CSV writer all call; per-site callers
+keep their own attempt budget (IBKR still uses 20 because its CSV targets sit
+under the Vite watcher and see longer lock windows). Before the extraction five
+copies had already drifted: one used a fixed `<file>.tmp` (two writers in the
+same process could delete each other's staged file), and the crypto writer had
+no unique temp name, no retry, and no cleanup on failure. The LRU-touch memo used
 by the oldest-mtime-first prune is bounded by the same `MAX_CACHE_FILES` cap
 and releases a path's record when that file is pruned, so bookkeeping cannot
 outgrow the on-disk cache; an evicted memo entry only costs a later

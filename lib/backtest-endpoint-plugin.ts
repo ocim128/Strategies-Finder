@@ -35,7 +35,7 @@ import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS, toCompactMetrics, toSlimSingleResul
 import { stripEndpointIgnoredBacktestSettings } from "./backtest-endpoint-settings";
 import { buildBacktestEndpointExecutorRequest } from "./backtest-endpoint-execution";
 import { rememberLoopbackOriginFromRequest } from "./local-api-transport";
-import { readJsonBody, sendCaughtErrorJson, sendJson } from "./vite-http-utils";
+import { readJsonBody, registerLocalJsonRoute, sendCaughtErrorJson, sendJson } from "./vite-http-utils";
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 import { strategies as builtInStrategies } from "./strategies/library";
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -785,102 +785,116 @@ function computeRequestFingerprint(
 
 export function backtestEndpointPlugin(): Plugin {
     const register = (middlewares: any) => {
-        middlewares.use("/api/backtest", async (req: any, res: any) => {
-            const method = req.method || "GET";
-            const requestUrl = new URL(req.url || "/", "http://localhost");
-            const pathParts = requestUrl.pathname.split("/").filter(Boolean);
+        // Audit (route-authorization drift): this was the last mutating dev-server
+        // surface registered without the shared loopback/bearer gate. It accepts a
+        // 100 MB dataset upload, a 10 000-item batch, and a 5 000-run random
+        // search, so a `--host`ed / tunnelled / reverse-proxied Vite server could
+        // be driven into arbitrary CPU and heap work by any remote caller.
+        // Registering through `registerLocalJsonRoute` (a) applies the same gate
+        // every Batch/Finder/IBKR/Crypto route uses, (b) adds the standard
+        // per-request telemetry line, and (c) keeps the sub-path routing below
+        // inside `onAuthorized` so the wire shape is unchanged.
+        registerLocalJsonRoute(middlewares, "/api/backtest", {
+            methods: ["GET", "POST"],
+            readBody: false,
+            unauthorizedMessage: "Unauthorized: backtest routes are local-only.",
+            onAuthorized: async ({ req, res }) => {
+                const method = req.method || "GET";
+                const requestUrl = new URL(req.url || "/", "http://localhost");
+                const pathParts = requestUrl.pathname.split("/").filter(Boolean);
 
-            try {
-                // GET /api/backtest/health
-                if (method === "GET" && pathParts.length === 1 && pathParts[0] === "health") {
-                    const manifest = getManifestFingerprint();
-                    const { rustEngine } = await import("./rust-engine-client");
+                try {
+                    // GET /api/backtest/health
+                    if (method === "GET" && pathParts.length === 1 && pathParts[0] === "health") {
+                        const manifest = getManifestFingerprint();
+                        const { rustEngine } = await import("./rust-engine-client");
 
-                    const healthResp: BacktestHealthResponse = {
-                        ok: true,
-                        version: "1.0.0",
-                        manifest: {
-                            strategyCount: manifest.strategyCount,
-                            hash: manifest.hash,
-                        },
-                        enginePreference: {
-                            rustPreferred: false,
-                            rustAvailable: await rustEngine.checkHealth(),
-                        },
-                    };
-                    sendJson(res, 200, healthResp);
-                    return;
-                }
-
-                // POST /api/backtest/datasets
-                if (method === "POST" && pathParts.length === 1 && pathParts[0] === "datasets") {
-                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
-                    const uploadReq = body as unknown as DatasetUploadRequest;
-                    if (!Array.isArray(uploadReq.candles) || uploadReq.candles.length === 0) {
-                        errorResponse(res, 400, "candles array is required");
+                        const healthResp: BacktestHealthResponse = {
+                            ok: true,
+                            version: "1.0.0",
+                            manifest: {
+                                strategyCount: manifest.strategyCount,
+                                hash: manifest.hash,
+                            },
+                            enginePreference: {
+                                rustPreferred: false,
+                                rustAvailable: await rustEngine.checkHealth(),
+                            },
+                        };
+                        sendJson(res, 200, healthResp);
                         return;
                     }
 
-                    const entry = cacheDataset(uploadReq.candles, uploadReq.keyHint);
-                    if ("error" in entry) {
-                        errorResponse(res, entry.status, entry.error, entry.code);
+                    // POST /api/backtest/datasets
+                    if (method === "POST" && pathParts.length === 1 && pathParts[0] === "datasets") {
+                        const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
+                        const uploadReq = body as unknown as DatasetUploadRequest;
+                        if (!Array.isArray(uploadReq.candles) || uploadReq.candles.length === 0) {
+                            errorResponse(res, 400, "candles array is required");
+                            return;
+                        }
+
+                        const entry = cacheDataset(uploadReq.candles, uploadReq.keyHint);
+                        if ("error" in entry) {
+                            errorResponse(res, entry.status, entry.error, entry.code);
+                            return;
+                        }
+                        const resp: DatasetUploadResponse = {
+                            ok: true,
+                            datasetRef: entry.ref,
+                            hash: entry.hash,
+                            candleCount: entry.candles.length,
+                            firstTime: entry.firstTime,
+                            lastTime: entry.lastTime,
+                        };
+                        sendJson(res, 200, resp);
                         return;
                     }
-                    const resp: DatasetUploadResponse = {
-                        ok: true,
-                        datasetRef: entry.ref,
-                        hash: entry.hash,
-                        candleCount: entry.candles.length,
-                        firstTime: entry.firstTime,
-                        lastTime: entry.lastTime,
-                    };
-                    sendJson(res, 200, resp);
-                    return;
-                }
 
-                // POST /api/backtest/:strategyKey
-                if (method === "POST" && pathParts.length === 1) {
-                    const strategyKey = pathParts[0];
-                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
-                    // Audit Finding (Host SSRF): remember the loopback origin from
-                    // the bound server socket (NOT the spoofable Host header) so any
-                    // internal second-market /api/* fetches done during execution
-                    // target this Vite server and never a caller-controlled origin.
-                    rememberLoopbackOriginFromRequest(req);
-                    const result = await handleSingleBacktest(strategyKey, body, req as IncomingMessage);
-                    const status = result.ok ? 200 : (result as BacktestErrorResponse).code === "EXECUTION_ERROR" ? 500 : 400;
-                    sendJson(res, status, result);
-                    return;
-                }
+                    // POST /api/backtest/:strategyKey
+                    if (method === "POST" && pathParts.length === 1) {
+                        const strategyKey = pathParts[0];
+                        const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
+                        // Audit Finding (Host SSRF): remember the loopback origin from
+                        // the bound server socket (NOT the spoofable Host header) so any
+                        // internal second-market /api/* fetches done during execution
+                        // target this Vite server and never a caller-controlled origin.
+                        rememberLoopbackOriginFromRequest(req);
+                        const result = await handleSingleBacktest(strategyKey, body, req as IncomingMessage);
+                        const status = result.ok ? 200 : (result as BacktestErrorResponse).code === "EXECUTION_ERROR" ? 500 : 400;
+                        sendJson(res, status, result);
+                        return;
+                    }
 
-                // POST /api/backtest/:strategyKey/batch
-                if (method === "POST" && pathParts.length === 2 && pathParts[1] === "batch") {
-                    const strategyKey = pathParts[0];
-                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
-                    rememberLoopbackOriginFromRequest(req);
-                    const result = await handleBatchBacktest(strategyKey, body);
-                    const status = result.ok ? 200 : 400;
-                    sendJson(res, status, result);
-                    return;
-                }
+                    // POST /api/backtest/:strategyKey/batch
+                    if (method === "POST" && pathParts.length === 2 && pathParts[1] === "batch") {
+                        const strategyKey = pathParts[0];
+                        const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
+                        rememberLoopbackOriginFromRequest(req);
+                        const result = await handleBatchBacktest(strategyKey, body);
+                        const status = result.ok ? 200 : 400;
+                        sendJson(res, status, result);
+                        return;
+                    }
 
-                // POST /api/backtest/:strategyKey/search/random
-                if (method === "POST" && pathParts.length === 3 && pathParts[1] === "search" && pathParts[2] === "random") {
-                    const strategyKey = pathParts[0];
-                    const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
-                    rememberLoopbackOriginFromRequest(req);
-                    const result = await handleRandomSearch(strategyKey, body);
-                    const status = result.ok ? 200 : 400;
-                    sendJson(res, status, result);
-                    return;
-                }
+                    // POST /api/backtest/:strategyKey/search/random
+                    if (method === "POST" && pathParts.length === 3 && pathParts[1] === "search" && pathParts[2] === "random") {
+                        const strategyKey = pathParts[0];
+                        const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
+                        rememberLoopbackOriginFromRequest(req);
+                        const result = await handleRandomSearch(strategyKey, body);
+                        const status = result.ok ? 200 : 400;
+                        sendJson(res, status, result);
+                        return;
+                    }
 
-                sendJson(res, 404, { ok: false, error: "Not found" });
-            } catch (err) {
-                // sendCaughtErrorJson maps HttpStatusError (400/413/415 from the
-                // shared readJsonBody) to its own status and everything else to 500.
-                sendCaughtErrorJson(res, err);
-            }
+                    sendJson(res, 404, { ok: false, error: "Not found" });
+                } catch (err) {
+                    // sendCaughtErrorJson maps HttpStatusError (400/413/415 from the
+                    // shared readJsonBody) to its own status and everything else to 500.
+                    sendCaughtErrorJson(res, err);
+                }
+            },
         });
     };
 

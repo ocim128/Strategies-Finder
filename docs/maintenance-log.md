@@ -4,6 +4,93 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-20 — Seven server-side ROI fixes: catalog write storm, ungated `/api/backtest`, cron refetch, retry jitter, route telemetry, five atomic writers, watcher globs
+
+- **Evidence (all source-verified before editing):** (1) `writeCatalog` in
+  `lib/ibkr-data/ibkr-data-vite-plugin.ts` re-serialized the whole
+  `price-data/ibkr/catalog.json` (measured 3,564,688 bytes / 3,827 entries;
+  `JSON.parse` ≈8 ms, pretty `JSON.stringify` ≈10 ms) for EVERY completed
+  symbol, synchronously, inside the sync loop — O(symbols × catalog) work plus a
+  full-file rename per symbol. (2) `/api/backtest` was the only one of the 29
+  route registrations built by hand, with no `isAllowedLocalRequest` gate: a
+  `--host`ed or tunneled dev server let ANY caller launch backtests, read
+  datasets, and enumerate batch runs. (3) `runScheduledSubscriptions` fetched
+  candle history once per subscription per tick, so two subscriptions on
+  `BTCUSDT 5m` downloaded the same 350 candles twice every minute, and the
+  subscription query used `SELECT *`. (4) Provider retries used a linear
+  `baseDelayMs * attempt` with no jitter while Finder arms, Batch pools, and
+  sync loops hit the same host concurrently, and `Retry-After` was honored
+  unbounded — an upstream answering `3600` parked an arm for an hour with no
+  log. (5) 28 routes emitted no request telemetry, so a slow or failing endpoint
+  was invisible without a debugger. (6) Five hand-rolled atomic writers had
+  drifted: the crypto CSV writer had no unique temp name, no retry, and no
+  cleanup on failure; one copy used a fixed `<file>.tmp` (two writers in one
+  process could delete each other's staged file). (7) The Vite watcher globs
+  missed runtime output trees and 59 leaked `asset-opportunity-analysis-*` temp
+  directories were sitting inside the watch root.
+- **Change 1 (IBKR catalog):** `readCatalog()` is memoized on the file's
+  `(mtimeMs, size)` (shared by the catalog route, the Alpaca refresh scan, and
+  the sync bootstrap) and the persisted JSON is compact. Writes are coalesced:
+  `scheduleCatalogWrite` marks dirty and a 2 s debounced, `unref`'d timer
+  persists at most one catalog per window, with `flushCatalogWrites()` awaited
+  before the terminal `done` event so a completed run never loses its last
+  symbols. The blocking `Atomics.wait` retry loop was replaced by
+  `replaceFileWithRetrySync` from the shared atomic module (attempt budget still
+  20, because these CSV/catalog targets sit under the Vite watcher).
+- **Change 2 (route authorization):** `/api/backtest` now registers through
+  `registerLocalJsonRoute` (loopback/bearer gate + `405` + body cap for free),
+  with its sub-path routing moved into the authorized handler; `/api/ibkr/*`
+  and `/api/crypto/sync/status` gained the same explicit gate. Route access is
+  no longer a property of how a route happened to be registered.
+- **Change 3 (Worker cron):** one `CandleFetchCache` per scheduled tick keys on
+  `symbol|interval|limit` (synthetic pairs key on their `BASE/QUOTE` legs),
+  joins in-flight loads, evicts on failure, and is bypassed by manual
+  `run-now`/`run-with-candles`; the subscription query lists its 19 columns
+  explicitly instead of `SELECT *`.
+- **Change 4 (retry pacing):** `resolveRetryWaitMs` gives exponential growth
+  (capped at 2^6 × base), jitter in the upper half of the window (a draw near
+  zero would re-hammer a 429 the jitter exists to avoid), and a 30 s ceiling on
+  `Retry-After`; every retry decision logs one `provider.retry` line (import-free
+  `console.info`, so the module stays safe inside the Vite config bundle).
+- **Change 5 (route telemetry):** `registerLocalJsonRoute` accepts an optional
+  `logger` and emits `api.request` (mutations, or all requests with
+  `API_REQUEST_LOG=1`) plus `api.request.slow` above `API_SLOW_REQUEST_MS`
+  (default 2 s) with `route`/`method`/`status`/`durationMs`; the default sink
+  writes through the process console, keeping `debug-logger` out of the config
+  graph. Telemetry is emitted from a `finally`, so 401/405/body-cap outcomes are
+  recorded too.
+- **Change 6 (atomic writes):** new leaf `lib/atomic-write.ts` (node builtins
+  only) owns temp naming (`<target>.<pid>.<ts>.<nonce>.tmp`), Windows-only
+  retry of EPERM/EACCES/EBUSY with bounded backoff, failure cleanup, and a
+  `fallback` hook. The TOP_MEAN artifact store, synthetic-pair cache, IBKR seed
+  sidecars, shares-outstanding cache, and crypto CSV writer now delegate to it;
+  the artifact store re-exports the old helper names so call sites and specs stay
+  unchanged.
+- **Change 7 (watcher):** `vite.config.ts` ignores `screenshots/`, root
+  `asset-opportunity-analysis-*`, `signals/`, `dist/`, and the runtime dirs of
+  local tooling. Root-anchored entries deliberately match BOTH the bare
+  directory and its subtree (`x/**` does not match `x`), and `signals`/`dist`
+  are anchored to the checkout because a depth-agnostic `**/signals/**` would
+  also swallow a future `lib/signals/` and silently kill its hot reload.
+- **Focused checks:** `npm run typecheck`, `npm run typecheck:tests`, and
+  `npm run test` green (295 specs) — including the new `tests/atomic-write.spec.ts`
+  (12 cases pinning temp uniqueness, retry classification, backoff schedule,
+  platform gating, fallback, and failure cleanup), the new cron coalescing case
+  in `tests/worker-schema-migrations.spec.ts` (two `BTCUSDT` subscriptions → one
+  download, still refetched next tick), the new "rejects a non-loopback caller
+  before any work is dispatched" case in `tests/backtest-endpoint-plugin.spec.ts`,
+  six telemetry cases in `tests/vite-http-utils.spec.ts`, retry-pacing cases in
+  `tests/fetch-helpers.spec.ts`, and root-anchoring guards in
+  `tests/vite-startup-watch.spec.ts`. `npm run build:check` fails in this
+  environment with `[vite:esbuild-transpile] remove <Temp>\esbuild-…: Access is
+  denied` — reproduced with these changes stashed, so it is a pre-existing
+  Windows/AV temp-file artifact, not a regression from this work.
+- **Follow-up:** four plugins (`crypto-data`, `local-sqlite`,
+  `strategy-library-admin`, `ibkr-data`) still hand-roll the loopback gate
+  instead of calling `registerLocalJsonRoute`; migrating them would also give
+  them the new telemetry. The market-cap catalog writer still pretty-prints and
+  is not coalesced (it is one write per completed symbol on a cold path).
+
 ## 2026-10-15 — Rust engine gate fix, and the measured reason TOP_MEAN should keep TypeScript
 
 - **Evidence:** A slippage-0 TOP_MEAN run still reported

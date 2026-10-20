@@ -19,6 +19,27 @@ const LIGHTWEIGHT_CHARTS_ROOT = resolve(APP_ROOT, '..', '..', '..');
 const LIGHTWEIGHT_CHARTS_DIST_DIR = resolve(LIGHTWEIGHT_CHARTS_ROOT, 'dist');
 const LIGHTWEIGHT_CHARTS_NODE_MODULES_DIR = resolve(LIGHTWEIGHT_CHARTS_ROOT, 'node_modules');
 const WATCH_STRATEGIES = process.env.WATCH_STRATEGIES === '1';
+const APP_ROOT_POSIX = APP_ROOT.replace(/\\/g, '/');
+// Picomatch treats these as syntax. Escape them so a checkout inside a folder
+// like `repos/[wip]/` or `@scope/app` cannot turn the anchor into a bad pattern.
+const escapeGlobSegment = (value: string): string => value.replace(/[()[\]{}!+@?#]/g, (ch) => `\\${ch}`);
+/**
+ * Ignore a tree rooted at THIS checkout only.
+ *
+ * A `**\/signals/**` style glob matches at ANY depth, so it would also swallow a
+ * same-named source folder (e.g. a future `lib/signals/`) and silently stop its
+ * hot reload. Root-relative anchors keep runtime output trees (ISIN signals,
+ * aborted-spec temp trees, build output) out of the watcher without that risk.
+ *
+ * Returns the bare entry AND its subtree: `x/**` alone does not match `x`, so a
+ * directory would still be crawled even though its children were ignored.
+ */
+const ignoreAtRoot = (entry: string): string[] => [
+    `${escapeGlobSegment(APP_ROOT_POSIX)}/${entry}`,
+    `${escapeGlobSegment(APP_ROOT_POSIX)}/${entry}/**`,
+];
+/** Same pair for a name that may appear at any depth under the checkout. */
+const ignoreAnywhere = (entry: string): string[] => [`**/${entry}`, `**/${entry}/**`];
 const WATCH_IGNORED_GLOBS = [
     // Generated artifacts are rewritten in place and can trip Vite's watcher on Windows.
     '**/artifacts/**',
@@ -31,6 +52,28 @@ const WATCH_IGNORED_GLOBS = [
     '**/reports/**',
     '**/rust-engine/target/**',
     '**/.freebuff/**',
+    ...ignoreAnywhere('screenshots'),
+    // Aborted specs used to leave their temp trees in the repo root (the spec now
+    // mkdtemps under the OS temp dir). They are gitignored but were still inside
+    // the chokidar watch root, so a crashed run inflated the dev server's watch
+    // descriptors until restart. Root-anchored: nothing else may match this name.
+    ...ignoreAtRoot('asset-opportunity-analysis-*'),
+    // ISIN/paper-execution signal output (`signals/`) is written per pass.
+    // Root-anchored: a depth-agnostic `**/signals/**` would also match any
+    // same-named source folder and quietly disable its hot reload.
+    ...ignoreAtRoot('signals'),
+    // Local build output of this app; never a hot-reload source.
+    ...ignoreAtRoot('dist'),
+    // Runtime state of local tooling that happens to live in the checkout.
+    ...ignoreAnywhere('.kilo'),
+    ...ignoreAnywhere('.zcode'),
+    ...ignoreAnywhere('.workbuddy-ai'),
+    ...ignoreAnywhere('.codegraph'),
+    ...ignoreAnywhere('.hermes'),
+    ...ignoreAnywhere('.wrangler'),
+    // Copies of this project created by worktree tooling: watching them both
+    // duplicates the whole tree and misses the point (edits happen elsewhere).
+    ...ignoreAnywhere('.wt-tmp'),
     // Strategy authoring often happens during long Finder runs. Require a manual refresh
     // instead of interrupting the current browser session on every change under lib/strategies.
     ...(WATCH_STRATEGIES ? [] : ['**/lib/strategies/**']),
