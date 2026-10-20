@@ -92,6 +92,12 @@ describe("TOP_RAW scan input and bounded sampling", () => {
         assert.ok(flat.every(r => r.estimatedRaw === 0 && r.flatDegree === r.sampledDegree && r.coverageComplete));
         const ties = chooseScanFinalists(flat, 3, 3);
         assert.equal(ties.cutoffTies.length, 8); assert.equal(ties.omittedCutoffTies.length, 5);
+        // TOP_MEAN divides by the nonzero-vote degree, so a flat sample has no
+        // numeric cutoff at all. Null must not equal null: no asset is tied at
+        // a cutoff that does not exist, and none may appear in both lists.
+        const meanTies = chooseScanFinalists(flat, 3, 3, "top_mean");
+        assert.equal(meanTies.selected.length, 3);
+        assert.deepEqual(meanTies.cutoffTies, []); assert.deepEqual(meanTies.omittedCutoffTies, []);
     });
     it("accumulates per-arm sums and ranks finalists by the selected arm", () => {
         const universe = assets(6), seed = 5, options = { opponentsPerAsset: 64, finalistCount: 3, seed };

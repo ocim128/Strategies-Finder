@@ -59,7 +59,14 @@ export function reduceScanDiscovery(assets: readonly string[], pairs: readonly S
 export function chooseScanFinalists(rows: readonly ScanRow[], count: number, seed: number, arm: ScanArm = "top_raw") {
     const ties = new Map(scanPermutation(rows.map(r => r.asset), seed, TOP_RAW_SCAN_TIES).map((asset, index) => [asset, index]));
     const sorted = [...rows].sort((a, b) => (scanArmEstimatedValue(arm, b) ?? -Infinity) - (scanArmEstimatedValue(arm, a) ?? -Infinity) || ties.get(a.asset)! - ties.get(b.asset)!);
-    const selected = sorted.slice(0, count), cutoff = scanArmEstimatedValue(arm, selected.at(-1)!);
+    const selected = sorted.slice(0, count);
+    // A null value means the arm cannot score the row from its sampled pairs
+    // (TOP_MEAN with no nonzero vote, TOP_MEAN_PROFIT_NOW with no gated vote).
+    // There is then no numeric cutoff, so nothing can be tied AT it: matching
+    // null against null would report every asset as both a cutoff tie and an
+    // omitted cutoff tie.
+    const last = selected.at(-1), cutoff = last ? scanArmEstimatedValue(arm, last) : null;
+    if (cutoff === null) return { selected: selected.map(r => r.asset), cutoffTies: [], omittedCutoffTies: [] };
     const tied = sorted.filter(r => scanArmEstimatedValue(arm, r) === cutoff).map(r => r.asset);
     const cutoffTies = tied.length > 1 ? tied : [];
     return { selected: selected.map(r => r.asset), cutoffTies, omittedCutoffTies: sorted.slice(count).filter(r => scanArmEstimatedValue(arm, r) === cutoff).map(r => r.asset) };

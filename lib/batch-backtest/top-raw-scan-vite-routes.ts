@@ -9,8 +9,22 @@ import { parseScanAssets, scanBudget, validateScanOptions, TOP_RAW_SCAN_MAX_BYTE
 import { validateScanArm } from "./top-raw-scan-arms";
 
 let active: TopRawScanEngine | null = null;
-let pendingStop: string | null = null;
 const terminalStatuses = new Map<string, ScanStatus>();
+// A Stop can arrive while the run body is still uploading, i.e. before any
+// owner exists. The marker below cancels exactly that one admission. It only
+// ever stands for a request that is in flight, so it must not survive the
+// window: Resume reuses the saved runId by design, and a marker left over from
+// an earlier attempt would answer a legitimate Resume with 409.
+const PENDING_STOP_TTL_MS = 60_000;
+let pendingStop: { runId: string; armedAt: number } | null = null;
+function armPendingStop(runId: string): void { pendingStop = { runId, armedAt: Date.now() }; }
+function consumePendingStop(runId: string): boolean {
+    if (!pendingStop) return false;
+    const armed = pendingStop;
+    if (armed.runId !== runId) return false;
+    pendingStop = null;
+    return Date.now() - armed.armedAt <= PENDING_STOP_TTL_MS;
+}
 export function stopActiveTopRawScan(runId: string | null): boolean {
     if (!runId || active?.request.runId !== runId) return false;
     active.stop(); return true;
@@ -67,7 +81,7 @@ export function registerTopRawScanRoutes(middlewares: LocalRouteMiddlewareStack,
         onAuthorized: async ({ res, body }) => {
             let request: ScanRequest;
             try { request = validateScanRequest(body); } catch (error) { throw new HttpStatusError(400, error instanceof Error ? error.message : String(error)); }
-            if (pendingStop === request.runId) { pendingStop = null; throw new HttpStatusError(409, "Scan stopped before ownership was acquired."); }
+            if (consumePendingStop(request.runId)) throw new HttpStatusError(409, "Scan stopped before ownership was acquired.");
             if (active || deps.ownerLocks.isBusy()) throw new HttpStatusError(409, "A Batch, TOP_MEAN, scan or Finder sweep is already running.");
             const token = deps.ownerLocks.acquire(request.runId);
             active = new TopRawScanEngine(request);
@@ -99,7 +113,10 @@ export function registerTopRawScanRoutes(middlewares: LocalRouteMiddlewareStack,
             const runId = (body as { runId?: unknown })?.runId;
             if (typeof runId !== "string" || !isValidRunId(runId)) throw new HttpStatusError(400, "A valid runId is required.");
             const stopped = stopActiveTopRawScan(runId);
-            if (!active) pendingStop = runId;
+            // Only an admission that has not taken ownership yet can be
+            // pre-empted. A run that already settled has nothing left to
+            // cancel, and arming it would block the next Resume of that id.
+            if (!active && !terminalStatuses.has(runId)) armPendingStop(runId);
             sendJson(res, 200, { ok: true, stopped });
         },
     });

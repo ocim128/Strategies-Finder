@@ -101,6 +101,47 @@ describe("TOP_RAW HTTP authorization and reservation", () => {
         assert.equal((await call("stop", "POST", { runId: "route_spec" })).statusCode, 200);
         const stopped = await call("run", "POST", request); assert.equal(stopped.statusCode, 409); assert.match(stopped.text, /before ownership/); assert.equal(acquisitions, 0);
     });
+    it("expires a Stop marker instead of pre-empting the Resume that reuses its runId", async () => {
+        const handlers = new Map<string, (req: IncomingMessage, res: ViteHttpResponse) => void | Promise<void>>();
+        let busy = false, acquisitions = 0;
+        registerTopRawScanRoutes({ use: (path, handler) => handlers.set(path, handler) }, {
+            maxBodyBytes: 4096, rememberLocalApiOriginFromRequest: () => {},
+            ownerLocks: {
+                isBusy: () => busy,
+                acquire: () => { acquisitions++; busy = true; return { runOwner: 1, analysisOwner: 1 }; },
+                releaseIfStillOwner: () => { busy = false; },
+            },
+        });
+        const call = async (route: string, body?: unknown) => {
+            const path = "/api/batch-backtest/top-raw-scan/" + route;
+            const req = Readable.from(body === undefined ? [] : [JSON.stringify(body)]) as unknown as IncomingMessage;
+            Object.assign(req, { method: body === undefined ? "GET" : "POST", url: path, headers: { host: "localhost:5173" }, socket: { remoteAddress: "127.0.0.1" } });
+            const events = new EventEmitter(); let text = "";
+            const res = Object.assign(events, { statusCode: 0, setHeader() {}, write() { return true; }, end(value: string | Buffer) { text += value; } });
+            await handlers.get(path)!(req, res); return { code: res.statusCode, text };
+        };
+        const request = (runId: string) => ({ runId, strategyKey: "dema_confirmation", strategyParams: {}, backtestSettings: {}, capitalSettings: makeCapitalSettings(), interval: "4h", assetListText: "AAPL•\nMSFT•" });
+        const original = { run: TopRawScanEngine.prototype.run, now: Date.now };
+        TopRawScanEngine.prototype.run = async function (emit, release) {
+            const status: ScanStatus = { ...this.getStatus(), phase: "completed", message: "complete" };
+            release?.(status); emit?.(status); return status;
+        };
+        try {
+            assert.equal((await call("run", request("settled_run"))).code, 200);
+            // The scan already reached a terminal phase, so a late Stop has
+            // nothing to pre-empt and must not be remembered for the Resume.
+            assert.equal((await call("stop", { runId: "settled_run" })).code, 200);
+            const resumed = await call("run", request("settled_run"));
+            assert.equal(resumed.code, 200, "a settled run must not carry a Stop into its Resume");
+            assert.equal(acquisitions, 2);
+            // A Stop that is never followed by its admission cannot cancel an
+            // unrelated later attempt either.
+            assert.equal((await call("stop", { runId: "abandoned_run" })).code, 200);
+            Date.now = () => original.now() + 61_000;
+            assert.equal((await call("run", request("abandoned_run"))).code, 200);
+            assert.equal(acquisitions, 3);
+        } finally { TopRawScanEngine.prototype.run = original.run; Date.now = original.now; }
+    });
     it("retains shared ownership across disconnect, scopes Stop and releases after terminal settlement", async () => {
         const handlers = new Map<string, (req: IncomingMessage, res: ViteHttpResponse) => void | Promise<void>>();
         let busy = false, acquired = 0, released = 0, stopCalls = 0;
