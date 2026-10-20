@@ -178,6 +178,33 @@ describe("Finder manager logic", () => {
         ]);
     });
 
+    it("submits an empty universe sort priority when ranking is switched off", () => {
+        // Ranking off must not fall back to a smaller chain: an empty priority
+        // is the signal for "keep evaluation order, let Re-Sort sort".
+        expect(resolveFinderUniverseSortPriority({
+            primarySort: "medianExpectancy",
+            secondarySort: "averageNetProfit",
+            rankingEnabled: false,
+        })).to.deep.equal([]);
+
+        const universe = buildFinderUniverseOptions({
+            symbols: ["BTCUSDT"],
+            minActiveSymbols: 2,
+            minTotalTrades: 40,
+            minProfitableActiveRatio: 0.5,
+            primarySort: "medianExpectancy",
+            secondarySort: "averageNetProfit",
+            rankingEnabled: false,
+        });
+        expect(universe.sortPriority).to.deep.equal([]);
+
+        // Omitted means enabled, so existing callers keep the ranked chain.
+        expect(resolveFinderUniverseSortPriority({
+            primarySort: "medianExpectancy",
+            secondarySort: "medianExpectancy",
+        })).to.deep.equal(["medianExpectancy", "worstNetProfit", "totalTrades"]);
+    });
+
     it("clamps symbol-universe filters to valid ranges", () => {
         const universe = buildFinderUniverseOptions({
             symbols: ["BTCUSDT", "ETHUSDT"],

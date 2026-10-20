@@ -149,6 +149,11 @@ include:
 - `Window Stability Score`
 - `Profitable Active Ratio`
 - `Active Symbols`
+- `Average Win Rate`
+- `Average Expectancy`
+- `Average Net Profit`
+- `Trade-Weighted Win Rate`
+- `Win Reliability Q25`
 - `Median Expectancy`
 - `Median Expectancy x Total Trades`
 - `Median Sharpe Ratio`
@@ -161,6 +166,21 @@ include:
 - `Median Return / Drawdown Ratio`
 - `Worst Net Profit`
 - `Total Trades`
+
+The section toggle turns Universe Ranking off for the next run. Ranking off
+submits an empty sort priority instead of a shortened chain:
+
+- the survivor ranker becomes a first-K rotation buffer, so the retention bound
+  keeps the first evaluations rather than the highest-scoring ones;
+- the terminal inventory keeps evaluation order (an empty priority makes
+  `sortFinderUniverseCandidates` a pass-through), so `Run Sort` in the post-run
+  `Re-Sort` menu restores evaluation order, and only an explicit Re-Sort metric
+  imposes an order;
+- `Sort By` / `Then By` are disabled but remembered, so re-enabling ranking
+  restores the previous choice.
+
+Both selects are captured at submit; changing them after a run does nothing to
+the displayed inventory. Use `Re-Sort` for post-run ordering.
 
 Strategy Quality Audit uses its own quality metrics, including median/average
 expectancy, profit factor, average Sharpe, profitable-active ratio, weighted
@@ -243,6 +263,15 @@ Universe runner. If one of these becomes a universal Re-Sort option, either
 compute it for every candidate or hide it when the retained result does not
 contain valid values. Never silently sort missing values as if they were zero.
 
+The Symbol Universe Re-Sort menu follows that rule: `Median Exit Alpha`,
+the drawdown family (`Worst-Symbol Max Drawdown`, `Median Max Drawdown`,
+`Median Return / Drawdown Ratio`), and `Median Composite Edge Ratio` are only
+offered when the retained inventory carries the measurement
+(`medianExitAlpha`/`medianOosExitAlpha` finite, `drawdownMetricsAvailable`, and
+a non-zero median Composite Edge Ratio respectively). With Universe Ranking off
+none of those metrics is requested by the run, so they are absent from the menu
+until a run asks for them.
+
 Metric labels are defined in `lib/finder/constants.ts`; Universe aggregation
 is in `lib/finder/finder-universe-metrics.ts`; the candidate fields are in
 `lib/types/finder.ts`; the comparator is `sortFinderUniverseCandidates`.
@@ -285,6 +314,15 @@ Each surviving candidate contains scalar aggregate metrics plus a symbol
 breakdown. Symbol statuses distinguish profitable, losing, flat, no-trade,
 load-failed, and run-failed symbols. Failed symbols are counted uniquely for
 the user-facing total even when multiple strategies were selected.
+
+Two aggregates are arithmetic means over the active symbols (symbols with at
+least one trade), which makes them deliberately different from their
+robust-median counterparts: `Average Net Profit` (`averageNetProfit`) and
+`Average Expectancy` (`averageExpectancy`). A single outsized symbol moves an
+average while `Worst Net Profit` and the median metrics stay anchored to the
+typical symbol, so both are available as sort options. The result card shows
+them as the `Avg Exp` and `Avg Net` chips. They are computed for every candidate,
+so neither depends on the initial run sort.
 
 Symbol Universe is server-owned. The server performs IS evaluation, merges all
 selected strategies, performs optional OOS validation, combines diagnostics,

@@ -61,6 +61,8 @@ export type FinderPersistedUiState = {
 	universeMinProfitableActiveRatio: number;
 	universeSort: FinderUniverseMetric;
 	universeSortSecondary: FinderUniverseMetric;
+	/** Rank survivors at run time; false keeps evaluation order for Re-Sort. */
+	universeRankingEnabled: boolean;
 	assetOpportunityCandidatePoolSize: number;
 	assetOpportunityMinFreshSupport: number;
 	assetOpportunityIncludeOpenPositions: boolean;
@@ -118,6 +120,7 @@ export const DEFAULT_FINDER_UI_STATE: FinderPersistedUiState = {
 	universeMinProfitableActiveRatio: 0.5,
 	universeSort: "robustUniverseScore",
 	universeSortSecondary: "windowStabilityScore",
+	universeRankingEnabled: true,
 	assetOpportunityCandidatePoolSize: 10,
 	assetOpportunityMinFreshSupport: 2,
 	assetOpportunityIncludeOpenPositions: false,
@@ -147,6 +150,8 @@ export const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
     "windowStabilityScore",
     "profitableActiveRatio",
     "averageWinRate",
+    "averageExpectancy",
+    "averageNetProfit",
     "tradeWeightedWinRate",
     "winReliabilityQ25",
     "medianExpectancy",
@@ -352,6 +357,7 @@ export function normalizeFinderUiState(raw: unknown): FinderPersistedUiState {
 		universeMinProfitableActiveRatio: minProfitableActiveRatio,
 		universeSort: normalizeFinderUniverseMetric(source.universeSort, DEFAULT_FINDER_UI_STATE.universeSort),
 		universeSortSecondary: normalizeFinderUniverseMetric(source.universeSortSecondary, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
+		universeRankingEnabled: source.universeRankingEnabled !== false,
 		assetOpportunityCandidatePoolSize,
 		assetOpportunityMinFreshSupport,
 		assetOpportunityIncludeOpenPositions: source.assetOpportunityIncludeOpenPositions === true,

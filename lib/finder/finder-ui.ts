@@ -179,6 +179,7 @@ export class FinderUI {
             this.appendTableMetric(metrics, metricValues, "Active", "active", String(item.activeSymbols));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
             this.appendTableMetric(metrics, metricValues, "Med Exp", "medExp", item.medianExpectancy.toFixed(2));
+            metrics.appendChild(this.createMetricChip(`Avg Exp ${item.averageExpectancy.toFixed(2)}`));
             metrics.appendChild(this.createMetricChip(item.medianSharpeAvailable
                 ? `Med Sharpe ${item.medianSharpe.toFixed(2)}`
                 : "Med Sharpe --"));
@@ -201,6 +202,7 @@ export class FinderUI {
                 metrics.appendChild(this.createMetricChip(`Med R/DD ${returnDrawdown}`));
             }
             metrics.appendChild(this.createMetricChip(`Worst ${formatNullableCurrency(item.worstNetProfit)}`));
+            metrics.appendChild(this.createMetricChip(`Avg Net ${formatNullableCurrency(item.averageNetProfit)}`));
             this.appendTableMetric(metrics, metricValues, "Trades", "trades", String(item.totalTrades));
             const oosBadges: HTMLElement[] = [];
             if (item.oosAggregate) {

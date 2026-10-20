@@ -474,6 +474,14 @@ describe("Finder comparison table renders keyed cells from FinderUI output", () 
             assert.equal(cellText(universe, 0, "Med Exp"), universeCandidate.medianExpectancy.toFixed(2));
             assert.equal(cellText(universe, 0, "Med PF"), universeCandidate.medianProfitFactor.toFixed(2));
             assert.equal(cellText(universe, 0, "Trades"), String(universeCandidate.totalTrades));
+            // The universe card keeps the averages visible even though the table
+            // layout has no column for them.
+            assert.equal(descendants(universe.table, (node) =>
+                node.tagName !== "TD" && node.textContent === `Avg Exp ${universeCandidate.averageExpectancy.toFixed(2)}`
+            ).length, 1);
+            assert.equal(descendants(universe.table, (node) =>
+                node.tagName !== "TD" && node.textContent?.startsWith("Avg Net ") === true
+            ).length, 1);
 
             const asset = renderTable(mini, (ui) => ui.renderAssetOpportunityResults([makeAssetRow()]));
             assert.deepEqual(asset.headers.slice(3), ["Support", "Agree", "Exp", "Net", "PF", "Trades"]);

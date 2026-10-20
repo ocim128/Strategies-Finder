@@ -132,7 +132,9 @@ export function appendFinderResultsTable(
     const table = document.createElement("table");
     table.className = "finder-comparison-table";
     const caption = document.createElement("caption");
-    caption.textContent = "Ranked candidates · Re-Sort changes the ranking across the retained results";
+    // Ranking off keeps evaluation order, so the caption must not claim the
+    // rows were ranked: Re-Sort is what imposes an order.
+    caption.textContent = "Retained candidates · Re-Sort changes the ordering across the retained results";
     table.appendChild(caption);
     const head = document.createElement("thead");
     const header = document.createElement("tr");

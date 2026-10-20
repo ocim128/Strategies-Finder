@@ -46,7 +46,7 @@ import {
 	INVERTED_MAX_DRAWDOWN_METRIC,
 	type FinderAssetOpportunityResortMetric,
 } from "../finder-asset-opportunity-metrics";
-import { sortFinderUniverseCandidates } from "../finder-universe-metrics";
+import { sortFinderUniverseCandidates, DRAWDOWN_UNIVERSE_METRICS } from "../finder-universe-metrics";
 import { sortStrategyQualityResultsByMetric } from "../finder-strategy-quality";
 import {
 	FINDER_ARM_PERFORMANCE_REPLAY_FIELDS,
@@ -403,8 +403,17 @@ export class FinderResultStore {
 			const hasMedianExitAlpha = results.some((result) => result.oosAggregate !== undefined
 				? Number.isFinite(result.medianOosExitAlpha)
 				: Number.isFinite(result.medianExitAlpha));
+			// These aggregates are only computed when the run-time sort (or OOS)
+			// asks for them. Offering a metric the retained rows never measured
+			// would sort every candidate as 0 — an ordering that looks like a
+			// ranking rather than "unavailable" — so hide it instead.
+			const hasDrawdownMetrics = results.some((result) => result.drawdownMetricsAvailable === true);
+			const hasCompositeEdgeRatio = results.some((result) =>
+				Number.isFinite(result.medianCompositeEdgeRatio) && result.medianCompositeEdgeRatio > 0);
 			for (const metric of UNIVERSE_SORT_OPTIONS) {
 				if (metric === "medianExitAlpha" && !hasMedianExitAlpha) continue;
+				if (DRAWDOWN_UNIVERSE_METRICS.has(metric) && !hasDrawdownMetrics) continue;
+				if (metric === "medianCompositeEdgeRatio" && !hasCompositeEdgeRatio) continue;
 				options.push({ value: metric, label: UNIVERSE_METRIC_FULL_LABELS[metric] });
 			}
 		} else if (scope === 'asset_opportunity') {

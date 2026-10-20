@@ -61,6 +61,7 @@ import {
     passesFinderUniverseFilters,
     sortFinderUniverseCandidates,
     FinderUniverseSurvivorRanker,
+    DRAWDOWN_UNIVERSE_METRICS,
 } from "./finder-universe-metrics";
 import type { FinderSelectedStrategy } from "./finder-runner";
 import {
@@ -713,11 +714,7 @@ export async function runFinderUniverseExecution(
     // Median Sharpe is available in the post-run re-sort menu, so it must be
     // computed even when it was not the initial Universe sort priority.
     const requiresSharpeRatio = true;
-    const requiresDrawdown = universe.sortPriority.some((metric) =>
-        metric === "worstMaxDrawdownPercent"
-        || metric === "medianMaxDrawdownPercent"
-        || metric === "medianReturnDrawdownRatio"
-    );
+    const requiresDrawdown = universe.sortPriority.some((metric) => DRAWDOWN_UNIVERSE_METRICS.has(metric));
     // Composite Edge Ratio needs per-trade OHLCV lookups; only compute when the
     // active sort requests it, using the closed-candle series the backtest ran on.
     const requiresCompositeEdgeRatio = universe.sortPriority.includes("medianCompositeEdgeRatio");

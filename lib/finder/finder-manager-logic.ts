@@ -205,6 +205,12 @@ export interface FinderUniverseOptionsInput {
     minProfitableActiveRatio: number;
     primarySort: FinderUniverseMetric;
     secondarySort: FinderUniverseMetric;
+    /**
+     * Apply the run-time Universe Ranking. `false` submits an empty sort
+     * priority: the run keeps evaluation order, and only a post-run Re-Sort
+     * orders the retained inventory. Omitted means enabled.
+     */
+    rankingEnabled?: boolean;
 }
 
 export function resolveFinderSortPriority(input: {
@@ -231,7 +237,12 @@ export function resolveFinderSortPriority(input: {
 export function resolveFinderUniverseSortPriority(input: {
     primarySort: FinderUniverseMetric;
     secondarySort: FinderUniverseMetric;
+    rankingEnabled?: boolean;
 }): FinderUniverseMetric[] {
+    // Ranking off means "no run-time order": an empty priority makes the
+    // comparator a pass-through, so survivors stay in evaluation order until a
+    // Re-Sort metric is chosen.
+    if (input.rankingEnabled === false) return [];
     const sortPriority: FinderUniverseMetric[] = [input.primarySort];
     if (input.secondarySort !== input.primarySort) {
         sortPriority.push(input.secondarySort);
@@ -254,7 +265,11 @@ export function buildFinderUniverseOptions(input: FinderUniverseOptionsInput): F
         minActiveSymbols,
         minTotalTrades,
         minProfitableActiveRatio,
-        sortPriority: resolveFinderUniverseSortPriority(input),
+        sortPriority: resolveFinderUniverseSortPriority({
+            primarySort: input.primarySort,
+            secondarySort: input.secondarySort,
+            rankingEnabled: input.rankingEnabled,
+        }),
     };
 }
 

@@ -54,6 +54,7 @@ export type FinderBoundStateKey =
 	| "universeMinActiveSymbols"
 	| "universeMinTotalTrades"
 	| "universeMinProfitableActiveRatio"
+	| "universeRankingEnabled"
 	| "assetOpportunityCandidatePoolSize"
 	| "assetOpportunityMinFreshSupport"
 	| "assetOpportunityIncludeOpenPositions"
@@ -122,6 +123,7 @@ export const FINDER_CONTROL_BINDINGS: readonly FinderControlBinding[] = [
 	{ domKey: "finderUniverseMinActiveSymbols", stateKey: "universeMinActiveSymbols", read: "number", min: 1, id: "finderUniverseMinActiveSymbols" },
 	{ domKey: "finderUniverseMinTotalTrades", stateKey: "universeMinTotalTrades", read: "number", min: 0, id: "finderUniverseMinTotalTrades" },
 	{ domKey: "finderUniverseMinProfitableActiveRatio", stateKey: "universeMinProfitableActiveRatio", read: "number", min: 0, id: "finderUniverseMinProfitableActiveRatio" },
+	{ domKey: "finderUniverseRankingEnabled", stateKey: "universeRankingEnabled", read: "boolean", id: "finderUniverseRankingEnabled" },
 	{ domKey: "finderAssetCandidatePoolSize", stateKey: "assetOpportunityCandidatePoolSize", read: "number", min: 1, id: "finderAssetCandidatePoolSize" },
 	{ domKey: "finderAssetMinFreshSupport", stateKey: "assetOpportunityMinFreshSupport", read: "number", min: 1, id: "finderAssetMinFreshSupport" },
 	{ domKey: "finderAssetIncludeOpenPositions", stateKey: "assetOpportunityIncludeOpenPositions", read: "boolean", id: "finderAssetIncludeOpenPositions" },

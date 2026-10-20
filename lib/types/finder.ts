@@ -63,6 +63,8 @@ export type FinderUniverseMetric =
     | 'profitableActiveRatio'
     | 'activeSymbols'
     | 'averageWinRate'
+    | 'averageExpectancy'
+    | 'averageNetProfit'
     | 'tradeWeightedWinRate'
     | 'winReliabilityQ25'
     | 'medianExpectancy'
@@ -390,6 +392,10 @@ export interface FinderUniverseCandidate {
     profitableActiveRatio: number;
     /** Arithmetic mean of per-symbol win rates across active symbols. */
     averageWinRate: number;
+    /** Arithmetic mean of per-symbol expectancy across active symbols. */
+    averageExpectancy: number;
+    /** Arithmetic mean of per-symbol net profit across active symbols. */
+    averageNetProfit: number;
     /** Trade-count-weighted mean of per-symbol win rates across active symbols. */
     tradeWeightedWinRate: number;
     /** 25th percentile of 95% Wilson lower bounds for active-symbol win rates. */

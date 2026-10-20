@@ -114,6 +114,8 @@ function compactUniverseCandidate(candidate: FinderUniverseCandidate): FinderUni
         totalTrades: candidate.totalTrades,
         profitableActiveRatio: candidate.profitableActiveRatio,
         averageWinRate: candidate.averageWinRate,
+        averageExpectancy: candidate.averageExpectancy,
+        averageNetProfit: candidate.averageNetProfit,
         tradeWeightedWinRate: candidate.tradeWeightedWinRate,
         winReliabilityQ25: candidate.winReliabilityQ25,
         medianExpectancy: candidate.medianExpectancy,

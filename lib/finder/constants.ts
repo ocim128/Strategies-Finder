@@ -78,6 +78,8 @@ export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> =
     profitableActiveRatio: 'Profitable Active Ratio',
     activeSymbols: 'Active Symbols',
     averageWinRate: 'Average Win Rate',
+    averageExpectancy: 'Average Expectancy',
+    averageNetProfit: 'Average Net Profit',
     tradeWeightedWinRate: 'Trade-Weighted Win Rate',
     winReliabilityQ25: 'Win Reliability Q25',
     medianExpectancy: 'Median Expectancy',

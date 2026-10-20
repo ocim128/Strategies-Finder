@@ -1120,6 +1120,62 @@ describe("Finder facade terminal adoption (integration)", () => {
         expect(manager().resultStore.latestResults.results[0]!.params.threshold).to.equal(2);
     });
 
+    it("re-sorts Symbol Universe by average net profit regardless of the fallback keys", async () => {
+        persistActiveServerRun("universe-average-net-resort");
+        manager().controls.uiState.topN = 2;
+        // One symbol per candidate is enough: the fallbacks must not decide.
+        const symbol = (name: string, netProfit: number, trades: number): FinderUniverseSymbolResult => {
+            const base = makeSymbolResult(name, netProfit);
+            return {
+                ...base,
+                result: {
+                    ...base.result!,
+                    expectancy: netProfit / trades,
+                    totalTrades: trades,
+                    winningTrades: trades,
+                },
+            };
+        };
+        // `richer` wins on average net profit per symbol but loses on BOTH
+        // fallback keys: its worst symbol is negative and it trades less.
+        const richer = buildFinderUniverseCandidate({
+            strategyKey: "universe_test",
+            strategyName: "Richer",
+            params: { threshold: 1 },
+            symbols: [
+                symbol("AAA", 3000, 10),
+                symbol("BBB", 1000, 10),
+                symbol("CCC", -445.79, 10),
+            ],
+        });
+        const leaner = buildFinderUniverseCandidate({
+            strategyKey: "universe_test",
+            strategyName: "Leaner",
+            params: { threshold: 2 },
+            symbols: [
+                symbol("AAA", 900, 30),
+                symbol("BBB", 750, 30),
+                symbol("CCC", 595.81, 30),
+            ],
+        });
+
+        // The fixture only proves something if the primary and the fallbacks disagree.
+        expect(richer.averageNetProfit).to.be.greaterThan(leaner.averageNetProfit);
+        expect(richer.worstNetProfit).to.be.lessThan(leaner.worstNetProfit);
+        expect(richer.totalTrades).to.be.lessThan(leaner.totalTrades);
+
+        const reattach = manager().reattachToActiveServerRun();
+        mockFetch.resolveFirst(terminalDoneSnapshot("universe-average-net-resort", [leaner, richer]));
+        await reattach;
+
+        manager().getDom().finderResort.value = "averageNetProfit";
+        manager().applyResort();
+
+        expect(manager().resultStore.latestResults.results.map((item: FinderUniverseCandidate) => item.strategyName))
+            .to.deep.equal(["Richer", "Leaner"]);
+    });
+
+
     it("reattaches the full Arm Performance inventory and repeatedly re-sorts every arm locally", async () => {
         const runId = "arm-performance-reattach";
         persistActiveServerRun(runId, "arm_performance");
@@ -1860,6 +1916,41 @@ describe("Finder controls shared form conversion", () => {
             // Execution receives the parsed horizon array.
             oosHorizons: [2, 4, 6],
         });
+    });
+
+    it("switches Universe Ranking off into an empty sort priority and disables the metric selects", () => {
+        const dom: any = createFakeFinderManagerDom();
+        const controls = makeControls(dom);
+        dom.finderScope.value = "symbol_universe";
+        controls.uiState.scope = "symbol_universe";
+        dom.finderUniverseSymbols.value = "AAA\nBBB";
+        dom.finderUniverseMinActiveSymbols.value = "2";
+        dom.finderUniverseMinTotalTrades.value = "40";
+        dom.finderUniverseMinProfitableActiveRatio.value = "0.5";
+        dom.finderUniverseSort.value = "medianExpectancy";
+        dom.finderUniverseSortSecondary.value = "averageNetProfit";
+        dom.finderUniverseRankingEnabled.checked = true;
+
+        // Ranking on keeps the ranked chain (primary, secondary, fallbacks).
+        expect(controls.readOptions(stubBacktestSettings).universe!.sortPriority)
+            .to.deep.equal(["medianExpectancy", "averageNetProfit", "worstNetProfit", "totalTrades"]);
+        expect(dom.finderUniverseSort.disabled).to.equal(false);
+
+        dom.finderUniverseRankingEnabled.checked = false;
+        (controls as any).captureUniverseUiState(false);
+
+        // The selections stay remembered for when ranking is switched back on.
+        expect(controls.uiState.universeRankingEnabled).to.equal(false);
+        expect(controls.uiState.universeSort).to.equal("medianExpectancy");
+        expect(dom.finderUniverseSort.disabled).to.equal(true);
+        expect(dom.finderUniverseSortSecondary.disabled).to.equal(true);
+        // An empty priority, not a shortened chain: the run keeps evaluation order.
+        expect(controls.readOptions(stubBacktestSettings).universe!.sortPriority).to.deep.equal([]);
+
+        dom.finderUniverseRankingEnabled.checked = true;
+        (controls as any).captureUniverseUiState(false);
+        expect(dom.finderUniverseSort.disabled).to.equal(false);
+        expect(controls.readOptions(stubBacktestSettings).universe!.sortPriority[0]).to.equal("medianExpectancy");
     });
 
     it("keeps settings capture from parsing the symbol list while submission parses it once", () => {

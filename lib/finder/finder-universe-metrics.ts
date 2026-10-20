@@ -12,6 +12,18 @@ import { median } from "../statistics-utils";
 const MIN_RELIABLE_SYMBOL_TRADES = 15;
 const WILSON_Z_95 = 1.96;
 
+/**
+ * Universe metrics whose values come from per-symbol max-drawdown computation.
+ * The runner only computes drawdown when the run-time sort asks for one of
+ * these, so the post-run Re-Sort menu and the card chips must treat them as
+ * unavailable otherwise instead of sorting missing values as zero.
+ */
+export const DRAWDOWN_UNIVERSE_METRICS: ReadonlySet<FinderUniverseMetric> = new Set([
+    "worstMaxDrawdownPercent",
+    "medianMaxDrawdownPercent",
+    "medianReturnDrawdownRatio",
+] as const);
+
 function wilsonLowerBoundPercent(winningTrades: number, totalTrades: number): number {
     if (totalTrades <= 0 || !Number.isFinite(winningTrades) || !Number.isFinite(totalTrades)) return 0;
     const n = totalTrades;
@@ -123,6 +135,8 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
     let noTradeSymbols = 0;
     let totalTrades = 0;
     let totalWinRate = 0;
+    let totalExpectancy = 0;
+    let totalNetProfit = 0;
     let tradeWeightedWinRateTotal = 0;
     let tradeWeightedWinRateTrades = 0;
     const winReliabilityBounds: number[] = [];
@@ -152,6 +166,8 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         activeSymbols += 1;
         totalTrades += result.totalTrades;
         totalWinRate += result.winRate;
+        totalExpectancy += result.expectancy;
+        totalNetProfit += result.netProfit;
         tradeWeightedWinRateTotal += result.winRate * result.totalTrades;
         tradeWeightedWinRateTrades += result.totalTrades;
         winReliabilityBounds.push(wilsonLowerBoundPercent(result.winningTrades, result.totalTrades));
@@ -190,6 +206,8 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         noTradeSymbols,
         totalTrades,
         averageWinRate: activeSymbols > 0 ? totalWinRate / activeSymbols : 0,
+        averageExpectancy: activeSymbols > 0 ? totalExpectancy / activeSymbols : 0,
+        averageNetProfit: activeSymbols > 0 ? totalNetProfit / activeSymbols : 0,
         tradeWeightedWinRate: tradeWeightedWinRateTrades > 0
             ? tradeWeightedWinRateTotal / tradeWeightedWinRateTrades
             : 0,
@@ -397,6 +415,10 @@ export function getFinderUniverseMetricValue(
             return item.activeSymbols;
         case "averageWinRate":
             return Number.isFinite(item.averageWinRate) ? item.averageWinRate : 0;
+        case "averageExpectancy":
+            return Number.isFinite(item.averageExpectancy) ? item.averageExpectancy : Number.NEGATIVE_INFINITY;
+        case "averageNetProfit":
+            return Number.isFinite(item.averageNetProfit) ? item.averageNetProfit : Number.NEGATIVE_INFINITY;
         case "tradeWeightedWinRate":
             return Number.isFinite(item.tradeWeightedWinRate) ? item.tradeWeightedWinRate : 0;
         case "winReliabilityQ25":
@@ -459,11 +481,19 @@ export function compareFinderUniverseCandidates(
     return JSON.stringify(left.params).localeCompare(JSON.stringify(right.params));
 }
 
+/**
+ * Rank survivors. An EMPTY sort priority means "no run-time ranking": the
+ * input order is returned unchanged so the runner's evaluation order survives
+ * to the terminal inventory, and only a post-run Re-Sort imposes an order.
+ * `compareFinderUniverseCandidates` still falls back to strategy/params for
+ * deterministic ties, so it must not be used as a pass-through proxy.
+ */
 export function sortFinderUniverseCandidates(
     results: readonly FinderUniverseCandidate[],
     sortPriority: readonly FinderUniverseMetric[],
     options?: { useOosValues?: boolean },
 ): FinderUniverseCandidate[] {
+    if (sortPriority.length === 0) return [...results];
     return [...results].sort((left, right) => compareFinderUniverseCandidates(left, right, sortPriority, options));
 }
 
@@ -487,6 +517,10 @@ export function sortFinderUniverseCandidates(
  * matching `[...results].sort(compareFinderUniverseCandidates)` on a stable
  * runtime — so both the kept SET and the intermediate display order match the
  * pre-heap path. Locked by `tests/finder-universe-runner.spec.ts`.
+ *
+ * Ranking can be disabled (Universe Ranking toggle off): with an EMPTY sort
+ * priority the ranker degenerates to a first-K rotation buffer, so the kept set
+ * and `toSortedArray` output both follow insertion order.
  */
 export class FinderUniverseSurvivorRanker {
     private readonly maxSize: number;
@@ -530,15 +564,26 @@ export class FinderUniverseSurvivorRanker {
      * Return survivors ordered best-first by the metric comparator, with
      * insertion order as the final tie-breaker. Matches the old
      * `sortFinderUniverseCandidates(survivors, sortPriority).slice(0, limit)`.
+     *
+     * An empty sort priority means "no run-time ranking": survivors keep
+     * insertion (evaluation) order, exactly like the pass-through
+     * `sortFinderUniverseCandidates`.
      */
     toSortedArray(limit: number): FinderUniverseCandidate[] {
-        const sorted = [...this.heap].sort((a, b) => {
-            const cmp = compareFinderUniverseCandidates(a.candidate, b.candidate, this.sortPriority);
-            if (cmp !== 0) return cmp;
-            // Stable-sort parity: earlier-inserted first on a tie.
-            return a.order - b.order;
-        });
+        const sorted = [...this.heap].sort((a, b) => this.compare(a, b));
         return sorted.slice(0, Math.max(1, limit)).map((entry) => entry.candidate);
+    }
+
+    /**
+     * Ranking comparator with the insertion-order tie-breaker folded in. With
+     * an empty sort priority every pair ties on metrics, so insertion order
+     * alone decides — which keeps the first K offered rather than a
+     * strategy/param-alphabetical subset.
+     */
+    private compare(a: { candidate: FinderUniverseCandidate; order: number }, b: { candidate: FinderUniverseCandidate; order: number }): number {
+        if (this.sortPriority.length === 0) return a.order - b.order;
+        const cmp = compareFinderUniverseCandidates(a.candidate, b.candidate, this.sortPriority);
+        return cmp !== 0 ? cmp : a.order - b.order;
     }
 
     /**
@@ -549,21 +594,15 @@ export class FinderUniverseSurvivorRanker {
      * evicted on overflow — matching stable-sort-keeps-first semantics.
      */
     private isWorse(a: { candidate: FinderUniverseCandidate; order: number }, b: { candidate: FinderUniverseCandidate; order: number }): boolean {
-        const cmp = compareFinderUniverseCandidates(a.candidate, b.candidate, this.sortPriority);
-        if (cmp > 0) return true;
-        if (cmp < 0) return false;
-        return a.order > b.order;
+        return this.compare(a, b) > 0;
     }
 
     private isWorseOrEqual(a: { candidate: FinderUniverseCandidate; order: number }, b: { candidate: FinderUniverseCandidate; order: number }): boolean {
-        const cmp = compareFinderUniverseCandidates(a.candidate, b.candidate, this.sortPriority);
-        if (cmp > 0) return true;
-        if (cmp < 0) return false;
-        // Tie: the newcomer (a) has a strictly greater order index than any
-        // already-heap element (b), so it is "worse" and would not survive a
-        // stable sort + slice. Equal order is impossible here because a was
-        // just allocated a fresh index.
-        return a.order > b.order;
+        // On a metric tie the newcomer (a) has a strictly greater order index
+        // than any already-heap element (b), so it is "worse" and would not
+        // survive a stable sort + slice. Equal order is impossible here because
+        // a was just allocated a fresh index.
+        return this.compare(a, b) > 0;
     }
 
     private siftUp(index: number): void {

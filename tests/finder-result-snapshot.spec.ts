@@ -82,6 +82,8 @@ function makeUniverseCandidate(index: number): FinderUniverseCandidate {
         totalTrades: 1250,
         profitableActiveRatio: 1,
         averageWinRate: 68,
+        averageExpectancy: 1.4,
+        averageNetProfit: 37.5,
         tradeWeightedWinRate: 71.2,
         winReliabilityQ25: 58.4,
         medianExpectancy: 1,

@@ -219,6 +219,10 @@
         <div id="finderUniverseSortSection" style="display:none;">
             <div class="section-header">
                 <div class="section-title">Universe Ranking</div>
+                <label class="section-toggle" aria-label="Rank universe results at run time; off leaves evaluation order for Re-Sort">
+                    <input type="checkbox" id="finderUniverseRankingEnabled">
+                    <span class="section-toggle-track"></span>
+                </label>
             </div>
             <div class="section-body">
                 <div class="param-row">
@@ -231,6 +235,7 @@
                         <select class="param-input" id="finderUniverseSortSecondary"></select>
                     </div>
                 </div>
+                <div class="param-hint" id="finderUniverseRankingHint">Ranking on orders survivors as they finish. Turn it off to keep evaluation order and let Re-Sort do all sorting.</div>
             </div>
         </div>
     </section>

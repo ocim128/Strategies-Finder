@@ -301,6 +301,46 @@ describe("FinderResultStore", () => {
         expect(writes.length).to.be.greaterThan(1, "re-sorts persist as semantic checkpoints");
     });
 
+    it("offers only Universe re-sort metrics the retained inventory actually measured", () => {
+        const { store } = makeStore();
+        // The default fixture never computes drawdown, Composite ER, or Exit Alpha.
+        store.adoptSymbolUniverseResults([makeCandidate({ threshold: 1 }, 10)]);
+        const unmeasured = store.getResortOptions().map((option) => option.value);
+        expect(unmeasured).to.include("averageNetProfit");
+        expect(unmeasured).to.include("averageExpectancy");
+        expect(unmeasured).to.not.include("worstMaxDrawdownPercent");
+        expect(unmeasured).to.not.include("medianMaxDrawdownPercent");
+        expect(unmeasured).to.not.include("medianReturnDrawdownRatio");
+        expect(unmeasured).to.not.include("medianCompositeEdgeRatio");
+        expect(unmeasured).to.not.include("medianExitAlpha");
+
+        // A candidate that carries the measurements keeps every option.
+        const measuredSymbol: FinderUniverseSymbolResult = {
+            ...makeSymbolResult("AAA", 40),
+            result: {
+                ...makeSymbolResult("AAA", 40).result!,
+                maxDrawdownPercent: 5,
+                drawdownAvailable: true,
+                compositeEdgeRatio: 1.4,
+                exitAlpha: 0.25,
+            },
+        };
+        const measured = buildFinderUniverseCandidate({
+            strategyKey: "measured",
+            strategyName: "Measured",
+            params: { threshold: 3 },
+            symbols: [measuredSymbol],
+        });
+        const { store: measuredStore } = makeStore();
+        measuredStore.adoptSymbolUniverseResults([measured]);
+        const available = measuredStore.getResortOptions().map((option) => option.value);
+        expect(available).to.include("worstMaxDrawdownPercent");
+        expect(available).to.include("medianMaxDrawdownPercent");
+        expect(available).to.include("medianReturnDrawdownRatio");
+        expect(available).to.include("medianCompositeEdgeRatio");
+        expect(available).to.include("medianExitAlpha");
+    });
+
     it("switches measurement locally before Top Results and preserves the full source", () => {
         const { store } = makeStore();
         store.armPerformanceDisplayLimit = 1;

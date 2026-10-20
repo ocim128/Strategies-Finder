@@ -308,6 +308,7 @@ private readUniverseInputs(): {
 	minProfitableActiveRatio: number;
 	universeSort: FinderPersistedUiState["universeSort"];
 	universeSortSecondary: FinderPersistedUiState["universeSortSecondary"];
+	universeRankingEnabled: boolean;
 } {
 	const dom = this.deps.getDom();
 	return {
@@ -316,6 +317,7 @@ private readUniverseInputs(): {
 		minProfitableActiveRatio: this.readFinderNumberInput(dom.finderUniverseMinProfitableActiveRatio, DEFAULT_FINDER_UI_STATE.universeMinProfitableActiveRatio, 0),
 		universeSort: normalizeFinderUniverseMetric(dom.finderUniverseSort.value, DEFAULT_FINDER_UI_STATE.universeSort),
 		universeSortSecondary: normalizeFinderUniverseMetric(dom.finderUniverseSortSecondary.value, DEFAULT_FINDER_UI_STATE.universeSortSecondary),
+		universeRankingEnabled: dom.finderUniverseRankingEnabled.checked,
 	};
 }
 
@@ -345,6 +347,7 @@ applyPersistedUiStateToDom(): void {
 	}
 	this.syncArmPerformanceControls();
 	this.syncAssetOosBatchControls();
+	this.syncUniverseRankingControls();
 	this.updateUniverseSummary();
 }
 
@@ -588,6 +591,7 @@ initUniverseUI(): void {
 		dom.finderUniverseMinProfitableActiveRatio,
 		dom.finderUniverseSort,
 		dom.finderUniverseSortSecondary,
+		dom.finderUniverseRankingEnabled,
 	].forEach((element) => {
 		element.addEventListener("input", () => {
 			this.captureUniverseUiState(false);
@@ -610,10 +614,24 @@ private captureUniverseUiState(persist = true): void {
 	this.uiState.universeMinProfitableActiveRatio = Math.max(0, Math.min(1, universe.minProfitableActiveRatio));
 	this.uiState.universeSort = universe.universeSort;
 	this.uiState.universeSortSecondary = universe.universeSortSecondary;
+	this.uiState.universeRankingEnabled = universe.universeRankingEnabled;
+	this.syncUniverseRankingControls();
 	this.updateUniverseSummary();
 	if (persist) {
 		this.saveUiState();
 	}
+}
+
+/**
+ * Universe Ranking off submits an empty sort priority, so the two metric
+ * selects have no effect on the run. Disable them instead of hiding them: the
+ * chosen metrics are remembered for when ranking is switched back on.
+ */
+private syncUniverseRankingControls(): void {
+	const dom = this.deps.getDom();
+	const enabled = dom.finderUniverseRankingEnabled.checked;
+	dom.finderUniverseSort.disabled = !enabled;
+	dom.finderUniverseSortSecondary.disabled = !enabled;
 }
 
 applyScopeUi(): void {
@@ -628,6 +646,7 @@ applyScopeUi(): void {
 
 	dom.finderChartSortSection.style.display = multiAssetScope ? "none" : "";
 	dom.finderUniverseSortSection.style.display = universeScope ? "" : "none";
+	this.syncUniverseRankingControls();
 	dom.finderUniverseSectionHeader.style.display = multiAssetScope ? "" : "none";
 	dom.finderUniverseSection.style.display = multiAssetScope ? "" : "none";
 	dom.finderUniverseFilters.style.display = universeScope ? "" : "none";
@@ -1019,6 +1038,7 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 			minProfitableActiveRatio: universe.minProfitableActiveRatio,
 			primarySort: universe.universeSort,
 			secondarySort: universe.universeSortSecondary,
+			rankingEnabled: universe.universeRankingEnabled,
 		});
 	} else if (scope === 'asset_opportunity') {
 		const assetOpportunity = this.readAssetOpportunityInputs();

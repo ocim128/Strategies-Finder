@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates, updateFinderUniverseCandidateScores } from "../lib/finder/finder-universe-metrics";
+import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates, updateFinderUniverseCandidateScores, FinderUniverseSurvivorRanker } from "../lib/finder/finder-universe-metrics";
 import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 import type { Time } from "../lib/types/strategies";
 
@@ -139,6 +139,120 @@ describe("Finder universe metrics", () => {
             [higherMedian, higherWeighted],
             ["medianProfitFactorWeightedTrades"]
         ).map((item) => item.strategyKey)).to.deep.equal(["higher-weighted", "higher-median"]);
+    });
+
+    it("aggregates average expectancy and average net profit across active symbols", () => {
+        const candidate = buildFinderUniverseCandidate({
+            strategyKey: "averages",
+            strategyName: "Averages",
+            params: {},
+            symbols: [
+                makeSymbol("BTCUSDT", "profitable", makeBacktestResult(120, 4, 8)),
+                makeSymbol("ETHUSDT", "losing", makeBacktestResult(-40, -2, 4)),
+                makeSymbol("SOLUSDT", "no_trades", makeBacktestResult(0, 0, 0)),
+            ],
+        });
+
+        // A no-trade symbol is not active, so it never enters the means.
+        expect(candidate.averageExpectancy).to.equal(1);
+        expect(candidate.averageNetProfit).to.equal(40);
+    });
+
+    it("sorts by average expectancy and average net profit where medians disagree", () => {
+        const spiky = buildFinderUniverseCandidate({
+            strategyKey: "spiky",
+            strategyName: "Spiky",
+            params: {},
+            symbols: [
+                makeSymbol("AAA", "profitable", makeBacktestResult(1200, 10, 8)),
+                makeSymbol("BBB", "profitable", makeBacktestResult(5, 1, 5)),
+                makeSymbol("CCC", "profitable", makeBacktestResult(5, 1, 5)),
+            ],
+        });
+        const even = buildFinderUniverseCandidate({
+            strategyKey: "even",
+            strategyName: "Even",
+            params: {},
+            symbols: [
+                makeSymbol("AAA", "profitable", makeBacktestResult(6, 2, 5)),
+                makeSymbol("BBB", "profitable", makeBacktestResult(6, 2, 5)),
+                makeSymbol("CCC", "profitable", makeBacktestResult(6, 2, 5)),
+            ],
+        });
+
+        expect(spiky.averageExpectancy).to.be.closeTo(4, 1e-9);
+        expect(even.averageExpectancy).to.equal(2);
+        expect(sortFinderUniverseCandidates(
+            [even, spiky],
+            ["averageExpectancy"]
+        ).map((item) => item.strategyKey)).to.deep.equal(["spiky", "even"]);
+        // The median comparator keeps its own, opposite ordering.
+        expect(sortFinderUniverseCandidates(
+            [even, spiky],
+            ["medianExpectancy"]
+        ).map((item) => item.strategyKey)).to.deep.equal(["even", "spiky"]);
+
+        expect(spiky.averageNetProfit).to.be.closeTo(403.333333, 1e-5);
+        expect(spiky.medianNetProfit).to.equal(5);
+        expect(even.averageNetProfit).to.equal(6);
+        expect(sortFinderUniverseCandidates(
+            [even, spiky],
+            ["averageNetProfit"]
+        ).map((item) => item.strategyKey)).to.deep.equal(["spiky", "even"]);
+    });
+
+    it("sorts candidates without average values last", () => {
+        const complete = buildFinderUniverseCandidate({
+            strategyKey: "complete",
+            strategyName: "Complete",
+            params: {},
+            symbols: [makeSymbol("AAA", "profitable", makeBacktestResult(10, 2, 5))],
+        });
+        // A retained snapshot from before these aggregates existed carries no
+        // value at all; it must sort last instead of masquerading as zero.
+        const legacy = { ...complete, strategyKey: "legacy", averageExpectancy: undefined as unknown as number };
+
+        expect(sortFinderUniverseCandidates([legacy, complete], ["averageExpectancy"])
+            .map((item) => item.strategyKey)).to.deep.equal(["complete", "legacy"]);
+    });
+
+
+    it("keeps evaluation order when no universe sort priority is configured", () => {
+        const first = buildFinderUniverseCandidate({
+            strategyKey: "z_first",
+            strategyName: "Zeta",
+            params: { threshold: 9 },
+            symbols: [makeSymbol("AAA", "profitable", makeBacktestResult(5, 1, 5))],
+        });
+        const second = buildFinderUniverseCandidate({
+            strategyKey: "a_second",
+            strategyName: "Alpha",
+            params: { threshold: 1 },
+            symbols: [makeSymbol("AAA", "profitable", makeBacktestResult(900, 30, 5))],
+        });
+
+        // The comparator's name/param tie-break would put Alpha first; an empty
+        // priority must not reorder the run at all.
+        expect(sortFinderUniverseCandidates([first, second], []).map((item) => item.strategyKey))
+            .to.deep.equal(["z_first", "a_second"]);
+    });
+
+    it("retains the first K offered and reports insertion order when ranking is off", () => {
+        const candidates = ["first", "second", "third"].map((key, index) => buildFinderUniverseCandidate({
+            strategyKey: key,
+            strategyName: key,
+            params: { threshold: index },
+            symbols: [makeSymbol("AAA", "profitable", makeBacktestResult(100 - index * 10, 5, 5))],
+        }));
+
+        const ranker = new FinderUniverseSurvivorRanker(2, []);
+        for (const candidate of candidates) {
+            ranker.offer(candidate);
+        }
+
+        // No ranking: the rotation buffer keeps the first two evaluations
+        // instead of the two best metrics (or a param-alphabetical subset).
+        expect(ranker.toSortedArray(10).map((item) => item.strategyKey)).to.deep.equal(["first", "second"]);
     });
 
     it("aggregates median sharpe ratio across active symbols", () => {
