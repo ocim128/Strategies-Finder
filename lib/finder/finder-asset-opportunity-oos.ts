@@ -235,27 +235,36 @@ export function normalizeFinderAssetOosBatchHoldoutRange(
 }
 
 /**
- * Normalize the user/server boundary to exactly three positive integer
- * horizons. Invalid or incomplete input falls back to the documented default.
+ * Separators accepted between horizons: whitespace, ASCII comma/semicolon, and
+ * the full-width comma/、 a non-US keyboard produces.
+ */
+const FINDER_ASSET_OOS_HORIZON_SEPARATORS = /[\s,;\uFF0C\u3001]+/u;
+
+/**
+ * Normalize the user/server boundary to the horizons the run actually measures.
+ * Every positive integer the user entered is honored — one horizon, three, or
+ * more — de-duplicated and returned in ascending order. Unparseable tokens are
+ * dropped; only input with no usable horizon at all (blank field, `abc`) falls
+ * back to the documented default, so a run never silently measures horizons the
+ * user did not ask for. Before this, a two-value entry such as `12,23` failed
+ * the "exactly three values" check and was replaced by `1,3,5`.
  */
 export function normalizeFinderAssetOosHorizons(value: unknown): number[] {
     const raw = Array.isArray(value)
         ? value
         : typeof value === "string"
-            ? value.split(/[\s,]+/u).filter(Boolean)
+            ? value.split(FINDER_ASSET_OOS_HORIZON_SEPARATORS).filter(Boolean)
             : [];
-    const horizons: number[] = [];
+    const horizons = new Set<number>();
     for (const entry of raw) {
         const numeric = typeof entry === "number" || typeof entry === "string"
             ? Number(entry)
             : Number.NaN;
-        if (!Number.isInteger(numeric) || numeric <= 0 || numeric > MAX_FINDER_ASSET_OOS_VALUE) {
-            return [...DEFAULT_FINDER_ASSET_OOS_HORIZONS];
-        }
-        if (!horizons.includes(numeric)) horizons.push(numeric);
+        if (!Number.isInteger(numeric) || numeric <= 0 || numeric > MAX_FINDER_ASSET_OOS_VALUE) continue;
+        horizons.add(numeric);
     }
-    return horizons.length === DEFAULT_FINDER_ASSET_OOS_HORIZONS.length
-        ? horizons
+    return horizons.size > 0
+        ? [...horizons].sort((left, right) => left - right)
         : [...DEFAULT_FINDER_ASSET_OOS_HORIZONS];
 }
 

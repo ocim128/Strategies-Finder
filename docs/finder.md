@@ -357,8 +357,12 @@ The controls are:
 - `Forward Measurement`: `Fixed horizons` or `Next configured exit`.
 - `OOS Holdout Bars`: bars reserved for forward validation. In next-exit mode
   this label becomes `OOS Max Wait Bars`.
-- `OOS Horizons`: comma-separated fixed forward horizons, normally `1,3,5`.
-  A horizon longer than the holdout is measured ongoing: the return is taken
+- `OOS Horizons`: comma-separated fixed forward horizons; any count is honored
+  (for example `1,3,5`, `12`, or `12,23`), de-duplicated and applied in
+  ascending order. Unparseable tokens are dropped; only an entry with no usable
+  horizon at all (blank, `abc`) falls back to the `1,3,5` default, so a run
+  never measures horizons the field does not list. A horizon longer than the
+  holdout is measured ongoing: the return is taken
   at the last available candle (mark-to-market) and flagged `ongoing` in
   results/archives instead of being discarded. The holdout analyzer keeps the
   main aggregates completed-only — a horizon the sweep has not reached yet

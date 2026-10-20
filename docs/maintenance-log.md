@@ -4,6 +4,34 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-20 — OOS Horizons were silently rewritten to `1,3,5` unless exactly three values were entered
+
+- **Evidence:** A user setting `OOS Horizons` to `12,23` saw `1`, `3`, and `5`
+  bar forward columns. `normalizeFinderAssetOosHorizons`
+  (`lib/finder/finder-asset-opportunity-oos.ts`) required exactly
+  `DEFAULT_FINDER_ASSET_OOS_HORIZONS.length` values and otherwise returned the
+  default, so any count other than three — including a two-value entry — was
+  discarded at capture, settings restore, the request boundary, and the runner.
+  Nothing downstream needed three: the horizon metric builder, per-basis merge,
+  pool/baseline collection, result cards, and every `analyze-asset-opportunity-*`
+  script iterate the stored horizon list, and the archive stores it inline.
+- **Change:** one normalizer, now count-agnostic. Every distinct positive
+  integer is honored, de-duplicated and returned ascending; unparseable tokens
+  are dropped and only input with no usable horizon (blank, `abc`) falls back to
+  the documented `1,3,5` default, so a run never measures horizons the field
+  does not list. Splitting also accepts `;`, the full-width comma, and `、`.
+  Result-card horizon cells moved from a fixed 3-column grid to
+  `repeat(auto-fit, minmax(96px, 1fr))` so 1, 2, or 5 horizons fill the row.
+- **Checks:** `finder-asset-opportunity-oos` (normalizer cases for `12,23`,
+  single values, five values, unsorted/duplicate/stray tokens, full-width
+  comma, plus a measurement case proving 12/23 bars are the targets) and
+  `finder-asset-opportunity-runner` (a `12,23` run reports exactly those two
+  completed horizons). `npm run validate:changes -- --run` passed
+  (`full-js`: 295 specs, typecheck, `vite build` + bundle budget); the vite
+  build only completes here with `TEMP`/`TMP` redirected inside the workspace,
+  because esbuild's own temp-file cleanup is denied under `%TEMP%` in this
+  environment.
+
 ## 2026-10-20 — Seven server-side ROI fixes: catalog write storm, ungated `/api/backtest`, cron refetch, retry jitter, route telemetry, five atomic writers, watcher globs
 
 - **Evidence (all source-verified before editing):** (1) `writeCatalog` in

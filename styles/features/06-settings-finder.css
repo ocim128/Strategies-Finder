@@ -1157,7 +1157,10 @@
 
     display: grid;
 
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    /* The OOS horizon count is user-defined, so cells fill the row evenly
+       instead of assuming the default three. */
+
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
 
     gap: var(--space-1-5);
 

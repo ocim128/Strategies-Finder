@@ -103,11 +103,33 @@ describe("Asset Opportunity fixed-horizon OOS metrics", () => {
         ]);
     });
 
-    it("uses the documented three-horizon default and rejects incomplete settings", () => {
+    it("falls back to the documented default only when no usable horizon remains", () => {
         expect(normalizeFinderAssetOosHorizons(undefined)).to.deep.equal([...DEFAULT_FINDER_ASSET_OOS_HORIZONS]);
+        expect(normalizeFinderAssetOosHorizons("")).to.deep.equal([...DEFAULT_FINDER_ASSET_OOS_HORIZONS]);
+        expect(normalizeFinderAssetOosHorizons("abc")).to.deep.equal([...DEFAULT_FINDER_ASSET_OOS_HORIZONS]);
+        expect(normalizeFinderAssetOosHorizons("0, -2")).to.deep.equal([...DEFAULT_FINDER_ASSET_OOS_HORIZONS]);
+        expect(normalizeFinderAssetOosHorizons([])).to.deep.equal([...DEFAULT_FINDER_ASSET_OOS_HORIZONS]);
+    });
+
+    it("honors every entered horizon instead of forcing three", () => {
+        // Regression: a two-value entry used to fail the "exactly three"
+        // check and silently became 1,3,5 in results and archives.
+        expect(normalizeFinderAssetOosHorizons("12,23")).to.deep.equal([12, 23]);
+        expect(normalizeFinderAssetOosHorizons([12, 23])).to.deep.equal([12, 23]);
+        expect(normalizeFinderAssetOosHorizons("1")).to.deep.equal([1]);
         expect(normalizeFinderAssetOosHorizons("1,3,5")).to.deep.equal([1, 3, 5]);
-        expect(normalizeFinderAssetOosHorizons([1, 3])).to.deep.equal([...DEFAULT_FINDER_ASSET_OOS_HORIZONS]);
-        expect(normalizeFinderAssetOosHorizons([1, 1, 5])).to.deep.equal([...DEFAULT_FINDER_ASSET_OOS_HORIZONS]);
+        expect(normalizeFinderAssetOosHorizons("1,5,12,23,48")).to.deep.equal([1, 5, 12, 23, 48]);
+        expect(normalizeFinderAssetOosHorizons("1, 36, 96")).to.deep.equal([1, 36, 96]);
+        // Ordering is ascending regardless of typing order.
+        expect(normalizeFinderAssetOosHorizons("23, 12")).to.deep.equal([12, 23]);
+        // Duplicates collapse; stray tokens are dropped rather than blanking
+        // the whole field back to the default.
+        expect(normalizeFinderAssetOosHorizons("1,1,5")).to.deep.equal([1, 5]);
+        expect(normalizeFinderAssetOosHorizons("12, abc, 23")).to.deep.equal([12, 23]);
+        expect(normalizeFinderAssetOosHorizons("12, 23.5")).to.deep.equal([12]);
+        expect(normalizeFinderAssetOosHorizons(`12, ${MAX_FINDER_ASSET_OOS_VALUE + 1}`)).to.deep.equal([12]);
+        // Full-width comma from a non-US keyboard is a separator too.
+        expect(normalizeFinderAssetOosHorizons("12\uFF0C23")).to.deep.equal([12, 23]);
     });
 
     it("scores one visible-boundary signal against only the hidden future", () => {
@@ -149,6 +171,26 @@ describe("Asset Opportunity fixed-horizon OOS metrics", () => {
             { bars: 3, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
             { bars: 5, pnlPercent: null, averagePnlPercent: null, winRatePercent: null, sampleSize: 0 },
         ]);
+    });
+
+    it("measures exactly the horizons a two-value setting lists", () => {
+        // 30 rising closes; the entry sits on candle 4, so candle 16 is the
+        // 12-bar target and candle 27 the 23-bar target.
+        const candles = makeCandles(Array.from({ length: 30 }, (_, index) => 100 + index));
+        const metrics = calculateFinderAssetOosSignalMetrics({
+            candles,
+            signalIndex: 4,
+            entryPrice: 100,
+            direction: "long",
+            ignoreLastBars: 5,
+            horizons: [12, 23],
+        });
+
+        // Regression: 12,23 must not become 1,3,5.
+        expect(metrics.horizons.map((horizon) => horizon.bars)).to.deep.equal([12, 23]);
+        expect(metrics.horizons[0]!.pnlPercent).to.be.closeTo(16, 1e-9);
+        expect(metrics.horizons[1]!.pnlPercent).to.be.closeTo(27, 1e-9);
+        expect(metrics.horizons.every((horizon) => horizon.ongoing === undefined)).to.equal(true);
     });
 
     it("leaves leg-basis horizons unavailable when the leg lacks those timestamps", () => {

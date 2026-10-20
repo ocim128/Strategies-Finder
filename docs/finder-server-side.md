@@ -434,8 +434,9 @@ final N candles remain hidden for validation.
 Asset Opportunity can reserve the last N historical bars as an OOS holdout.
 Candidate ranking and the Finder data slice use only the visible prefix, while
 the hidden bars validate the boundary opportunity. `Fixed horizons` preserves
-the existing signed close-to-entry forward PnL at three horizons (default
-`1,3,5`). `Next configured exit` replays the selected winner across the full
+the existing signed close-to-entry forward PnL at every horizon the run was
+configured with (default `1,3,5`; the count is whatever `OOS Horizons` lists,
+normalized to distinct positive integers in ascending order). `Next configured exit` replays the selected winner across the full
 execution-aware timeline and reports the first engine exit for the boundary
 entry, including TP/SL, signal exits, exit-strategy overrides, trailing/path
 exits, and max-hold time stops. A forced `end_of_data` close is reported as

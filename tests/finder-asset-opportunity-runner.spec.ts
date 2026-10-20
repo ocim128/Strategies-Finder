@@ -1105,6 +1105,40 @@ describe("Asset Opportunity runner", () => {
         expect(result.oosHorizonMetrics?.horizons[0]?.pnlPercent).to.equal(((180 - 150) / 150) * 100);
     });
 
+    it("reports the two horizons a 12,23 setting asks for, never 1/3/5", async () => {
+        // 60 candles with a 30-bar holdout: the boundary entry sits on candle
+        // 29, so 12 and 23 bars forward are both completed hidden targets.
+        const candles = makeCandles(Array.from({ length: 60 }, (_, index) => 100 + index));
+        const strategy: Strategy = {
+            name: "TwoHorizonsBoundary", description: "fresh boundary buy",
+            defaultParams: {}, paramLabels: {},
+            execute(data) {
+                const candle = data[data.length - 1];
+                return candle ? [{ time: candle.time, price: candle.close, type: "buy" as const }] : [];
+            },
+        };
+        const output = await runAssetOpportunitySearch(makeInput({
+            options: makeOptions({ assetOpportunity: {
+                symbols: ["TWO_HORIZONS"], candidatePoolSize: 1, minFreshSupport: 1,
+                oosIgnoreLastBars: 30, oosHorizons: [12, 23],
+            } }),
+            settings: { ...settings, tradeDirection: "long" },
+            selectedStrategy: { key: "two_horizons", name: strategy.name, strategy },
+            assets: [{ symbol: "TWO_HORIZONS", data: candles }],
+            runIsSearch: makeRetainingStubIsSearch(),
+        }), makeCallbacks());
+
+        expect(output.results).to.have.length(1);
+        const result = output.results[0]!;
+        expect(result.freshStatus).to.equal("fresh");
+        const metrics = result.oosHorizonMetrics!;
+        expect(metrics.horizons.map((horizon) => horizon.bars)).to.deep.equal([12, 23]);
+        // Entry close 129; +12 bars close 141, +23 bars close 152.
+        expect(metrics.horizons[0]!.pnlPercent).to.be.closeTo(((141 - 129) / 129) * 100, 1e-9);
+        expect(metrics.horizons[1]!.pnlPercent).to.be.closeTo(((152 - 129) / 129) * 100, 1e-9);
+        expect(metrics.horizons.every((horizon) => horizon.ongoing === undefined)).to.equal(true);
+    });
+
     it("replays the winner through the engine and reports its next configured exit", async () => {
         const strategy: Strategy = {
             name: "NextExitSignal",
