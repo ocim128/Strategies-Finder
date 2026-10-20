@@ -813,9 +813,20 @@ infer server ownership for another Finder mode from the shared result types.
   the OOS pass. Asset Opportunity batch mode uses the analogous
   `POST /api/finder/asset-opportunity-batch-run` route (see above).
 - **Stop is scoped by `runId`** — `POST /api/finder/stop` carries the active
-  run id so a stale tab cannot cancel a newer run. Stop aborts in-flight
-  data loads, makes every strategy + OOS loop observe lost ownership, marks
-  the snapshot cancelled, and clears the browser-side active-run record.
+  run id so a stale tab cannot cancel a newer run. Stop aborts the run's
+  `AbortController`, which cancels in-flight data loads, and every cancellation
+  check in the Universe job observes BOTH stop signals: the run abort signal and
+  the ownership loss that a newer run causes. Ownership loss alone is NOT a
+  Stop — the stopped job keeps ownership until its own teardown — so a phase
+  that only checks ownership keeps running after the user pressed Stop. That
+  includes the sequential in-process strategy loop (the only path for a
+  single-strategy Universe job) and the post-strategy OOS pass; both must call
+  the shared `isStopRequested()` check
+  (`processFinderUniverseRun` in `finder-vite-plugin.ts`). A stopped job marks
+  its snapshot cancelled, emits one terminal `done` with `cancelled: true`, and
+  clears the browser-side active-run record. `tests/finder-server-plugin.spec.ts`
+  pins the sequential-loop, stop-before-start, and OOS-abort cases;
+  `tests/finder-universe-parallel.spec.ts` pins the worker-pool path.
 - **Tab reload reattach is supported.** The browser persists the active
   `runId` (`playground_finder_active_server_run`, schema
   `finder.active_server_run`, v1) before `fetch`. On Finder init, it polls

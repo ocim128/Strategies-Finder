@@ -868,6 +868,14 @@ stream does not imply cancellation; a reload may reattach while the same Vite
 process is alive. Stop is run-id scoped, including the Stop-before-ownership
 race.
 
+A server-owned job must cancel on BOTH stop signals: the run's abort request and
+the ownership loss caused by a newer run. Ownership is deliberately retained by
+a stopped job until its own teardown, so a phase that checks only ownership
+keeps evaluating after Stop. Single-strategy Symbol Universe jobs, which run
+through the sequential in-process strategy loop, and the post-strategy OOS pass
+both depend on this rule; see
+[the server guide](finder-server-side.md#runtime-contract).
+
 Stop responses are also scoped in the browser: confirmation clears only the
 matching persisted run record, and a delayed failure cannot replace a newer
 run's status, even after that newer run completes.

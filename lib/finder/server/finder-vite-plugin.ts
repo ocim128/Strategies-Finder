@@ -718,9 +718,10 @@ export interface FinderUniverseServerRunInput {
  * with a stubbed loader and writer without spinning up Vite. Mirrors
  * `processRunBatch` in the Batch plugin.
  *
- * `owner` keys cancellation: every strategy + OOS loop bails as soon as
- * `runOwner !== owner` (Stop force-bumped the lock or a newer run took it).
- * The shared `abortController` cancels in-flight dataset loads.
+ * `owner` keys single-run ownership: acquiring a newer owner cancels this job.
+ * Cancelling THIS job does not change the owner — the route's `abortSignal`
+ * does — so every phase checks both (`isStopRequested`), and the shared
+ * `abortController` also cancels in-flight dataset loads.
  *
  * Parity: this is a THIN WRAPPER over `runFinderUniverseExecution`. The same
  * core that powers the browser path powers the server path; the only
@@ -849,6 +850,17 @@ export async function processFinderUniverseRun(
     });
 
     const lostOwnership = () => runOwner !== owner;
+    /**
+     * Stop has TWO signals. `lostOwnership()` covers a newer run taking the
+     * single-owner lock; the route abort signal covers the ordinary
+     * `POST /api/finder/stop` of THIS run, which only aborts the controller and
+     * leaves ownership intact until the job's teardown. Every cancellation
+     * check must honor both — checking only ownership leaves the sequential
+     * strategy loop and the OOS pass running after the user pressed Stop until
+     * the whole job finishes (and then reports a normal completion).
+     */
+    const isStopRequested = (): boolean =>
+        lostOwnership() || input.abortSignal?.aborted === true;
     // Completed strategies and the active strategy are tracked separately.
     // `activeSurvivorByKey` receives bounded live snapshots, while the
     // completed map receives the runner's full terminal result set. The full
@@ -1057,7 +1069,7 @@ export async function processFinderUniverseRun(
         if (sweep.fatal) {
             throw new Error(sweep.fatal.error);
         }
-        if (sweep.cancelled || lostOwnership()) {
+        if (sweep.cancelled || isStopRequested()) {
             cancelled = true;
             if (runState === snapshot) snapshot.cancelled = true;
         }
@@ -1065,7 +1077,7 @@ export async function processFinderUniverseRun(
 
     const runSequentialStrategyLoop = async (): Promise<void> => {
         for (let strategyIndex = 0; strategyIndex < strategyCount; strategyIndex += 1) {
-            if (lostOwnership()) {
+            if (isStopRequested()) {
                 cancelled = true;
                 break;
             }
@@ -1130,7 +1142,11 @@ export async function processFinderUniverseRun(
                         await new Promise<void>((resolve) => setImmediate(resolve));
                     },
                     isCancelled: () => {
-                        if (lostOwnership()) {
+                        // Stop = route abort OR ownership loss. Both must cancel:
+                        // a plain Stop never changes ownership, so checking only
+                        // `lostOwnership()` lets this phase run to completion
+                        // after the user pressed Stop.
+                        if (isStopRequested()) {
                             cancelled = true;
                             return true;
                         }
@@ -1161,7 +1177,7 @@ export async function processFinderUniverseRun(
                 },
             );
 
-            if (lostOwnership()) {
+            if (isStopRequested()) {
                 cancelled = true;
                 if (runState === snapshot) snapshot.cancelled = true;
                 break;
@@ -1201,7 +1217,10 @@ export async function processFinderUniverseRun(
         );
 
     try {
-        if (strategyCount > 1 && universeWorkerCount > 1) {
+        if (isStopRequested()) {
+            // Stop landed before the sweep began: start no work at all.
+            cancelled = true;
+        } else if (strategyCount > 1 && universeWorkerCount > 1) {
             await runParallelStrategySweep(universeWorkerCount);
         } else {
             await runSequentialStrategyLoop();
@@ -1214,7 +1233,7 @@ export async function processFinderUniverseRun(
             ...activeSurvivorByKey.values(),
         ], sortPriority);
 
-        if (!cancelled && !lostOwnership() && input.options.oosValidationEnabled && input.loadOosDataset) {
+        if (!cancelled && !isStopRequested() && input.options.oosValidationEnabled && input.loadOosDataset) {
             snapshot.phase = "oos";
             snapshot.strategyIndex = strategyCount; // OOS is post-strategy
             const oosSlice = resolveUniverseOosSlice(input.options.dataSlice);
@@ -1262,7 +1281,11 @@ export async function processFinderUniverseRun(
                     rustCapabilities: input.rustCapabilities,
                     retainAllResults: true,
                     isCancelled: () => {
-                        if (lostOwnership()) {
+                        // Stop = route abort OR ownership loss. Both must cancel:
+                        // a plain Stop never changes ownership, so checking only
+                        // `lostOwnership()` lets this phase run to completion
+                        // after the user pressed Stop.
+                        if (isStopRequested()) {
                             cancelled = true;
                             return true;
                         }
@@ -1288,7 +1311,7 @@ export async function processFinderUniverseRun(
             }
         }
 
-        if (lostOwnership()) {
+        if (isStopRequested()) {
             cancelled = true;
             if (runState === snapshot) snapshot.cancelled = true;
         }

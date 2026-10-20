@@ -232,6 +232,8 @@ async function runPlugin(args: {
     onUnderlyingLoad?: (symbol: string) => void;
     options?: FinderOptions;
     onEvent?: (event: FinderStreamEvent, events: FinderStreamEvent[]) => void;
+    /** Route abort signal (Stop). Omitted when a test never stops the run. */
+    abortSignal?: AbortSignal;
 }): Promise<FinderStreamEvent[]> {
     const {
         symbols, datasets, owner,
@@ -244,6 +246,7 @@ async function runPlugin(args: {
         options,
         onEvent,
         onUnderlyingLoad,
+        abortSignal,
     } = args;
     setRunOwnerForTests(owner);
     const loadDataset = loadDatasetImpl ?? (loadDatasetThrows
@@ -270,6 +273,7 @@ async function runPlugin(args: {
                 // datasets map (the OOS slice is applied inside the plugin).
                 ...(options?.oosValidationEnabled ? { loadOosDataset: loadDataset } : {}),
                 ...(omitGenerateParamSets ? {} : { generateParamSets }),
+                ...(abortSignal ? { abortSignal } : {}),
                 // These tests target the sequential plugin logic (job cache,
                 // merge bookkeeping, stream contract). The parallel strategy
                 // sweep has its own spec (finder-universe-parallel.spec.ts)
@@ -717,6 +721,89 @@ describe("finder server plugin processFinderUniverseRun", () => {
         });
         const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
         expect(done.cancelled).to.equal(true);
+    });
+
+    it("Stop aborts the sequential strategy loop (route abort signal, not owner loss)", async () => {
+        // A real Stop aborts the route's run abort signal; it does NOT bump
+        // the owner. The sequential loop must honor that signal, otherwise a
+        // single-strategy Symbol Universe run keeps evaluating after the user
+        // pressed Stop.
+        const controller = new AbortController();
+        let sawProgress = false;
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner: 7310,
+            runId: "run-stop-abort-sequential",
+            abortSignal: controller.signal,
+            onEvent: (event) => {
+                if (sawProgress || event.type !== "progress") return;
+                sawProgress = true;
+                controller.abort();
+            },
+        });
+
+        expect(sawProgress).to.equal(true);
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.type).to.equal("done");
+        expect(done.cancelled).to.equal(true);
+        expect(done.ok).to.equal(false);
+        // Aborted before any strategy evaluated: nothing may be reported as a
+        // completed survivor set.
+        expect(done.candidates).to.have.length(0);
+    });
+
+    it("Stop before the first strategy prevents any strategy from starting", async () => {
+        const controller = new AbortController();
+        controller.abort();
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets: upDownDatasets(),
+            owner: 7311,
+            runId: "run-stop-abort-preseeded",
+            strategyKeys: [STRATEGY_KEY, STRATEGY_KEY_2],
+            abortSignal: controller.signal,
+        });
+
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.type).to.equal("done");
+        expect(done.cancelled).to.equal(true);
+        expect(done.candidates).to.have.length(0);
+        expect(done.totals.loadedSymbols).to.equal(0);
+    });
+
+    it("Stop aborts the server-owned OOS validation pass", async () => {
+        const controller = new AbortController();
+        let abortedInOos = false;
+        const opts = makeOptions(["UP", "DOWN"]);
+        opts.oosValidationEnabled = true;
+        opts.dataSlice = "half_oldest";
+        const longCandles = (start: number): OHLCVData[] =>
+            makeCandles(Array.from({ length: 20 }, (_v, i) => start + i));
+        const datasets = new Map<string, OHLCVData[]>([
+            ["UP", longCandles(100)],
+            ["DOWN", longCandles(100)],
+        ]);
+        const events = await runPlugin({
+            symbols: ["UP", "DOWN"],
+            datasets,
+            owner: 7312,
+            runId: "run-stop-abort-oos",
+            options: opts,
+            abortSignal: controller.signal,
+            onEvent: (event) => {
+                if (abortedInOos || event.type !== "progress") return;
+                if (event.phase !== "oos") return;
+                abortedInOos = true;
+                controller.abort();
+            },
+        });
+
+        expect(abortedInOos).to.equal(true);
+        const done = events[events.length - 1] as Extract<FinderStreamEvent, { type: "done" }>;
+        expect(done.type).to.equal("done");
+        expect(done.cancelled).to.equal(true);
+        expect(done.ok).to.equal(false);
     });
 
     it("Stop is scoped by run id: a stale run id cannot stop the active job", async () => {
