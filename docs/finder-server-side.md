@@ -562,6 +562,18 @@ counterfactual across forward horizons, and best/worst signal-candle hours.
 The removal section excludes archived rows; it does not rerun Finder or
 simulate capital, position sizing, or trade overlap.
 
+The forward-OOS summary states how much of an average a tail carries. A
+synthetic pair is a ratio (`close = base / quote`), so its return is
+`(1+base)/(1−quote) − 1`: a quote-leg collapse produces returns no leg basis can
+match, and a few rows can set a whole horizon average. Each row therefore
+reports `Trimmed avg (5%)` (mean of the middle 90% of completed observations,
+withheld below 20 samples) and `Rows |PnL|>100%`, and the report ends with a
+`Basis consistency:` line counting completed rows whose pair value disagrees
+with `(1+base)/(1−quote)−1` by more than 1 point — split by how many exceed 100
+points. A non-zero count means the pair and the legs were measured on different
+bar aggregation at those rows, so the per-basis reports are comparable there
+only up to that mismatch.
+
 Only the current iteration's full scalar rows are retained (for re-sort and
 the terminal view); prior iterations' rows are never held in memory or sent
 again. The terminal status snapshot carries the LAST completed iteration's

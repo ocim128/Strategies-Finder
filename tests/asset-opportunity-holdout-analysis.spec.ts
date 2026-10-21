@@ -540,6 +540,68 @@ describe("Asset Opportunity holdout analysis", () => {
         expect(renderAssetOpportunityHoldoutReport(report)).to.include("Forward horizon basis: pair");
     });
 
+    it("reports a trimmed average, an extreme-row count, and basis disagreement so one ratio outlier cannot speak for a horizon", () => {
+        // A synthetic pair is `base / quote`, so its return is
+        // `(1+base)/(1−quote) − 1`: a quote-leg collapse produces huge rows even
+        // though both legs are measured correctly. Twenty bland +1% rows plus a
+        // +4000% and a −150% row average ~175%, which is not what the horizon did.
+        const withBases = (pair: number, base: number, quote: number) => ({
+            ...row(1, pair, 1),
+            forwardOosPerformanceByBasis: {
+                pair: { ignoreLastBars: 12, basis: "pair", horizons: [{ bars: 12, pnlPercent: pair, averagePnlPercent: pair, winRatePercent: 100, sampleSize: 1 }] },
+                base_only: { ignoreLastBars: 12, basis: "base_only", horizons: [{ bars: 12, pnlPercent: base, averagePnlPercent: base, winRatePercent: 100, sampleSize: 1 }] },
+                quote_only: { ignoreLastBars: 12, basis: "quote_only", horizons: [{ bars: 12, pnlPercent: quote, averagePnlPercent: quote, winRatePercent: 100, sampleSize: 1 }] },
+            },
+        });
+        const pnls = [...Array(20).fill(1), 4000, -150];
+        const records = pnls.flatMap((pnl, index) => parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-12T00:00:00.000Z",
+            runId: "robustness",
+            holdoutBars: index + 1,
+            sortMetric: "expectancy",
+            // Legs stay consistent with the pair except on the +4000% row, where
+            // they imply +1% — the aggregation mismatch the report must count.
+            rows: [withBases(pnl, pnl === 4000 ? 1 : pnl, 0)],
+        }), "fixture.txt"));
+
+        const report = analyzeAssetOpportunityArchive(records, { topK: 1 });
+        const horizon = report.sorts[0]!.horizons.find((item) => item.horizonBars === 12)!;
+        expect(horizon.observedRows).to.equal(22);
+        expect(horizon.averagePnlPercent).to.be.closeTo(3870 / 22, 1e-9);
+        // floor(22 × 5%) = 1 dropped per tail → the twenty +1% rows remain.
+        expect(horizon.trimmedAveragePnlPercent).to.equal(1);
+        expect(horizon.extremeRows).to.equal(2);
+        // Only the +4000% row disagrees: its legs imply +1%.
+        expect(horizon.basisMismatchRows).to.equal(1);
+        expect(horizon.basisMismatchExtremeRows).to.equal(1);
+        const text = renderAssetOpportunityHoldoutReport(report);
+        expect(text).to.include("Trimmed avg (5%)");
+        expect(text).to.include("Rows |PnL|>100%");
+        expect(text).to.include("Basis consistency: 1 of 22 completed rows disagree");
+        expect(text).to.include("1 of them by more than 100");
+    });
+
+    it("withholds the trimmed average and says so when the bases cannot be checked", () => {
+        const records = [1, 2, 3].flatMap((pnl, index) => parseAssetOpportunityArchiveText(block({
+            timestamp: "2026-10-12T00:00:00.000Z",
+            runId: "too-few",
+            holdoutBars: index + 1,
+            sortMetric: "expectancy",
+            rows: [row(1, pnl, 1)],
+        }), "fixture.txt"));
+
+        const report = analyzeAssetOpportunityArchive(records, { topK: 1 });
+        const horizon = report.sorts[0]!.horizons.find((item) => item.horizonBars === 12)!;
+        expect(horizon.observedRows).to.equal(3);
+        // A 5% trim would drop nothing or the whole sample, so it stays unstated.
+        expect(horizon.trimmedAveragePnlPercent).to.equal(null);
+        expect(horizon.extremeRows).to.equal(0);
+        // Rows without per-basis legs are unchecked, never counted as agreeing.
+        expect(horizon.basisMismatchRows).to.equal(null);
+        expect(renderAssetOpportunityHoldoutReport(report))
+            .to.include("no row in scope carried all three bases");
+    });
+
     it("keeps ongoing forward observations out of completed-horizon aggregates and reports them separately", () => {
         const records = parseAssetOpportunityArchiveText(block({
             timestamp: "2026-10-11T00:00:00.000Z",

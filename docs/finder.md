@@ -393,6 +393,17 @@ The controls are:
   under signal_close entry. Without the 1-bar horizon the summary reports
   that entry→exit cannot be chained (per-horizon tenure outcomes stay in the
   JSON).
+- Reading the basis reports: a synthetic pair is a **ratio** (`close = base /
+  quote`), so its forward return is `(1+base)/(1−quote) − 1` and a quote-leg
+  collapse amplifies the pair far beyond the sum of the two legs. The analyzer
+  therefore prints `Trimmed avg (5%)` (the middle 90% of completed rows) next to
+  the average and a `Rows |PnL|>100%` count; when the trimmed average sits far
+  below the average, a handful of rows — not the typical row — set it. Its
+  `Basis consistency:` line counts completed rows whose pair value disagrees
+  with `(1+base)/(1−quote)−1` by more than one point (and how many exceed 100
+  points): those rows were measured on different bar aggregation for the pair
+  than for the legs, so a basis-by-basis comparison is indicative there, not
+  bar-for-bar. Compare medians and trimmed averages when pairing bases.
 - `Eval Window Bars`: limit the historical search to the last N bars before
   any holdout gap; `0` means all available bars.
 - `Batch OOS Holdout`: run an inclusive holdout range and append archive blocks

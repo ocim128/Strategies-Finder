@@ -4,6 +4,42 @@ Newest entry first. Keep completed improvements concise; record the evidence,
 focused checks, and any useful follow-up so future maintenance runs can avoid
 repeating the same investigation.
 
+## 2026-10-21 — Basis reports compared a ratio pair to its legs with only the mean, so one microcap collapse read as a +75% horizon
+
+- **Evidence:** `--basis` reports over the same 201-holdout sweep (run
+  `finder-mvgkigvh`, 6,030 archived blocks) showed 5-bar averages of +75.44%
+  (pair), +1.71% (base_only) and +5.81% (quote_only) for the same selected rows.
+  The measurement is correct: a synthetic pair is a RATIO (`close = base /
+  quote`), so its return must equal `(1+base)/(1−quote) − 1`, and across 17,868
+  completed rank-1 observations that identity holds to ~1e-14 on 68% of rows and
+  within one point on 87%. The gap is convexity: 1.14% of rows exceed
+  |PnL| > 100% and they carry the average (top five rows, all `PULM•+HKIT•`,
+  were 29% of the pooled 5-bar pair sum). The legs are NOT corrupt — a bar-by-bar
+  comparison of `price-data/ibkr/csv/1d/HKIT.csv` against live Alpaca
+  `adjustment=split` bars matched exactly, including a −91% day on 7 shares;
+  HKIT's 10⁵-scale prices are its four 2026 reverse splits (0.02, 0.3333, 0.04,
+  0.04 ≈ 93,750×) applied correctly.
+- **Change:** the analyzer's FORWARD OOS SUMMARY gained `Trimmed avg (5%)` (mean
+  of the middle 90% of completed rows, withheld below 20 samples) and
+  `Rows |PnL|>100%`, plus a closing `Basis consistency:` line counting completed
+  rows whose pair value disagrees with `(1+base)/(1−quote)−1` by more than one
+  point, split by how many exceed 100 points. `REPORT_SCHEMA_VERSION` 15 → 16.
+  No measurement changed and no archive was rewritten.
+- **Checks:** `asset-opportunity-holdout-analysis` (new cases: 20 bland +1% rows
+  plus +4000% and −150% rows report mean ≈175.9%, trimmed 1.00%, two extreme
+  rows and one basis-mismatch row that also exceeds 100 points; sub-20 samples
+  withhold the trimmed average and state that the bases were not checked).
+  `typecheck` and `typecheck:tests` clean. Re-running the analyzer over the
+  archived sweep now reads 5-bar pair mean 75.44% → trimmed 11.44% (median
+  5.45%), 11 extreme rows, and 5,498 of 17,313 completed rows deviating by more
+  than one point (13 by more than 100).
+- **Follow-up:** the residual multi-hundred-point deviations come from the pair
+  being aggregated from finer source bars while the leg basis reads the 4h CSV,
+  so the ratio's denominator sits on a different intraday print. Harmless at
+  normal volatility and dominant only when an illiquid leg prints on a handful
+  of shares; aligning both bases on one aggregation would remove the last
+  ambiguity.
+
 ## 2026-10-20 — OOS Horizons were silently rewritten to `1,3,5` unless exactly three values were entered
 
 - **Evidence:** A user setting `OOS Horizons` to `12,23` saw `1`, `3`, and `5`

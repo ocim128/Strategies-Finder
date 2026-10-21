@@ -56,7 +56,7 @@ export type {
     ArchiveParseOptions,
 } from "../lib/asset-opportunity-explorer/archive-parser";
 
-const REPORT_SCHEMA_VERSION = 15;
+const REPORT_SCHEMA_VERSION = 16;
 const DEFAULT_TOP_K = 10;
 const DEFAULT_REPORT_CANDIDATES = 15;
 const HORIZON_BASES = ["pair", "base_only", "quote_only"] as const;
@@ -97,6 +97,25 @@ const THESIS_SORT_FIELDS: Readonly<Record<string, string>> = {
 };
 const DERIVED_THESIS_SORTS = new Set(["payoffRatio", "tstatEdge"]);
 const CONTROL_SORT_METRICS = new Set(["run_default"]);
+/**
+ * Robustness thresholds for the forward-OOS summary.
+ *
+ * A synthetic pair is a ratio, so its return is `(1+base)/(1−quote) − 1`: when
+ * the quote leg collapses the pair return explodes even though both legs are
+ * measured correctly, and a single such holdout can carry a whole horizon
+ * average. The report therefore states three diagnostics next to the mean —
+ * a trimmed mean, a count of extreme single-observation returns, and a count of
+ * rows where the pair disagrees with its legs (different bar aggregation).
+ */
+const TRIMMED_MEAN_TAIL_FRACTION = 0.05;
+/** Below this many observations a 5% trim removes too much to be informative. */
+const MIN_TRIMMED_MEAN_ROWS = 20;
+/** A completed single-observation return beyond ±100% is reported as extreme. */
+const EXTREME_PNL_PERCENT = 100;
+/** Percentage-point disagreement tolerated between a pair value and its legs. */
+const BASIS_MISMATCH_TOLERANCE_PERCENT = 1;
+/** Disagreement above this many points cannot be aggregation noise. */
+const BASIS_MISMATCH_EXTREME_PERCENT = 100;
 const DISCOVERY_WARNING = "Research status: DISCOVERY ONLY — the same outcomes were inspected across many sorts. Freeze metric, direction, and K before a new confirmation run.";
 const REPORT_QUESTIONS = [
     "Which archive sort has the highest average forward PnL at each tested horizon?",
@@ -184,6 +203,31 @@ export interface HoldoutHorizonAnalysis {
     standardDeviationPnlPercent: number | null;
     bestPnlPercent: number | null;
     worstPnlPercent: number | null;
+    /**
+     * Mean over the middle 90% of completed observations (top and bottom 5%
+     * dropped). A synthetic pair is a RATIO (`close = base / quote`), so its
+     * percentage return compounds — `(1+base)/(1−quote) − 1` — and one leg
+     * collapse carries the plain average. This column states what the bulk of
+     * the rows did. Null below {@link MIN_TRIMMED_MEAN_ROWS} observations.
+     */
+    trimmedAveragePnlPercent: number | null;
+    /** Completed observations whose |PnL| exceeds {@link EXTREME_PNL_PERCENT}. */
+    extremeRows: number;
+    /**
+     * Completed observations whose pair PnL disagrees with the leg-implied
+     * `((1+base)/(1−quote) − 1)` value by more than
+     * {@link BASIS_MISMATCH_TOLERANCE_PERCENT} points. A non-zero count means
+     * the pair and the legs were measured on different bar aggregation, so the
+     * three bases are not bar-for-bar comparable at those rows. Null when no
+     * row in scope carries all three bases at this horizon.
+     */
+    basisMismatchRows: number | null;
+    /**
+     * Subset of {@link basisMismatchRows} whose disagreement exceeds
+     * {@link BASIS_MISMATCH_EXTREME_PERCENT} points — too large to be
+     * aggregation noise, so those rows distort a basis-by-basis average.
+     */
+    basisMismatchExtremeRows: number | null;
     totalSamples: number;
     /** Observations measured at the last candle because the horizon exceeded the holdout. */
     ongoingRows: number;
@@ -729,6 +773,48 @@ function toHorizonObservation(horizon: {
     return { pnlPercent: horizon.averagePnlPercent, sampleSize: horizon.sampleSize, ongoing: horizon.ongoing === true };
 }
 
+/**
+ * Mean over the middle `1 − 2 × TRIMMED_MEAN_TAIL_FRACTION` of the sample, so a
+ * ratio pair's tail cannot carry the average. Returns null when the sample is
+ * too small for a 5% trim to drop any observation.
+ */
+function trimmedMeanPercent(values: readonly number[]): number | null {
+    if (values.length < MIN_TRIMMED_MEAN_ROWS) return null;
+    const sorted = [...values].sort((left, right) => left - right);
+    const cut = Math.floor(sorted.length * TRIMMED_MEAN_TAIL_FRACTION);
+    if (cut < 1) return null;
+    const kept = sorted.slice(cut, sorted.length - cut);
+    if (kept.length === 0) return null;
+    return percentOrNull(kept.reduce((sum, value) => sum + value, 0) / kept.length);
+}
+
+/**
+ * The identity every synthetic pair must satisfy: `close = base / quote`, so a
+ * pair's forward return is `(1 + base)/(1 − quote) − 1` where the quote leg's
+ * value is its SHORT return. Returns the deviation in percentage points, or
+ * null when the row cannot be checked — a missing per-basis entry, an ongoing
+ * mark (no completed horizon return), or a quote leg at or beyond −100% (the
+ * ratio has no finite inverse there).
+ */
+function measurePairBasisDeviation(row: AssetOpportunityArchiveRow, horizonBars: number): number | null {
+    const byBasis = row.forwardOosPerformanceByBasis;
+    if (!byBasis?.base_only || !byBasis?.quote_only) return null;
+    const read = (horizons: ArchiveHorizon[] | undefined): number | null => {
+        const horizon = horizons?.find((candidate) => candidate.bars === horizonBars);
+        if (!horizon || horizon.ongoing === true || !isUsableArchiveHorizon(horizon)) return null;
+        return horizon.averagePnlPercent;
+    };
+    const pair = read(row.forwardOosPerformanceByBasis?.pair?.horizons ?? row.forwardOosPerformance?.horizons);
+    const base = read(byBasis.base_only.horizons);
+    const quote = read(byBasis.quote_only.horizons);
+    if (pair === null || base === null || quote === null) return null;
+    const denominator = 1 - quote / 100;
+    if (denominator <= 0) return null;
+    const implied = ((1 + base / 100) / denominator - 1) * 100;
+    if (!Number.isFinite(implied)) return null;
+    return Math.abs(pair - implied);
+}
+
 function calculateHorizonAnalysis(
     values: HorizonObservation[],
     horizonBars: number,
@@ -759,6 +845,10 @@ function calculateHorizonAnalysis(
         standardDeviationPnlPercent: standardDeviation(pnlValues),
         bestPnlPercent: completed.length > 0 ? Math.max(...pnlValues) : null,
         worstPnlPercent: completed.length > 0 ? Math.min(...pnlValues) : null,
+        trimmedAveragePnlPercent: trimmedMeanPercent(pnlValues),
+        extremeRows: pnlValues.filter((value) => Math.abs(value) > EXTREME_PNL_PERCENT).length,
+        basisMismatchRows: null,
+        basisMismatchExtremeRows: null,
         totalSamples,
         ongoingRows: ongoing.length,
         ongoingAveragePnlPercent: ongoing.length > 0
@@ -1243,16 +1333,31 @@ function buildSortHorizonAnalyses(
     return horizonBars.map((horizonBarsValue) => {
         const values: HorizonObservation[] = [];
         const contributingHoldouts = new Set<number>();
+        // Completed rows whose pair value can be checked against its legs. The
+        // pair and the leg bases are measured on different bar aggregation, so
+        // a non-zero mismatch count says the three columns in the basis reports
+        // are not bar-for-bar comparable at this horizon.
+        const basisDeviations: number[] = [];
         for (const record of records) {
             const selected = record.topResults.slice(0, topK);
             for (const row of selected) {
                 const horizon = row.forwardOosPerformance?.horizons?.find((candidate) => candidate.bars === horizonBarsValue);
                 if (!horizon || !isUsableArchiveHorizon(horizon)) continue;
                 values.push(toHorizonObservation(horizon));
-                if (horizon.ongoing !== true) contributingHoldouts.add(record.holdoutBars);
+                if (horizon.ongoing !== true) {
+                    contributingHoldouts.add(record.holdoutBars);
+                    const deviation = measurePairBasisDeviation(row, horizonBarsValue);
+                    if (deviation !== null) basisDeviations.push(deviation);
+                }
             }
         }
         const result = calculateHorizonAnalysis(values, horizonBarsValue);
+        result.basisMismatchRows = basisDeviations.length > 0
+            ? basisDeviations.filter((deviation) => deviation > BASIS_MISMATCH_TOLERANCE_PERCENT).length
+            : null;
+        result.basisMismatchExtremeRows = basisDeviations.length > 0
+            ? basisDeviations.filter((deviation) => deviation > BASIS_MISMATCH_EXTREME_PERCENT).length
+            : null;
         if (matchBaseline) {
             const matchedBaseline = buildBaselineHorizonAnalysis(
                 records.filter((record) => contributingHoldouts.has(record.holdoutBars)),
@@ -2613,7 +2718,7 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
         lines.push(
             "",
             "FORWARD OOS SUMMARY — BEST TO WORST BY PRIMARY HORIZON AVG PNL",
-            "Sort | Horizon | Positive rows | Average PnL | Median PnL | P10 PnL | Worst PnL | Matched all-candidate avg | Pool P50 | Pool P10–P90 | Delta | Ongoing n | Ongoing avg | Samples (completed)",
+            "Sort | Horizon | Positive rows | Average PnL | Trimmed avg (5%) | Median PnL | P10 PnL | Worst PnL | Rows |PnL|>100% | Matched all-candidate avg | Pool P50 | Pool P10–P90 | Delta | Ongoing n | Ongoing avg | Samples (completed)",
         );
         for (const sort of orderedSorts) {
             for (const horizon of sort.horizons) {
@@ -2625,9 +2730,11 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
                     `${horizon.horizonBars} bars`,
                     `${horizon.positiveRows}/${horizon.observedRows}`,
                     formatPercent(horizon.averagePnlPercent),
+                    formatPercent(horizon.trimmedAveragePnlPercent),
                     formatPercent(horizon.medianPnlPercent),
                     formatPercent(horizon.p10PnlPercent),
                     formatPercent(horizon.worstPnlPercent),
+                    String(horizon.extremeRows),
                     formatPercent(horizon.baselineAveragePnlPercent),
                     formatPercent(horizon.poolP50PnlPercent),
                     horizon.poolP10PnlPercent !== null && horizon.poolP90PnlPercent !== null
@@ -2640,6 +2747,21 @@ export function renderAssetOpportunityHoldoutReport(report: AssetOpportunityHold
                 ].join(" | "));
             }
         }
+        lines.push(
+            "Note: Trimmed avg drops the top and bottom 5% of completed rows and is shown from 20 observations up; Rows |PnL|>100% counts single-holdout returns beyond ±100%.",
+            "Note: a synthetic pair is a ratio, so its return is (1+base)/(1−quote)−1 — a quote-leg collapse amplifies the pair far beyond the sum of the two legs. Read the average together with the trimmed average and the median: a large gap between them means a handful of rows, not the typical row, set the average.",
+        );
+        const checkedHorizons = orderedSorts
+            .flatMap((sort) => sort.horizons)
+            .filter((horizon) => horizon.basisMismatchRows !== null);
+        const basisMismatchRows = checkedHorizons.reduce((sum, horizon) => sum + (horizon.basisMismatchRows ?? 0), 0);
+        const basisMismatchExtreme = checkedHorizons.reduce((sum, horizon) => sum + (horizon.basisMismatchExtremeRows ?? 0), 0);
+        const basisCheckedRows = checkedHorizons.reduce((sum, horizon) => sum + horizon.observedRows, 0);
+        lines.push(checkedHorizons.length === 0
+            ? "Basis consistency: no row in scope carried all three bases, so the pair could not be checked against its legs."
+            : basisMismatchRows > 0
+                ? `Basis consistency: ${basisMismatchRows} of ${basisCheckedRows} completed rows disagree with (1+base)/(1−quote)−1 by more than 1 point, ${basisMismatchExtreme} of them by more than 100 — the pair and the legs were measured on different bar aggregation there, so a basis-by-basis comparison is indicative, not bar-for-bar.`
+                : `Basis consistency: all ${basisCheckedRows} completed rows match (1+base)/(1−quote)−1 within 1 point, so the three bases are directly comparable.`);
     }
     const horizonColumns = [...new Set(report.sorts.flatMap((sort) => sort.horizons.map((horizon) => horizon.horizonBars)))].sort((left, right) => left - right).slice(0, 3);
     lines.push("", "STRATEGY LIBRARY FORWARD OOS CONTRIBUTION (selected top rows; sorted by primary-horizon average)");
