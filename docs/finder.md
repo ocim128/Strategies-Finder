@@ -165,6 +165,7 @@ include:
 - `Median Max Drawdown`
 - `Median Return / Drawdown Ratio`
 - `Worst Net Profit`
+- `Buy & Hold Beat Ratio`
 - `Total Trades`
 
 The section toggle turns Universe Ranking off for the next run. Ranking off
@@ -278,6 +279,17 @@ until a run asks for them.
 Metric labels are defined in `lib/finder/constants.ts`; Universe aggregation
 is in `lib/finder/finder-universe-metrics.ts`; the candidate fields are in
 `lib/types/finder.ts`; the comparator is `sortFinderUniverseCandidates`.
+
+`Buy & Hold Beat Ratio` is always measured, so it is always offered. It is the
+share of comparable active symbols whose `netProfitPercent` beat that symbol's
+buy-and-hold percent (`lastClose / firstClose - 1`, the same convention as
+Batch's `computeBuyAndHoldPct` and its buy-hold alpha). Comparable means the
+symbol was active and retained finite positive `firstClose`/`lastClose` plus a
+finite `netProfitPercent`; `buyHoldComparableSymbols` and
+`buyHoldBeatenSymbols` record the counts behind the ratio. Snapshots persisted
+before the metric existed carry no value and sort last, never as zero. The
+result card shows it as `B&H beaten/comparable (percent)` next to the
+Profitable Active Ratio chip.
 
 ## Scope-specific behavior
 

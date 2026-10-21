@@ -127,6 +127,23 @@ function computeReturnDrawdownRatio(netProfitPercent: number, maxDrawdownPercent
     return 0;
 }
 
+/**
+ * Buy-and-hold percent for one symbol over the evaluated window. Same
+ * definition as Batch's `computeBuyAndHoldPct` (first valid close to last
+ * valid close) but fed from the two scalars the universe runner already
+ * retains, so no OHLCV is needed here. Returns null when the anchors are
+ * missing or unusable — a symbol with no B&H baseline cannot be compared.
+ */
+export function computeUniverseBuyAndHoldPercent(
+    firstClose: number | undefined,
+    lastClose: number | undefined,
+): number | null {
+    if (typeof firstClose !== "number" || typeof lastClose !== "number") return null;
+    if (!Number.isFinite(firstClose) || !Number.isFinite(lastClose)) return null;
+    if (firstClose <= 0 || lastClose <= 0) return null;
+    return ((lastClose / firstClose) - 1) * 100;
+}
+
 function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
     let activeSymbols = 0;
     let profitableSymbols = 0;
@@ -139,6 +156,8 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
     let totalNetProfit = 0;
     let tradeWeightedWinRateTotal = 0;
     let tradeWeightedWinRateTrades = 0;
+    let buyHoldComparableSymbols = 0;
+    let buyHoldBeatenSymbols = 0;
     const winReliabilityBounds: number[] = [];
     const expectancies: number[] = [];
     const netProfits: number[] = [];
@@ -168,6 +187,13 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         totalWinRate += result.winRate;
         totalExpectancy += result.expectancy;
         totalNetProfit += result.netProfit;
+        const buyHoldPercent = computeUniverseBuyAndHoldPercent(symbol.firstClose, symbol.lastClose);
+        if (buyHoldPercent !== null && Number.isFinite(result.netProfitPercent)) {
+            buyHoldComparableSymbols += 1;
+            if (result.netProfitPercent - buyHoldPercent > 0.0001) {
+                buyHoldBeatenSymbols += 1;
+            }
+        }
         tradeWeightedWinRateTotal += result.winRate * result.totalTrades;
         tradeWeightedWinRateTrades += result.totalTrades;
         winReliabilityBounds.push(wilsonLowerBoundPercent(result.winningTrades, result.totalTrades));
@@ -223,6 +249,11 @@ function classifyCounts(symbols: readonly FinderUniverseSymbolResult[]) {
         worstMaxDrawdownPercent: maxDrawdownPercents.length > 0 ? Math.max(...maxDrawdownPercents) : 0,
         medianMaxDrawdownPercent: median(maxDrawdownPercents),
         medianReturnDrawdownRatio: median(returnDrawdownRatios),
+        buyHoldComparableSymbols,
+        buyHoldBeatenSymbols,
+        buyHoldBeatRatio: buyHoldComparableSymbols > 0
+            ? buyHoldBeatenSymbols / buyHoldComparableSymbols
+            : 0,
         worstNetProfit: netProfits.length > 0 ? Math.min(...netProfits) : 0,
         bestNetProfit: netProfits.length > 0 ? Math.max(...netProfits) : 0,
     };
@@ -447,6 +478,10 @@ export function getFinderUniverseMetricValue(
             return item.medianReturnDrawdownRatio;
         case "worstNetProfit":
             return item.worstNetProfit;
+        case "buyHoldBeatRatio":
+            // Missing means the snapshot predates this metric (or the run had
+            // no usable B&H baseline): sort it last instead of pretending 0.
+            return Number.isFinite(item.buyHoldBeatRatio) ? item.buyHoldBeatRatio! : Number.NEGATIVE_INFINITY;
         case "totalTrades":
             return item.totalTrades;
         default:

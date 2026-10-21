@@ -93,6 +93,7 @@ export const UNIVERSE_METRIC_FULL_LABELS: Record<FinderUniverseMetric, string> =
     medianMaxDrawdownPercent: 'Median Max Drawdown',
     medianReturnDrawdownRatio: 'Median Return / Drawdown Ratio',
     worstNetProfit: 'Worst Net Profit',
+    buyHoldBeatRatio: 'Buy & Hold Beat Ratio',
     totalTrades: 'Total Trades',
 };
 

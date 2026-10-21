@@ -165,6 +165,7 @@ export const UNIVERSE_SORT_OPTIONS: readonly FinderUniverseMetric[] = [
     "medianMaxDrawdownPercent",
     "medianReturnDrawdownRatio",
     "worstNetProfit",
+    "buyHoldBeatRatio",
     "totalTrades",
     "activeSymbols",
 ] as const;

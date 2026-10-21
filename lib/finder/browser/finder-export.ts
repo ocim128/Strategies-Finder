@@ -128,6 +128,11 @@ export function buildUniverseMetadataPayload(result: FinderUniverseCandidate, ra
 			bestNetProfit: result.bestNetProfit,
 			...(Number.isFinite(result.medianExitAlpha) ? { medianExitAlpha: result.medianExitAlpha } : {}),
 			...(Number.isFinite(result.medianOosExitAlpha) ? { medianOosExitAlpha: result.medianOosExitAlpha } : {}),
+			...(Number.isFinite(result.buyHoldBeatRatio) ? {
+				buyHoldBeatRatio: result.buyHoldBeatRatio,
+				buyHoldBeatenSymbols: result.buyHoldBeatenSymbols,
+				buyHoldComparableSymbols: result.buyHoldComparableSymbols,
+			} : {}),
 			evaluationStoppedEarly: Boolean(result.evaluationStoppedEarly),
 			stoppedReason: result.stoppedReason ?? null,
 		},

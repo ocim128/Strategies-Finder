@@ -1,6 +1,6 @@
 import { expect } from "chai";
 import { describe, it } from "node:test";
-import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates, updateFinderUniverseCandidateScores, FinderUniverseSurvivorRanker } from "../lib/finder/finder-universe-metrics";
+import { buildFinderUniverseCandidate, computePerformanceVerdict, computeStrategyVerdict, computeUniverseBuyAndHoldPercent, computeUniverseOosAggregate, computeUniverseSymbolOosVerdict, passesFinderUniverseFilters, sortFinderUniverseCandidates, updateFinderUniverseCandidateScores, FinderUniverseSurvivorRanker } from "../lib/finder/finder-universe-metrics";
 import type { FinderUniverseSymbolMetrics, FinderUniverseSymbolResult } from "../lib/types/finder";
 import type { Time } from "../lib/types/strategies";
 
@@ -59,6 +59,79 @@ describe("Finder universe metrics", () => {
         expect(candidate.medianExpectancy).to.equal(1);
         expect(candidate.worstNetProfit).to.equal(-40);
         expect(candidate.bestNetProfit).to.equal(120);
+    });
+
+    it("counts symbols whose net return beat buy and hold", () => {
+        const withCloses = (
+            symbol: string,
+            status: FinderUniverseSymbolResult["status"],
+            result: FinderUniverseSymbolMetrics | undefined,
+            firstClose?: number,
+            lastClose?: number,
+        ): FinderUniverseSymbolResult => ({ ...makeSymbol(symbol, status, result), firstClose, lastClose });
+
+        const candidate = buildFinderUniverseCandidate({
+            strategyKey: "bh",
+            strategyName: "BH",
+            params: {},
+            symbols: [
+                // +50% B&H, +60% strategy -> beat
+                withCloses("BTCUSDT", "profitable", makeBacktestResult(60, 4, 10, 0, 2, undefined, 60), 100, 150),
+                // +20% B&H, +10% strategy -> lost
+                withCloses("ETHUSDT", "profitable", makeBacktestResult(10, 1, 10, 0, 2, undefined, 10), 100, 120),
+                // -20% B&H, -10% strategy -> beat on a falling symbol
+                withCloses("SOLUSDT", "losing", makeBacktestResult(-10, -1, 10, 0, 1, undefined, -10), 100, 80),
+                // No price anchors -> not comparable
+                withCloses("DOGEUSDT", "profitable", makeBacktestResult(99, 9, 10, 0, 3, undefined, 99)),
+                // No trades -> excluded from the denominator
+                withCloses("XRPUSDT", "no_trades", makeBacktestResult(0, 0, 0), 100, 200),
+            ],
+        });
+
+        expect(candidate.buyHoldComparableSymbols).to.equal(3);
+        expect(candidate.buyHoldBeatenSymbols).to.equal(2);
+        expect(candidate.buyHoldBeatRatio).to.be.closeTo(2 / 3, 1e-9);
+    });
+
+    it("sorts by buy-and-hold beat ratio and ranks unmeasured rows last", () => {
+        const beatsAll = buildFinderUniverseCandidate({
+            strategyKey: "beats-all",
+            strategyName: "Beats All",
+            params: {},
+            symbols: [{
+                ...makeSymbol("BTCUSDT", "profitable", makeBacktestResult(50, 5, 10, 0, 2, undefined, 50)),
+                firstClose: 100,
+                lastClose: 110,
+            }],
+        });
+        const beatsNone = buildFinderUniverseCandidate({
+            strategyKey: "beats-none",
+            strategyName: "Beats None",
+            params: {},
+            symbols: [{
+                ...makeSymbol("BTCUSDT", "profitable", makeBacktestResult(5, 5, 10, 0, 2, undefined, 5)),
+                firstClose: 100,
+                lastClose: 200,
+            }],
+        });
+        // Snapshot persisted before the metric existed: no ratio measured.
+        const legacy = {
+            ...beatsNone,
+            strategyKey: "legacy",
+            strategyName: "Legacy",
+        } as typeof beatsNone;
+        delete legacy.buyHoldBeatRatio;
+
+        const sorted = sortFinderUniverseCandidates([legacy, beatsNone, beatsAll], ["buyHoldBeatRatio"]);
+        expect(sorted.map((item) => item.strategyKey)).to.deep.equal(["beats-all", "beats-none", "legacy"]);
+    });
+
+    it("returns no buy-and-hold baseline for unusable price anchors", () => {
+        expect(computeUniverseBuyAndHoldPercent(undefined, 100)).to.equal(null);
+        expect(computeUniverseBuyAndHoldPercent(100, undefined)).to.equal(null);
+        expect(computeUniverseBuyAndHoldPercent(0, 100)).to.equal(null);
+        expect(computeUniverseBuyAndHoldPercent(100, 150)).to.equal(50);
+        expect(computeUniverseBuyAndHoldPercent(200, 100)).to.equal(-50);
     });
 
     it("applies survivor filters after aggregation", () => {

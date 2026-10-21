@@ -78,6 +78,7 @@ export type FinderUniverseMetric =
     | 'medianMaxDrawdownPercent'
     | 'medianReturnDrawdownRatio'
     | 'worstNetProfit'
+    | 'buyHoldBeatRatio'
     | 'totalTrades';
 
 export interface FinderUniverseOptions {
@@ -422,6 +423,20 @@ export interface FinderUniverseCandidate {
     medianMaxDrawdownPercent: number;
     /** Median per-symbol net-profit-percent / max-drawdown-percent ratio. */
     medianReturnDrawdownRatio: number;
+    /**
+     * Share of comparable active symbols whose net profit percent beat that
+     * symbol's buy-and-hold return over the same window. Mirrors Batch's
+     * buy-hold alpha convention (`netProfitPercent - buyHoldPct`). Comparable
+     * means: active, finite `firstClose`/`lastClose` above zero, and a finite
+     * `netProfitPercent`. Optional because snapshots persisted before this
+     * metric existed never measured it — treat a missing value as unmeasured,
+     * not as zero.
+     */
+    buyHoldBeatRatio?: number;
+    /** Symbols contributing to {@link buyHoldBeatRatio}. */
+    buyHoldComparableSymbols?: number;
+    /** Symbols whose net profit percent beat buy-and-hold. */
+    buyHoldBeatenSymbols?: number;
     /** Bounded 0..100 score favoring broad, sufficiently sampled, downside-aware universe performance. */
     robustUniverseScore: number;
     /** Bounded 0..100 score comparing IS breadth against the OOS validation window; 0 until OOS validation runs. */

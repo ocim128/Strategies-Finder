@@ -176,6 +176,14 @@ export class FinderUI {
                 ? `Stable ${item.windowStabilityScore.toFixed(1)}`
                 : "Stable --"));
             this.appendTableMetric(metrics, metricValues, "Ratio", "ratio", `${(item.profitableActiveRatio * 100).toFixed(1)}%`);
+            // Buy-and-hold breadth: share of comparable active symbols whose
+            // net return beat holding the symbol over the same window. Absent
+            // on snapshots persisted before the metric existed.
+            if (Number.isFinite(item.buyHoldBeatRatio) && (item.buyHoldComparableSymbols ?? 0) > 0) {
+                metrics.appendChild(this.createMetricChip(
+                    `B&H ${item.buyHoldBeatenSymbols ?? 0}/${item.buyHoldComparableSymbols} (${(item.buyHoldBeatRatio! * 100).toFixed(0)}%)`,
+                ));
+            }
             this.appendTableMetric(metrics, metricValues, "Active", "active", String(item.activeSymbols));
             metrics.appendChild(this.createMetricChip(`No Trade ${item.noTradeSymbols}`));
             this.appendTableMetric(metrics, metricValues, "Med Exp", "medExp", item.medianExpectancy.toFixed(2));
