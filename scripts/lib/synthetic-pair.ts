@@ -37,6 +37,13 @@ export interface SyntheticPairDataset {
     meta: SyntheticPairDatasetMeta;
 }
 
+/** Pipeline-owned state: unusual timestamps/invalid skipped ratios fall back
+ * to the general bucket attachment pass, preserving its exact semantics. */
+interface NormalizedPairExecution {
+    intervalSeconds: number;
+    attached: boolean;
+}
+
 export interface SyntheticPairPayloadSource {
     baseSymbol: string;
     quoteSymbol: string;
@@ -130,6 +137,8 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
     quote: readonly OHLCVData[];
     minBars?: number;
     wickMode?: SyntheticWickMode;
+    executionMode?: SyntheticPairExecutionMode;
+    execution?: NormalizedPairExecution;
 }): SyntheticPairDataset {
     const { base: baseBars, quote: quoteBars, minBars = 1, wickMode = 'matched' } = options;
 
@@ -174,6 +183,7 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
         const close = safeDiv(baseBar.close, quoteBar.close);
 
         if (!Number.isFinite(open) || !Number.isFinite(close)) {
+            if (options.execution) options.execution.attached = false;
             baseIndex += 1;
             quoteIndex += 1;
             continue;
@@ -200,14 +210,11 @@ export function buildSyntheticPairDatasetFromNormalizedCandles(options: {
             Number.isFinite(quoteBar.volume) ? quoteBar.volume : 0,
         );
 
-        syntheticBars.push({
-            time: baseBar.time as Time,
-            open,
-            high,
-            low,
-            close,
-            volume: Math.max(0, volume),
-        });
+        const execution = options.execution;
+        if (execution && (!execution.intervalSeconds || baseTime % execution.intervalSeconds !== 0)) execution.attached = false;
+        const sample = execution?.attached ? createPairExecutionSample(baseBar, quoteBar) : undefined;
+        syntheticBars.push(createNormalizedPairCandle(baseBar.time as Time,
+            open, high, low, close, Math.max(0, volume), options.executionMode, sample ? [sample] : undefined));
         baseIndex += 1;
         quoteIndex += 1;
     }
@@ -534,6 +541,9 @@ export async function buildSyntheticPairFromLegs(args: {
     }
 
     const effectiveInterval = subdivided ? sourceInterval : interval;
+    const execution: NormalizedPairExecution | undefined = args.assumeNormalizedLegs && args.executionMode === 'equal_weight'
+        ? { intervalSeconds: parseIntervalSeconds(interval) ?? 0, attached: true }
+        : undefined;
     const dataset = args.assumeNormalizedLegs
         ? (subdivided
             ? buildAndAggregateSyntheticPairDatasetFromNormalizedCandles({
@@ -542,14 +552,20 @@ export async function buildSyntheticPairFromLegs(args: {
                 targetInterval: interval,
                 minBars,
                 wickMode,
+                executionMode: args.executionMode,
+                execution,
             })
-            : buildSyntheticPairDatasetFromNormalizedCandles({ base, quote, minBars, wickMode }))
+            : buildSyntheticPairDatasetFromNormalizedCandles({ base, quote, minBars, wickMode, executionMode: args.executionMode, execution }))
         : buildSyntheticPairDataset({ base, quote, interval: effectiveInterval, minBars, wickMode });
     const bars = subdivided && !args.assumeNormalizedLegs
         ? aggregateSyntheticBars(dataset.bars, interval)
         : dataset.bars;
 
-    if (args.executionMode === 'equal_weight') {
+    if (args.executionMode === 'equal_weight' && !execution?.attached) {
+        // A non-grid source or skipped invalid ratio can share a target bucket
+        // with another source candle. Rebuild attachments using the general
+        // bucket merge rather than mixing fused and fallback samples.
+        if (execution) for (const candle of bars) candle.pairLegs = undefined;
         attachPairExecutionLegs(bars,
             args.assumeNormalizedLegs ? base : ensureNormalizedLegBars(base),
             args.assumeNormalizedLegs ? quote : ensureNormalizedLegBars(quote), interval);
@@ -582,10 +598,7 @@ function attachPairExecutionLegs(bars: OHLCVData[], base: OHLCVData[], quote: OH
         while (targetIndex < bars.length && Math.floor(Number(bars[targetIndex].time) / seconds) < bucket) targetIndex++;
         const target = bars[targetIndex];
         if (target && Math.floor(Number(target.time) / seconds) === bucket) {
-            const sample: SyntheticPairSample = [a.open, a.high, a.low, a.close, b.open, b.high, b.low, b.close];
-            if (!sample.every(value => Number.isFinite(value) && value > 0)) {
-                throw new Error('50/50 pairs require finite positive OHLC prices on both legs.');
-            }
+            const sample = createPairExecutionSample(a, b);
             if (target.pairLegs) (target.pairLegs as SyntheticPairSample[]).push(sample);
             else { target.pairLegs = [sample]; populatedBars++; }
         }
@@ -607,6 +620,8 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
     targetInterval: string;
     minBars?: number;
     wickMode?: SyntheticWickMode;
+    executionMode?: SyntheticPairExecutionMode;
+    execution?: NormalizedPairExecution;
 }): SyntheticPairDataset {
     const { base: baseBars, quote: quoteBars, targetInterval, minBars = 1, wickMode = 'matched' } = options;
     if (quoteBars.length === 0) {
@@ -618,7 +633,7 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
 
     const targetSecs = parseIntervalSeconds(targetInterval);
     if (!targetSecs || targetSecs <= 0) {
-        return buildSyntheticPairDatasetFromNormalizedCandles({ base: baseBars, quote: quoteBars, minBars, wickMode });
+        return buildSyntheticPairDatasetFromNormalizedCandles({ base: baseBars, quote: quoteBars, minBars, wickMode, executionMode: options.executionMode, execution: options.execution });
     }
 
     const syntheticBars: OHLCVData[] = [];
@@ -658,6 +673,7 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
         const open = safeDiv(baseBar.open, quoteBar.open);
         const close = safeDiv(baseBar.close, quoteBar.close);
         if (!Number.isFinite(open) || !Number.isFinite(close)) {
+            if (options.execution) options.execution.attached = false;
             baseIndex += 1;
             quoteIndex += 1;
             continue;
@@ -683,23 +699,19 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
         const bucketStart = Math.floor(baseTime / targetSecs) * targetSecs;
         alignedBars += 1;
         if (alignedBars === 1) singleAlignedTime = baseBar.time;
+        const sample = options.execution?.attached ? createPairExecutionSample(baseBar, quoteBar) : undefined;
 
         if (currentBucket !== bucketStart) {
             if (current) syntheticBars.push(current);
             currentBucket = bucketStart;
-            current = {
-                time: bucketStart as Time,
-                open,
-                high,
-                low,
-                close,
-                volume,
-            };
+            current = createNormalizedPairCandle(bucketStart as Time,
+                open, high, low, close, volume, options.executionMode, sample ? [sample] : undefined);
         } else if (current) {
             if (high > current.high) current.high = high;
             if (low < current.low) current.low = low;
             current.close = close;
             current.volume += volume;
+            if (sample) (current.pairLegs as SyntheticPairSample[]).push(sample);
         }
 
         baseIndex += 1;
@@ -728,6 +740,28 @@ function buildAndAggregateSyntheticPairDatasetFromNormalizedCandles(options: {
             droppedBars: baseBars.length - alignedBars,
         },
     };
+}
+
+/** Reserve execution storage in the candle's original shape. Adding pairLegs
+ * after construction otherwise allocates a separate property backing store
+ * for every candle in large equal-weight universes. The normalized merge fills
+ * it directly; unusual source windows retain the general attachment pass.
+ */
+function createNormalizedPairCandle(time: Time, open: number, high: number, low: number,
+    close: number, volume: number, executionMode?: SyntheticPairExecutionMode, pairLegs?: OHLCVData['pairLegs']): OHLCVData {
+    return executionMode === 'equal_weight'
+        ? { time, open, high, low, close, volume, pairLegs }
+        : { time, open, high, low, close, volume };
+}
+
+function createPairExecutionSample(a: OHLCVData, b: OHLCVData): SyntheticPairSample {
+    if (!(Number.isFinite(a.open) && a.open > 0 && Number.isFinite(a.high) && a.high > 0
+        && Number.isFinite(a.low) && a.low > 0 && Number.isFinite(a.close) && a.close > 0
+        && Number.isFinite(b.open) && b.open > 0 && Number.isFinite(b.high) && b.high > 0
+        && Number.isFinite(b.low) && b.low > 0 && Number.isFinite(b.close) && b.close > 0)) {
+        throw new Error('50/50 pairs require finite positive OHLC prices on both legs.');
+    }
+    return [a.open, a.high, a.low, a.close, b.open, b.high, b.low, b.close];
 }
 
 export function aggregateSyntheticBars(

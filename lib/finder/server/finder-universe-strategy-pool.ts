@@ -299,10 +299,41 @@ export async function runFinderUniverseStrategySweep(args: {
     ) => void;
     isCancelled: () => boolean;
 }): Promise<{ cancelled: boolean; completedStrategies: number; fatal: { task: FinderUniverseStrategyWorkerTask; error: string } | null }> {
+    let assignedTasks = 0;
+    const createRunner: FinderUniverseStrategyRunnerFactory = async (events) => {
+        let active = false;
+        let disposal: Promise<void> | undefined;
+        const disposeOnce = (): Promise<void> => {
+            disposal ??= Promise.resolve().then(() => runner.dispose());
+            // Final sweep cleanup awaits this same promise. Attach a handler
+            // now so a rejection during early retirement is never unhandled.
+            void disposal.catch(() => undefined);
+            return disposal;
+        };
+        const runner = await args.createRunner({
+            ...events,
+            onComplete: (task, result) => {
+                active = false;
+                events.onComplete(task, result);
+                // Once the queue is exhausted this isolate can never receive
+                // another strategy. Release its full-universe dataset cache
+                // while slower workers finish, rather than holding several
+                // otherwise idle GB-sized heaps until the last result.
+                // Forwarding completion may synchronously assign a new task;
+                // the active check protects that reuse.
+                if (!active && assignedTasks >= args.tasks.length) void disposeOnce();
+            },
+        });
+        return {
+            runTask(task) { active = true; assignedTasks++; runner.runTask(task); },
+            stop() { if (!disposal) runner.stop(); },
+            dispose: disposeOnce,
+        };
+    };
     const sweep = await runAssetOpportunityBatchSweep<FinderUniverseStrategyWorkerResult, FinderUniverseStrategyWorkerTask, FinderUniverseStrategyProgress>({
         tasks: args.tasks,
         runnerCount: args.runnerCount,
-        createRunner: args.createRunner,
+        createRunner,
         onIterationResult: args.onStrategyResult,
         onProgress: (task, progress, aggregate) => {
             args.onProgress(task, progress, { percent: aggregate.percent });

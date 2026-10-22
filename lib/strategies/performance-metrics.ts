@@ -1,6 +1,6 @@
 import type { AdvancedPerformanceAnalytics, Time } from "../types/strategies";
 import { timeToNumber } from "./backtest/backtest-utils";
-import { mean, median, percentileSorted, sampleStdDev } from "../statistics-utils";
+import { mean, percentileSorted, sampleStdDev } from "../statistics-utils";
 import { clamp } from "../param-math-utils";
 
 export const SHARPE_MIN_SAMPLES = 5;
@@ -61,25 +61,68 @@ export function estimatePeriodsPerYear(
     samples: ArrayLike<Time | TimedPoint>,
     sampleCount = samples.length
 ): number {
+    return estimateSampleCadence(samples, sampleCount);
+}
+
+function estimateSampleCadence(
+    samples: ArrayLike<Time | TimedPoint>,
+    sampleCount: number,
+    dailyIndices?: number[],
+): number {
     if (sampleCount < 2) return 1;
 
-    const deltas: number[] = [];
+    // Candle histories repeat a small number of cadences (ordinary bars,
+    // overnight gaps, weekends). Count those values instead of allocating,
+    // copying and sorting one delta per candle on every cold Sharpe window.
+    // Weighted middle ranks retain the exact ordinary median, including the
+    // arithmetic average of the two middle deltas for even sample counts.
+    const deltaCounts = new Map<number, number>();
+    let deltaCount = 0;
     let previousTimeMs: number | null = null;
+    let currentDayId: number | null = null;
 
     for (let index = 0; index < sampleCount; index += 1) {
-        const currentTimeMs = toEpochMilliseconds(extractSampleTime(samples[index]));
+        const time = extractSampleTime(samples[index]);
+        const currentTimeMs = toEpochMilliseconds(time);
+        // Building a cold Sharpe plan needs the same timestamp scan for day
+        // endpoints. Reuse this conversion instead of parsing every bar twice.
+        if (dailyIndices) {
+            const dayId = time && typeof time === 'object' && 'year' in time
+                ? time.year * 10000 + time.month * 100 + time.day
+                : currentTimeMs === null ? null : Math.floor(currentTimeMs / MILLIS_PER_DAY);
+            if (dayId !== null) {
+                if (dayId !== currentDayId) {
+                    dailyIndices.push(index);
+                    currentDayId = dayId;
+                } else {
+                    dailyIndices[dailyIndices.length - 1] = index;
+                }
+            }
+        }
         if (currentTimeMs === null) continue;
         if (previousTimeMs !== null) {
             const deltaMs = currentTimeMs - previousTimeMs;
             if (Number.isFinite(deltaMs) && deltaMs > 0) {
-                deltas.push(deltaMs);
+                deltaCounts.set(deltaMs, (deltaCounts.get(deltaMs) ?? 0) + 1);
+                deltaCount++;
             }
         }
         previousTimeMs = currentTimeMs;
     }
 
-    if (deltas.length === 0) return 1;
-    const typicalDeltaMs = median(deltas);
+    if (deltaCount === 0) return 1;
+    const lowerRank = Math.floor((deltaCount - 1) / 2);
+    const upperRank = Math.floor(deltaCount / 2);
+    let cumulativeCount = 0;
+    let lower = 0;
+    let upper = 0;
+    for (const delta of [...deltaCounts.keys()].sort((a, b) => a - b)) {
+        const nextCount = cumulativeCount + deltaCounts.get(delta)!;
+        if (cumulativeCount <= lowerRank && nextCount > lowerRank) lower = delta;
+        if (nextCount > upperRank) { upper = delta; break; }
+        cumulativeCount = nextCount;
+    }
+    const typicalDeltaMs = lowerRank === upperRank ? upper : (lower + upper) / 2;
     if (!Number.isFinite(typicalDeltaMs) || typicalDeltaMs <= 0) return 1;
 
     return Math.max(1, MILLIS_PER_YEAR / typicalDeltaMs);
@@ -245,27 +288,16 @@ function getEquitySharpeSamplePlan(
     const cached = byCount.get(sampleCount);
     if (cached) return cached;
 
-    const sourcePeriodsPerYear = estimatePeriodsPerYear(samples, sampleCount);
+    const selectedIndices: number[] = [];
+    const sourcePeriodsPerYear = estimateSampleCadence(samples, sampleCount, selectedIndices);
     const typicalDeltaMs = sourcePeriodsPerYear > 0
         ? MILLIS_PER_YEAR / sourcePeriodsPerYear
         : Infinity;
     const collapsedIntraday = Number.isFinite(typicalDeltaMs) && typicalDeltaMs < MILLIS_PER_DAY;
-    const selectedIndices: number[] = [];
 
     if (!collapsedIntraday) {
+        selectedIndices.length = 0;
         for (let index = 0; index < sampleCount; index += 1) selectedIndices.push(index);
-    } else {
-        let currentDayId: number | null = null;
-        for (let index = 0; index < sampleCount; index += 1) {
-            const dayId = toUtcDayId(extractSampleTime(samples[index]));
-            if (dayId === null) continue;
-            if (dayId !== currentDayId) {
-                selectedIndices.push(index);
-                currentDayId = dayId;
-            } else {
-                selectedIndices[selectedIndices.length - 1] = index;
-            }
-        }
     }
 
     const selectedTimes = selectedIndices.map((index) => extractSampleTime(samples[index]));

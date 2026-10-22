@@ -147,6 +147,62 @@ npm.cmd exec -- esno scripts/bench-synthetic-equal-weight.ts --compare artifacts
 ```
 
 The comparison rejects differing datasets, signals or result fingerprints.
+
+The cumulative-return Universe workload has a separate benchmark:
+`scripts/bench-finder-equal-weight-universe.ts`. It builds 64 cold 24,000-bar
+30m pairs with one shared leg, evaluates two cumulative-return percentile
+candidates, and verifies the complete scalar result inventory with SHA-256.
+It includes pair construction, signal generation, simulation and Sharpe, with
+fees and slippage; it excludes disk/network I/O and browser rendering.
+One discarded warmup and three measured runs on Node 22.16.0 gave a median
+of 1,614 ms before and 1,324 ms after the following changes (18% less time):
+
+- Cumulative Return Percentile Reversion prepares one-bar returns once and
+  retains at most four rank series per window. Threshold-only candidates
+  reuse compatible ranks. When the actual threshold comparisons permit only
+  the minimum and unique maximum, monotone queues replace sorted-window
+  percentile updates. Other thresholds retain full percentile ranks, including
+  lower-bound tie behavior and the existing signal warmup/reason strings.
+- Normalized pair candles reserve their leg field at construction, avoiding
+  a separate property store per candle during execution-leg attachment.
+- Fixed/percent simulations skip ATR and its OHLC arrays when neither risk
+  settings nor filters consume ATR. Adaptive sizing, ATR risk/filter settings
+  and the public full precompute API retain their existing ATR series.
+
+Capture with `npm exec -- esno scripts/bench-finder-equal-weight-universe.ts
+--out artifacts/universe-before.json`, then repeat with
+`--compare artifacts/universe-before.json --out artifacts/universe-after.json`.
+All measured result fingerprints matched. This deterministic fixture does
+not reproduce a complete 1,001-pair local-data run; host load, history depth,
+parameters and filesystem cache state affect the live improvement.
+
+The four-strategy follow-up benchmark uses the production worker pool and
+local 30m CSV seeds: `scripts/bench-finder-universe-strategies.ts`. It pairs
+64 local assets with AAPL and runs the diagnostic's entropy alignment,
+short-term overextension, pivot midpoint and probability-boundary strategies,
+with two seeded candidates each, fees, slippage and Sharpe. One warmup and
+three measured four-worker runs gave 3,774 ms before and 3,579 ms after the
+follow-up changes (about 5% less elapsed time); summed backtest time fell
+about 16%. Result inventories matched by SHA-256, including a one-worker
+replay. This includes local loading and worker startup, with warmed filesystem
+caches; it is not the original 1,001-pair request.
+
+The follow-up counts repeated timestamp gaps to calculate the exact median
+cadence without copying/sorting every candle delta, and selects Sharpe's daily
+endpoints in that same timestamp pass. Rolling medians use a fixed numeric
+buffer rather than allocating splice results on every bar. Normalized 50/50
+pair construction attaches validated execution samples during the ratio merge;
+non-grid timestamps and skipped invalid ratios retain the general bucket
+attachment path. Exhausted idle workers release their dataset heaps while
+other strategies finish; result release order and cancellation are unchanged.
+
+Capture with `npm exec -- esno scripts/bench-finder-universe-strategies.ts
+--out artifacts/multi-before.json`, then repeat with
+`--compare artifacts/multi-before.json --out artifacts/multi-after.json`.
+`--workers 1` checks sequential worker parity. The comparison checks CSV
+size/mtime identity and all candidate results; do not sync the sources between
+reports. The benchmark does not change the source CSVs.
+
 `tests/synthetic-pair-fast-path.spec.ts` compares all trades, leg fills,
 metrics and endpoint exclusions against the fallback for long/short/both,
 three execution models, 30m and aggregated 4h source data, costs, partials,

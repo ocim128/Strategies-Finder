@@ -36,6 +36,7 @@ import { processFinderUniverseRun, __testInternals } from "../lib/finder/server/
 import {
     resolveUniverseMaxBarsPerSymbol,
     resolveUniverseStrategyWorkerCount,
+    runFinderUniverseStrategySweep,
     FINDER_UNIVERSE_WORKERS_ENV,
     type FinderUniverseStrategyProgress,
     type FinderUniverseStrategyRunnerFactory,
@@ -321,6 +322,74 @@ function doneEventOf(events: FinderStreamEvent[]): Extract<FinderStreamEvent, { 
 }
 
 describe("finder universe parallel strategy sweep", () => {
+    it('retires exhausted idle workers before a slower task completes and disposes each exactly once', async () => {
+        const controls = new Map<number, { complete: () => void; runnerIndex: number }>();
+        const disposed = [0, 0];
+        const emitted: number[] = [];
+        let cancelled = false;
+        let created = 0;
+        let startedCount = 0;
+        let notifyInitial!: () => void, notifyReused!: () => void, notifyRetired!: () => void;
+        const initial = new Promise<void>(resolve => { notifyInitial = resolve; });
+        const reused = new Promise<void>(resolve => { notifyReused = resolve; });
+        const retired = new Promise<void>(resolve => { notifyRetired = resolve; });
+        const tasks = [0, 1, 2].map(taskIndex => ({ taskIndex } as FinderUniverseStrategyWorkerTask));
+        const sweep = runFinderUniverseStrategySweep({
+            tasks, runnerCount: 2, isCancelled: () => cancelled, onProgress() {},
+            onStrategyResult: async task => { emitted.push(task.taskIndex); },
+            createRunner: events => {
+                const runnerIndex = created++;
+                let active: FinderUniverseStrategyWorkerTask | undefined;
+                let lastTaskIndex = -1;
+                const complete = (wasCancelled = false) => {
+                    if (!active) return;
+                    const task = active;
+                    active = undefined;
+                    events.onComplete(task, {
+                        results: [], diagnostics: undefined, loadedSymbols: 0, failedSymbols: [], cancelled: wasCancelled,
+                        datasetCacheDelta: { requests: 0, hits: 0, misses: 0, successfulLoads: 0, failedLoads: 0, uniqueBarsLoaded: 0, cacheEntries: 0 }, slowLoads: [],
+                    });
+                };
+                return {
+                    runTask(task) {
+                        expect(disposed[runnerIndex]).to.equal(0, 'never reuse a retired worker');
+                        active = task;
+                        lastTaskIndex = task.taskIndex;
+                        controls.set(task.taskIndex, { complete, runnerIndex });
+                        startedCount++;
+                        if (startedCount === 2) notifyInitial();
+                        if (task.taskIndex === 2) notifyReused();
+                    },
+                    stop: () => complete(true),
+                    async dispose() {
+                        expect(active).to.equal(undefined, 'never retire a busy worker');
+                        disposed[runnerIndex]++;
+                        if (lastTaskIndex === 1) notifyRetired();
+                    },
+                };
+            },
+        });
+        try {
+            await initial;
+            controls.get(0)!.complete();
+            await reused;
+            expect(disposed).to.deep.equal([0, 0]);
+            controls.get(1)!.complete();
+            await retired;
+            expect(disposed[controls.get(1)!.runnerIndex]).to.equal(1);
+            expect(disposed[controls.get(2)!.runnerIndex]).to.equal(0);
+            controls.get(2)!.complete();
+            const result = await sweep;
+            expect(result.completedStrategies).to.equal(3);
+            expect(emitted).to.deep.equal([0, 1, 2]);
+            expect(disposed).to.deep.equal([1, 1]);
+        } finally {
+            cancelled = true;
+            for (const control of controls.values()) control.complete();
+            await sweep;
+        }
+    });
+
     before(() => {
         strategyRegistry.register(STRATEGY_A, strategyA);
         strategyRegistry.register(STRATEGY_B, strategyB);

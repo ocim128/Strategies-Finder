@@ -1,5 +1,5 @@
 
-import { BacktestSettings, OHLCVData } from '../../types/index';
+import { BacktestSettings, OHLCVData, TradeSizingMode } from '../../types/index';
 import { calculateADX, calculateATR, calculateEMA } from '../indicators';
 import { getCloses, getHighs, getLows } from '../strategy-helpers';
 import { IndicatorSeries, NormalizedSettings, PrecomputedIndicators } from '../../types/backtest';
@@ -9,7 +9,7 @@ import { resolveTrendPeriod } from './regime-filters';
 const MAX_SETTINGS_CACHE_PER_DATASET = 24;
 const indicatorCache = new WeakMap<OHLCVData[], Map<string, PrecomputedIndicators>>();
 
-function buildIndicatorCacheKey(config: NormalizedSettings): string {
+function buildIndicatorCacheKey(config: NormalizedSettings, includeAtr = true): string {
     return [
         config.atrPeriod,
         config.atrPercentMin,
@@ -21,22 +21,22 @@ function buildIndicatorCacheKey(config: NormalizedSettings): string {
         config.adxPeriod,
         config.adxMin,
         config.adxMax,
-    ].join('|');
+    ].join('|') + (includeAtr ? '' : '|no-atr');
 }
 
 function precomputeIndicatorsFromConfig(
     data: OHLCVData[],
-    config: NormalizedSettings
+    config: NormalizedSettings,
+    includeAtr = true,
 ): PrecomputedIndicators {
-    const highs = getHighs(data);
-    const lows = getLows(data);
-    const closes = getCloses(data);
-    const atr = calculateATR(highs, lows, closes, config.atrPeriod);
-    const trendPeriod = resolveTrendPeriod(config);
-    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
-
     const useAdx = config.adxMin > 0
         || config.adxMax > 0;
+    const highs = includeAtr || useAdx ? getHighs(data) : [];
+    const lows = includeAtr || useAdx ? getLows(data) : [];
+    const trendPeriod = resolveTrendPeriod(config);
+    const closes = includeAtr || useAdx || trendPeriod > 0 ? getCloses(data) : [];
+    const atr = includeAtr ? calculateATR(highs, lows, closes, config.atrPeriod) : [];
+    const emaTrend = trendPeriod > 0 ? calculateEMA(closes, trendPeriod) : [];
     const adxPeriod = useAdx ? Math.max(1, config.adxPeriod) : 0;
     const adx = useAdx ? calculateADX(highs, lows, closes, adxPeriod) : [];
 
@@ -45,15 +45,16 @@ function precomputeIndicatorsFromConfig(
         emaTrend,
         adx,
         dataLength: data.length,
-        settingsKey: buildIndicatorCacheKey(config)
+        settingsKey: buildIndicatorCacheKey(config, includeAtr)
     };
 }
 
 function getOrCreatePrecomputedIndicators(
     data: OHLCVData[],
-    config: NormalizedSettings
+    config: NormalizedSettings,
+    includeAtr = true,
 ): PrecomputedIndicators {
-    const cacheKey = buildIndicatorCacheKey(config);
+    const cacheKey = buildIndicatorCacheKey(config, includeAtr);
     let datasetCache = indicatorCache.get(data);
     if (!datasetCache) {
         datasetCache = new Map<string, PrecomputedIndicators>();
@@ -62,7 +63,7 @@ function getOrCreatePrecomputedIndicators(
 
     let computed = datasetCache.get(cacheKey);
     if (!computed || computed.dataLength !== data.length) {
-        computed = precomputeIndicatorsFromConfig(data, config);
+        computed = precomputeIndicatorsFromConfig(data, config, includeAtr);
         if (datasetCache.size >= MAX_SETTINGS_CACHE_PER_DATASET) {
             const oldestKey = datasetCache.keys().next().value;
             if (oldestKey !== undefined) {
@@ -100,9 +101,17 @@ export function precomputeIndicators(
 export function resolveIndicatorsFromConfig(
     data: OHLCVData[],
     config: NormalizedSettings,
-    precomputed?: PrecomputedIndicators
+    precomputed?: PrecomputedIndicators,
+    sizingMode?: TradeSizingMode,
 ): IndicatorSeries {
-    const cacheKey = buildIndicatorCacheKey(config);
+    // Adaptive sizing can consume ATR even without ATR risk/filter settings.
+    // Unspecified sizing preserves the public precompute contract; the engine
+    // supplies its mode so fixed/percent runs can omit wholly unused series.
+    const includeAtr = (sizingMode !== 'fixed' && sizingMode !== 'percent')
+        || config.stopLossAtr > 0 || config.takeProfitAtr > 0 || config.trailingAtr > 0
+        || config.partialTakeProfitAtR > 0 || config.breakEvenAtR > 0
+        || config.atrPercentMin > 0 || config.atrPercentMax > 0;
+    const cacheKey = buildIndicatorCacheKey(config, includeAtr);
     let computed: PrecomputedIndicators | undefined;
     if (
         precomputed &&
@@ -111,7 +120,7 @@ export function resolveIndicatorsFromConfig(
     ) {
         computed = precomputed;
     } else {
-        computed = getOrCreatePrecomputedIndicators(data, config);
+        computed = getOrCreatePrecomputedIndicators(data, config, includeAtr);
     }
 
     return {

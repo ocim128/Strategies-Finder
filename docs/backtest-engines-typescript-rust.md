@@ -108,6 +108,11 @@ without improving the measured end-to-end workload.
   recency and insertion evicts the least-recently used period; evicted series
   stay valid for callers that hold them, and indicator-precompute's
   per-dataset bundle bound remains the independent retained-reference limit.
+  The engine supplies its sizing mode to indicator resolution: fixed/percent
+  runs omit ATR and unused OHLC arrays when no ATR risk or filter consumes
+  them. Adaptive sizing and unspecified sizing retain ATR; public
+  `precomputeIndicators()` still returns the full series. The cache keys keep
+  these reduced bundles separate from full ATR bundles.
   Measure the policy with `npm run bench:indicator-cache` before changing the
   budget; sweeps whose cycle exceeds the derived capacity trade warm-pass
   recomputation for bounded memory.
@@ -708,6 +713,14 @@ Rust engine. The service is local-only in the current configuration and is not
 the public Finder HTTP boundary.
 
 ## Diagnostics and performance interpretation
+
+TypeScript Sharpe's cold sample plan counts repeated timestamp gaps rather
+than sorting one delta per candle to estimate cadence. Weighted middle ranks
+preserve the exact median, including the even-count average. Daily endpoint
+selection shares that timestamp conversion pass; UTC-day collapse, annualization,
+non-finite-equity fallback and return arithmetic are unchanged. The existing
+window-owned WeakMap still reuses plans across candidates. See the
+[four-strategy 50/50 benchmark](synthetic-pairs.md#finder-execution-performance).
 
 When investigating a slow run, separate these timings:
 

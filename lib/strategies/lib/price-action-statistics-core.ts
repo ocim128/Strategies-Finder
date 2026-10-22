@@ -471,6 +471,39 @@ export function buildRollingMedian(
 	const lookback = Math.max(1, Math.round(lookbackInput));
 	return getCachedSeries(rollingMedianCache, values, lookback, () => {
 		const result: NullableSeries = new Array(values.length).fill(null);
+		if (lookback > values.length) return result;
+		if (Number.isFinite(lookback)) {
+			// A fixed sorted buffer avoids Array.splice's per-bar backing-store
+			// churn. Keep insertion BEFORE removal to preserve lower-bound ties
+			// and the historical behavior of non-finite numeric samples.
+			const window = new Float64Array(lookback + 1);
+			let used = 0;
+			const lowerBound = (value: number): number => {
+				let low = 0, high = used;
+				while (low < high) {
+					const mid = (low + high) >> 1;
+					if (window[mid] < value) low = mid + 1;
+					else high = mid;
+				}
+				return low;
+			};
+			for (let i = 0; i < values.length; i++) {
+				const value = values[i];
+				const inserted = lowerBound(value);
+				window.copyWithin(inserted + 1, inserted, used);
+				window[inserted] = value;
+				used++;
+				if (i >= lookback) {
+					const removed = lowerBound(values[i - lookback]);
+					window.copyWithin(removed, removed + 1, used);
+					used--;
+				}
+				if (i < lookback - 1) continue;
+				const mid = lookback >> 1;
+				result[i] = (lookback & 1) ? window[mid] : (window[mid - 1] + window[mid]) / 2;
+			}
+			return result;
+		}
 		const window: number[] = [];
 		const lowerBound = (value: number): number => {
 			let low = 0;

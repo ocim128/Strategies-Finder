@@ -407,6 +407,29 @@ describe('aggregateSyntheticBars', () => {
 });
 
 describe('buildSyntheticPairFromLegs', () => {
+    it('keeps fused 50/50 samples identical to the general attachment path, including fallback buckets', async () => {
+        for (const interval of ['30m', '4h']) for (const times of [
+            [0, 1800, 3600, 5400, 86400, 88200],
+            [0, 1810, 3610], // fall back after the first sample was already fused
+            [10, 20, 1810], // multiple non-grid source samples in one target bucket
+        ]) for (const invalidQuoteIndex of [-1, 1]) {
+            const base = times.map((time, i) => bar(time, { open: 100 + i, high: 105 + i, low: 90 + i, close: 102 + i }));
+            const quote = times.map((time, i) => bar(time, { open: i === invalidQuoteIndex ? 0 : 50, high: 55, low: 45, close: 52 }));
+            const run = (assumeNormalizedLegs: boolean) => buildSyntheticPairFromLegs({
+                baseSymbol: 'AAPL\u2022', quoteSymbol: 'MSFT\u2022', interval, targetBars: 100,
+                assumeNormalizedLegs, executionMode: 'equal_weight',
+                fetchLeg: async symbol => symbol === 'AAPL\u2022' ? base : quote,
+            });
+            const [generic, fused] = await Promise.allSettled([run(false), run(true)]);
+            assert.equal(fused.status, generic.status, `${interval}: ${times}, invalid ${invalidQuoteIndex}`);
+            if (generic.status === 'fulfilled' && fused.status === 'fulfilled') {
+                assert.deepEqual(fused.value, generic.value);
+            } else if (generic.status === 'rejected' && fused.status === 'rejected') {
+                assert.equal(fused.reason.message, generic.reason.message);
+            }
+        }
+    });
+
     it('builds 1h and 2h IBKR ratios from canonical 30m legs', async () => {
         const sourceBars = [0, 1800, 3600, 5400].map((time) => bar(time));
 

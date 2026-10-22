@@ -12,6 +12,9 @@
  */
 import { expect } from "chai";
 import { describe, it, afterEach } from "node:test";
+import { precomputeIndicators, resolveIndicatorsFromConfig } from "../lib/strategies/backtest/indicator-precompute";
+import { normalizeBacktestSettings } from "../lib/strategies/backtest/backtest-utils";
+import type { OHLCVData } from "../lib/types/strategies";
 import {
     calculateADX,
     calculateATR,
@@ -43,6 +46,27 @@ function fillPeriods(beyond: number, compute: (period: number) => unknown): void
 }
 
 describe("bounded indicator period caches", () => {
+    it("omits unused ATR for fixed/percent sizing while retaining risk, filters, adaptive sizing and public precompute", () => {
+        const bars: OHLCVData[] = data.map((close, i) => ({ time: i as OHLCVData['time'], open: close,
+            high: highs[i], low: lows[i], close, volume: 100 }));
+        const config = normalizeBacktestSettings({ marketMode: 'all' });
+        const expected = precomputeIndicators(bars).atr;
+        expect(expected.length).to.equal(bars.length);
+        for (const mode of ['fixed', 'percent'] as const) {
+            const unused = resolveIndicatorsFromConfig(bars, config, undefined, mode);
+            expect(unused).to.deep.equal({ atr: [], emaTrend: [], adx: [] });
+            for (const field of ['stopLossAtr', 'takeProfitAtr', 'trailingAtr', 'partialTakeProfitAtR', 'breakEvenAtR', 'atrPercentMin', 'atrPercentMax'] as const) {
+                expect(resolveIndicatorsFromConfig(bars, { ...config, [field]: 1 }, undefined, mode).atr, field).to.deep.equal(expected);
+            }
+        }
+        expect(resolveIndicatorsFromConfig(bars, config).atr).to.deep.equal(expected);
+        expect(resolveIndicatorsFromConfig(bars, config, undefined, 'kelly_criterion').atr).to.deep.equal(expected);
+        const filtered = resolveIndicatorsFromConfig(bars, normalizeBacktestSettings({ trendEmaPeriod: 20, adxMin: 10 }), undefined, 'fixed');
+        expect(filtered.atr).to.deep.equal([]);
+        expect(filtered.emaTrend.length).to.equal(bars.length);
+        expect(filtered.adx.length).to.equal(bars.length);
+    });
+
     it("retains a computed period and serves the identical series on repeat calls", () => {
         const first = calculateEMA(data, 12);
         expect(calculateEMA(data, 12)).to.equal(first);

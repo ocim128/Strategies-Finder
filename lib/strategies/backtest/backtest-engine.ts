@@ -539,7 +539,7 @@ function prepareBacktestRunSignals(args: {
     preparedSignalBarIndexes: Int32Array;
 } {
     const indicatorStartedAt = performance.now();
-    const indicatorSeries = resolveIndicatorsFromConfig(args.data, args.config, args.precomputed);
+    const indicatorSeries = resolveIndicatorsFromConfig(args.data, args.config, args.precomputed, args.sizingMode);
     addBacktestDiagnosticElapsed(args.diagnostics, "indicatorResolution", indicatorStartedAt);
 
     const fastPathBlockers = getSinglePositionFinderFastPathBlockers(

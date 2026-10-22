@@ -24,6 +24,14 @@ Asset Opportunity fixed horizons also use equal-weight leg returns before
 costs, with the execution model determining the boundary entry leg prices.
 See [synthetic pair execution](synthetic-pairs.md#equal-dollar-two-leg-execution).
 
+The cumulative-return percentile strategy now shares prepared returns and
+bounded rank features across candidates. Its default extreme threshold uses
+linear-time extrema queues; ordinary thresholds retain full percentile ranks.
+Fixed/percent simulations also omit unused ATR features, and normalized pair
+construction reserves execution-leg storage to reduce candle allocations.
+See the [cold Universe benchmark](synthetic-pairs.md#finder-execution-performance)
+for measured timing, parity evidence and the scope of the fixture.
+
 Historical crypto CSV loads pass their requested bar limit to the shared
 columnar loader, materializing only the newest requested bars on cache hits.
 Detached loads retain the full series. See the
@@ -771,6 +779,11 @@ semantics are byte-identical to the sequential loop. Load-bearing contracts:
   worker-count memory ceiling budgets for that. Per-strategy cache DELTAS
   are summed into the job diagnostics (`requests`/`hits`/`misses` reflect
   real per-worker loads; `entries` reports the largest worker cache).
+  Once all tasks have been assigned, an idle worker is disposed immediately
+  so its dataset heap does not remain resident while slower strategies finish.
+  Workers needed by queued strategies retain their caches. Final cleanup awaits
+  each worker's single disposal promise; ordered result release and Stop/fatal
+  behavior remain the shared coordinator's responsibility.
 - **Worker count policy** (`resolveUniverseStrategyWorkerCount`):
   `FINDER_UNIVERSE_WORKERS` env override (1 = sequential in-process loop,
   the rollback lever; capped at 32, bypasses the memory ceiling), otherwise
