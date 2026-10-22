@@ -37,6 +37,17 @@ export const FINDER_STATUS_REQUEST_TIMEOUT_MS = 15_000;
  * browser modules must not pull in the Vite server plugin.
  */
 const FINDER_TERMINAL_CANDIDATE_PAGE_LIMIT = 200;
+/**
+ * Bounded lifetime for ONE inventory page request. Pages are byte-budgeted
+ * server-side (a few MB), so a page that takes longer than this is a stalled
+ * connection, not a big page — and a stalled page must not hang the whole
+ * recovery.
+ */
+const FINDER_TERMINAL_PAGE_TIMEOUT_MS = 30_000;
+/** Attempts per inventory page before the inventory is adopted as partial. */
+const FINDER_TERMINAL_PAGE_ATTEMPTS = 3;
+/** Linear retry backoff unit between inventory page attempts. */
+const FINDER_TERMINAL_PAGE_RETRY_MS = 1_000;
 
 export type FinderServerJobKind = FinderServerRunScope;
 
@@ -68,6 +79,36 @@ export function createFinderStatusRequestSignal(
 			parentSignal.removeEventListener("abort", abortFromParent);
 		},
 	};
+}
+
+/**
+ * Abort probe that does not narrow the caller's `signal` variable. A direct
+ * `signal?.aborted === true` check inside a retry loop narrows the parameter,
+ * so the identical check after an `await` in the `catch` reads as unreachable
+ * to the compiler even though the signal can abort mid-request.
+ */
+function isAborted(signal: AbortSignal | undefined): boolean {
+	return signal?.aborted === true;
+}
+
+/**
+ * Abort-aware sleep between inventory page attempts: resolves early as soon as
+ * Stop / a newer run aborts, so a retry backoff never delays cancellation.
+ */
+function waitForRetry(ms: number, signal: AbortSignal | undefined): Promise<void> {
+	if (isAborted(signal)) return Promise.resolve();
+	return new Promise<void>((resolve) => {
+		let timer: ReturnType<typeof setTimeout>;
+		const onAbort = (): void => {
+			clearTimeout(timer);
+			resolve();
+		};
+		timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
 }
 
 /** Presentation + adoption capabilities the session needs from the facade. */
@@ -311,10 +352,13 @@ export class FinderServerSession {
 	 * preserves the documented contract that the terminal Symbol Universe
 	 * snapshot is the authoritative, complete inventory needed by Re-Sort.
 	 *
-	 * Hydration MUTATES the snapshot so every caller keeps the single
-	 * "hydrated terminal snapshot" shape. A failure is logged and leaves
-	 * `terminalCandidates` null: losing results is bad, but discarding an
-	 * otherwise complete run is worse, and the caller still reports the run.
+	 * Every page is byte-budgeted server-side and retried here, and a page that
+	 * still fails ends the paging loop instead of discarding the run: a
+	 * completed job whose inventory is partly unreadable is worth far more than
+	 * a "Finder failed" for a transport hiccup. Hydration therefore MUTATES the
+	 * snapshot with whatever arrived — `terminalCandidates` stays null only when
+	 * not a single page could be read, which the caller reports as a partial
+	 * recovery over the streamed survivors.
 	 */
 	private async hydrateTerminalInventory(
 		snapshot: FinderRunStatusSnapshot,
@@ -326,13 +370,66 @@ export class FinderServerSession {
 		// Already complete (a server that inlined it anyway): nothing to page.
 		if ((snapshot.terminalCandidates?.length ?? 0) >= total) return;
 		const candidates: FinderUniverseCandidate[] = [];
-		try {
-			let offset = 0;
-			while (offset < total) {
+		let failedOffset: number | null = null;
+		let offset = 0;
+		while (offset < total) {
+			const rows = await this.fetchTerminalInventoryPage(snapshot.runId, offset, signal);
+			// Stop / a newer run aborts the signal: not a failure worth reporting.
+			if (signal?.aborted === true) return;
+			if (rows === null) {
+				failedOffset = offset;
+				break;
+			}
+			if (rows.length === 0) break;
+			for (const row of rows) candidates.push(row);
+			offset += rows.length;
+		}
+		if (candidates.length === 0) {
+			debugLogger.warn("finder.server.terminal_inventory_page_failed", {
+				runId: snapshot.runId,
+				offset: failedOffset,
+				expected: total,
+			});
+			return;
+		}
+		snapshot.terminalCandidates = candidates;
+		debugLogger.event("finder.server.terminal_inventory_hydrated", {
+			runId: snapshot.runId,
+			candidates: candidates.length,
+			expected: total,
+		});
+		if (candidates.length !== total) {
+			debugLogger.warn("finder.server.terminal_inventory_short", {
+				runId: snapshot.runId,
+				candidates: candidates.length,
+				expected: total,
+				failedOffset,
+			});
+		}
+	}
+
+	/**
+	 * ONE byte-budgeted inventory page: bounded lifetime per attempt, bounded
+	 * attempts, and `null` once every attempt failed so the caller keeps what it
+	 * already collected. Callers advance by the returned row count, never by the
+	 * requested limit — the server cuts a page by bytes.
+	 */
+	private async fetchTerminalInventoryPage(
+		runId: string,
+		offset: number,
+		signal: AbortSignal | undefined,
+	): Promise<FinderUniverseCandidate[] | null> {
+		for (let attempt = 1; attempt <= FINDER_TERMINAL_PAGE_ATTEMPTS; attempt += 1) {
+			if (isAborted(signal)) return null;
+			const request = createFinderStatusRequestSignal(
+				signal ?? new AbortController().signal,
+				FINDER_TERMINAL_PAGE_TIMEOUT_MS,
+			);
+			try {
 				const response = await fetch(
-					`/api/finder/terminal-candidates?runId=${encodeURIComponent(snapshot.runId)}`
+					`/api/finder/terminal-candidates?runId=${encodeURIComponent(runId)}`
 					+ `&offset=${offset}&limit=${FINDER_TERMINAL_CANDIDATE_PAGE_LIMIT}`,
-					{ cache: "no-store", signal },
+					{ cache: "no-store", signal: request.signal },
 				);
 				if (!response.ok) throw new Error(`status ${response.status}`);
 				const page = parseJsonPreservingNonFinite(await response.text()) as {
@@ -342,36 +439,29 @@ export class FinderServerSession {
 					total?: unknown;
 					candidates?: unknown;
 				};
-				if (page?.ok !== true || page.runId !== snapshot.runId) {
+				if (page?.ok !== true || page.runId !== runId) {
 					throw new Error("inventory page rejected");
 				}
-				const rows = Array.isArray(page.candidates) ? page.candidates as FinderUniverseCandidate[] : [];
-				if (rows.length === 0) break;
-				for (const row of rows) candidates.push(row);
-				const pageOffset = typeof page.offset === "number" ? page.offset : offset;
-				offset = pageOffset + rows.length;
-			}
-			snapshot.terminalCandidates = candidates;
-			debugLogger.event("finder.server.terminal_inventory_hydrated", {
-				runId: snapshot.runId,
-				candidates: candidates.length,
-				expected: total,
-			});
-			if (candidates.length !== total) {
-				debugLogger.warn("finder.server.terminal_inventory_short", {
-					runId: snapshot.runId,
-					candidates: candidates.length,
-					expected: total,
+				return Array.isArray(page.candidates)
+					? page.candidates as FinderUniverseCandidate[]
+					: [];
+			} catch (error) {
+				if (isAborted(signal)) return null;
+				const lastAttempt = attempt === FINDER_TERMINAL_PAGE_ATTEMPTS;
+				debugLogger.warn("finder.server.terminal_inventory_page_retry", {
+					runId,
+					offset,
+					attempt,
+					willRetry: !lastAttempt,
+					error: error instanceof Error ? error.message : String(error),
 				});
+				if (lastAttempt) return null;
+				await waitForRetry(FINDER_TERMINAL_PAGE_RETRY_MS * attempt, signal);
+			} finally {
+				request.cleanup();
 			}
-		} catch (error) {
-			// Stop / a newer run aborts the signal: not a failure worth reporting.
-			if (signal?.aborted === true) return;
-			debugLogger.warn("finder.server.terminal_inventory_page_failed", {
-				runId: snapshot.runId,
-				error: error instanceof Error ? error.message : String(error),
-			});
 		}
+		return null;
 	}
 
 	/**

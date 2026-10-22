@@ -694,6 +694,58 @@ describe("finder server plugin processFinderUniverseRun", () => {
         assert.equal(missingResponse.statusCode, 404);
     });
 
+    it("cuts terminal-candidate pages by bytes so one page cannot serialize a huge inventory", async () => {
+        // A row cap is not a size bound: 200 candidates over a several-hundred
+        // symbol universe is 100+ MB, which serializes for tens of seconds and
+        // then dies in the browser's response-body stream. The page must be cut
+        // by the sizes measured at terminal time.
+        const candidate = buildFinderUniverseCandidate({ strategyKey: "paged", strategyName: "Paged",
+            params: {}, symbols: [] });
+        const candidates = Array.from({ length: 5 }, (_, threshold) => ({
+            ...candidate, params: { threshold },
+            symbols: [{ symbol: `S${threshold}`, status: "no_trades" as const, barCount: 10 }],
+        }));
+        const state = { runId: "paged-status", startedAt: 1, finishedAt: 2, interval: "4h",
+            jobKind: "symbol_universe" as const, strategyKeys: ["paged"], strategyIndex: 0, strategyCount: 1,
+            phase: "done" as const, totalSymbols: 5, progressPercent: 100, statusText: "Done",
+            loadedSymbols: 5, failedSymbols: 0, candidates, candidateInventoryChunked: true,
+            // Two 1.5 MB rows cannot share a 2 MB page.
+            candidateSizes: [1_500_000, 1_500_000, 1_500_000, 1_500_000, 1_500_000],
+            diagnostics: null, cancelled: false, summary: "Done", error: null,
+            totals: { loadedSymbols: 5, failedSymbols: 0, survivors: 5, oosRemoved: 0 } };
+        __testInternals.setRunStateForTests(state);
+        setRunOwnerForTests(0);
+
+        const pages: number[] = [];
+        const seen: unknown[] = [];
+        let offset = 0;
+        while (offset < candidates.length) {
+            const page = __testInternals.handleTerminalCandidatesRequest("paged-status", String(offset), "200");
+            if (!page.ok) throw new Error(page.error);
+            assert.equal(page.offset, offset);
+            assert.equal(page.total, candidates.length);
+            assert.ok(page.candidates.length < 2, "a 2 MB budget must not fit two 1.5 MB rows");
+            pages.push(page.candidates.length);
+            seen.push(...page.candidates.map((row) => row.params));
+            offset += page.candidates.length;
+        }
+        assert.deepEqual(pages, [1, 1, 1, 1, 1]);
+        assert.deepEqual(seen, candidates.map((row) => row.params));
+
+        // A single row larger than the whole budget still ships alone, so a page
+        // always advances instead of returning empty forever.
+        __testInternals.setRunStateForTests({ ...state, candidateSizes: [3_000_000, 10, 10, 10, 10] });
+        const oversized = __testInternals.handleTerminalCandidatesRequest("paged-status", "0", "200");
+        if (!oversized.ok) throw new Error(oversized.error);
+        assert.equal(oversized.candidates.length, 1);
+
+        // Without measured sizes the row cap is honored unchanged, so a state
+        // that never measured (or a hand-built one) cannot stall paging.
+        assert.equal(__testInternals.planTerminalCandidatePageCount(undefined, 0, 25, 2 * 1024 * 1024), 25);
+        assert.equal(__testInternals.planTerminalCandidatePageCount([100, 100, 100], 0, 25, 2 * 1024 * 1024), 3);
+        assert.equal(__testInternals.planTerminalCandidatePageCount([3_000_000], 0, 25, 2 * 1024 * 1024), 1);
+    });
+
     it("status returns 404-style error for a mismatched run id", async () => {        const owner = 7006;
         await runPlugin({
             symbols: ["UP", "DOWN"],

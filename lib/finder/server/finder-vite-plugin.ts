@@ -267,6 +267,19 @@ const FINDER_TERMINAL_CANDIDATE_PAGE_SIZE = 200;
 /** Hard ceiling on a requested page size (keeps one response bounded). */
 const FINDER_TERMINAL_CANDIDATE_PAGE_MAX = 500;
 /**
+ * Serialized-character budget for ONE `GET /api/finder/terminal-candidates`
+ * page.
+ *
+ * A row cap is not a size bound: a Symbol Universe candidate carries one
+ * IS+OOS scalar row per symbol, so 200 candidates over a several-hundred-symbol
+ * universe is 100+ MB of JSON. Serializing that takes tens of seconds, blocks
+ * the dev-server event loop (starving concurrent `/status` polls past their
+ * timeout), and then dies in the browser's response-body stream — which the UI
+ * reports as "Finder failed. network error" for a run that actually completed.
+ * Pages are therefore cut by bytes first and by rows second.
+ */
+const FINDER_TERMINAL_CANDIDATE_PAGE_MAX_CHARS = 2 * 1024 * 1024;
+/**
  * Env override for the inline terminal-inventory budget, in serialized
  * characters. `0` forces the chunked path for any non-empty inventory, which is
  * the only practical way to exercise it end-to-end without a multi-hundred-
@@ -642,6 +655,13 @@ export type FinderRunSnapshot = {
      * it from `GET /api/finder/terminal-candidates`.
      */
     candidateInventoryChunked?: boolean;
+    /**
+     * Per-candidate serialized size, measured ONCE when the terminal inventory
+     * is planned. `GET /api/finder/terminal-candidates` uses it to cut a page by
+     * bytes without re-serializing every row on each request, so a page stays
+     * cheap even when the inventory is hundreds of megabytes.
+     */
+    candidateSizes?: number[];
     /** All Asset Opportunity rows accumulated so far (scalar-only). */
     assetResults?: FinderAssetOpportunityResult[];
     /** Terminal diagnostics once the run finishes; null while in flight. */
@@ -1447,6 +1467,9 @@ export async function processFinderUniverseRun(
         const inlineMaxChars = resolveTerminalInventoryInlineMaxChars(input.terminalInventoryInlineMaxChars);
         const inventoryChunked = inventory.chars > Math.max(0, inlineMaxChars);
         snapshot.candidateInventoryChunked = inventoryChunked;
+        // Retained for byte-budgeted paging: re-measuring per page request is
+        // what made one page cost tens of seconds on a large inventory.
+        snapshot.candidateSizes = inventory.sizes;
         snapshot.phase = cancelled ? "cancelled" : "done";
         snapshot.finishedAt = Date.now();
 
@@ -1562,8 +1585,10 @@ export async function processFinderUniverseRun(
         // status snapshot when they cannot be one JSON string, so the failure
         // report itself stays serializable (the client pages them instead).
         if (snapshot.candidates.length > 0) {
-            snapshot.candidateInventoryChunked = measureTerminalInventory(snapshot.candidates).chars
+            const fatalInventory = measureTerminalInventory(snapshot.candidates);
+            snapshot.candidateInventoryChunked = fatalInventory.chars
                 > FINDER_TERMINAL_INVENTORY_INLINE_MAX_CHARS;
+            snapshot.candidateSizes = fatalInventory.sizes;
         }
         writer({ type: "fatal", runId: input.runId, error: message });
     } finally {
@@ -3957,6 +3982,38 @@ export type FinderTerminalCandidatesPage =
     | { ok: false; error: string };
 
 /**
+ * Row count for one `terminal-candidates` page: the caller's row cap, further
+ * cut so the page's serialized candidates stay under `maxChars`.
+ *
+ * A single candidate larger than the whole budget still ships alone, so a page
+ * always advances and the client can never stall on one giant row. When the
+ * stored sizes are missing or do not match the inventory (a run that never
+ * measured, or a hand-built test state) the row cap is used unchanged — the
+ * page is still bounded by {@link FINDER_TERMINAL_CANDIDATE_PAGE_MAX}.
+ */
+function planTerminalCandidatePageCount(
+    sizes: readonly number[] | undefined,
+    start: number,
+    rowLimit: number,
+    maxChars: number,
+): number {
+    if (!sizes || sizes.length === 0) return rowLimit;
+    const budget = Math.max(1, Math.floor(maxChars));
+    let count = 0;
+    let chars = 0;
+    while (count < rowLimit && start + count < sizes.length) {
+        // +1 for the separating comma in the wire array.
+        const size = sizes[start + count]! + 1;
+        if (count > 0 && chars + size > budget) break;
+        chars += size;
+        count += 1;
+    }
+    // Past the measured range (stale sizes) fall back to the row cap so paging
+    // still terminates instead of returning an empty page forever.
+    return count > 0 ? count : rowLimit;
+}
+
+/**
  * Page the terminal inventory for a completed Symbol Universe run
  * (`GET /api/finder/terminal-candidates?runId=&offset=&limit=`).
  *
@@ -3965,6 +4022,12 @@ export type FinderTerminalCandidatesPage =
  * `/status` or a single stream event and has to be read in bounded slices. A
  * run id mismatch is the same 404 the status route reports, so a stale tab can
  * never page another tab's inventory.
+ *
+ * The requested `limit` is a ROW cap, not a size bound. The returned page is
+ * further cut by {@link FINDER_TERMINAL_CANDIDATE_PAGE_MAX_CHARS} using the
+ * per-candidate sizes measured at terminal time, so a page over a
+ * several-hundred-symbol universe stays a few megabytes instead of a hundred.
+ * Callers must advance by `candidates.length`, not by the requested limit.
  */
 function handleTerminalCandidatesRequest(
     runIdFilter: string | null,
@@ -3991,12 +4054,18 @@ function handleTerminalCandidatesRequest(
     const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
         ? Math.min(Math.floor(parsedLimit), FINDER_TERMINAL_CANDIDATE_PAGE_MAX)
         : FINDER_TERMINAL_CANDIDATE_PAGE_SIZE;
+    const count = planTerminalCandidatePageCount(
+        state.candidateSizes,
+        start,
+        limit,
+        FINDER_TERMINAL_CANDIDATE_PAGE_MAX_CHARS,
+    );
     return {
         ok: true,
         runId: state.runId,
         offset: start,
         total,
-        candidates: state.candidates.slice(start, start + limit),
+        candidates: state.candidates.slice(start, start + count),
     };
 }
 
@@ -4454,6 +4523,7 @@ export const __testInternals = {
     handleStopRequest,
     handleStatusRequest,
     handleTerminalCandidatesRequest,
+    planTerminalCandidatePageCount,
     handleArmDiagnosticsRequest,
     resolveAssetOpportunityChunkWorkerCount,
     clearServerFinderDatasetCaches,

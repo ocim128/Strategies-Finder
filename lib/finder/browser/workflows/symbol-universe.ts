@@ -300,20 +300,31 @@ export async function runUniverseFinderServer(args: {
 		streamError = error;
 	}
 
+	/**
+	 * A transport failure must never be reported as a failed run when the server
+	 * job reached a terminal phase. The server keeps working after the browser
+	 * loses the NDJSON pipe, so a terminal snapshot means the run finished —
+	 * adopt whatever inventory recovery could re-read and fall back to the
+	 * streamed survivors for the rest.
+	 */
+	let recoveredTerminalRun = false;
+	let expectedInventory = 0;
 	if (streamError !== null && terminalCandidates === null) {
 		const recovered = await session.recoverStreamFailure(runId, 'symbol_universe', host);
 		if (recovered.kind === "fatal") {
 			throw new Error(recovered.error);
 		}
-		if (recovered.kind === "terminal" && recovered.snapshot.terminalCandidates) {
+		if (recovered.kind === "terminal") {
 			const snapshot = recovered.snapshot;
+			recoveredTerminalRun = true;
+			expectedInventory = snapshot.terminalCandidateCount ?? 0;
 			terminalCandidates = snapshot.terminalCandidates ?? null;
 			terminalDiagnostics = snapshot.diagnostics ?? null;
 			loadedSymbols = snapshot.totals?.loadedSymbols ?? 0;
 			failedSymbolCount = snapshot.totals?.failedSymbols ?? 0;
 			oosRemoved = snapshot.totals?.oosRemoved ?? 0;
 			finalized = true;
-			if (isStillActive() && terminalCandidates) {
+			if (isStillActive() && terminalCandidates && terminalCandidates.length > 0) {
 				store.adoptSymbolUniverseResults(terminalCandidates);
 				host.stashAndResetResort();
 				host.populateResortOptions();
@@ -322,7 +333,7 @@ export async function runUniverseFinderServer(args: {
 		}
 	}
 
-	if (streamError !== null && terminalCandidates === null) {
+	if (streamError !== null && terminalCandidates === null && !recoveredTerminalRun) {
 		if (host.isCancelled() && !isStillActive()) {
 			throw new Error("Finder stopped.");
 		}
@@ -337,7 +348,13 @@ export async function runUniverseFinderServer(args: {
 		?? sortFinderUniverseCandidates([...survivorByKey.values()], sortPriority);
 
 	if (!host.isCancelled() && isStillActive()) {
-		host.setStatus(`Server Finder: ${finalResults.length} survivors (${Math.round(performance.now() - startTime)}ms)`);
+		// A run that finished server-side but could only be partly re-read is
+		// still a result, not a failure — say exactly how much arrived.
+		host.setStatus(
+			recoveredTerminalRun && finalResults.length < expectedInventory
+				? `Server Finder: ${finalResults.length} of ${expectedInventory} survivors recovered after the connection dropped — reload to page the rest.`
+				: `Server Finder: ${finalResults.length} survivors (${Math.round(performance.now() - startTime)}ms)`,
+		);
 	}
 
 	return {

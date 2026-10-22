@@ -927,6 +927,13 @@ run's status, even after that newer run completes.
   reattach. Re-Sort still ranks the complete inventory; only the transport is
   chunked. See the terminal inventory transport rules in
   [Finder server guide](finder-server-side.md#terminal-inventory-transport-v8-single-string-limit).
+- `GET /api/finder/terminal-candidates` is budgeted by BYTES, not rows: a
+  candidate carries one IS+OOS scalar row per symbol, so a 200-row page over a
+  several-hundred-symbol universe is 100+ MB of JSON that serializes for tens of
+  seconds and then dies in the browser's response-body stream. Callers advance by
+  the returned `candidates.length`, never by the requested `limit`. A page that
+  still fails is retried, then ends the paging loop with a partial inventory — a
+  completed run is never reported as failed because one page did not arrive.
 - The server job dataset cache is per-job and cleared in the job `finally`
   path. Failed or empty loads remain retryable. In the parallel strategy
   sweep each worker keeps a private per-job cache (one dataset copy per
