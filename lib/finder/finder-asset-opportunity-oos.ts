@@ -1,5 +1,6 @@
 import type { OHLCVData, Time, Trade } from "../types/strategies";
 import { parseTimeToUnixSeconds } from "../time-normalization";
+import { pairMarketPrices } from '../strategies/backtest/pair-execution';
 
 export const DEFAULT_FINDER_ASSET_OOS_HORIZONS = [1, 3, 5] as const;
 export const MAX_FINDER_ASSET_OOS_VALUE = 100_000;
@@ -106,6 +107,7 @@ function buildHorizonMetrics(args: {
     entryPrice: number;
     direction: "long" | "short";
     horizons: readonly number[];
+    pairEntryPrices?: readonly [number, number];
 }): FinderAssetOosHorizonMetric[] {
     const normalizedHorizons = normalizeFinderAssetOosHorizons(args.horizons);
     // A horizon longer than the holdout has no target candle yet, but the
@@ -123,7 +125,14 @@ function buildHorizonMetrics(args: {
             ? (targetTime === null ? undefined : args.horizonCandlesByTime.get(targetTime)?.close)
             : resolvedCandle?.close;
         const directionFactor = args.direction === "short" ? -1 : 1;
-        const pnlPercent = typeof targetClose === "number"
+        const entryCandle = args.candles[args.signalIndex];
+        const pairEntry = !args.horizonCandlesByTime
+            ? args.pairEntryPrices ?? (entryCandle?.pairLegs ? pairMarketPrices(entryCandle, 'close') : undefined)
+            : undefined;
+        const pairClose = pairEntry && resolvedCandle?.pairLegs ? pairMarketPrices(resolvedCandle, 'close') : undefined;
+        const pnlPercent = pairEntry
+            ? pairClose ? directionFactor * 50 * (pairClose[0] / pairEntry[0] - pairClose[1] / pairEntry[1]) : Number.NaN
+            : typeof targetClose === "number"
             && Number.isFinite(targetClose)
             && Number.isFinite(args.entryPrice)
             && args.entryPrice > 0
@@ -282,6 +291,8 @@ export function calculateFinderAssetOosSignalMetrics(args: {
     ignoreLastBars: number;
     horizons: readonly number[];
     basis?: FinderAssetOosHorizonBasis;
+    /** Explicit execution-time legs for a fresh next-open/next-close measurement. */
+    pairEntryPrices?: readonly [number, number];
 }): FinderAssetOosMetrics {
     return {
         ignoreLastBars: normalizeFinderAssetOosIgnoreLastBars(args.ignoreLastBars),

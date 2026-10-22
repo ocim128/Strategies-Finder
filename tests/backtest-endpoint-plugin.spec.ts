@@ -110,6 +110,20 @@ function buildCandles(count = 240): OHLCVData[] {
     }));
 }
 
+it('keeps ratio and 50/50 execution datasets distinct even when ratio OHLC is identical', async () => {
+    const handler = createHandler();
+    const ratio = buildCandles(3);
+    const pair = ratio.map(bar => ({ ...bar, pairLegs: [[200, 200, 200, 200, 100, 100, 100, 100] as const] }));
+    const changed = pair.map(bar => ({ ...bar, pairLegs: [[400, 400, 400, 400, 200, 200, 200, 200] as const] }));
+    const refs: string[] = [];
+    for (const candles of [ratio, pair, changed]) {
+        const response = await invoke(handler, '/datasets', 'POST', { candles });
+        assert.equal(response.statusCode, 200);
+        refs.push(response.json.datasetRef);
+    }
+    assert.equal(new Set(refs).size, 3);
+});
+
 function buildSinglePayload(
     dataset: { candles: OHLCVData[] } | { ref: string },
     strategyParams = defaultStrategyParams

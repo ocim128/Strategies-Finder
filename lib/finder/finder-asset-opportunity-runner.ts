@@ -45,6 +45,7 @@
  */
 
 import { mapWithConcurrencyLimit } from "../async-pool";
+import { pairMarketPrices } from '../strategies/backtest/pair-execution';
 import type {
     BacktestResult,
     BacktestSettings,
@@ -1973,6 +1974,7 @@ async function searchOneAsset(args: {
             basis: FinderAssetOosHorizonBasis,
             legCandlesByTime: ReadonlyMap<number, OHLCVData> | undefined,
         ) => "long" | "short",
+        pairEntryPrices?: readonly [number, number],
     ): Partial<Record<FinderAssetOosHorizonBasis, FinderAssetOosMetrics>> => {
         const metricsByBasis: Partial<Record<FinderAssetOosHorizonBasis, FinderAssetOosMetrics>> = {};
         for (const basis of ["pair", "base_only", "quote_only"] as const) {
@@ -1992,6 +1994,7 @@ async function searchOneAsset(args: {
                 ignoreLastBars: oosIgnoreLastBars,
                 horizons: oosHorizons,
                 basis,
+                ...(basis === 'pair' && pairEntryPrices ? { pairEntryPrices } : {}),
             });
         }
         return metricsByBasis;
@@ -2024,6 +2027,10 @@ async function searchOneAsset(args: {
                 (basis, legCandlesByTime) => legCandlesByTime
                     ? basis === "quote_only" ? "short" : "long"
                     : winnerDirection,
+                fullClosed[fixedOosSignalIndex]?.pairLegs
+                    ? pairMarketPrices(executionModel === 'signal_close' ? boundaryCandle : firstHiddenBar,
+                        executionModel === 'next_open' ? 'open' : 'close')
+                    : undefined,
             );
             // The UI shows the pair basis; per-basis views come from the
             // archive analyzer (--basis), not from a run-time selection.

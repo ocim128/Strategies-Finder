@@ -6,6 +6,7 @@ import {
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { ensureConfirmationStrategiesLoaded } from "../confirmation-signal-filter";
 import { median } from "../statistics-utils";
+import { normalizeSyntheticPairExecutionSymbol } from '../synthetic-pair-mode';
 import { roundToHundredths as roundMs } from "../number-utils";
 import type { CapitalSettings } from "../types/backtest";
 import type {
@@ -96,7 +97,7 @@ function getCacheDelta(
 }
 
 function normalizeSymbols(symbols: readonly string[]): string[] {
-    return [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
+    return [...new Set(symbols.map(normalizeSyntheticPairExecutionSymbol).filter(Boolean))];
 }
 
 /**

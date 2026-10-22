@@ -112,7 +112,8 @@ function createRandomSeed(): number {
 }
 
 function estimateCandlesBytes(candles: OHLCVData[]): number {
-    return Math.max(1, candles.length) * DATASET_CACHE_BYTES_PER_CANDLE;
+    return Math.max(1, candles.length) * DATASET_CACHE_BYTES_PER_CANDLE
+        + candles.reduce((sum, candle) => sum + (candle.pairLegs ? 32 + candle.pairLegs.length * 112 : 0), 0);
 }
 
 function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | DatasetCacheError {
@@ -238,6 +239,7 @@ function computeCandleHash(candles: OHLCVData[]): string {
         h.update(
             `${toUnixSeconds(candle.time) ?? 0}|${candle.open}|${candle.high}|${candle.low}|${candle.close}|${candle.volume};`
         );
+        if (candle.pairLegs) h.update(`pair:${JSON.stringify(candle.pairLegs)};`);
     }
 
     const last = candles[candles.length - 1];

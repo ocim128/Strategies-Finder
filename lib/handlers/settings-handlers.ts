@@ -18,6 +18,7 @@ import { strategyPanelController } from "../strategy-panel-controller";
 import { copyToClipboard } from "../browser-transfer";
 import { createSettingsHandlersDom } from "./settings-handlers-dom";
 import { buildSharedSyntheticApplyPlan, type SharedChartContext } from "./settings-handlers-shared";
+import type { SyntheticPairExecutionMode } from '../synthetic-pair-mode';
 
 const STRATEGY_CONFIGS_CHANGED_EVENT = "strategy-configs:changed";
 const bulkConfigSelectionAnchors = new WeakMap<HTMLElement, string>();
@@ -28,9 +29,9 @@ const SHARED_DEFAULT_INTERVAL = '120m';
 // Dynamic import keeps data-mining-manager (the entire Data Mining UI) out of
 // the startup chunk — see lib/synthetic-pair-session.ts. Both call sites are
 // async, so this thin wrapper is the only seam.
-async function regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<boolean> {
+async function regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string, executionMode?: SyntheticPairExecutionMode): Promise<boolean> {
     const { dataMiningManager } = await import("../data-mining-manager");
-    return dataMiningManager.regenerateSyntheticPair(baseSymbol, quoteSymbol, interval);
+    return dataMiningManager.regenerateSyntheticPair(baseSymbol, quoteSymbol, interval, executionMode);
 }
 
 let configApplyTail: Promise<void> = Promise.resolve();
@@ -104,7 +105,8 @@ export function applySharedStrategyConfig(
             const regenerated = await regenerateSyntheticPair(
                 plan.syntheticPair.baseSymbol,
                 plan.syntheticPair.quoteSymbol,
-                plan.nextInterval
+                plan.nextInterval,
+                plan.syntheticPair.executionMode,
             );
             if (!regenerated) throw new Error("Synthetic pair regeneration failed.");
         }
@@ -136,7 +138,8 @@ function applyUserStrategyConfig(config: StrategyConfig): Promise<void> {
             const regenerated = await regenerateSyntheticPair(
                 config.syntheticPair!.baseSymbol,
                 config.syntheticPair!.quoteSymbol,
-                context.interval!
+                context.interval!,
+                config.syntheticPair!.executionMode,
             );
             if (!regenerated) throw new Error("Synthetic pair regeneration failed.");
         }

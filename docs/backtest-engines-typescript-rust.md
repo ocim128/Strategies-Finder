@@ -124,6 +124,20 @@ without improving the measured end-to-end workload.
 
 ### Standard execution
 
+Synthetic pairs ending in `@50/50` or `@` use equal-dollar fixed-quantity
+leg execution. Ratio OHLC drives signals; retained `pairLegs` drives fills,
+PNL, fees, equity and portfolio-return risk checks. Standard runs and unsupported
+compact settings use the shared fallback loop; compatible single-position
+Finder runs use the fast path with the same two-leg fill helpers and compact
+metric arithmetic. Rust remains blocked. `Trade.legs` carries the actual per-leg quantities/fills;
+trade marker prices remain ratios. See [the execution contract](synthetic-pairs.md#equal-dollar-two-leg-execution).
+
+The [50/50 performance benchmark](synthetic-pairs.md#finder-execution-performance)
+records simulation and cold pair-build/signal/simulation timings with result
+fingerprints. Exit fill helpers are hoisted out of the bar loop, and each
+position caches its current candle's portfolio OHLC conversion. The sparse
+signal-only scan is available under the ordinary no-risk/no-equity fences.
+
 `runBacktest()` cleans the input data, resolves indicators, prepares signals,
 scans candles, manages positions, builds trade history and an equity curve, and
 calculates metrics. It supports the broad settings model, including execution

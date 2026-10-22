@@ -58,7 +58,7 @@ import { resolveOosDataSlice } from "./finder-manager-logic";
 import {
     buildFinderPairNeutralMetrics,
     FINDER_PAIR_NEUTRAL_METRIC_BASIS,
-    isSyntheticPairFinderSymbol,
+    usesFinderPairNeutralMetrics,
 } from "./finder-pair-neutral";
 import { computeExitAlpha } from "./finder-exit-alpha";
 
@@ -252,7 +252,7 @@ export async function runUniverseOosPass(deps: UniverseOosDeps): Promise<Univers
             }
             const oosData = await deps.loadOosData(symbolResult.symbol, deps.interval);
             if (oosData.length === 0) continue;
-            const isSyntheticPair = isSyntheticPairFinderSymbol(symbolResult.symbol);
+            const isSyntheticPair = usesFinderPairNeutralMetrics(symbolResult.symbol);
 
             try {
                 const output = await executeBacktest({

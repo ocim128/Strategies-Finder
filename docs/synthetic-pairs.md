@@ -66,6 +66,92 @@ Import the generated JSON via **Data Mining → Import JSON → Load JSON to Cha
 
 ## How It Works
 
+### Equal-dollar two-leg execution
+
+Append `@50/50` to a pair to backtest a fixed-quantity long/short portfolio:
+`AAPL•+NVDA•@50/50`. The shorthand `AAPL•+NVDA•@` is identical and is
+canonicalized to `@50/50`. Crypto pairs such as `BTC+ETH@` work too. Other
+allocations are rejected; there is no settings toggle.
+
+The chart and strategy indicators still use BASE / QUOTE. A long signal buys
+BASE and shorts QUOTE; a short signal reverses both legs. Each entry allocates
+half its configured trade notional to each leg, with commissions charged in
+addition. Quantities stay fixed until exit; there is no continuous rebalancing.
+Overlapping entries keep their own entry prices. Partial exits close the same
+fraction of both legs. For a $1,000 long, BASE +10% and QUOTE +5% earns $25
+before costs, rather than the ratio backtest's approximately $47.62.
+
+Entry and exit slippage apply independently to each leg. Fees use both legs'
+actual entry/exit notionals. Equity and drawdown mark the remaining leg
+quantities to market. Percentage stops, profit targets and break-even use the
+combined gross portfolio return relative to the entry notional, before fees
+and exit slippage. ATR distances still originate from ratio indicators and
+are applied on the entry-relative portfolio price scale. Trade entry/exit
+prices remain ratios for chart markers; `Trade.legs` records both legs' sides,
+quantities, fills and fees. Fixed ratio-price stop/target lines are omitted
+because a portfolio-return threshold has no constant ratio-price equivalent.
+
+The generator retains aligned source OHLC samples, including finer sub-bars.
+Intrabar ranges use matched leg extrema; stop/target fills interpolate the
+two leg prices in the first source sample bracketing the threshold. A stop
+gap fills at the target bar's opening leg prices; TP fills stay capped.
+This remains an OHLC approximation with the execution-realism limitations
+below. Ratio-only adverse stop-stress envelopes are not supported for `@`.
+
+The mode travels with saved/shared configurations and Finder/Batch symbol
+lists. Its in-memory cache identity is separate from a plain ratio pair;
+ratio-only disk cache files are bypassed. Finder uses the portfolio's dollar
+metrics directly, without the legacy ratio-neutral log adjustment. Full,
+compact, OOS and Asset Opportunity next-exit runs use the shared TypeScript
+simulator. Fixed-horizon Asset Opportunity measurements use the two leg
+returns before costs. Rust acceleration is fenced off for these datasets.
+Unfinished next-open bridge bars retain only each leg's known opening price.
+
+Pairs without a suffix retain the existing ratio behavior.
+
+### Finder execution performance
+
+Single-position `@50/50` runs can use the TypeScript Finder fast path,
+including indexed signal preparation and the signal-only scan when no bar
+risk, drawdown or Sharpe calculation is required. Both kernels share leg
+fills, fees and trade records. Overlapping/trailing/break-even and other
+unsupported configurations retain the shared fallback. Rust remains blocked.
+Portfolio OHLC conversion is cached for the active position's current candle;
+price checks avoid temporary leg-point arrays. Exit fill helpers live outside
+the per-bar loop so the TypeScript loader does not create/name functions on
+every check. The leg attachment pass merges sorted timestamps directly and
+trusts the normalized-source contract instead of building a per-bar Map and
+revalidating both source series for every pair.
+
+`scripts/bench-synthetic-equal-weight.ts` exercises deterministic 24,000-bar
+windows with 5,699 `true_range_skew_acceptance` signals, commissions and
+slippage. Node 22.16.0, three discarded warmups and nine measured runs gave
+these median times before/after the optimization:
+
+| Work | Before | After |
+| --- | ---: | ---: |
+| 30m pair construction | 6.48 ms | 2.71 ms |
+| Next-open simulation with Sharpe | 25.53 ms | 4.87 ms |
+| Signal-close simulation | 15.05 ms | 3.71 ms |
+| Cold pair construction + signals + simulation | 37.96 ms | 16.19 ms |
+
+The cold case rebuilds the pair and strategy features each run; source legs
+are already in memory, so it excludes disk/network I/O and does not predict
+the complete 1,000-symbol Finder runtime. All nine benchmark result SHA-256
+fingerprints match the pre-optimization report. Signal generation is unchanged.
+To capture and compare reports (run commands through RTK as required):
+
+```powershell
+npm.cmd exec -- esno scripts/bench-synthetic-equal-weight.ts --out artifacts/pair-before.json
+npm.cmd exec -- esno scripts/bench-synthetic-equal-weight.ts --compare artifacts/pair-before.json --out artifacts/pair-after.json
+```
+
+The comparison rejects differing datasets, signals or result fingerprints.
+`tests/synthetic-pair-fast-path.spec.ts` compares all trades, leg fills,
+metrics and endpoint exclusions against the fallback for long/short/both,
+three execution models, 30m and aggregated 4h source data, costs, partials,
+confirmation, hold/cooldown and Kelly sizing, with and without retained trades.
+
 ### Candle Formula
 
 For each aligned timestamp, the synthetic candle is computed as a ratio:

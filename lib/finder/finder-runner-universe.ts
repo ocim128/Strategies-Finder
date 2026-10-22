@@ -1,6 +1,7 @@
 import { executeBacktest, prepareClosedCandleData, resolveExecutorBacktestSettings } from "../backtest-executor";
 import type { BacktestExecutorResult } from "../backtest-executor";
 import { shouldUseRustEngine } from "../engine-preferences";
+import { normalizeSyntheticPairExecutionSymbol } from '../synthetic-pair-mode';
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
 import { mapWithConcurrencyLimit } from "../async-pool";
 import { debugLogger } from "../debug-logger";
@@ -68,6 +69,7 @@ import {
     buildFinderPairNeutralMetrics,
     FINDER_PAIR_NEUTRAL_METRIC_BASIS,
     isSyntheticPairFinderSymbol,
+    usesFinderPairNeutralMetrics,
     type FinderPairNeutralMetrics,
 } from "./finder-pair-neutral";
 import { computeExitAlpha } from "./finder-exit-alpha";
@@ -322,7 +324,7 @@ function createPreparedStrategy(
 function normalizeUniverseSymbols(symbols: readonly string[]): string[] {
     const unique = new Set<string>();
     for (const symbol of symbols) {
-        const normalized = symbol.trim().toUpperCase();
+        const normalized = normalizeSyntheticPairExecutionSymbol(symbol);
         if (normalized) {
             unique.add(normalized);
         }
@@ -1109,7 +1111,7 @@ export async function runFinderUniverseExecution(
             }
 
             const symbol = loadedSymbols[symbolIndex]!;
-            const isSyntheticPair = isSyntheticPairFinderSymbol(symbol.symbol);
+            const isSyntheticPair = usesFinderPairNeutralMetrics(symbol.symbol);
 
             for (let candidateIndex = 0; candidateIndex < candidatePlans.length; candidateIndex += 1) {
                 const candidateState = candidateStates[candidateIndex]!;
@@ -1204,7 +1206,9 @@ export async function runFinderUniverseExecution(
                         rustCompletedRuns += 1;
                     } else {
                         typescriptCompletedRuns += 1;
-                        const reasons = typescriptRequirementReasons.length > 0
+                        const reasons = symbol.data[0]?.pairLegs && output.engineDiagnostics?.typescriptReason
+                            ? [output.engineDiagnostics.typescriptReason]
+                            : typescriptRequirementReasons.length > 0
                             ? typescriptRequirementReasons
                             : output.signals.length === 0
                                 ? ["no signals required trade simulation"]

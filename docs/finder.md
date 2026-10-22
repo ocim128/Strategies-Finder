@@ -4,6 +4,14 @@ This is the maintained reference for the Finder menu. Read it before changing
 Finder controls, ranking metrics, result retention, server routes, or the
 backtest path used by Finder.
 
+Synthetic symbols ending in `@50/50` (or the shorthand `@`) select
+[equal-dollar leg execution](synthetic-pairs.md#equal-dollar-two-leg-execution).
+The ratio still drives strategy signals, while candidate profit, costs and
+drawdown come from the two legs. Current-chart, Universe and OOS runs use
+TypeScript for this mode, with the single-position fast path available under
+its normal settings fences. Universe ranking skips the legacy pair-neutral log
+adjustment, and symbol lists deduplicate `@` and `@50/50` aliases.
+
 The Finder searches strategy parameters and displays the strongest candidates
 for one of five scopes:
 

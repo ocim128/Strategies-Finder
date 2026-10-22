@@ -7,6 +7,12 @@ export type { EdgeStatistics, EdgeRatioHorizon, TTestResult, StreakAnalysis } fr
 // Types & Interfaces
 // ============================================================================
 
+/** Aligned source-bar OHLC for both legs. Tuples keep worker payloads compact. */
+export type SyntheticPairSample = readonly [
+    baseOpen: number, baseHigh: number, baseLow: number, baseClose: number,
+    quoteOpen: number, quoteHigh: number, quoteLow: number, quoteClose: number,
+];
+
 export interface OHLCVData {
     time: Time;
     open: number;
@@ -14,6 +20,8 @@ export interface OHLCVData {
     low: number;
     close: number;
     volume: number;
+    /** Present only for @50/50 execution; indicators still consume ratio OHLC. */
+    pairLegs?: readonly SyntheticPairSample[];
 }
 
 export interface Trade {
@@ -27,6 +35,11 @@ export interface Trade {
     pnlPercent: number;
     size: number;
     fees?: number;
+    /** Actual fixed quantities and fills for @50/50 trades; chart prices remain ratios. */
+    legs?: {
+        base: { side: 'long' | 'short'; size: number; entryPrice: number; exitPrice: number; fees: number };
+        quote: { side: 'long' | 'short'; size: number; entryPrice: number; exitPrice: number; fees: number };
+    };
     /** Exit reason: how the trade was closed */
 exitReason?: 'signal' | 'stop_loss' | 'take_profit' | 'trailing_stop' | 'time_stop' | 'partial' | 'probation_fail' | 'end_of_data';
     /** Stop-loss price level for the active position targets when available */

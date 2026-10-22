@@ -1,5 +1,6 @@
 import { debugLogger } from "../debug-logger";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
+import { syntheticPairModeSuffix, type SyntheticPairExecutionMode } from '../synthetic-pair-mode';
 import { isIbkrSymbol } from "../local-daily-datasets";
 import {
     buildSyntheticPairFromLegs,
@@ -383,6 +384,9 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         if (diagnostics) diagnostics.requests += 1;
         try {
             const synthParts = parseSyntheticPairToken(symbol);
+            if (!synthParts && symbol.includes('+') && symbol.includes('@')) {
+                throw new Error('Invalid synthetic allocation: use BASE+QUOTE@ or BASE+QUOTE@50/50.');
+            }
             if (synthParts) {
                 return (await loadSyntheticPair(
                     synthParts.baseSymbol,
@@ -391,6 +395,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                     signal,
                     context,
                     false,
+                    synthParts.executionMode,
                 )).data;
             }
 
@@ -461,6 +466,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
             signal,
             context,
             true,
+            synthParts.executionMode,
         );
     }
 
@@ -471,12 +477,13 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         signal?: AbortSignal,
         context?: BatchDatasetLoadContext,
         includeMetadata = false,
+        executionMode?: SyntheticPairExecutionMode,
     ): Promise<BatchDatasetLoadResult> {
         if (signal?.aborted) return { data: [] };
         const diagnostics = context?.diagnostics;
         if (diagnostics) diagnostics.syntheticPairRequests += 1;
 
-        const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
+        const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol) + syntheticPairModeSuffix(executionMode);
         const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
         const source = pickSourceInterval(interval, 12, available);
         const sourceInterval = source?.sourceInterval ?? interval;
@@ -556,7 +563,8 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
         const diskArgs: SyntheticPairDiskCacheArgs = {
             pairKey, syntheticSymbol, baseSymbol, quoteSymbol, interval, sourceInterval, sourceBars,
         };
-        const bypassDiskCache = context?.preferInMemorySyntheticPairs === true;
+        // Legacy disk payloads contain ratio OHLC only, never execution legs.
+        const bypassDiskCache = executionMode === 'equal_weight' || context?.preferInMemorySyntheticPairs === true;
         if (bypassDiskCache && diagnostics) diagnostics.diskCacheBypasses += 1;
 
         // This caller's ownership group becomes the single producer for the
@@ -616,6 +624,7 @@ export function createBatchDatasetLoaderCore(options: BatchDatasetLoaderCoreOpti
                 // deduplicated candles. Keep the expensive generic parser for
                 // other callers, but use the normalized pair hot path here.
                 assumeNormalizedLegs: true,
+                executionMode,
                 fetchLeg: (legSymbol, legInterval, legBars) =>
                     getSourceSeries(legSymbol, legInterval, legBars, signal, context),
             });

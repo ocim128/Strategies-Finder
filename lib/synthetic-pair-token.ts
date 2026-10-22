@@ -12,6 +12,7 @@
  */
 
 import { isIbkrSymbol, markIbkrSymbol } from "./local-daily-datasets";
+import { splitSyntheticPairMode, syntheticPairModeSuffix, type SyntheticPairExecutionMode } from './synthetic-pair-mode';
 
 // Quote suffix list used by the batch/Finder synthetic-pair contract.
 // (`lib/synthetic-pair-parser.ts` has its own
@@ -41,7 +42,9 @@ function resolveToBinanceSymbol(token: string): string {
  * Explicit quote-suffixed market symbols remain unchanged.
  */
 export function normalizeSyntheticPairProviderMarkers(symbol: string): string {
-    const normalized = symbol.trim().toUpperCase();
+    const mode = splitSyntheticPairMode(symbol);
+    if (!mode) return symbol.trim().toUpperCase();
+    const normalized = mode.pair;
     const plusIdx = normalized.indexOf("+");
     if (plusIdx < 1 || plusIdx === normalized.length - 1 || normalized.indexOf("+", plusIdx + 1) !== -1) {
         return normalized;
@@ -49,7 +52,7 @@ export function normalizeSyntheticPairProviderMarkers(symbol: string): string {
 
     const base = normalized.slice(0, plusIdx).trim();
     const quote = normalized.slice(plusIdx + 1).trim();
-    if (!isIbkrSymbol(base) && !isIbkrSymbol(quote)) return normalized;
+    if (!isIbkrSymbol(base) && !isIbkrSymbol(quote)) return normalized + syntheticPairModeSuffix(mode.executionMode);
 
     const normalizeLeg = (leg: string): string => {
         if (isIbkrSymbol(leg)) return leg;
@@ -57,7 +60,7 @@ export function normalizeSyntheticPairProviderMarkers(symbol: string): string {
         return markIbkrSymbol(leg);
     };
 
-    return `${normalizeLeg(base)}+${normalizeLeg(quote)}`;
+    return `${normalizeLeg(base)}+${normalizeLeg(quote)}${syntheticPairModeSuffix(mode.executionMode)}`;
 }
 
 /**
@@ -69,7 +72,10 @@ export function normalizeSyntheticPairProviderMarkers(symbol: string): string {
  * tickers and must NOT be funneled through `resolveToBinanceSymbol`, which
  * would append `USDT` and strip the marker's provider-routing hint.
  */
-export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; quoteSymbol: string } | null {
+export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; quoteSymbol: string; executionMode?: SyntheticPairExecutionMode } | null {
+    const mode = splitSyntheticPairMode(symbol);
+    if (!mode) return null;
+    symbol = mode.pair;
     const plusIdx = symbol.indexOf("+");
     if (plusIdx < 1 || plusIdx === symbol.length - 1) return null;
     const baseRaw = symbol.slice(0, plusIdx).trim().toUpperCase();
@@ -79,5 +85,6 @@ export function parseSyntheticPairToken(symbol: string): { baseSymbol: string; q
     return {
         baseSymbol: isIbkrSymbol(baseRaw) ? baseRaw : resolveToBinanceSymbol(baseRaw),
         quoteSymbol: isIbkrSymbol(quoteRaw) ? quoteRaw : resolveToBinanceSymbol(quoteRaw),
+        ...(mode.executionMode ? { executionMode: mode.executionMode } : {}),
     };
 }

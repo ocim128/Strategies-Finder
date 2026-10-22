@@ -24,6 +24,18 @@ beforeEach(() => {
 afterEach(() => { globalThis.fetch = originalFetch; clearLocalDailyAssetCaches(); });
 
 describe('Asset search synthetic pairs', () => {
+    it('canonicalizes both equal-weight suffixes without changing either leg provider', async () => {
+        for (const suffix of ['@', '@50/50']) {
+            const [stock] = await assetSearchService.searchAssets(`aapl\u2022+nvda${suffix}`, 20);
+            assert.equal(stock?.symbol, 'AAPL\u2022+NVDA\u2022@50/50');
+            assert.equal(stock?.displayName, 'AAPL\u2022 / NVDA\u2022 (50/50)');
+            assert.equal(stock?.provider, 'ibkr-local');
+            const [crypto] = await assetSearchService.searchAssets(`btc+eth${suffix}`, 20, { binanceMarketType: 'futures' });
+            assert.equal(crypto?.symbol, 'BTCUSDT+ETHUSDT@50/50');
+            assert.equal(crypto?.provider, 'binance-futures');
+        }
+        assert.deepEqual(await assetSearchService.searchAssets('AAPL\u2022+NVDA\u2022@60/40', 20), []);
+    });
     it('returns an exact IBKR ratio with both bullet markers preserved', async () => {
         assert.deepEqual(await assetSearchService.searchAssets('AAPL•+NVDA•', 20), [{
             symbol: 'AAPL•+NVDA•', displayName: 'AAPL• / NVDA•', type: 'stock',

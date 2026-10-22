@@ -63,6 +63,10 @@ export function resolveOpenTradeDisplayMetrics(
         isSyntheticLiveExit: false,
     };
 
+    // Synthetic portfolios have no live market stream. Their authoritative
+    // two-leg marks/costs cannot be reconstructed from the chart ratio.
+    if (trade.legs) return base;
+
     if (trade.exitReason !== "end_of_data" || !liveCandle) {
         return base;
     }

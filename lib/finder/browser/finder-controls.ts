@@ -1,3 +1,5 @@
+import { normalizeSyntheticPairExecutionSymbol } from '../../synthetic-pair-mode';
+
 /**
  * Finder controls: owner of the editable UI state (`uiState`), the form
  * binding/capture cycle, `readOptions` (the run-boundary input capture),
@@ -150,7 +152,7 @@ export class FinderControls {
 private parseUniverseSymbols(rawText = this.deps.getDom().finderUniverseSymbols.value): string[] {
 	const unique = new Set<string>();
 	for (const token of rawText.split(/[\s,]+/)) {
-		const normalized = token.trim().toUpperCase();
+		const normalized = normalizeSyntheticPairExecutionSymbol(token);
 		if (normalized) {
 			unique.add(normalized);
 		}

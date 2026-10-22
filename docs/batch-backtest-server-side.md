@@ -1,5 +1,13 @@
 # Server-Side Batch Backtest
 
+Pair lists accept `BASE+QUOTE@50/50` and the shorthand `BASE+QUOTE@` for
+[equal-dollar two-leg execution](synthetic-pairs.md#equal-dollar-two-leg-execution).
+The shared Batch/Finder loader retains source leg OHLC, separates its cache
+identity from the ratio-only pair and bypasses legacy ratio disk payloads.
+The shared TypeScript simulator calculates both legs' fills, costs, PNL and
+drawdown. Pair-list enumeration preserves the suffix, including Finder Arm
+Performance inputs. Plain `BASE+QUOTE` keeps its existing ratio behavior.
+
 The Batch Backtest tab runs its heavy per-symbol workload in the Vite
 dev-server (Node) process. The browser keeps scalar results and DOM rows.
 Historically, retaining full candle/signal/trade artifacts for 1000+ synthetic

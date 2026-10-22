@@ -15,6 +15,7 @@ import {
 } from './local-daily-datasets';
 import { debugLogger } from './debug-logger';
 import { normalizeSyntheticPairProviderMarkers, parseSyntheticPairToken } from './synthetic-pair-token';
+import { syntheticPairModeSuffix } from './synthetic-pair-mode';
 
 export type AssetType = 'crypto' | 'stock' | 'forex' | 'commodity';
 export type AssetProvider = 'binance' | 'binance-futures' | 'bybit-tradfi' | 'ibkr-local' | 'mock';
@@ -82,8 +83,8 @@ class AssetSearchService {
             ]);
             if (!base || !quote) return [];
             return [{
-                symbol: `${pair.baseSymbol}+${pair.quoteSymbol}`,
-                displayName: `${pair.baseSymbol} / ${pair.quoteSymbol}`,
+                symbol: `${pair.baseSymbol}+${pair.quoteSymbol}${syntheticPairModeSuffix(pair.executionMode)}`,
+                displayName: `${pair.baseSymbol} / ${pair.quoteSymbol}${pair.executionMode ? ' (50/50)' : ''}`,
                 type: base.type,
                 provider: base.provider,
                 baseAsset: pair.baseSymbol,

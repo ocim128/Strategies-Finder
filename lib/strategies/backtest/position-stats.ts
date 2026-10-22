@@ -162,7 +162,9 @@ export function calculateTradeExitDetails(
     const size = Math.min(exitSize, position.size);
     const exitValue = size * exitPrice;
     const entryValue = size * position.entryPrice;
-    const commission = exitValue * commissionRate;
+    const commission = position.pair
+        ? entryValue * position.pair.exitNotionalFactor * commissionRate
+        : exitValue * commissionRate;
     const entryCommission = position.entryCommissionPerShare * size;
 
     const rawPnl = (exitValue - entryValue) * directionFactor;

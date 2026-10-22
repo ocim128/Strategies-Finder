@@ -10,6 +10,7 @@ import {
 import type { BacktestResult } from "../types/strategies";
 import { hasUnsupportedRustSignalShape, rustEngine } from "../rust-engine-client";
 import { shouldUseRustEngine } from "../engine-preferences";
+import { validatePairExecutionData } from '../strategies/backtest/pair-execution';
 import { debugLogger } from "../debug-logger";
 
 import { compareFinderResults } from "./finder-engine";
@@ -423,9 +424,10 @@ async function resolveFinderEngineDecision(args: {
     requiresCompositeEdgeRatioSort: boolean;
 }): Promise<FinderEngineDecision> {
     const { input, callbacks, flags, totalRuns, closedData, requiresCompositeEdgeRatioSort } = args;
-    const rustPreferred = !requiresCompositeEdgeRatioSort && !input.requiresTsEngine && shouldUseRustEngine();
+    const equalWeightPair = validatePairExecutionData(closedData);
+    const rustPreferred = !equalWeightPair && !requiresCompositeEdgeRatioSort && !input.requiresTsEngine && shouldUseRustEngine();
     const rustHealthy = rustPreferred && await rustEngine.checkHealth(input.signal);
-    const rustUnavailableReason = requiresCompositeEdgeRatioSort
+    const rustUnavailableReason = equalWeightPair ? '50/50 pair execution requires TypeScript' : requiresCompositeEdgeRatioSort
         ? "Composite Edge Ratio sort requires full TypeScript trade paths"
         : !rustPreferred
             ? (input.requiresTsEngine ? "current sizing or realism settings require TypeScript" : "engine preference is TypeScript")

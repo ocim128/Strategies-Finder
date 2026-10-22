@@ -18,6 +18,13 @@ Adaptive percentage take-profit parameters have one canonical input per setting.
 
 ## Saving and restoring
 
+Saved synthetic-pair metadata can include `executionMode: "equal_weight"`
+for `@50/50` / `@` symbols. Normalization, shared links and configuration
+restore preserve this field and regenerate the leg execution data. Older
+metadata without the field retains ratio execution; unsupported mode values
+are rejected during stored-config normalization. The storage envelope and
+existing field meanings are unchanged.
+
 General settings retain the existing debounced browser autosave. The status reports pending writes, successful writes, and storage failures. Editing search or configuration names does not schedule an autosave. Strategy parameters are kept through named configurations, rather than the general-settings autosave.
 
 After saving or applying a named configuration, the menu tracks the effective strategy key, parameters, and all backtest settings in memory. It reports **Matches saved setup** or **Modified**, independently of general-settings autosave. Editing and then restoring a field to its earlier value clears Modified. This comparison excludes chart symbol/timeframe and display preferences.

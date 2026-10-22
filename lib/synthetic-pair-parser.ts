@@ -10,6 +10,7 @@ import {
     stripIbkrMarker,
 } from "./local-daily-datasets";
 import { deriveSyntheticSymbol } from "../scripts/lib/synthetic-pair";
+import { splitSyntheticPairMode, syntheticPairModeSuffix, type SyntheticPairExecutionMode } from './synthetic-pair-mode';
 
 export const PORTFOLIO_QUOTE_SUFFIXES = ["USDT", "USDC", "USD", "BTC", "ETH", "BNB"] as const;
 
@@ -19,6 +20,7 @@ export interface ParsedSyntheticPairSymbol {
     baseSymbol: string;
     quoteSymbol: string;
     syntheticSymbol: string;
+    executionMode?: SyntheticPairExecutionMode;
 }
 
 export function stripKnownQuoteSuffix(symbol: string): string {
@@ -38,7 +40,9 @@ function resolveToBinanceSymbol(token: string): string {
 }
 
 export function parsePortfolioSyntheticPairSymbol(symbol: string): ParsedSyntheticPairSymbol | null {
-    const normalized = symbol.trim().toUpperCase();
+    const mode = splitSyntheticPairMode(symbol);
+    if (!mode) return null;
+    const normalized = mode.pair;
     const plusIdx = normalized.indexOf("+");
     if (plusIdx < 1 || plusIdx === normalized.length - 1 || normalized.indexOf("+", plusIdx + 1) !== -1) {
         return null;
@@ -58,6 +62,7 @@ export function parsePortfolioSyntheticPairSymbol(symbol: string): ParsedSynthet
         quoteAsset: isIbkrSymbol(quoteSymbol) ? stripIbkrMarker(quoteSymbol) : stripKnownQuoteSuffix(quoteSymbol),
         baseSymbol,
         quoteSymbol,
-        syntheticSymbol: deriveSyntheticSymbol(baseSymbol, quoteSymbol),
+        syntheticSymbol: deriveSyntheticSymbol(baseSymbol, quoteSymbol) + syntheticPairModeSuffix(mode.executionMode),
+        ...(mode.executionMode ? { executionMode: mode.executionMode } : {}),
     };
 }

@@ -1,4 +1,5 @@
 import { Time, MarketMode, PercentageTakeProfitMode, EntryConfirmationMove, EntryTimeFilter } from './strategies';
+import type { OHLCVData } from './strategies';
 
 export interface NormalizedSettings {
     atrPeriod: number;
@@ -91,6 +92,17 @@ export interface PositionState {
     partialTaken: boolean;
     breakEvenApplied: boolean;
     realizedPnl: number;
+    /** Fixed quantities are represented by entry notionals, half on each leg. */
+    pair?: {
+        baseEntryPrice: number;
+        quoteEntryPrice: number;
+        exitNotionalFactor: number;
+        baseExitPrice?: number;
+        quoteExitPrice?: number;
+        /** One immutable source candle reused by open/risk/trailing checks. */
+        executionSource?: OHLCVData;
+        executionCandle?: OHLCVData;
+    };
     /**
      * Transient engine bookkeeping: the bar index at which the position was
      * last (re-)opened, so the simulation loop can detect same-bar entries

@@ -130,6 +130,7 @@ export function setupSymbolSearch(dom: UiEventHandlersDom): void {
                 const { dataMiningManager } = await import('../data-mining-manager');
                 const loaded = await dataMiningManager.regenerateSyntheticPair(
                     syntheticPair.baseSymbol, syntheticPair.quoteSymbol, state.currentInterval,
+                    syntheticPair.executionMode,
                 );
                 if (!loaded) return;
                 debugLogger.event('ui.symbol.select', { symbol, displayName, provider, syntheticPair });

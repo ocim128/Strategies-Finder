@@ -24,8 +24,28 @@ import { roundToHundredths as roundBacktestDiagnosticMs } from '../../number-uti
 import { createKellySizingState, updateKellyState } from '../sizing/kelly-criterion';
 import { createMartingaleState, updateMartingaleState } from '../sizing/martingale';
 import { createOptimalFState, updateOptimalFState } from '../sizing/optimal-f';
+import { pairMarketExitPrice, pairTradeLegs, positionClosePrice, positionExecutionCandle, validatePairExecutionData } from './pair-execution';
 
 export { precomputeIndicators };
+
+/** Shared presentation for both kernels; PNL was calculated on the execution scale. */
+function buildClosedTrade(
+    id: number, position: PositionState, candle: OHLCVData, exitPrice: number,
+    details: ReturnType<typeof calculateTradeExitDetails>, exitReason: Trade['exitReason'], commissionRate: number,
+): Trade {
+    const legs = pairTradeLegs(position, details.size * position.entryPrice, commissionRate);
+    const entryPrice = legs ? legs.base.entryPrice / legs.quote.entryPrice : position.entryPrice;
+    return {
+        id, type: position.direction, entryTime: position.entryTime, entryPrice,
+        exitTime: candle.time, exitPrice: legs ? legs.base.exitPrice / legs.quote.exitPrice : exitPrice,
+        pnl: details.totalPnl, pnlPercent: details.pnlPercent,
+        size: legs ? (details.size * position.entryPrice) / entryPrice : details.size,
+        fees: details.fees, exitReason,
+        stopLossPrice: legs ? null : position.stopLossPrice,
+        takeProfitPrice: legs ? null : position.takeProfitPrice,
+        ...(legs ? { legs } : {}),
+    };
+}
 
 type BacktestRunOptions = {
     /** Adverse-only stop stress, keyed by timeKey. Signals, TP and indicators use the original candles. */
@@ -528,6 +548,9 @@ function prepareBacktestRunSignals(args: {
         args.sizingMode,
         args.options
     );
+    if (validatePairExecutionData(args.data)) {
+        if (args.options?.stopLossStressRanges) throw new Error('Ratio stop-stress envelopes cannot be used for 50/50 execution.');
+    }
     const signalPreparationStartedAt = performance.now();
     const indexedSignals = fastPathBlockers.length === 0
         ? prepareIndexedFinderSignals(args.data, args.signals, args.config, args.tradeDirection)
@@ -752,6 +775,9 @@ function runSinglePositionFinderFastPath(args: {
     const slippageRate = config.slippageBps / 10000;
     const stopLossStressRanges = options?.stopLossStressRanges;
     const retainTradeHistory = options?.requireTradeHistory === true;
+    // Pair runs previously used compact fallback metrics. Keep that exact
+    // arithmetic when retaining trades rather than re-aggregating the list.
+    const useRecordedTradeStats = retainTradeHistory && data[0]?.pairLegs === undefined;
     const endpointEnabled = options?.endpointSelectionLastDataTime !== undefined;
     const endpointLastDataTime = options?.endpointSelectionLastDataTime ?? null;
     const endpointAccumulator = endpointEnabled ? createEndpointSelectionAccumulator() : undefined;
@@ -818,23 +844,7 @@ function runSinglePositionFinderFastPath(args: {
         } else {
             totalLoss += Math.abs(d.totalPnl);
         }
-        if (retainTradeHistory) {
-            trades.push({
-                id: ++tradeId,
-                type: pos.direction,
-                entryTime: pos.entryTime,
-                entryPrice: pos.entryPrice,
-                exitTime: candle.time,
-                exitPrice,
-                pnl: d.totalPnl,
-                pnlPercent: d.pnlPercent,
-                size: d.size,
-                fees: d.fees,
-                exitReason: reason,
-                stopLossPrice: pos.stopLossPrice,
-                takeProfitPrice: pos.takeProfitPrice,
-            });
-        }
+        if (retainTradeHistory) trades.push(buildClosedTrade(++tradeId, pos, candle, exitPrice, d, reason, commissionRate));
         if (endpointAccumulator) {
             recordEndpointSelectionExit(endpointAccumulator, endpointLastDataTime, candle.time, d);
         }
@@ -938,7 +948,9 @@ function runSinglePositionFinderFastPath(args: {
         if (!exitOrder) return null;
 
         diagnostics && diagnostics.counts.signalExitOrders++;
-        const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+        const exitPrice = exitTarget.pair
+            ? pairMarketExitPrice(exitTarget, candle, config.executionModel === 'next_open' ? 'open' : 'close', slippageRate)
+            : resolveSignalExitPrice(exitTarget, signal, slippageRate);
         const { fullyClosed } = recordExit(exitTarget, candle, exitPrice, exitOrder.exitSize, 'signal');
         if (
             !isExitOnly
@@ -960,7 +972,7 @@ function runSinglePositionFinderFastPath(args: {
             return;
         }
         const unrealizedPnl = position
-            ? (candle.close - position.entryPrice) * position.size * directionFactorFor(position.direction)
+            ? (positionClosePrice(position, candle) - position.entryPrice) * position.size * directionFactorFor(position.direction)
             : 0;
         const equity = capital + unrealizedPnl;
         if (equityOut) {
@@ -1021,13 +1033,14 @@ function runSinglePositionFinderFastPath(args: {
         const forcedCloseStartedAt = performance.now();
         if (position && data.length > 0) {
             const candle = data[data.length - 1];
-            recordExit(position, candle, candle.close, position.size, "end_of_data");
+            const exitPrice = position.pair ? pairMarketExitPrice(position, candle, 'close', slippageRate) : candle.close;
+            recordExit(position, candle, exitPrice, position.size, "end_of_data");
             diagnostics && diagnostics.counts.forcedEndOfDataExits++;
         }
         addBacktestDiagnosticElapsed(diagnostics, "forcedClose", forcedCloseStartedAt);
 
         const metricsStartedAt = performance.now();
-        const result = (retainTradeHistory
+        const result = (useRecordedTradeStats
             ? calculateBacktestStats(trades, [], initialCapital, capital, 0, 0, options)
             : finalizeBacktestMetrics(
                 initialCapital,
@@ -1040,6 +1053,7 @@ function runSinglePositionFinderFastPath(args: {
                 0,
                 0,
             ) as BacktestResult) as BacktestResultWithEndpointSelection;
+        if (retainTradeHistory && !useRecordedTradeStats) result.trades = trades;
         const endpointAdjustment = buildEndpointSelection(
             result,
             endpointAccumulator ?? createEndpointSelectionAccumulator(),
@@ -1129,7 +1143,8 @@ function runSinglePositionFinderFastPath(args: {
     const forcedCloseStartedAt = performance.now();
     if (position && data.length > 0) {
         const candle = data[data.length - 1];
-        recordExit(position, candle, candle.close, position.size, "end_of_data");
+        const exitPrice = position.pair ? pairMarketExitPrice(position, candle, 'close', slippageRate) : candle.close;
+        recordExit(position, candle, exitPrice, position.size, "end_of_data");
         if (equityOut) {
             equityOut[data.length - 1] = capital;
         }
@@ -1157,7 +1172,7 @@ function runSinglePositionFinderFastPath(args: {
     const statsOptions = options?.includeSharpeRatio === false
         ? options
         : { ...options, includeSharpeRatio: false };
-    const result = (retainTradeHistory
+    const result = (useRecordedTradeStats
         ? calculateBacktestStats(
             trades,
             [],
@@ -1178,6 +1193,7 @@ function runSinglePositionFinderFastPath(args: {
             skipDrawdown ? 0 : maxDrawdown,
             skipDrawdown ? 0 : maxDrawdownPercent,
         ) as BacktestResult) as BacktestResultWithEndpointSelection;
+    if (retainTradeHistory && !useRecordedTradeStats) result.trades = trades;
     if (options?.includeSharpeRatio !== false && equityOut) {
         result.sharpeRatio = calculateSharpeRatioFromEquitySamples(data, equityOut, data.length);
     }
@@ -1320,6 +1336,7 @@ function updateSmartSizingPosition(
     position: PositionState,
     candle: OHLCVData
 ): void {
+    candle = positionExecutionCandle(position, candle);
     const state = smartSizingPositionState.get(position);
     if (!state) return;
 
@@ -1816,23 +1833,7 @@ function runFallbackPositionSimulation(args: {
         capital += details.rawPnl - details.commission;
         totalTrades++;
         if (details.totalPnl > 0) { winningTrades++; totalProfit += details.totalPnl; } else { totalLoss += Math.abs(details.totalPnl); }
-        if (retainTradeHistory) {
-            trades.push({
-                id: ++tradeId,
-                type: pos.direction,
-                entryTime: pos.entryTime,
-                entryPrice: pos.entryPrice,
-                exitTime: candle.time,
-                exitPrice,
-                pnl: details.totalPnl,
-                pnlPercent: details.pnlPercent,
-                size: details.size,
-                fees: details.fees,
-                exitReason,
-                stopLossPrice: pos.stopLossPrice,
-                takeProfitPrice: pos.takeProfitPrice,
-            });
-        }
+        if (retainTradeHistory) trades.push(buildClosedTrade(++tradeId, pos, candle, exitPrice, details, exitReason, commissionRate));
         diagnostics && diagnostics.counts.tradesClosed++;
         pos.realizedPnl += details.totalPnl;
         pos.size -= details.size;
@@ -1915,7 +1916,7 @@ function runFallbackPositionSimulation(args: {
         if (!needsPerBarEquity) return;
         let unrealizedPnl = 0;
         for (let p = 0; p < positions.length; p++) {
-            unrealizedPnl += (candle.close - positions[p].entryPrice) * positions[p].size * directionFactorFor(positions[p].direction);
+            unrealizedPnl += (positionClosePrice(positions[p], candle) - positions[p].entryPrice) * positions[p].size * directionFactorFor(positions[p].direction);
         }
         const equity = capital + unrealizedPnl;
         if (objectEquityCurve) {
@@ -2035,7 +2036,9 @@ function runFallbackPositionSimulation(args: {
                         }
 
                         diagnostics && diagnostics.counts.signalExitOrders++;
-                        const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+                        const exitPrice = exitTarget.pair
+                            ? pairMarketExitPrice(exitTarget, candle, 'open', slippageRate)
+                            : resolveSignalExitPrice(exitTarget, signal, slippageRate);
                         const { fullyClosed } = recordExit(exitTarget, candle, exitPrice, exitOrder.exitSize, 'signal');
                         allTargetsFullyClosed = allTargetsFullyClosed && fullyClosed;
                         allExitOrdersFull = allExitOrdersFull && !exitOrder.wasPartial;
@@ -2144,7 +2147,9 @@ function runFallbackPositionSimulation(args: {
                             }
 
                             diagnostics && diagnostics.counts.signalExitOrders++;
-                            const exitPrice = resolveSignalExitPrice(exitTarget, signal, slippageRate);
+                            const exitPrice = exitTarget.pair
+                                ? pairMarketExitPrice(exitTarget, candle, 'close', slippageRate)
+                                : resolveSignalExitPrice(exitTarget, signal, slippageRate);
                             const { fullyClosed } = recordExit(exitTarget, candle, exitPrice, exitOrder.exitSize, 'signal');
                             allTargetsFullyClosed = allTargetsFullyClosed && fullyClosed;
                             allExitOrdersFull = allExitOrdersFull && !exitOrder.wasPartial;
@@ -2190,7 +2195,9 @@ function runFallbackPositionSimulation(args: {
             throwIfBacktestEngineCancelled(options);
             diagnostics && diagnostics.counts.forcedEndOfDataExits++;
             const positionsBefore = positions.length;
-            recordExit(positions[0]!, finalCandle, finalCandle.close, positions[0]!.size, 'end_of_data');
+            const position = positions[0]!;
+            const exitPrice = position.pair ? pairMarketExitPrice(position, finalCandle, 'close', slippageRate) : finalCandle.close;
+            recordExit(position, finalCandle, exitPrice, position.size, 'end_of_data');
             if (positions.length >= positionsBefore) {
                 throw new Error("TypeScript backtest fallback forced-close made no progress.");
             }

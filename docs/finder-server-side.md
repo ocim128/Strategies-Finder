@@ -13,6 +13,17 @@ crash/exit reporting, immediate Stop termination, and awaited disposal.
 Each runner retains its own message conversion, resource limits, and scheduling;
 TOP_MEAN and ledger pools keep their separate lifecycle contracts.
 
+For `BASE+QUOTE@50/50` / `BASE+QUOTE@`, the shared loader retains aligned
+source leg OHLC samples on each ratio candle (`pairLegs`). Worker structured
+clones preserve them. These windows have distinct cache keys and bypass the
+ratio-only disk format. Candidate/OOS execution uses TypeScript and actual
+equal-dollar leg PNL; Universe does not apply ratio-neutral log metrics.
+Compatible single-position runs use the TypeScript fast path, and engine
+diagnostics retain the executor's 50/50 requirement alongside realism reasons.
+Asset Opportunity fixed horizons also use equal-weight leg returns before
+costs, with the execution model determining the boundary entry leg prices.
+See [synthetic pair execution](synthetic-pairs.md#equal-dollar-two-leg-execution).
+
 Historical crypto CSV loads pass their requested bar limit to the shared
 columnar loader, materializing only the newest requested bars on cache hits.
 Detached loads retain the full series. See the

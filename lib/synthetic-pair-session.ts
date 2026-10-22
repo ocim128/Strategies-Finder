@@ -17,7 +17,9 @@
  * `import("./data-mining-manager")` at the call sites that need it.
  */
 
-export type SyntheticPairMetadata = { baseSymbol: string; quoteSymbol: string };
+import type { SyntheticPairExecutionMode } from './synthetic-pair-mode';
+
+export type SyntheticPairMetadata = { baseSymbol: string; quoteSymbol: string; executionMode?: SyntheticPairExecutionMode };
 
 let currentSyntheticPair: SyntheticPairMetadata | null = null;
 

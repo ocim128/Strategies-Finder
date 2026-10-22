@@ -76,6 +76,8 @@ import {
 import { attachTradeTimingQuality, type TradeTimingPreparedFloorsSource } from "./trade-timing-quality";
 import { resolveBinanceMarketType } from "./binance-market";
 import { buildSelectionResult } from "./finder/endpoint";
+import { splitSyntheticPairMode } from './synthetic-pair-mode';
+import { validatePairExecutionData } from './strategies/backtest/pair-execution';
 
 // ============================================================================
 // Executor request / response
@@ -392,6 +394,10 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
 
     const backtestData = req.closedCandleDataOverride
         ?? selectClosedCandleData(effectiveData, interval, resolvedSettings, nowSec, blockRange);
+    const equalWeightPair = validatePairExecutionData(backtestData);
+    if (backtestData.length && splitSyntheticPairMode(req.primarySymbol ?? '')?.executionMode && !equalWeightPair) {
+        throw new Error('50/50 pair execution legs are missing; reload the synthetic pair.');
+    }
 
     // Asset Opportunity's next-bar fresh-entry pass only needs the generated
 // signals. Avoid the remaining context-alignment/exit
@@ -590,6 +596,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     const signalShapeUnsupported = hasUnsupportedRustSignalShape(mergedSignals);
     const requiredRustCapabilities = getRequiredRustCapabilities(resolvedSettings);
     if (!signalShapeUnsupported
+        && !equalWeightPair
         && !req.backtestRunOptions?.stopLossStressRanges
         && !rustCapabilities
         && requiredRustCapabilities.length > 0
@@ -602,6 +609,7 @@ export async function executeBacktest(req: BacktestExecutorRequest): Promise<Bac
     }
     throwIfBacktestCancelled(req.context.signal);
     const typescriptRequirementReasons = getTypescriptEngineRequirementReasons(resolvedSettings, rustCapabilities);
+    if (equalWeightPair) typescriptRequirementReasons.push('50/50 pair execution requires TypeScript');
     if (req.backtestRunOptions?.stopLossStressRanges) {
         typescriptRequirementReasons.push("Stop-loss stress ranges require TypeScript");
     }

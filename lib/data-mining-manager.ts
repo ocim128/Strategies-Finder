@@ -11,6 +11,7 @@ import { clearAll } from "./app-actions";
 import { commitOhlcvData } from "./state-actions";
 import { OHLCVData, HistoricalFetchProgress } from "./types/index";
 import { getSyntheticPairMetadata, setSyntheticPairMetadata } from "./synthetic-pair-session";
+import { syntheticPairModeSuffix, type SyntheticPairExecutionMode } from './synthetic-pair-mode';
 import { isIbkrSymbol } from "./local-daily-datasets";
 
 import { parseTimeToUnixSeconds } from "./time-normalization";
@@ -46,18 +47,19 @@ export class DataMiningManager {
         return typeof value === 'object' && value !== null && !Array.isArray(value);
     }
 
-    public getSyntheticPairMetadata(): { baseSymbol: string; quoteSymbol: string } | null {
+    public getSyntheticPairMetadata(): ReturnType<typeof getSyntheticPairMetadata> {
         return getSyntheticPairMetadata();
     }
 
-    public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string): Promise<boolean> {
+    public async regenerateSyntheticPair(baseSymbol: string, quoteSymbol: string, interval: string, executionMode?: SyntheticPairExecutionMode): Promise<boolean> {
         const currentPair = getSyntheticPairMetadata();
         if (
             currentPair
             && isSyntheticSymbol(state.currentSymbol, currentPair)
-            && isSyntheticSymbol(state.currentSymbol, { baseSymbol, quoteSymbol })
+            && isSyntheticSymbol(state.currentSymbol, { baseSymbol, quoteSymbol, executionMode })
             && state.currentInterval === interval
             && state.ohlcvData.length > 0
+            && (!executionMode || state.ohlcvData.every(bar => bar.pairLegs?.length))
             && this.barsMatchInterval(state.ohlcvData, interval, isIbkrSymbol(baseSymbol) || isIbkrSymbol(quoteSymbol))
         ) {
             this.recordDiagnostic('synth_regenerate_skipped_current', { base: baseSymbol, quote: quoteSymbol, interval });
@@ -73,7 +75,7 @@ export class DataMiningManager {
         if (this.dom) this.updateSynthDerivedSymbol();
 
         // Generate directly — bypasses DOM availability check
-        return this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval);
+        return this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval, executionMode);
     }
 
     public init(): void {
@@ -115,8 +117,7 @@ export class DataMiningManager {
     private clearSyntheticPairIfStale(): void {
         const currentPair = getSyntheticPairMetadata();
         if (!currentPair) return;
-        const derived = deriveSyntheticSymbol(currentPair.baseSymbol, currentPair.quoteSymbol);
-        if (state.currentSymbol !== derived) {
+        if (!isSyntheticSymbol(state.currentSymbol, currentPair)) {
             setSyntheticPairMetadata(null);
         }
     }
@@ -723,10 +724,10 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
         await this.executeSyntheticPairGeneration(baseSymbol, quoteSymbol, interval);
     }
 
-    private async executeSyntheticPairGeneration(baseSymbol: string, quoteSymbol: string, interval: string): Promise<boolean> {
+    private async executeSyntheticPairGeneration(baseSymbol: string, quoteSymbol: string, interval: string, executionMode?: SyntheticPairExecutionMode): Promise<boolean> {
         if (this.isGeneratingSynthetic) return false;
 
-        const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol);
+        const syntheticSymbol = deriveSyntheticSymbol(baseSymbol, quoteSymbol) + syntheticPairModeSuffix(executionMode);
         const allowSessionGaps = isIbkrSymbol(baseSymbol) || isIbkrSymbol(quoteSymbol);
         const available = resolveSyntheticAvailableIntervals(baseSymbol, quoteSymbol);
         const source = pickSourceInterval(interval, 12, available);
@@ -762,7 +763,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
             // SQLite/IndexedDB, so a rebuild reads legs from disk and only
             // pays the re-aggregation cost.
             const cached = dataManager.getImportedData(syntheticSymbol, interval);
-            if (cached && cached.length > 0) {
+            if (cached && cached.length > 0 && (!executionMode || cached.every(bar => bar.pairLegs?.length))) {
                 if (!this.barsMatchInterval(cached, interval, allowSessionGaps)) {
                     this.recordDiagnostic('synth_ignored_wrong_interval_cache', {
                         symbol: syntheticSymbol,
@@ -776,7 +777,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                         symbol: syntheticSymbol, interval, bars: cached.length,
                         firstTime: cached[0]?.time, lastTime: cached[cached.length - 1]?.time,
                     });
-                    this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, cached);
+                    this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, cached, executionMode);
                     this.setStatus(
                         `Loaded ${cached.length} cached synthetic bars for ${syntheticSymbol} (no re-fetch).`,
                         'success'
@@ -797,6 +798,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                 // ensureNormalizedLegBars verifies that shape per leg and only
                 // pays a canonicalizing pass for a loader that breaks it.
                 assumeNormalizedLegs: true,
+                executionMode,
                 // offline:true so synthetic leg fetches skip the remote Binance
                 // gap-fill tail and read straight from SQLite/IndexedDB when
                 // present. Synthetic pair freshness is bounded for the whole
@@ -847,7 +849,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
                 aggregated,
             });
 
-            this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, syntheticBars);
+            this.commitSyntheticPair(syntheticSymbol, interval, baseSymbol, quoteSymbol, syntheticBars, executionMode);
 
             this.recordDiagnostic('synth_committed', {
                 symbol: syntheticSymbol, finalBars: syntheticBars.length,
@@ -884,6 +886,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
         baseSymbol: string,
         quoteSymbol: string,
         bars: OHLCVData[],
+        executionMode?: SyntheticPairExecutionMode,
     ): void {
         if (!this.barsMatchInterval(bars, interval, isIbkrSymbol(baseSymbol) || isIbkrSymbol(quoteSymbol))) {
             throw new Error(`Refusing to load ${bars.length} ${syntheticSymbol} bars because their cadence does not match ${interval}.`);
@@ -901,7 +904,7 @@ uiManager.showToast('Historical SQLite sync is supported for Binance / Bybit Tra
 
         commitOhlcvData(bars, 'synthetic_pair');
         dataManager.registerImportedData(syntheticSymbol, interval, bars);
-        setSyntheticPairMetadata({ baseSymbol, quoteSymbol });
+        setSyntheticPairMetadata({ baseSymbol, quoteSymbol, ...(executionMode ? { executionMode } : {}) });
     }
 
     private async importJsonFile(): Promise<void> {

@@ -130,6 +130,7 @@ export interface StrategyConfig {
     syntheticPair?: {
         baseSymbol: string;
         quoteSymbol: string;
+        executionMode?: import('./synthetic-pair-mode').SyntheticPairExecutionMode;
     };
 }
 
@@ -359,6 +360,11 @@ export function normalizeStoredStrategyConfig(raw: unknown): StrategyConfig | nu
     const name = readString(source.name, '');
     if (!name) return null;
 
+    const pair = toRecord(source.syntheticPair);
+    const baseSymbol = pair ? readOptionalString(pair.baseSymbol)?.toUpperCase() : undefined;
+    const quoteSymbol = pair ? readOptionalString(pair.quoteSymbol)?.toUpperCase() : undefined;
+    if (pair?.executionMode !== undefined && pair.executionMode !== 'equal_weight') return null;
+
     const nowIso = new Date().toISOString();
     return {
         name,
@@ -369,6 +375,11 @@ export function normalizeStoredStrategyConfig(raw: unknown): StrategyConfig | nu
         strategyKey: readString(source.strategyKey, DEFAULT_BUILT_IN_STRATEGY_KEY),
         strategyParams: normalizeStrategyParams(source.strategyParams),
         backtestSettings: normalizeStoredBacktestSettings(source.backtestSettings),
+        ...(baseSymbol && quoteSymbol ? { syntheticPair: {
+            baseSymbol,
+            quoteSymbol,
+            ...(pair?.executionMode === 'equal_weight' ? { executionMode: 'equal_weight' as const } : {}),
+        } } : {}),
     };
 }
 

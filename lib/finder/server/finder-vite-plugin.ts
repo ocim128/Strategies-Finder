@@ -200,6 +200,7 @@ import {
 import { parseTopMeanDateWindow } from "../../batch-backtest/top-mean-date-window";
 import { RANKING_TOP_K_DEFAULT, RANKING_TOP_K_MAX, RANKING_TOP_K_MIN } from "../../batch-backtest/open-score-replay/types";
 import { parseSyntheticPairToken } from "../../synthetic-pair-token";
+import { normalizeSyntheticPairExecutionSymbol } from '../../synthetic-pair-mode';
 import type { BatchOwnerLocks, BatchOwnerToken } from "../../batch-backtest/sp500-top-mean-vite-routes";
 import {
     buildFinderArmPerformanceCandidatePlans,
@@ -4165,7 +4166,7 @@ function normalizeSymbols(raw: unknown): string[] {
     const source = Array.isArray(raw) ? raw : typeof raw === "string" ? raw.split(/[\s,]+/) : [];
     for (const item of source) {
         if (typeof item !== "string") continue;
-        const normalized = item.trim().toUpperCase();
+        const normalized = normalizeSyntheticPairExecutionSymbol(item);
         if (normalized && !seen.has(normalized)) {
             seen.add(normalized);
             out.push(normalized);

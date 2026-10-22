@@ -13,6 +13,12 @@ export function isSyntheticPairFinderSymbol(symbol: string): boolean {
     return parseSyntheticPairToken(symbol) !== null;
 }
 
+/** Executable 50/50 portfolios already have dollar PNL; never rebase them as ratios. */
+export function usesFinderPairNeutralMetrics(symbol: string): boolean {
+    const pair = parseSyntheticPairToken(symbol);
+    return pair !== null && pair.executionMode === undefined;
+}
+
 function resolveTradeMultiplier(trade: Trade): number {
     if (!(trade.entryPrice > 0) || !(trade.exitPrice > 0)) return NaN;
     return trade.type === "short"

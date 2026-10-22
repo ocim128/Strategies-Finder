@@ -407,7 +407,8 @@ class SettingsManager {
                 const regenerated = await dataMiningManager.regenerateSyntheticPair(
                     config.syntheticPair.baseSymbol,
                     config.syntheticPair.quoteSymbol,
-                    config.interval
+                    config.interval,
+                    config.syntheticPair.executionMode,
                 );
                 if (!regenerated) {
                     throw new Error(`Synthetic pair ${config.syntheticPair.baseSymbol}/${config.syntheticPair.quoteSymbol} could not be generated.`);

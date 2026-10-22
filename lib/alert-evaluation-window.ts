@@ -73,6 +73,10 @@ export function buildExecutionAwareCandleWindow(
         low: nextOpen,
         close: nextOpen,
         volume: 0,
+        ...(nextOpenCandle.pairLegs?.length ? { pairLegs: [[
+            nextOpenCandle.pairLegs[0][0], nextOpenCandle.pairLegs[0][0], nextOpenCandle.pairLegs[0][0], nextOpenCandle.pairLegs[0][0],
+            nextOpenCandle.pairLegs[0][4], nextOpenCandle.pairLegs[0][4], nextOpenCandle.pairLegs[0][4], nextOpenCandle.pairLegs[0][4],
+        ] as const] } : {}),
     };
 
     return [...closedCandles, bridgeCandle];

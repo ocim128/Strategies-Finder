@@ -23,6 +23,13 @@ function createPriceDataFixture(): string {
 }
 
 function testCustomPairListText(baseDir: string): void {
+    for (const suffix of ['@', '@50/50']) {
+        const portfolio = enumerateSp500Pairs({ interval: '4h', baseDir, pairListText: `AAPL\u2022+MSFT\u2022${suffix}` });
+        assert.deepEqual(portfolio.canonicalPairs, ['AAPL\u2022+MSFT\u2022@50/50']);
+        assert.deepEqual(deriveReplayTargetsFromCanonicalPairs(portfolio.canonicalPairs), [
+            { asset: 'AAPL', symbol: 'AAPL\u2022' }, { asset: 'MSFT', symbol: 'MSFT\u2022' },
+        ]);
+    }
     const customText = `CVX•+AMGN•\nPANW•+CVX•\nKO•+PANW•`;
     const res = enumerateSp500Pairs({ interval: "4h", baseDir, pairListText: customText });
     assert.equal(res.counts.pairCount, 3);

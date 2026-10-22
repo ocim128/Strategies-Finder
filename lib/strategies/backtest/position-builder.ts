@@ -15,6 +15,7 @@ import { calculateSecureF, createOptimalFState, type OptimalFState } from '../si
 import { resolveRiskParityMultiplier } from '../sizing/risk-parity';
 import { average, clamp } from '../sizing/shared';
 import { resolveVolTargetingMultiplier } from '../sizing/volatility-targeting';
+import { pairMarketPrices } from './pair-execution';
 const VELOCITY_MEMORY_MIN_MULTIPLIER = 0.75;
 const VELOCITY_MEMORY_MAX_MULTIPLIER = 1.2;
 const QUALITY_X_VELOCITY_MIN_MULTIPLIER = 0.72;
@@ -408,7 +409,11 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
     const direction = signalToPositionDirection(signal.type);
     const directionFactor = directionFactorFor(direction);
     const entrySide = entrySideForDirection(direction);
-    const entryFillPrice = applySlippage(signal.price, entrySide, slippageRate);
+    const entryLegs = data[barIndex]?.pairLegs
+        ? pairMarketPrices(data[barIndex], config.executionModel === 'next_open' ? 'open' : 'close')
+        : undefined;
+    if (entryLegs && slippageRate >= 1) throw new Error('50/50 execution requires slippage below 10000 bps.');
+    const entryFillPrice = entryLegs ? entryLegs[0] / entryLegs[1] : applySlippage(signal.price, entrySide, slippageRate);
     if (!Number.isFinite(entryFillPrice) || entryFillPrice <= 0) return null;
 
     const { stopLossPrice: finalStopLossPrice, takeProfitPrice: finalTakeProfitPrice, riskPerShare, partialTargetPrice } =
@@ -437,7 +442,7 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
     );
     if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) return null;
 
-    const tradeValue = allocatedCapital / (1 + commissionRate);
+    const tradeValue = entryLegs ? allocatedCapital : allocatedCapital / (1 + commissionRate);
     const entryCommission = tradeValue * commissionRate;
     if (!Number.isFinite(tradeValue) || tradeValue <= 0) return null;
 
@@ -460,6 +465,11 @@ export function buildPositionFromSignal(params: PositionBuilderParams): BuiltPos
             partialTaken: false,
             breakEvenApplied: false,
             realizedPnl: 0,
+            ...(entryLegs ? { pair: {
+                baseEntryPrice: entryLegs[0] * (1 + directionFactor * slippageRate),
+                quoteEntryPrice: entryLegs[1] * (1 - directionFactor * slippageRate),
+                exitNotionalFactor: 1,
+            } } : {}),
         },
         entryCommission
     };

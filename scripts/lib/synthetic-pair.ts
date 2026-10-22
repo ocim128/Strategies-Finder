@@ -9,7 +9,8 @@
  */
 
 import type { Time } from 'lightweight-charts';
-import type { OHLCVData } from '../../lib/types/strategies';
+import type { OHLCVData, SyntheticPairSample } from '../../lib/types/strategies';
+import { syntheticPairModeSuffix, type SyntheticPairExecutionMode } from '../../lib/synthetic-pair-mode';
 import { parseOhlcvBars } from './ohlcv-file';
 import { parseTimeToUnixSeconds } from '../../lib/time-normalization';
 import { parseIntervalSeconds } from '../../lib/interval-utils';
@@ -471,6 +472,7 @@ export async function buildSyntheticPairFromLegs(args: {
     tailSliceBars?: number;
     minBars?: number;
     assumeNormalizedLegs?: boolean;
+    executionMode?: SyntheticPairExecutionMode;
     wickMode?: SyntheticWickMode;
     /**
      * When true, an empty base or quote leg yields an empty `bars` array
@@ -547,6 +549,12 @@ export async function buildSyntheticPairFromLegs(args: {
         ? aggregateSyntheticBars(dataset.bars, interval)
         : dataset.bars;
 
+    if (args.executionMode === 'equal_weight') {
+        attachPairExecutionLegs(bars,
+            args.assumeNormalizedLegs ? base : ensureNormalizedLegBars(base),
+            args.assumeNormalizedLegs ? quote : ensureNormalizedLegBars(quote), interval);
+    }
+
     return {
         bars: args.tailSliceBars
             ? bars.slice(-Math.max(1, args.tailSliceBars))
@@ -556,6 +564,34 @@ export async function buildSyntheticPairFromLegs(args: {
         base,
         quote,
     };
+}
+
+/** Keep the same aligned source samples used by the ratio, including sub-bars. */
+function attachPairExecutionLegs(bars: OHLCVData[], base: OHLCVData[], quote: OHLCVData[], interval: string): void {
+    const seconds = parseIntervalSeconds(interval);
+    if (!seconds) throw new Error('50/50 pairs require a valid interval.');
+    // All three inputs are chronological. Merge directly into the final
+    // candles instead of allocating a timestamp Map entry for every bar.
+    let i = 0, j = 0, targetIndex = 0, populatedBars = 0;
+    while (i < base.length && j < quote.length) {
+        const a = base[i], b = quote[j];
+        const at = Number(a.time), bt = Number(b.time);
+        if (at < bt) { i++; continue; }
+        if (at > bt) { j++; continue; }
+        const bucket = Math.floor(at / seconds);
+        while (targetIndex < bars.length && Math.floor(Number(bars[targetIndex].time) / seconds) < bucket) targetIndex++;
+        const target = bars[targetIndex];
+        if (target && Math.floor(Number(target.time) / seconds) === bucket) {
+            const sample: SyntheticPairSample = [a.open, a.high, a.low, a.close, b.open, b.high, b.low, b.close];
+            if (!sample.every(value => Number.isFinite(value) && value > 0)) {
+                throw new Error('50/50 pairs require finite positive OHLC prices on both legs.');
+            }
+            if (target.pairLegs) (target.pairLegs as SyntheticPairSample[]).push(sample);
+            else { target.pairLegs = [sample]; populatedBars++; }
+        }
+        i++; j++;
+    }
+    if (populatedBars !== bars.length) throw new Error('Missing aligned execution legs for 50/50 pair.');
 }
 
 /**
@@ -784,13 +820,13 @@ export function deriveSyntheticSymbol(baseSymbol: string, quoteSymbol: string): 
 
 export function isSyntheticSymbol(
     symbol: string,
-    known: { baseSymbol: string; quoteSymbol: string } | null,
+    known: { baseSymbol: string; quoteSymbol: string; executionMode?: SyntheticPairExecutionMode } | null,
 ): boolean {
     if (!known) return false;
     return normalizeSymbol(symbol) === deriveSyntheticSymbol(
         normalizeSymbol(known.baseSymbol),
         normalizeSymbol(known.quoteSymbol),
-    );
+    ) + syntheticPairModeSuffix(known.executionMode);
 }
 
 function longestCommonSuffix(a: string, b: string): number {

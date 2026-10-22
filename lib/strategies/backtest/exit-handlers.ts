@@ -2,6 +2,7 @@
 import { OHLCVData, Trade } from '../../types/index';
 import { NormalizedSettings, PositionState } from '../../types/backtest';
 import { applySlippage, directionFactorFor, exitSideForDirection } from './backtest-utils';
+import { pairMarketExitPrice, pairTargetExitPrice, positionExecutionCandle } from './pair-execution';
 
 export interface PositionExitTrigger {
     exitPrice: number;
@@ -93,6 +94,18 @@ function isTakeProfitHitAtOpen(
         : greaterThanOrNearlyEqual(candle.open, takeProfit);
 }
 
+function fillPositionTarget(position: PositionState, candle: OHLCVData, price: number, slippageRate: number, openOnly?: boolean): number {
+    return position.pair
+        ? pairTargetExitPrice(position, candle, price, slippageRate, openOnly)
+        : applySlippage(price, exitSideForDirection(position.direction), slippageRate);
+}
+
+function fillPositionClose(position: PositionState, candle: OHLCVData, slippageRate: number): number {
+    return position.pair
+        ? pairMarketExitPrice(position, candle, 'close', slippageRate)
+        : applySlippage(candle.close, exitSideForDirection(position.direction), slippageRate);
+}
+
 /**
  * Checks and processes various exit conditions for a position.
  * Returns the first exit trigger for this bar, if any.
@@ -106,8 +119,9 @@ export function processPositionExits(
     currentBarIndex?: number,
     stopLossStressRange?: { high: number; low: number },
 ): PositionExitTrigger | null {
+    const sourceCandle = candle;
+    candle = positionExecutionCandle(position, candle);
     const isShortPosition = position.direction === 'short';
-    const exitSide = exitSideForDirection(position.direction);
 
     // Check stop loss
     const stopLoss = position.stopLossPrice;
@@ -120,7 +134,9 @@ export function processPositionExits(
         if (stopHit) {
             const stopExitPrice = resolveStopLossExitPrice(candle, stopLoss, isShortPosition);
             return {
-                exitPrice: applySlippage(stopExitPrice, exitSide, slippageRate),
+                exitPrice: position.pair && stopExitPrice === candle.open
+                    ? pairMarketExitPrice(position, sourceCandle, 'open', slippageRate)
+                    : fillPositionTarget(position, sourceCandle, stopExitPrice, slippageRate, options.openOnly),
                 exitSize: position.size,
                 exitReason: 'stop_loss',
             };
@@ -141,7 +157,7 @@ export function processPositionExits(
         if (takeHit) {
             const takeProfitExitPrice = resolveTakeProfitExitPrice(position.takeProfitPrice);
             return {
-                exitPrice: applySlippage(takeProfitExitPrice, exitSide, slippageRate),
+                exitPrice: fillPositionTarget(position, sourceCandle, takeProfitExitPrice, slippageRate, options.openOnly),
                 exitSize: position.size,
                 exitReason: 'take_profit',
             };
@@ -162,7 +178,7 @@ export function processPositionExits(
             if (partialSize > 0) {
                 position.partialTaken = partialSize < position.size;
                 return {
-                    exitPrice: applySlippage(position.partialTargetPrice, exitSide, slippageRate),
+                    exitPrice: fillPositionTarget(position, sourceCandle, position.partialTargetPrice, slippageRate, options.openOnly),
                     exitSize: partialSize,
                     exitReason: 'partial',
                 };
@@ -182,7 +198,7 @@ export function processPositionExits(
         maxHoldBarsInTrade >= config.riskMaxHoldBars
     ) {
         return {
-            exitPrice: applySlippage(candle.close, exitSide, slippageRate),
+            exitPrice: fillPositionClose(position, sourceCandle, slippageRate),
             exitSize: position.size,
             exitReason: 'time_stop',
         };
@@ -197,7 +213,7 @@ export function processPositionExits(
         const isLosing = isShortPosition ? candle.close >= position.entryPrice : candle.close <= position.entryPrice;
         if (!position.partialTaken && isLosing) {
             return {
-                exitPrice: applySlippage(candle.close, exitSide, slippageRate),
+                exitPrice: fillPositionClose(position, sourceCandle, slippageRate),
                 exitSize: position.size,
                 exitReason: 'time_stop',
             };
@@ -218,6 +234,7 @@ export function updatePositionState(
     config: NormalizedSettings,
     atrValue: number | null | undefined
 ): void {
+    candle = positionExecutionCandle(position, candle);
     const directionFactor = directionFactorFor(position.direction);
     const isShortPosition = position.direction === 'short';
 

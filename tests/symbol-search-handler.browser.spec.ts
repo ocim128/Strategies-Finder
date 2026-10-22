@@ -26,7 +26,7 @@ afterEach(() => {
     else Reflect.deleteProperty(globalThis, 'document');
 });
 
-async function harness(t: TestContext) {
+async function harness(t: TestContext, suffix = '') {
     t.mock.timers.enable({ apis: ['setTimeout'] });
     t.mock.method(state, 'subscribe', () => () => {});
     const input = Object.assign(createFakeElement(), { focus() {} });
@@ -54,6 +54,7 @@ async function harness(t: TestContext) {
     const asset: Asset = {
         symbol: 'AAPL•+NVDA•', displayName: 'AAPL• / NVDA•', type: 'stock', provider: 'ibkr-local',
     };
+    asset.symbol += suffix;
     t.mock.method(assetSearchService, 'searchAssets', async () => [asset]);
     setupSymbolSearch({
         symbolSelector: createFakeElement(), symbolDropdown: dropdown,
@@ -67,6 +68,32 @@ async function harness(t: TestContext) {
 }
 
 describe('Pair search synthetic selection', () => {
+    for (const suffix of ['@', '@50/50']) {
+        it(`loads the 50/50 execution dataset and saves its mode for ${suffix}`, async t => {
+            state.currentSymbol = 'ETHUSDT';
+            state.currentInterval = '1d';
+            state.ohlcvData = [];
+            state.equitySeries = { setData() {} } as unknown as typeof state.equitySeries;
+            const bars: OHLCVData[] = [{ time: 172800 as OHLCVData['time'], open: 2, high: 2, low: 2, close: 2, volume: 1,
+                pairLegs: [[200, 200, 200, 200, 100, 100, 100, 100]] }];
+            t.mock.method(dataManager, 'getImportedData', (symbol: string) => {
+                assert.equal(symbol, 'AAPL\u2022+NVDA\u2022@50/50');
+                return bars;
+            });
+            t.mock.method(dataManager, 'registerImportedData', () => {});
+            t.mock.method(dataManager, 'updateCacheEntryFor', () => {});
+            t.mock.method(dataManager, 'stopStreaming', () => {});
+            t.mock.method(dataManager, 'suppressNextAutoReload', () => {});
+            t.mock.method(chartManager, 'clearIndicators', () => {});
+            t.mock.method(uiManager, 'clearUI', () => {});
+            const { results, item } = await harness(t, suffix);
+            results.dispatchEvent({ type: 'click', target: item });
+            await new Promise<void>(resolve => setImmediate(resolve));
+            assert.equal(state.currentSymbol, 'AAPL\u2022+NVDA\u2022@50/50');
+            assert.strictEqual(state.ohlcvData, bars);
+            assert.deepEqual(getSyntheticPairMetadata(), { baseSymbol: 'AAPL\u2022', quoteSymbol: 'NVDA\u2022', executionMode: 'equal_weight' });
+        });
+    }
     for (const selection of ['click', 'keyboard'] as const) {
         it(`loads cached synthetic candles and metadata through ${selection}`, async t => {
             state.currentSymbol = 'ETHUSDT';

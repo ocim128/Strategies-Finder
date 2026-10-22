@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { markIbkrSymbol, stripIbkrMarker } from "../local-daily-datasets";
 import { parsePortfolioSyntheticPairSymbol } from "../synthetic-pair-parser";
 import { parseSyntheticPairToken } from "../synthetic-pair-token";
+import { splitSyntheticPairMode, syntheticPairModeSuffix } from '../synthetic-pair-mode';
 import {
     canonicalizeLegIdentity,
     hasKnownQuoteSuffix,
@@ -184,10 +185,11 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
             continue;
         }
 
-        const separator = line.indexOf("+");
+        const pairExpression = splitSyntheticPairMode(line)!.pair;
+        const separator = pairExpression.indexOf("+");
         const missingDataAssets = new Set<string>();
-        const base = separator >= 0 ? resolveCustomToken(line.slice(0, separator), missingDataAssets) : null;
-        const quote = separator >= 0 ? resolveCustomToken(line.slice(separator + 1), missingDataAssets) : null;
+        const base = separator >= 0 ? resolveCustomToken(pairExpression.slice(0, separator), missingDataAssets) : null;
+        const quote = separator >= 0 ? resolveCustomToken(pairExpression.slice(separator + 1), missingDataAssets) : null;
         if (!base || !quote) {
             excludedPairCount++;
             if (missingDataAssets.size > 0) skippedPairTokens.push(line);
@@ -204,7 +206,7 @@ export function enumerateSp500Pairs(options: EnumerationOptions = {}): Enumerati
             rejectedPairTokens.push(line);
             continue;
         }
-        canonicalPairs.push(`${base.loaderSymbol}+${quote.loaderSymbol}`);
+        canonicalPairs.push(`${base.loaderSymbol}+${quote.loaderSymbol}${syntheticPairModeSuffix(parsed.executionMode)}`);
     }
 
     const eligibleTargets = Array.from(eligibleTargetsByAsset, ([asset, symbol]) => ({ asset, symbol }))

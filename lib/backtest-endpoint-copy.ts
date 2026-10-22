@@ -91,7 +91,10 @@ function cloneSnapshot(snapshot: UiBacktestEndpointSnapshot): UiBacktestEndpoint
 }
 
 function cloneCandles(candles: OHLCVData[]): OHLCVData[] {
-    return candles.map((candle) => ({ ...candle }));
+    return candles.map((candle) => ({
+        ...candle,
+        ...(candle.pairLegs ? { pairLegs: candle.pairLegs.map(sample => [...sample] as typeof sample) } : {}),
+    }));
 }
 
 function normalizeBacktestEndpointBaseUrl(baseUrl: string): string {
@@ -221,6 +224,7 @@ export function computeBacktestEndpointDatasetFingerprint(candles: OHLCVData[]):
             hash,
             `${toFingerprintUnixSeconds(candle.time)}|${candle.open}|${candle.high}|${candle.low}|${candle.close}|${candle.volume};`
         );
+        if (candle.pairLegs) hash = mixFingerprint(hash, JSON.stringify(candle.pairLegs));
     }
 
     const firstCandle = candles[0];

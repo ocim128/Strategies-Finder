@@ -1,4 +1,5 @@
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
+import { normalizeSyntheticPairExecutionSymbol } from '../synthetic-pair-mode';
 
 export interface BatchRunFingerprintInput {
     symbols: readonly string[];
@@ -65,7 +66,7 @@ export function normalizeBatchSymbols(value: unknown): string[] {
     const seen = new Set<string>();
     const out: string[] = [];
     for (const item of raw) {
-        const text = String(item ?? "").trim().toUpperCase();
+        const text = normalizeSyntheticPairExecutionSymbol(String(item ?? ''));
         if (!text) continue;
         if (seen.has(text)) continue;
         seen.add(text);
