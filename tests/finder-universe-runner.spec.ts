@@ -1372,6 +1372,62 @@ describe("Finder universe runner", () => {
         expect(yields).to.be.within(2, 6);
     });
 
+    it("throttles per-symbol load progress instead of reporting every symbol", async () => {
+        // Every symbol used to emit "Loading <symbol> (i/N)..." via setProgress,
+        // a duplicate setStatus, and another setProgress on completion. In the
+        // server path each of those is a worker->main postMessage, so a
+        // 5000-symbol strategy task queued ~15k messages. The report count must
+        // now be bounded by TIME, not by symbol count.
+        const symbols = Array.from({ length: 130 }, (_value, index) => `SYM_${index}`);
+        const data = makeCandles([100, 104, 108, 112, 116]);
+        const progress: Array<{ percent: number; text: string }> = [];
+        const statuses: string[] = [];
+        const options: FinderOptions = {
+            scope: "symbol_universe",
+            mode: "random",
+            sortPriority: ["netProfit"],
+            useAdvancedSort: false,
+            topN: 1,
+            steps: 1,
+            rangePercent: 0,
+            maxRuns: 1,
+            tradeFilterEnabled: false,
+            minTrades: 0,
+            maxTrades: Number.POSITIVE_INFINITY,
+            universe: {
+                symbols,
+                minActiveSymbols: 1,
+                minTotalTrades: 1,
+                minProfitableActiveRatio: 0,
+                sortPriority: ["profitableActiveRatio"],
+            },
+        };
+
+        await runFinderUniverseExecution({
+            interval: "5m",
+            options,
+            settings,
+            capitalSettings,
+            selectedStrategy: { key: "universe_test", name: testStrategy.name, strategy: testStrategy },
+            loadDataset: async () => data,
+            generateParamSets: () => [{ threshold: 1 }],
+        }, {
+            setProgress: (percent, text) => { progress.push({ percent, text }); },
+            setStatus: (text) => { statuses.push(text); },
+            yieldControl: async () => {},
+            isCancelled: () => false,
+        });
+
+        // 130 symbols x 3 legacy reports would be 390; the throttle keeps the
+        // whole load phase to a handful of reports plus the forced terminal one.
+        expect(progress.length, `load progress reports: ${JSON.stringify(progress.map((p) => p.text))}`).to.be.below(10);
+        expect(statuses.length, `load status reports: ${JSON.stringify(statuses)}`).to.be.below(10);
+        // The terminal total must still land even though the throttle window
+        // swallowed the per-symbol reports (the evaluation phase then overwrites
+        // it, so assert presence, not last position).
+        expect(progress.some((entry) => entry.text === "Loaded 130/130 symbols...")).to.equal(true);
+    });
+
     it("releases each symbol block's datasets at the block boundary while later blocks stay retained", async () => {
         const symbols = Array.from({ length: 8 }, (_, i) => `SYM${i}`);
         const datasets = new Map<string, OHLCVData[]>();

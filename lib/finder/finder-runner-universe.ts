@@ -72,12 +72,48 @@ import {
 } from "./finder-pair-neutral";
 import { computeExitAlpha } from "./finder-exit-alpha";
 
-const UNIVERSE_DATA_LOAD_CONCURRENCY = 12;
+/**
+ * Concurrency for the universe dataset load phase.
+ *
+ * Measured on the real 5000-pair 4h synthetic universe: loader THROUGHPUT is
+ * flat from 2 concurrent loads upward (~545 loads/s, ~1.8 ms of CPU per load)
+ * while per-load LATENCY grows linearly with the in-flight count — p50 3.4 ms
+ * at 2, 7.4 ms at 4, 21 ms at 12, 44 ms at 24. Raising this value therefore
+ * buys no throughput and only inflates `timings.dataLoading`, which is
+ * wall-clock time spent inside the load loop.
+ *
+ * It is worse than neutral in the real run because the multiplier applies PER
+ * WORKER: the sweep runs N strategy workers that all load the same universe.
+ * A 41-strategy / 5000-symbol run on a 28-core host resolved 26 workers and
+ * 130,000 loads (= 26 full universe passes), so this value set the in-flight
+ * depth to 26 x 12 = 312 decodes competing for 28 cores. That measured
+ * `dataLoading` at 1898% of total run time — ~87 s per worker for 5000 loads,
+ * i.e. ~17 ms of wall per load against ~1.8 ms of real work. 4 keeps an I/O
+ * pipeline for cold reads (26 x 4 = 104 in flight) without the inflation.
+ */
+const UNIVERSE_DATA_LOAD_CONCURRENCY = 4;
+/**
+ * Load-phase yield cadence. `yieldControl` is a full event-loop drain
+ * (MessageChannel round-trip in the browser, `setImmediate` in a worker); with
+ * hundreds of in-flight decodes queued it can take tens of milliseconds, and
+ * no further loads start while it runs. The count gate is left at 64 — it is
+ * the tested responsiveness contract for cache-hit-heavy loads (a 130-symbol
+ * universe must still yield a few times) — but the TIME gate only needs to keep
+ * the loop breathing, because Stop is already serviced synchronously by the
+ * per-symbol `callbacks.isCancelled()` poll. In production loads cost ~20 ms
+ * each, so the timer was the gate that actually fired: it drained the loop
+ * every 250 ms and measured 168% of total run time. Once a second is enough.
+ */
 const UNIVERSE_DATA_LOAD_YIELD_EVERY = 64;
-const UNIVERSE_DATA_LOAD_YIELD_MIN_MS = 250;
+const UNIVERSE_DATA_LOAD_YIELD_MIN_MS = 1000;
 const UNIVERSE_EVALUATION_YIELD_EVERY_RUNS = 256;
 const UNIVERSE_EVALUATION_YIELD_MIN_MS = 1000;
 const UNIVERSE_UI_UPDATE_MIN_MS = 250;
+/**
+ * Throttle window for per-symbol LOAD progress (the evaluation loop has its own
+ * `UNIVERSE_UI_UPDATE_MIN_MS` throttle). See `reportLoadProgress`.
+ */
+const UNIVERSE_LOAD_PROGRESS_MIN_MS = 250;
 // Per-bar diagnostic counters are expensive on dense state-signal strategies.
 // One representative run per block keeps the report useful without profiling
 // every bar of every candidate.
@@ -566,6 +602,30 @@ export async function runFinderUniverseExecution(
     };
     callbacks.setProgress(0, "Preparing symbol universe...");
     callbacks.setStatus("Loading universe symbols...");
+    let lastLoadProgressAt = Number.NEGATIVE_INFINITY;
+    /**
+     * Report load progress at most once per {@link UNIVERSE_LOAD_PROGRESS_MIN_MS}.
+     *
+     * The per-symbol load loop used to emit `setProgress` + `setStatus` on every
+     * symbol start AND another `setProgress` on every symbol completion. In the
+     * server Symbol Universe path each of those callbacks crosses the
+     * worker→main `postMessage` boundary (`onProgress` → `post({type:"progress"})`)
+     * and then re-enters the plugin's per-message handler, so a 5000-symbol
+     * strategy task queued ~15,000 messages and a 41-strategy run ~615,000 — on
+     * the same channel the NDJSON progress stream is throttled against. In the
+     * browser path each one rebuilt a status DOM node. Both texts are already
+     * carried by a single `setProgress` (`status` is the same string), so
+     * throttling loses no information and the redundant `setStatus` per symbol
+     * is dropped. The final `Loaded N/N` is forced so the total still lands.
+     */
+    const reportLoadProgress = (percent: number, text: string, force = false): void => {
+        const now = performance.now();
+        if (!force && now - lastLoadProgressAt < UNIVERSE_LOAD_PROGRESS_MIN_MS) {
+            return;
+        }
+        lastLoadProgressAt = now;
+        callbacks.setProgress(percent, text);
+    };
 
     let completedLoads = 0;
     const loadOutcomes = await mapWithConcurrencyLimit(
@@ -580,8 +640,7 @@ export async function runFinderUniverseExecution(
             const cachedDataset = input.getCachedDataset?.(symbol, input.interval);
             const reusedDataset = cachedDataset !== undefined;
             if (!reusedDataset) {
-                callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loading ${symbol} (${index + 1}/${normalizedSymbols.length})...`);
-                callbacks.setStatus(`Loading ${symbol} ${input.interval}...`);
+                reportLoadProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loading ${symbol} (${index + 1}/${normalizedSymbols.length})...`);
             }
 
             try {
@@ -614,7 +673,7 @@ export async function runFinderUniverseExecution(
                 return { status: "failed", symbol, result: buildLoadFailedResult(symbol, message) };
             } finally {
                 completedLoads += 1;
-                callbacks.setProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loaded ${completedLoads}/${normalizedSymbols.length} symbols...`);
+                reportLoadProgress((completedLoads / Math.max(1, normalizedSymbols.length)) * 15, `Loaded ${completedLoads}/${normalizedSymbols.length} symbols...`);
                 if (!reusedDataset) await maybeYieldDuringLoad();
             }
         }
@@ -641,6 +700,9 @@ export async function runFinderUniverseExecution(
             failedSymbols: [...loadFailures.keys()],
         };
     }
+    // Forced flush so the terminal "Loaded N/N" always lands even when the
+    // throttle window swallowed the last per-symbol report.
+    reportLoadProgress(15, `Loaded ${loadedSymbols.length}/${normalizedSymbols.length} symbols...`, true);
 
     if (loadedSymbols.length === 0) {
         // Surface per-symbol load failures so the caller (and the user via
