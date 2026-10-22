@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -11,6 +11,7 @@ import { buildReplayComparison } from "../lib/batch-backtest/open-score-replay/s
 import { FINDER_ARM_PERFORMANCE_REPLAY_FIELDS } from "../lib/finder/finder-arm-performance-metrics";
 import type { OpenScoreUsdReplayResult } from "../lib/batch-backtest/open-score-replay/types";
 import type { TopMeanRunManifest } from "../lib/batch-backtest/compact-pair-artifact";
+import { TopMeanResultReader, resultFileVersion } from "../lib/batch-backtest/sp500-top-mean-result-reader";
 
 function manifest(): TopMeanRunManifest {
     return {
@@ -43,6 +44,145 @@ function rawFixture() {
 }
 
 describe("TOP_MEAN persisted result normalization", () => {
+    it("coalesces restored reads and invalidates on manifest revision, replacement, and deletion", async () => {
+        const root = await mkdtemp(join(tmpdir(), "top-mean-result-cache-"));
+        const runManifest = manifest();
+        const path = join(getRunDir(runManifest.runId, root), "result.json");
+        let reads = 0;
+        const reader = new TopMeanResultReader(async (file) => { reads++; return readFile(file, "utf8"); });
+        try {
+            await atomicWriteJson(path, { horizons: [], reportLines: ["first"] });
+            const [first, joined] = await Promise.all([reader.load(path, runManifest), reader.load(path, runManifest)]);
+            assert.deepEqual(first, joined);
+            assert.equal(reads, 1);
+            await reader.load(path, runManifest);
+            assert.equal(reads, 1, "unchanged results skip parsing and normalization");
+            const updated = await reader.load(path, { ...runManifest, pairCount: 9, archiveComplete: true });
+            assert.equal(reads, 2);
+            assert.equal(updated.counts.pairCount, 9);
+            assert.equal(updated.archiveComplete, true);
+            const before = await stat(path);
+            await atomicWriteJson(path, { horizons: [], reportLines: ["other"] });
+            await utimes(path, before.atime, before.mtime);
+            const replaced = await reader.load(path, runManifest);
+            assert.equal(reads, 3, "same-size atomic replacement invalidates even with restored mtime");
+            assert.deepEqual(replaced.reportLines, ["other"]);
+            await rm(path);
+            await assert.rejects(reader.load(path, runManifest), { code: "ENOENT" });
+            await atomicWriteJson(path, { horizons: [], reportLines: ["retry"] });
+            assert.deepEqual((await reader.load(path, runManifest)).reportLines, ["retry"]);
+            assert.equal(reads, 4);
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
+    it("bounds cached summary bytes and entries and retries failures", async () => {
+        const root = await mkdtemp(join(tmpdir(), "top-mean-result-budget-"));
+        const runManifest = manifest();
+        let reads = 0;
+        const read = async (path: string) => { reads++; return readFile(path, "utf8"); };
+        const pathA = join(root, "a.json");
+        const pathB = join(root, "b.json");
+        try {
+            await atomicWriteJson(pathA, { horizons: [] });
+            await atomicWriteJson(pathB, { horizons: [] });
+            const reader = new TopMeanResultReader(read, 1);
+            await reader.load(pathA, runManifest);
+            await reader.load(pathB, runManifest);
+            await reader.load(pathA, runManifest);
+            assert.equal(reads, 3, "entry eviction releases the old summary");
+            const oneSummary = await reader.load(pathA, runManifest);
+            const jsonBytes = Buffer.byteLength(JSON.stringify(oneSummary));
+            const byteBounded = new TopMeanResultReader(read, 4, Math.floor(jsonBytes * 1.5));
+            const beforeBudget = reads;
+            await byteBounded.load(pathA, runManifest);
+            await byteBounded.load(pathB, runManifest);
+            await byteBounded.load(pathA, runManifest);
+            assert.equal(reads - beforeBudget, 3, "combined byte budget evicts even below the entry cap");
+            const uncached = new TopMeanResultReader(read, 4, 1);
+            const beforeUncached = reads;
+            await uncached.load(pathA, runManifest);
+            await uncached.load(pathA, runManifest);
+            assert.equal(reads - beforeUncached, 2, "oversized summaries bypass retention");
+            await atomicWriteJson(pathA, { horizons: "invalid" });
+            const beforeFailure = reads;
+            await assert.rejects(reader.load(pathA, runManifest));
+            await assert.rejects(reader.load(pathA, runManifest));
+            assert.equal(reads - beforeFailure, 2, "failed reads never remain cached or pending");
+            await atomicWriteJson(pathA, { horizons: [] });
+            assert.ok(await reader.load(pathA, runManifest));
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
+    it("prevents a slower old manifest read from evicting a newer summary", async () => {
+        const root = await mkdtemp(join(tmpdir(), "top-mean-result-order-"));
+        const path = join(root, "result.json");
+        let release!: () => void;
+        let entered!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        let reads = 0;
+        const reader = new TopMeanResultReader(async (file) => {
+            if (++reads === 1) { entered(); await blocked; }
+            return readFile(file, "utf8");
+        });
+        try {
+            await atomicWriteJson(path, { horizons: [] });
+            const old = reader.load(path, manifest());
+            await started;
+            const newerManifest = { ...manifest(), pairCount: 12 };
+            await reader.load(path, newerManifest);
+            release();
+            await old;
+            assert.equal((await reader.load(path, newerManifest)).counts.pairCount, 12);
+            assert.equal(reads, 2);
+        } finally { release(); await rm(root, { recursive: true, force: true }); }
+    });
+
+    it("validates download bytes once per exact revision without caching invalid JSON", async () => {
+        const root = await mkdtemp(join(tmpdir(), "top-mean-download-validation-"));
+        const path = join(root, "result.json");
+        const reader = new TopMeanResultReader();
+        let reads = 0;
+        const read = async () => { reads++; return readFile(path, "utf8"); };
+        try {
+            await atomicWriteJson(path, { horizons: [] });
+            const version = resultFileVersion(await stat(path, { bigint: true }));
+            await reader.validateDownload(path, version, read);
+            await reader.validateDownload(path, version, read);
+            assert.equal(reads, 1);
+            await assert.rejects(reader.validateDownload(path, "corrupted-revision", async () => "{"));
+            await assert.rejects(reader.validateDownload(path, "corrupted-revision", async () => "{"));
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
+
+    it("does not publish an older file read after a newer atomic replacement", async () => {
+        const root = await mkdtemp(join(tmpdir(), "top-mean-result-replacement-"));
+        const path = join(root, "result.json");
+        let release!: () => void;
+        let entered!: () => void;
+        const blocked = new Promise<void>((resolve) => { release = resolve; });
+        const started = new Promise<void>((resolve) => { entered = resolve; });
+        let reads = 0;
+        const reader = new TopMeanResultReader(async (file) => {
+            const ordinal = ++reads;
+            const text = await readFile(file, "utf8");
+            if (ordinal === 1) { entered(); await blocked; }
+            return text;
+        });
+        try {
+            await atomicWriteJson(path, { horizons: [], reportLines: ["old"] });
+            const runManifest = manifest();
+            const old = reader.load(path, runManifest);
+            await started;
+            await atomicWriteJson(path, { horizons: [], reportLines: ["new"] });
+            await reader.load(path, runManifest);
+            release();
+            assert.deepEqual((await old).reportLines, ["old"]);
+            assert.deepEqual((await reader.load(path, runManifest)).reportLines, ["new"]);
+            assert.equal(reads, 2, "stale completion preserves the newer cached summary");
+        } finally { release(); await rm(root, { recursive: true, force: true }); }
+    });
+
     it("drops retired arms from historical summaries, previews and wire responses", () => {
         const raw = rawFixture();
         Object.assign(raw.horizons[0]!, { topCoverage: raw.horizons[0]!.topMeanByAsset });

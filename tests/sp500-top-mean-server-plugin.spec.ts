@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { debugLogger } from "../lib/debug-logger";
 import { TOP_MEAN_RUN_MAX_BODY_BYTES } from "../lib/batch-backtest/sp500-top-mean-request-limits";
-import { Readable } from "node:stream";
+import { Readable, Writable } from "node:stream";
+import { finished } from "node:stream/promises";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -1639,27 +1640,46 @@ async function testFullResultDownloadRoute(): Promise<void> {
         maxBodyBytes: 1024, rememberLocalApiOriginFromRequest: () => undefined,
         ownerLocks: { isBusy: () => false, acquire: () => ({ runOwner: 1, analysisOwner: 1 }), releaseIfStillOwner: () => undefined },
     });
-    const get = async (id: string, remoteAddress = "127.0.0.1") => {
+    const get = async (id: string, remoteAddress = "127.0.0.1", disconnect = false) => {
         const req: any = Readable.from([]);
         req.method = "GET";
         req.url = `/api/batch-backtest/sp500-top-mean/result?runId=${encodeURIComponent(id)}`;
         req.headers = { host: "127.0.0.1:5173" };
         req.socket = { remoteAddress };
-        const res: any = { statusCode: 0, body: "", headers: {} as Record<string, string>,
-            setHeader(name: string, value: string) { this.headers[name] = value; },
-            end(body: string) { this.body = body; },
-        };
+        class Capture extends Writable {
+            statusCode = 0;
+            body = "";
+            chunks = 0;
+            headers: Record<string, string> = {};
+            headersSent = false;
+            setHeader(name: string, value: string) { this.headers[name] = value; }
+            _write(chunk: Buffer, _encoding: BufferEncoding, callback: (error?: Error | null) => void) {
+                this.headersSent = true;
+                this.body += chunk.toString();
+                this.chunks++;
+                if (disconnect) this.destroy();
+                setImmediate(callback);
+            }
+        }
+        const res = new Capture({ highWaterMark: 1024 });
+        const settled = finished(res).catch((error) => { if (!disconnect) throw error; });
         await routes.get("/api/batch-backtest/sp500-top-mean/result")!(req, res);
+        await settled;
         return res;
     };
     try {
         mkdirSync(runDir, { recursive: true });
-        writeFileSync(resultPath, JSON.stringify(full));
+        const originalText = JSON.stringify(full, null, 2) + "\n";
+        writeFileSync(resultPath, originalText);
         const response = await get(runId);
         assert.equal(response.statusCode, 200);
         assert.deepEqual(JSON.parse(response.body), full, "download must retain uncapped and archive-only rows");
+        assert.equal(response.body, originalText, "stream original disk bytes without reserializing");
+        assert.ok(response.chunks > 1, "the full result must cross multiple bounded writes");
         assert.equal(response.headers["Content-Disposition"], `attachment; filename="sp500_top_mean_${runId}.json"`);
         assert.equal(response.headers["Cache-Control"], "no-store");
+        const disconnected = await get(runId, "127.0.0.1", true);
+        assert.equal(disconnected.chunks, 1, "disconnect stops the file stream");
         for (const [id, remote, status] of [["../escape", "127.0.0.1", 400], [runId, "198.51.100.1", 401]] as const) {
             const rejected = await get(id, remote);
             assert.equal(rejected.statusCode, status);

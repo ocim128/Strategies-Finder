@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
@@ -58,6 +58,28 @@ async function fixture(deps: TopMeanCoordinatorEngineDeps = {}, replayMode: "hor
 }
 
 describe("TOP_MEAN coordinator persistence boundaries", () => {
+    it("services Stop during asynchronous expiry cleanup before starting evaluation", async () => {
+        const run = await fixture();
+        const expired = Array.from({ length: 10 }, (_, i) => join(getRunDir(`expired_${i}`, run.root)));
+        const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+        try {
+            for (const directory of expired) {
+                await mkdir(directory, { recursive: true });
+                await writeFile(join(directory, "stale.json"), "{}");
+                await utimes(directory, old, old);
+            }
+            const events: any[] = [];
+            const stop = setImmediate(() => run.engine.stop());
+            try { await run.engine.run((event) => events.push(event)); }
+            finally { clearImmediate(stop); }
+            assert.equal(events.some((event) => event.type === "preflight"), false);
+            assert.equal(events.at(-1)?.type, "done");
+            assert.equal(events.at(-1)?.interrupted, true);
+            for (const directory of expired) await assert.rejects(access(directory), { code: "ENOENT" });
+            assert.ok(loadManifest(run.request.runId, run.root), "unexpired resume data survives cleanup");
+        } finally { await rm(run.root, { recursive: true, force: true }); }
+    });
+
     for (const mode of ["horizon", "asset_switch"] as const) {
         it(`enables all seventeen arms in Batch ${mode}, including annual and restored zero-event sections`, async () => {
             const run = await fixture({}, mode);

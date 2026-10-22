@@ -17,7 +17,7 @@ import type { BatchSyntheticPairArtifact } from "./batch-synthetic-artifact";
 import type { CompactPairArtifact } from "./compact-pair-artifact";
 import {
     atomicWriteJson,
-    cleanOldArtifacts,
+    cleanOldArtifactsAsync,
     computeRunFingerprint,
     getRunDir,
     iterateRunRawCompactArtifacts,
@@ -973,7 +973,6 @@ export class TopMeanCoordinatorEngine {
             ? resolveTopMeanArchiveLogDir(this.baseDir ?? process.cwd())
             : null;
         reconcileInterruptedManifestsOnStartup(this.baseDir);
-        cleanOldArtifacts(this.baseDir);
         let phase0bWriter: TopMeanPhase0bArchiveWriter | null = null;
         let phase0bFiles: TopMeanPhase0bArchiveWriter["files"] | undefined;
         let assetSwitchTradeWriter: TopMeanAssetSwitchTradeWriter | null = null;
@@ -983,6 +982,11 @@ export class TopMeanCoordinatorEngine {
         let phase0bWriterError: string | undefined;
 
         try {
+            await cleanOldArtifactsAsync(this.baseDir);
+            if (this.isStopped) {
+                this.emitInterrupted(emitNdjson);
+                return;
+            }
             // 1. Enumeration & Preflight
             this.currentPhase = "preflight";
             this.progressText = "Preparing TOP_MEAN markets...";

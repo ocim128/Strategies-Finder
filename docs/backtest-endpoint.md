@@ -357,6 +357,19 @@ Notes:
 
 ## Workload Budgets
 
+Batch and random-search requests yield to the Node event loop after roughly
+20 ms of work between candidates. A premature response close cancels remaining
+request-owned evaluations and forwards cancellation to the shared executor,
+including its Rust transport. One synchronous TypeScript simulation must finish
+before cancellation can be observed. The evaluation timestamp, seed, ranking
+and successful response shapes stay fixed across yields. These requests are
+not durable jobs; Finder and Batch UI jobs retain their separate reload policy.
+
+Random search retains only the best `ranking.topN` eligible results, even when
+full trade/equity output is requested. Trade-count filters apply before retention;
+ranking ties preserve generated-candidate order. Evaluated/failed counts still
+cover every candidate, with at most five failure samples.
+
 To keep the server's worst-case CPU, response size, and memory predictable, the endpoint rejects oversized external inputs with `400` instead of silently clamping them.
 
 | Field | Cap | Notes |
@@ -379,6 +392,7 @@ Current behavior from the implementation:
 - cache is in memory only
 - refs disappear on server restart
 - entries expire after about 30 minutes
+- re-uploading an expired dataset creates a fresh usable entry; unexpired duplicate uploads preserve their original expiry and refresh LRU recency
 - cache is capped by a byte budget (default 384 MB) and an entry ceiling of 200; least-recently-used entries are evicted first
 - a single dataset larger than the whole byte budget is rejected with `413 DATASET_TOO_LARGE`
 - request body limit is 100 MB

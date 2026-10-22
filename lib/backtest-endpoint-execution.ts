@@ -20,6 +20,7 @@ export function buildBacktestEndpointExecutorRequest(
     engineMode: EngineMode,
     nowSec: number,
     blockRange: { from: number; to: number } | null,
+    signal?: AbortSignal,
 ): BacktestExecutorRequest {
     return {
         ohlcvData: candles,
@@ -27,12 +28,13 @@ export function buildBacktestEndpointExecutorRequest(
         primarySymbol: String(backtestSettings.symbol ?? ""),
         strategyKey,
         strategyParams,
-backtestSettings: stripEndpointIgnoredBacktestSettings(backtestSettings),
+        backtestSettings: stripEndpointIgnoredBacktestSettings(backtestSettings),
         capitalSettings: { ...BACKTEST_ENDPOINT_CAPITAL_SETTINGS },
         context: {
             nowSec,
             blockRange: cloneBlockRange(blockRange),
             engineMode,
+            ...(signal ? { signal } : {}),
         },
     };
 }

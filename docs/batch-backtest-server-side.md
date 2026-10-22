@@ -394,10 +394,11 @@ TOP_MEAN run directories (`artifacts/sp500-top-mean/<runId>/shards/`) follow a
 separate, longer retention: they are reclaimed 24 hours after their last write
 (`DEFAULT_RETENTION_MS` in `sp500-top-mean-artifact-store.ts`), since OPEN_SCORE
 USD Replay may revisit a completed run much later than a Mine would. The sweep
-runs at two points: when a new TOP_MEAN run starts
-(`cleanOldArtifacts`, synchronous) and when the dev or preview server boots
-(`cleanOldArtifactsAsync`, offloaded to `fs/promises` so a multi-GB
-reclamation never blocks the Vite event loop). A machine that has not started
+runs at two points: when a new TOP_MEAN run starts and when the dev or preview
+server boots. Both use `cleanOldArtifactsAsync`, offloaded to `fs/promises` so
+a multi-GB reclamation never blocks the Vite event loop. Run startup awaits
+cleanup while retaining ownership, then checks Stop before evaluation.
+A machine that has not started
 the dev server keeps past-run artifacts on disk until the next boot.
 
 ## Copy summary parity
@@ -994,6 +995,23 @@ therefore download the same full server result. A missing server file (404),
 or an older summary without a run id, falls back to a `_summary.json` export
 with an explicit notice that details may be omitted. Other server errors are
 shown as download failures, rather than silently exporting partial data.
+
+The server streams the original result-file bytes with backpressure and closes
+the file on disconnect. To preserve the existing malformed-file HTTP 500,
+each file revision is JSON-validated before its first download; a cold download
+still allocates validation text and a temporary parsed graph. A bounded
+128-entry validation inventory avoids repeating this work on later downloads.
+No download is reserialized. File identity includes device/inode, size, mtime
+and ctime at nanosecond precision, and an open handle pins the downloaded file
+across atomic replacements.
+
+Restored status reads retain at most four wire-safe summaries, with a combined
+16 MiB serialized-JSON budget (parsed heap overhead is additional). Cache keys
+include the file revision and manifest fields used by normalization. Concurrent
+same-version reads join one production; replacement, deletion and manifest
+changes invalidate hits. Failed reads and oversized summaries are not retained,
+and a stale completion cannot evict a newer cached summary. Live coordinator
+status and the full raw result on disk keep their existing contracts.
 
 ### Durable TOP_MEAN Diagnostic Log
 

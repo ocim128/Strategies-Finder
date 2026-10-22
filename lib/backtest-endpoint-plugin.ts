@@ -39,6 +39,8 @@ import { readJsonBody, registerLocalJsonRoute, sendCaughtErrorJson, sendJson } f
 import type { OHLCVData, BacktestResult, StrategyParams } from "./types/strategies";
 import { strategies as builtInStrategies } from "./strategies/library";
 import { parseTimeToUnixSeconds } from "./time-normalization";
+import { createRequestExecution, type RequestExecution } from "./server-request-execution";
+import { BoundedTopResults } from "./bounded-top-results";
 
 // ============================================================================
 // Dataset cache
@@ -129,6 +131,7 @@ function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | D
     }
 
     // If already cached with same ref, refresh and return.
+    evictExpiredDatasets();
     const existing = datasetCache.get(ref);
     if (existing) {
         if (existing.hash === hash) {
@@ -143,7 +146,6 @@ function cacheDataset(candles: OHLCVData[], keyHint?: string): CachedDataset | D
     }
 
     // Evict expired and LRU entries until the new dataset fits both budgets.
-    evictExpiredDatasets();
     while (
         (datasetCacheTotalBytes + bytes > maxBytes
             || datasetCache.size + 1 > DATASET_CACHE_MAX_ENTRIES)
@@ -371,7 +373,8 @@ function steppedRandom(min: number, max: number, step: number, rng: () => number
 async function handleSingleBacktest(
     strategyKey: string,
     body: Record<string, unknown>,
-    httpRequest?: import("http").IncomingMessage
+    httpRequest?: import("http").IncomingMessage,
+    signal?: AbortSignal,
 ): Promise<BacktestSingleResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestSingleRequest;
 
@@ -453,6 +456,7 @@ async function handleSingleBacktest(
             engineMode,
             nowSec,
             blockRange,
+            signal,
         ));
 
         // If the strategy is entry-only, we may need to use the parity-specific path
@@ -474,6 +478,7 @@ async function handleSingleBacktest(
             timingMs: Date.now() - startTs,
         };
     } catch (err) {
+        signal?.throwIfAborted();
         return {
             ok: false,
             error: err instanceof Error ? err.message : String(err),
@@ -484,7 +489,8 @@ async function handleSingleBacktest(
 
 async function handleBatchBacktest(
     strategyKey: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    execution: RequestExecution,
 ): Promise<BacktestBatchResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestBatchRequest;
 
@@ -518,6 +524,7 @@ async function handleBatchBacktest(
     const results: BacktestBatchItemResult[] = [];
 
     for (const item of req.items) {
+        await execution.checkpoint();
         try {
             const itemStart = Date.now();
 
@@ -536,6 +543,7 @@ async function handleBatchBacktest(
                 itemCtx.engineMode as EngineMode ?? engineMode,
                 itemCtx.nowSec ?? nowSec,
                 itemCtx.blockRange ?? blockRange,
+                execution.signal,
             ));
 
             results.push({
@@ -547,6 +555,7 @@ async function handleBatchBacktest(
                 timingMs: Date.now() - itemStart,
             });
         } catch (err) {
+            execution.signal.throwIfAborted();
             results.push({
                 id: item.id,
                 ok: false,
@@ -577,7 +586,8 @@ async function handleBatchBacktest(
 
 async function handleRandomSearch(
     strategyKey: string,
-    body: Record<string, unknown>
+    body: Record<string, unknown>,
+    execution: RequestExecution,
 ): Promise<BacktestRandomSearchResponse | BacktestErrorResponse> {
     const req = body as unknown as BacktestRandomSearchRequest;
 
@@ -660,23 +670,33 @@ async function handleRandomSearch(
     const compact = req.compact ?? false;
     const startTs = Date.now();
 
-    // Execute all runs.
-    //
-    // Audit Finding (compact retention): when `compact: true`, retain only the
-    // params and scalar metrics — never the full BacktestResult (which carries
-    // trades and equity). The previous path retained every full result and
-    // discarded them only at response time, so a 1,000-run search held 1,000
-    // full result objects in memory despite needing only scalars for ranking.
-    // The non-compact path is unchanged.
-    const allResults: Array<{
+    // Keep only eligible winners, including full results when requested.
+    // The generated index preserves the original stable tie order.
+    const priority = ranking.sortPriority?.length
+        ? ranking.sortPriority
+        : ["netProfitPercent"] as typeof ranking.sortPriority;
+    const topN = ranking.topN;
+    const minTrades = ranking.minTrades ?? 0;
+    const maxTrades = ranking.maxTrades ?? Infinity;
+    const winners = new BoundedTopResults<{
         index: number;
         params: StrategyParams;
         metrics: CompactBacktestMetrics;
         result?: BacktestResult;
-    }> = [];
+    }>(topN, (a, b) => {
+        for (const key of priority) {
+            const va = a.metrics[key] ?? 0;
+            const vb = b.metrics[key] ?? 0;
+            if (vb !== va) return vb - va;
+        }
+        return a.index - b.index;
+    });
+    let evaluated = 0;
+    let failed = 0;
     const failures: Array<{ index: number; error: string }> = [];
 
     for (let index = 0; index < paramsList.length; index += 1) {
+        await execution.checkpoint();
         const params = paramsList[index];
         try {
             const executorResult = await executeBacktest(buildBacktestEndpointExecutorRequest(
@@ -688,49 +708,29 @@ async function handleRandomSearch(
                 engineMode,
                 nowSec,
                 blockRange,
+                execution.signal,
             ));
 
-            allResults.push({
+            evaluated++;
+            const metrics = toCompactMetrics(executorResult.result);
+            if (metrics.totalTrades < minTrades || metrics.totalTrades > maxTrades) continue;
+            winners.offer({
                 index,
                 params,
-                metrics: toCompactMetrics(executorResult.result),
+                metrics,
                 ...(compact ? {} : { result: executorResult.result }),
             });
         } catch (error) {
-            failures.push({
+            execution.signal.throwIfAborted();
+            failed++;
+            if (failures.length < 5) failures.push({
                 index,
                 error: error instanceof Error ? error.message : String(error),
             });
         }
     }
 
-    // Filter by min/max trades
-    const minTrades = ranking.minTrades ?? 0;
-    const maxTrades = ranking.maxTrades ?? Infinity;
-    const filtered = allResults.filter(r =>
-        r.metrics.totalTrades >= minTrades && r.metrics.totalTrades <= maxTrades
-    );
-
-    // Sort
-    const priority = ranking.sortPriority?.length
-        ? ranking.sortPriority
-        : ["netProfitPercent"] as typeof ranking.sortPriority;
-
-    // Stable tiebreak by the original generated index keeps ranking
-    // deterministic across engines/runtimes that do not guarantee a stable
-    // Array.prototype.sort for equal keys.
-    filtered.sort((a, b) => {
-        for (const key of priority) {
-            const va = (a.metrics as any)[key] ?? 0;
-            const vb = (b.metrics as any)[key] ?? 0;
-            if (vb !== va) return vb - va; // descending
-        }
-        return a.index - b.index;
-    });
-
-    // Take top N
-    const topN = ranking.topN ?? 100;
-    const top = filtered.slice(0, topN);
+    const top = winners.toSortedArray();
 
     const datasetRef = typeof (req.dataset as { ref?: string })?.ref === "string"
         ? (req.dataset as { ref: string }).ref
@@ -741,8 +741,8 @@ async function handleRandomSearch(
         strategyKey,
         datasetRef,
         processed: paramsList.length,
-        evaluated: allResults.length,
-        failed: failures.length,
+        evaluated,
+        failed,
         returned: top.length,
         topN,
         results: top.map((r, i) => ({
@@ -799,6 +799,7 @@ export function backtestEndpointPlugin(): Plugin {
             readBody: false,
             unauthorizedMessage: "Unauthorized: backtest routes are local-only.",
             onAuthorized: async ({ req, res }) => {
+                const execution = createRequestExecution(req, res);
                 const method = req.method || "GET";
                 const requestUrl = new URL(req.url || "/", "http://localhost");
                 const pathParts = requestUrl.pathname.split("/").filter(Boolean);
@@ -860,7 +861,8 @@ export function backtestEndpointPlugin(): Plugin {
                         // internal second-market /api/* fetches done during execution
                         // target this Vite server and never a caller-controlled origin.
                         rememberLoopbackOriginFromRequest(req);
-                        const result = await handleSingleBacktest(strategyKey, body, req as IncomingMessage);
+                        const result = await handleSingleBacktest(strategyKey, body, req as IncomingMessage, execution.signal);
+                        execution.signal.throwIfAborted();
                         const status = result.ok ? 200 : (result as BacktestErrorResponse).code === "EXECUTION_ERROR" ? 500 : 400;
                         sendJson(res, status, result);
                         return;
@@ -871,7 +873,8 @@ export function backtestEndpointPlugin(): Plugin {
                         const strategyKey = pathParts[0];
                         const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
                         rememberLoopbackOriginFromRequest(req);
-                        const result = await handleBatchBacktest(strategyKey, body);
+                        const result = await handleBatchBacktest(strategyKey, body, execution);
+                        execution.signal.throwIfAborted();
                         const status = result.ok ? 200 : 400;
                         sendJson(res, status, result);
                         return;
@@ -882,7 +885,8 @@ export function backtestEndpointPlugin(): Plugin {
                         const strategyKey = pathParts[0];
                         const body = await readJsonBody(req as IncomingMessage, BACKTEST_MAX_BODY_BYTES);
                         rememberLoopbackOriginFromRequest(req);
-                        const result = await handleRandomSearch(strategyKey, body);
+                        const result = await handleRandomSearch(strategyKey, body, execution);
+                        execution.signal.throwIfAborted();
                         const status = result.ok ? 200 : 400;
                         sendJson(res, status, result);
                         return;
@@ -890,9 +894,12 @@ export function backtestEndpointPlugin(): Plugin {
 
                     sendJson(res, 404, { ok: false, error: "Not found" });
                 } catch (err) {
+                    if (execution.signal.aborted) return;
                     // sendCaughtErrorJson maps HttpStatusError (400/413/415 from the
                     // shared readJsonBody) to its own status and everything else to 500.
                     sendCaughtErrorJson(res, err);
+                } finally {
+                    execution.dispose();
                 }
             },
         });

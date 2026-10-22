@@ -25,7 +25,9 @@
  */
 
 import { join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
+import type { ServerResponse } from "node:http";
+import { pipeline } from "node:stream/promises";
 import {
     createDisconnectSafeStream,
     HttpStatusError,
@@ -38,16 +40,18 @@ import { strategies } from "../strategies/library";
 import {
     TopMeanCoordinatorEngine,
     getActiveTopMeanCoordinatorEngine,
-    toWireSafeTopMeanResultSummary,
     type TopMeanCoordinatorRunRequest,
     type TopMeanResultSummary,
     type TopMeanStatusResponse,
 } from "./sp500-top-mean-coordinator-engine";
 import { getRunDir, isValidRunId, loadManifest, saveManifest } from "./sp500-top-mean-artifact-store";
-import { normalizePersistedTopMeanResult } from "./sp500-top-mean-persisted-result";
+import { TopMeanResultReader, StoredTopMeanResultError, readWireTopMeanResult, resultFileVersion } from "./sp500-top-mean-result-reader";
+import { createRequestExecution } from "../server-request-execution";
 import { parseOptionalReplayDateWindow } from "./top-mean-date-window";
 import { debugLogger } from "../debug-logger";
 import { TOP_MEAN_RUN_MAX_BODY_BYTES, validateTopMeanRequestLimits } from "./sp500-top-mean-request-limits";
+
+const resultReader = new TopMeanResultReader();
 
 /**
  * Adapter over the Batch plugin's owner-lock counters. The TOP_MEAN run handler
@@ -154,15 +158,15 @@ export function registerSp500TopMeanRoutes(
     registerLocalJsonRoute(middlewares, "/api/batch-backtest/sp500-top-mean/result", {
         methods: ["GET"],
         unauthorizedMessage,
-        onAuthorized: async ({ res, url }) => {
+        onAuthorized: async ({ req, res, url }) => {
             const runIdParam = url.searchParams.get("runId");
             if (!runIdParam || !runIdParam.trim()) {
                 sendJson(res, 400, { ok: false, error: "Missing required runId parameter" });
                 return;
             }
-            const result = await handleSp500TopMeanResultRequest(runIdParam.trim());
-            res.setHeader("Content-Disposition", `attachment; filename="sp500_top_mean_${runIdParam.trim()}.json"`);
-            sendJson(res, 200, result);
+            const execution = createRequestExecution(req, res);
+            try { await streamSp500TopMeanResult(runIdParam.trim(), res, execution.signal); }
+            finally { execution.dispose(); }
         },
     });
 }
@@ -305,7 +309,7 @@ export async function handleSp500TopMeanStopRequest(runId?: unknown, ownerLocks?
 export async function handleSp500TopMeanStatusRequest(
     runId?: string,
     baseDir?: string,
-    readResultFile: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
+    readResultFile?: (path: string) => Promise<string>,
 ): Promise<TopMeanStatusResponse | { ok: false; error: string }> {
     const activeEngine = getActiveTopMeanCoordinatorEngine();
     if (activeEngine && (!runId || activeEngine.request.runId === runId)) {
@@ -349,13 +353,11 @@ export async function handleSp500TopMeanStatusRequest(
             let failureKind: "io_error" | "invalid_json" | "invalid_shape" | "missing" = "io_error";
             const resultPath = join(getRunDir(runId, baseDir), "result.json");
             try {
-                const txt = await readResultFile(resultPath);
-                failureKind = "invalid_json";
-                const parsed: unknown = JSON.parse(txt);
-                failureKind = "invalid_shape";
-                result = normalizePersistedTopMeanResult(parsed, manifest);
-                if (!result) throw new Error("Stored result has an invalid shape.");
+                result = readResultFile
+                    ? await readWireTopMeanResult(resultPath, manifest, readResultFile)
+                    : await resultReader.load(resultPath, manifest);
             } catch (err: unknown) {
+                if (err instanceof StoredTopMeanResultError) failureKind = err.failureKind;
                 const code = (err as { code?: string })?.code;
                 if (code !== "ENOENT" || manifest.status === "completed") {
                     if (code === "ENOENT") failureKind = "missing";
@@ -394,14 +396,14 @@ export async function handleSp500TopMeanStatusRequest(
                 error: manifest.error,
                 resultError,
                 // Normalize persisted replay fields before applying the live wire cap.
-                result: result ? toWireSafeTopMeanResultSummary(result) : undefined,
+                result: result ?? undefined,
             };
         }
     }
     return { ok: false, error: "Run not found" };
 }
 
-async function handleSp500TopMeanResultRequest(runId: string): Promise<unknown> {
+async function streamSp500TopMeanResult(runId: string, response: ViteHttpResponse, signal: AbortSignal): Promise<void> {
     if (!runId || typeof runId !== "string") {
         throw new HttpStatusError(400, "Missing runId parameter.");
     }
@@ -411,9 +413,9 @@ async function handleSp500TopMeanResultRequest(runId: string): Promise<unknown> 
         throw new HttpStatusError(400, "Invalid runId.");
     }
     const resultPath = join(getRunDir(runId), "result.json");
-    let txt: string;
+    let file;
     try {
-        txt = await readFile(resultPath, "utf8");
+        file = await open(resultPath, "r");
     } catch (err: unknown) {
         // TOCTOU-safe: distinguish "missing" (404) from "I/O error" (500).
         if ((err as { code?: string })?.code === "ENOENT") {
@@ -421,9 +423,23 @@ async function handleSp500TopMeanResultRequest(runId: string): Promise<unknown> 
         }
         throw new HttpStatusError(500, "Failed to read result file.");
     }
+    const res = response as ServerResponse;
     try {
-        return JSON.parse(txt);
-    } catch {
+        const version = resultFileVersion(await file.stat({ bigint: true }));
+        await resultReader.validateDownload(resultPath, version, () => file.readFile("utf8"));
+        signal.throwIfAborted();
+        res.statusCode = 200;
+        res.setHeader("Content-Type", "application/json");
+        res.setHeader("Cache-Control", "no-store");
+        res.setHeader("Content-Disposition", `attachment; filename="sp500_top_mean_${runId}.json"`);
+        await pipeline(file.createReadStream({ start: 0, autoClose: false }), res, { signal });
+    } catch (error) {
+        if (signal.aborted) return;
+        if (res.headersSent || res.destroyed) {
+            debugLogger.warn("sp500_top_mean.result_download_failed", { runId, error: String(error) });
+            res.destroy();
+            return;
+        }
         throw new HttpStatusError(500, "Failed to read result file.");
-    }
+    } finally { await file.close(); }
 }

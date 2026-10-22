@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { Readable } from "node:stream";
+import { EventEmitter } from "node:events";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { backtestEndpointPlugin } from "../lib/backtest-endpoint-plugin";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
@@ -137,6 +138,117 @@ function buildSinglePayload(
 }
 
 describe("backtest endpoint plugin", () => {
+    it("returns a usable reference after an expired identical upload and allows expired keyHint replacement", async () => {
+        const handler = createHandler();
+        const originalNow = Date.now;
+        let now = originalNow();
+        Date.now = () => now;
+        try {
+            const candles = buildCandles();
+            for (const keyHint of [undefined, "expired_upload"]) {
+                const first = await invoke(handler, "/datasets", "POST", { candles, keyHint });
+                now += 30 * 60 * 1000 + 1;
+                const second = await invoke(handler, "/datasets", "POST", { candles, keyHint });
+                assert.equal(first.statusCode, 200);
+                assert.equal(second.statusCode, 200);
+                assert.equal(first.json.datasetRef, second.json.datasetRef);
+                const used = await invoke(handler, `/${defaultStrategyKey}`, "POST",
+                    buildSinglePayload({ ref: second.json.datasetRef }));
+                assert.equal(used.statusCode, 200);
+            }
+            now += 30 * 60 * 1000 + 1;
+            const changed = buildCandles();
+            changed[0]!.close += 1;
+            assert.equal((await invoke(handler, "/datasets", "POST", { candles: changed, keyHint: "expired_upload" })).statusCode, 200);
+        } finally { Date.now = originalNow; }
+    });
+
+    it("keeps seeded full-result winners identical to full-sort ranking, including ties and trade filters", async () => {
+        const handler = createHandler();
+        const candles = buildCandles();
+        const payload = {
+            ...buildSinglePayload({ candles }), baseParams: randomizableStrategyParams,
+            randomization: { count: 35, rangePercent: 20, seed: 317 },
+            ranking: { topN: 35, sortPriority: ["netProfitPercent", "totalTrades"] },
+        };
+        const all = await invoke(handler, `/${randomizableStrategyKey}/search/random`, "POST", payload);
+        assert.equal(all.statusCode, 200);
+        assert.equal(all.json.evaluated, 35);
+        for (const tradeRange of [{ minTrades: 0 }, { minTrades: 1, maxTrades: 4 }]) {
+            const small = await invoke(handler, `/${randomizableStrategyKey}/search/random`, "POST", {
+                ...payload, ranking: { ...payload.ranking, topN: 3, ...tradeRange },
+            });
+            const expected = all.json.results.filter((row: any) => row.metrics.totalTrades >= tradeRange.minTrades
+                && row.metrics.totalTrades <= ("maxTrades" in tradeRange ? tradeRange.maxTrades! : Infinity))
+                .slice(0, 3).map((row: any, index: number) => ({ ...row, rank: index + 1 }));
+            assert.deepEqual(small.json.results, expected);
+            assert.equal(small.json.evaluated, 35);
+            assert.equal(small.json.failed, 0);
+        }
+        const tied = { ...payload, randomization: { ...payload.randomization, rangePercent: 0 } };
+        const fullTies = await invoke(handler, `/${randomizableStrategyKey}/search/random`, "POST", tied);
+        const topTies = await invoke(handler, `/${randomizableStrategyKey}/search/random`, "POST", {
+            ...tied, ranking: { ...tied.ranking, topN: 3 },
+        });
+        assert.deepEqual(topTies.json.results, fullTies.json.results.slice(0, 3));
+    });
+
+    it("services timers while a warmed TypeScript search is running", async () => {
+        const handler = createHandler();
+        let timerFired = false;
+        const timer = setTimeout(() => { timerFired = true; }, 0);
+        try {
+            const response = await invoke(handler, `/${defaultStrategyKey}/search/random`, "POST", {
+                ...buildSinglePayload({ candles: buildCandles() }), baseParams: defaultStrategyParams,
+                randomization: { count: 1000, rangePercent: 0, seed: 1 },
+                ranking: { topN: 1, sortPriority: ["netProfitPercent"] }, compact: true,
+            });
+            assert.equal(response.statusCode, 200);
+            assert.equal(response.json.processed, 1000);
+            assert.equal(timerFired, true);
+        } finally { clearTimeout(timer); }
+    });
+
+    it("reports all failed candidates while retaining only five failure samples", async () => {
+        const response = await invoke(createHandler(), "/missing_strategy/search/random", "POST", {
+            ...buildSinglePayload({ candles: buildCandles() }), baseParams: defaultStrategyParams,
+            randomization: { count: 12, rangePercent: 0, seed: 1 },
+            ranking: { topN: 1, sortPriority: ["netProfitPercent"] },
+        });
+        assert.equal(response.statusCode, 200);
+        assert.equal(response.json.evaluated, 0);
+        assert.equal(response.json.failed, 12);
+        assert.equal(response.json.failureSamples.length, 5);
+        assert.deepEqual(response.json.results, []);
+    });
+
+    for (const mode of ["batch", "search/random"]) {
+        it(`abandons ${mode} on a disconnected response and removes lifecycle listeners`, async () => {
+            const handler = createHandler();
+            const body = {
+                ...buildSinglePayload({ candles: buildCandles() }), baseParams: defaultStrategyParams,
+                items: Array.from({ length: 1000 }, (_, id) => ({ id: String(id), strategyParams: defaultStrategyParams })),
+                randomization: { count: 1000, rangePercent: 0, seed: 1 },
+                ranking: { topN: 1, sortPriority: ["netProfitPercent"] }, compact: true,
+            };
+            const req = makeRequest(`/${defaultStrategyKey}/${mode}`, "POST", body);
+            let ended = false;
+            const res = Object.assign(new EventEmitter(), {
+                statusCode: 200, writableEnded: false, destroyed: false,
+                setHeader() {}, end() { ended = true; },
+            });
+            const timer = setTimeout(() => { res.destroyed = true; res.emit("close"); }, 0);
+            try {
+                await handler(req, res);
+                assert.equal(res.destroyed, true, "the disconnect must be serviced before the response");
+                assert.equal(ended, false, "do not write to an abandoned response");
+                assert.equal(res.listenerCount("close"), 0);
+                assert.equal(res.listenerCount("error"), 0);
+                assert.equal((req as Readable).listenerCount("aborted"), 0);
+            } finally { clearTimeout(timer); }
+        });
+    }
+
     it("serves health from mounted middleware paths", async () => {
         const handler = createHandler();
         const response = await invoke(handler, "/health", "GET");

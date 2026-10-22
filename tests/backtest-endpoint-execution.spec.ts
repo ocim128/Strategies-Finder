@@ -2,7 +2,7 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import { BACKTEST_ENDPOINT_CAPITAL_SETTINGS } from "../lib/backtest-endpoint-contract";
 import { computeBacktestEndpointDatasetFingerprint, type UiBacktestEndpointSnapshot } from "../lib/backtest-endpoint-copy";
-import { buildBacktestEndpointExecutorRequestFromSnapshot } from "../lib/backtest-endpoint-execution";
+import { buildBacktestEndpointExecutorRequest, buildBacktestEndpointExecutorRequestFromSnapshot } from "../lib/backtest-endpoint-execution";
 import type { OHLCVData, Time } from "../lib/types/strategies";
 import { strategyManifest } from "../lib/strategies/manifest-eager";
 
@@ -44,6 +44,14 @@ function buildSnapshot(): UiBacktestEndpointSnapshot {
 }
 
 describe("backtest endpoint execution helpers", () => {
+    it("forwards the request-owned cancellation signal to the shared executor", () => {
+        const controller = new AbortController();
+        const request = buildBacktestEndpointExecutorRequest(defaultStrategyKey, buildCandles(), "5m",
+            defaultStrategyParams, {}, "typescript", 1775400000, null, controller.signal);
+        assert.strictEqual(request.context.signal, controller.signal);
+        controller.abort();
+        assert.equal(request.context.signal.aborted, true);
+    });
     it("builds the exact shared executor request shape for endpoint preview runs", () => {
         const candles = buildCandles();
         const snapshot = buildSnapshot();
