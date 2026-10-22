@@ -865,7 +865,9 @@ infer server ownership for another Finder mode from the shared result types.
   (`runOwnedServerRunStatusPoll`): it fetches and parses the scoped status
   snapshot, waits abort-aware between requests (Stop / a new run unblock a
   pending sleep or backoff immediately), and returns an outcome
-  (terminal / not_found / rejected / cancelled / connection_lost). Retry
+  (terminal / not_found / rejected / cancelled / connection_lost). Loops
+  cancelled before startup return `cancelled` without issuing a status
+  request, including when the owner's signal was already aborted. Retry
   cadence preserves each caller's pre-consolidation policy: recovery's first
   request is immediate and a retry follows the failure backoff (2s→15s)
   directly; adopted reattach waits the polling interval before each request,
@@ -885,8 +887,10 @@ infer server ownership for another Finder mode from the shared result types.
 - The shared browser reader (`lib/ndjson-stream.ts`) dispatches the final JSON
   record at clean EOF even without a trailing newline, including Finder's
   configured terminal event types. Malformed final records fail with their
-  line number; EOF without the required terminal event remains an interrupted
-  stream. See `tests/ndjson-stream.spec.ts`.
+  line number. Each record must be a JSON object with a string `type`; invalid
+  event shapes fail before observers or handlers run, while unknown string
+  event types remain accepted. EOF without the required terminal event remains
+  an interrupted stream. See `tests/ndjson-stream.spec.ts`.
 
 ## Memory
 

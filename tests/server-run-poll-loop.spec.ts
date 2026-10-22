@@ -90,6 +90,36 @@ function startLoop(options: StartOptions): LoopHarness {
 }
 
 describe("server-run-poll-loop", () => {
+    for (const requestTimeoutMs of [undefined, 25]) {
+        it(`does not fetch when the owner was already aborted (timeout=${requestTimeoutMs})`, async () => {
+            const owner = new AbortController();
+            owner.abort();
+            let calls = 0;
+            const { outcome, failures, progress } = startLoop({
+                signal: owner.signal,
+                requestTimeoutMs,
+                fetchStatus: async () => { calls += 1; return snap(-1); },
+            });
+            expect(await outcome).to.deep.equal({ kind: "cancelled" });
+            expect(calls).to.equal(0);
+            expect(failures).to.deep.equal([]);
+            expect(progress).to.deep.equal([]);
+        });
+    }
+
+    it("does not fetch when explicitly aborted before run starts", async () => {
+        let calls = 0;
+        const loop = new ServerRunPollLoop<Snap>({
+            isOwned: () => true,
+            isTerminal: terminalAtMinusOne,
+            nextRequestDelayMs: () => 1,
+            fetchStatus: async () => { calls += 1; return snap(-1); },
+        });
+        loop.abort();
+        expect(await loop.run()).to.deep.equal({ kind: "cancelled" });
+        expect(calls).to.equal(0);
+    });
+
     it("keeps the documented backoff schedule and give-up threshold", () => {
         expect(REATTACH_FAILURE_BACKOFF_MS).to.deep.equal([2_000, 5_000, 10_000, 15_000]);
         expect(MAX_REATTACH_CONSECUTIVE_FAILURES).to.equal(20);

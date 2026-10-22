@@ -161,6 +161,12 @@ change the DOM, write snapshots, or start recovery. This detaches the browser;
 it does not send Stop or clear persisted active-run markers. A replacement
 service can reattach to server-owned work.
 
+The shared `ServerRunPollLoop` also checks cancellation before its first
+request: an already-aborted owner signal or a loop aborted before `run()`
+returns `cancelled` without invoking the status fetch callback. This applies
+with and without a per-request timeout; `tests/server-run-poll-loop.spec.ts`
+pins the startup boundary.
+
 Batch progress says Done at 100% only after successful completion. Failed or
 unrecovered streams say Failed at the last known percentage; cancellation says
 Stopped at the last known percentage. The status line retains the error or
@@ -180,8 +186,10 @@ The shared browser stream reader (`lib/ndjson-stream.ts`) processes a final
 non-empty JSON record at clean EOF even when it has no trailing newline.
 Batch still requires a terminal event (`done`/`fatal`, or the caller's configured
 types); EOF without one triggers recovery. Malformed records, including an
-unterminated final record, fail with their 1-based line number. A stream read
-error propagates without admitting a buffered final record. The transport
+unterminated final record, fail with their 1-based line number. Each record must
+be a JSON object with a string `type`; invalid event shapes are rejected before
+event observers or handlers run. Unknown string event types remain accepted.
+A stream read error propagates without admitting a buffered final record. The transport
 contract is covered by `ndjson-stream.spec.ts` and `batch-ndjson-post.spec.ts`.
 
 ## Starting the dev server with extra heap

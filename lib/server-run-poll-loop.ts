@@ -187,7 +187,7 @@ export class ServerRunPollLoop<Snapshot> {
             if (!await this.wait(options.initialDelayMs)) return { kind: "cancelled" };
         }
         for (;;) {
-            if (!options.isOwned()) return { kind: "cancelled" };
+            if (signal.aborted || !options.isOwned()) return { kind: "cancelled" };
             const request = this.beginRequest();
             let fetchResult: ServerRunStatusFetchResult<Snapshot>;
             try {

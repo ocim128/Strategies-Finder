@@ -63,6 +63,18 @@ From/To edits, including clearing either date, use the same debounced settings
 save as other search inputs. Pending settings writes flush on pagehide, so a
 reload preserves date-only edits without requiring a run first.
 
+Scopes locked to Random Search display that enforced mode without replacing
+the saved search-mode preference. Editing other controls in those scopes also
+keeps the preference; returning to Current Chart or Arm Performance restores
+the chosen Grid Sweep or Random Search mode. Scope changes immediately refresh
+the universe count and its symbol/pair label.
+
+Arm Performance hides the shared OOS Validation control and always submits it
+as disabled, including with a Date range. The checkbox preference remains
+available when returning to a scope that supports shared OOS validation.
+`tests/finder-menu-controls.browser.spec.ts` and the Finder E2E workflow cover
+these scope transitions.
+
 ## Shared controls
 
 ### Workspace layout and result views
@@ -127,7 +139,7 @@ previous run.
 | --- | --- |
 | `Top Results` | Number of result cards rendered. In Symbol Universe this is a display limit, not the size of the terminal ranking inventory. |
 | `Runs / Strategy` | Candidate evaluations per selected strategy, subject to the selected search mode. |
-| `Search Mode` | `Grid Sweep`, `Random Search`, or `Genetic Search`. Server-owned Asset Opportunity currently requires random mode. |
+| `Search Mode` | `Grid Sweep` or `Random Search`. Symbol Universe, Asset Opportunity, and Strategy Quality Audit lock this control to Random Search. |
 | `Range (%)` | Parameter variation range used by the candidate generator. |
 | `Steps / Param` | Number of values per parameter for grid-style generation. |
 | `Data Window` | Full chart, a fifth, an oldest/newest half, or a `Date range` (From/To, UTC, inclusive on both ends). A missing bound is unbounded: `From` only runs to the newest data, `To` only runs from the oldest. Invalid bounds degrade to unbounded; an inverted range is swapped. |

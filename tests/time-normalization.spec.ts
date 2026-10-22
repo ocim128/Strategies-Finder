@@ -63,9 +63,10 @@ describe('time-normalization: business-day objects', () => {
         expect(parseTimeToUnixSeconds({ year: 'x', month: 1, day: 1 })).to.equal(null);
     });
 
-    it('overflows to NaN for an out-of-range business day (callers must guard)', () => {
-        const value = parseTimeToUnixSeconds({ year: 300_000, month: 1, day: 1 });
-        expect(Number.isNaN(value)).to.equal(true);
+    it('returns null for business days outside the Date range', () => {
+        for (const year of [300_000, -300_000, Number.MAX_VALUE]) {
+            expect(parseTimeToUnixSeconds({ year, month: 1, day: 1 })).to.equal(null);
+        }
     });
 });
 

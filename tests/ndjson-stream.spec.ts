@@ -11,6 +11,47 @@ describe("consumeNdjsonStream", () => {
             },
         });
 
+    for (const record of ['null', 'true', '42', '"done"', '[]', '{}', '{"type":null}', '{"type":42}', '{"type":[]}', '{"type":{}}']) {
+        for (const ending of ["\n", ""]) {
+            it(`rejects an invalid event shape (${record}) ${ending ? 'before a newline' : 'at EOF'} before dispatch`, async () => {
+                const observed: unknown[] = [];
+                const handled: string[] = [];
+                const stream = streamFromChunks(new TextEncoder().encode(
+                    `{"type":"progress"}\n\n${record}${ending}`,
+                ));
+                let caught: unknown;
+                try {
+                    await consumeNdjsonStream(stream, {
+                        onProgress: () => handled.push('progress'),
+                        onDone: () => handled.push('done'),
+                    }, {
+                        requireTerminal: true,
+                        onEvent: (event) => observed.push(event),
+                    });
+                } catch (error) {
+                    caught = error;
+                }
+                expect(caught).to.be.instanceOf(MalformedNdjsonLineError);
+                expect((caught as MalformedNdjsonLineError).lineNumber).to.equal(3);
+                expect(observed).to.deep.equal([{ type: 'progress' }]);
+                expect(handled).to.deep.equal(['progress']);
+                expect(stream.locked).to.equal(false);
+            });
+        }
+    }
+
+    it("continues past unknown string event types to the terminal event", async () => {
+        const observed: string[] = [];
+        let completed = false;
+        await consumeNdjsonStream(
+            streamFromChunks(new TextEncoder().encode('{"type":"future_event"}\n{"type":"done"}\n')),
+            { onDone: () => { completed = true; } },
+            { requireTerminal: true, onEvent: (event) => observed.push(event.type) },
+        );
+        expect(observed).to.deep.equal(['future_event', 'done']);
+        expect(completed).to.equal(true);
+    });
+
     for (const terminalType of ["done", "fatal", "asset_batch_done"]) {
         it(`dispatches an unterminated ${terminalType} event at EOF`, async () => {
             const events: string[] = [];

@@ -616,6 +616,42 @@ const verifyRankingCards = async (page: Page): Promise<void> => {
             manager.resultStore.setLatestResults({ scope: 'symbol_universe', results: [] }, false);
             const scopeControl = document.getElementById('finderScope') as HTMLSelectElement;
             const resortControl = document.getElementById('finderResort') as HTMLSelectElement;
+            const savedMenu = structuredClone(manager.controls.uiState);
+            try {
+                const mode = document.getElementById('finderMode') as HTMLSelectElement;
+                const symbols = document.getElementById('finderUniverseSymbols') as HTMLTextAreaElement;
+                const topN = document.getElementById('finderTopN') as HTMLInputElement;
+                const dataSlice = document.getElementById('finderDataSlice') as HTMLSelectElement;
+                const oos = document.getElementById('finderOosValidationToggle') as HTMLInputElement;
+                scopeControl.value = 'current_chart';
+                scopeControl.dispatchEvent(new Event('change', { bubbles: true }));
+                mode.value = 'grid'; mode.dispatchEvent(new Event('change', { bubbles: true }));
+                symbols.value = 'BTC+ETH\nSOL+BNB'; symbols.dispatchEvent(new Event('input', { bubbles: true }));
+                dataSlice.value = 'date_range'; dataSlice.dispatchEvent(new Event('change', { bubbles: true }));
+                oos.checked = true; oos.dispatchEvent(new Event('change', { bubbles: true }));
+                for (const scope of ['symbol_universe', 'asset_opportunity', 'strategy_quality']) {
+                    scopeControl.value = scope;
+                    scopeControl.dispatchEvent(new Event('change', { bubbles: true }));
+                    if (!mode.disabled || mode.value !== 'random') throw new Error('Locked Finder scope must display Random Search');
+                    topN.value = '7'; topN.dispatchEvent(new Event('input', { bubbles: true }));
+                    if (manager.controls.uiState.mode !== 'grid') throw new Error('Locked Finder scope overwrote the Grid preference');
+                    if (document.getElementById('finderUniverseSummary')!.textContent !== '2 symbols') throw new Error('Finder symbol summary is stale');
+                }
+                scopeControl.value = 'arm_performance';
+                scopeControl.dispatchEvent(new Event('change', { bubbles: true }));
+                if (mode.disabled || mode.value !== 'grid') throw new Error('Finder did not restore Grid Sweep');
+                if (document.getElementById('finderUniverseSummary')!.textContent !== '2 pairs') throw new Error('Finder pair summary is stale');
+                if (!oos.disabled || manager.controls.readOptions({}).oosValidationEnabled !== false) throw new Error('Hidden Arm OOS setting leaked into submission');
+                scopeControl.value = 'current_chart';
+                scopeControl.dispatchEvent(new Event('change', { bubbles: true }));
+                if (oos.disabled || !manager.controls.readOptions({}).oosValidationEnabled) throw new Error('Finder lost the retained chart OOS setting');
+                manager.controls.flushPendingPersistence();
+                if (JSON.parse(localStorage.getItem('playground_finder_ui')!).data.mode !== 'grid') throw new Error('Finder did not persist the retained search mode');
+            } finally {
+                manager.controls.uiState = savedMenu;
+                manager.controls.applyPersistedUiStateToDom();
+                scopeControl.dispatchEvent(new Event('change', { bubbles: true }));
+            }
             for (let repeat = 0; repeat < 2; repeat += 1) {
                 for (const scope of ['symbol_universe', 'arm_performance', 'strategy_quality', 'asset_opportunity', 'current_chart']) {
                     scopeControl.value = scope;

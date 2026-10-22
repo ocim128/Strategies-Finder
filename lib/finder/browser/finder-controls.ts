@@ -643,6 +643,7 @@ applyScopeUi(): void {
 	const multiAssetScope = universeScope || assetOpportunityScope || qualityScope || armPerformanceScope;
 	const modeLockedScope = universeScope || assetOpportunityScope || qualityScope;
 	const modeInput = dom.finderMode;
+	const wasModeLocked = modeInput.disabled;
 
 	dom.finderChartSortSection.style.display = multiAssetScope ? "none" : "";
 	dom.finderUniverseSortSection.style.display = universeScope ? "" : "none";
@@ -678,10 +679,15 @@ applyScopeUi(): void {
 	dom.finderStrategySelectNone.disabled = false;
 	dom.finderStrategyInvertVisible.disabled = this.deps.selection.getVisibleStrategyKeys().length === 0;
 	dom.finderStrategySelectVisible.disabled = this.deps.selection.getVisibleStrategyKeys().length === 0;
-	modeInput.disabled = modeLockedScope;
 	if (modeLockedScope) {
+		// The forced display value must not replace the editable mode preference.
+		if (!wasModeLocked) this.uiState.mode = normalizeFinderMode(modeInput.value);
 		modeInput.value = "random";
+	} else if (wasModeLocked) {
+		modeInput.value = this.uiState.mode;
 	}
+	modeInput.disabled = modeLockedScope;
+	this.updateUniverseSummary();
 	setVisible("finderBlockBadge", !multiAssetScope && Boolean(state.blockRange));
 	this.setTradeFilterControlsEnabled(this.isTradeFilterControlsEnabled());
 	this.updateTimingSortControlState();
@@ -807,7 +813,9 @@ captureFinderUiState(persist = true): void {
 		.filter((item) => item.querySelector<HTMLInputElement>(".finder-sort-enabled")?.checked === true)
 		.map((item) => item.dataset.value)
 		.filter((metric): metric is FinderMetric => isAdvancedOptionalSortMetric(metric));
-	this.uiState.mode = normalizeFinderMode(dom.finderMode.value);
+	if (!dom.finderMode.disabled) {
+		this.uiState.mode = normalizeFinderMode(dom.finderMode.value);
+	}
 	// Registry-owned boolean/text controls read here in one pass. Numeric and
 	// select controls stay explicit below because capture applies rounding and
 	// persistence clamps that differ from the submission boundary — folding them
@@ -1061,7 +1069,7 @@ readOptions(backtestSettings: Pick<ReturnType<typeof settingsManager.getBacktest
 	const oosWindowActive = dataSlice === 'half_oldest'
 		|| dataSlice === 'half_newest'
 		|| dataSlice === 'date_range';
-if (oosWindowActive) {
+if (scope !== 'arm_performance' && oosWindowActive) {
 		options.oosValidationEnabled = dom.finderOosValidationToggle.checked;
 	}
 

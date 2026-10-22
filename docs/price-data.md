@@ -52,6 +52,18 @@ lookback. WebSocket construction starts a handshake; only a current socket's
 `open` event resets reconnect attempts and emits `data.stream.connected`.
 Failures before opening retain the existing exponential backoff and ceiling.
 
+Realtime and cached-gap detection preserve the case-sensitive distinction
+between `1M` (month) and `1m` (minute). Monthly candles use UTC calendar-month
+distance, including February, leap years, and year boundaries; adjacent monthly
+candles never trigger a backfill just because the month has 31 days. Other
+intervals keep their fixed-duration gap checks. Regression coverage lives in
+`tests/data-manager-realtime.spec.ts`.
+
+The shared `parseTimeToUnixSeconds` normalizer returns a finite timestamp or
+`null`. Business-day objects outside JavaScript's supported Date range are
+rejected as `null`, so consumers' existing invalid-time guards also protect
+gap counts and cache processing from `NaN`. See `tests/time-normalization.spec.ts`.
+
 The shared in-memory `DataCache` (browser `DataManager` and the server
 singleton in `server-data-fetcher-factory.ts`) carries a dual budget: the
 64-entry LRU plus a retained-points cap (`DataCache.DEFAULT_MAX_POINTS`, one

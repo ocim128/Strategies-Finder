@@ -58,12 +58,21 @@ export async function consumeNdjsonStream<T extends { type: string }>(
         lineNumber += 1;
         const line = rawLine.trim();
         if (!line) return false;
-        let event: T;
+        let parsed: unknown;
         try {
-            event = parseJsonPreservingNonFinite(line) as T;
+            parsed = parseJsonPreservingNonFinite(line);
         } catch {
             throw new MalformedNdjsonLineError(lineNumber);
         }
+        if (
+            parsed === null
+            || typeof parsed !== "object"
+            || Array.isArray(parsed)
+            || typeof (parsed as { type?: unknown }).type !== "string"
+        ) {
+            throw new MalformedNdjsonLineError(lineNumber);
+        }
+        const event = parsed as T;
         options?.onEvent?.(event);
         const handler = handlers[toHandlerKey(event.type)];
         if (handler) handler(event);

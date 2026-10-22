@@ -39,7 +39,8 @@ export function parseTimeToUnixSeconds(value: unknown): number | null {
         const month = Number(day.month);
         const date = Number(day.day);
         if (!Number.isFinite(year) || !Number.isFinite(month) || !Number.isFinite(date)) return null;
-        return Math.floor(Date.UTC(year, month - 1, date) / 1000);
+        const timestamp = Date.UTC(year, month - 1, date);
+        return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : null;
     }
 
     return null;
