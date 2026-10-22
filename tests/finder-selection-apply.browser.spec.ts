@@ -26,7 +26,12 @@ import { dataManager } from "../lib/data-manager";
 import { createFakeFinderElement } from "./helpers/fake-finder-manager-dom";
 import type { FinderManagerDom } from "../lib/finder/finder-manager-dom";
 import type { FinderArmPerformanceCandidate, FinderLatestResults } from "../lib/types/finder";
-import type { Strategy } from "../lib/types/strategies";
+import type { BacktestSettings, OHLCVData, Strategy } from "../lib/types/strategies";
+import { executeBacktest } from "../lib/backtest-executor";
+import { runFinderUniverseExecution } from "../lib/finder/finder-runner-universe";
+import { sliceFinderDataWindow } from "../lib/finder/finder-manager-logic";
+import { decay_anchor_reversion } from "../lib/strategies/lib/decay_anchor_reversion";
+import { DEFAULT_BACKTEST_SETTINGS } from "../lib/settings-model";
 
 // ---------------------------------------------------------------------------
 // DOM stand-in
@@ -300,6 +305,123 @@ function stubApplyServices() {
 }
 
 describe("FinderResultActions", () => {
+    for (const tradeDirection of ['long', 'short'] as const) {
+        it(`reproduces the Universe IS result on a full-history 50/50 chart (${tradeDirection})`, async () => {
+            const stubs = stubApplyServices();
+            const saved = { symbol: state.currentSymbol, interval: state.currentInterval, strategy: state.currentStrategyKey,
+                data: state.ohlcvData, block: state.blockRange };
+            try {
+                const symbol = 'SMCI\u2022+AAPL\u2022@50/50';
+                const start = Date.parse('2026-01-01T00:00:00Z') / 1000;
+                const data: OHLCVData[] = Array.from({ length: 1200 }, (_, i) => {
+                    const base = 100 + 9 * Math.sin(i / 30) + i * 0.006;
+                    const quote = 100 + i * 0.01;
+                    const ratio = base / quote;
+                    return { time: (start + i * 1800) as OHLCVData['time'], open: ratio,
+                        high: Math.max(ratio, (base + 0.03) / (quote + 0.03)), low: Math.min(ratio, (base - 0.03) / (quote - 0.03)),
+                        close: ratio, volume: 1,
+                        pairLegs: [[base, base + 0.03, base - 0.03, base, quote, quote + 0.03, quote - 0.03, quote]],
+                    };
+                });
+                const settings = { executionModel: 'next_open', tradeDirection, slippageBps: 1,
+                    stopLossEnabled: false, stopLossPercent: 5.97, takeProfitEnabled: false, takeProfitPercent: 7.38,
+                } as BacktestSettings;
+                const capitalSettings = { initialCapital: 10000, positionSize: 10, commission: 0.1,
+                    sizingMode: 'fixed' as const, fixedTradeAmount: 1000 };
+                const options = { scope: 'symbol_universe', mode: 'random', sortPriority: ['netProfit'], useAdvancedSort: false,
+                    dataSlice: 'date_range', dataRangeFrom: '2026-01-07', dataRangeTo: '2026-01-18',
+                    topN: 1, steps: 1, rangePercent: 0, maxRuns: 1, tradeFilterEnabled: false, minTrades: 0, maxTrades: Infinity,
+                    freezeRiskManagement: true,
+                    universe: { symbols: [symbol], minActiveSymbols: 1, minTotalTrades: 1, minProfitableActiveRatio: 0, sortPriority: [] },
+                } as const;
+                const key = 'decay_anchor_apply_test';
+                strategyRegistry.register(key, decay_anchor_reversion);
+                const universe = await runFinderUniverseExecution({
+                    interval: '30m', settings, capitalSettings,
+                    selectedStrategy: { key, name: decay_anchor_reversion.name, strategy: decay_anchor_reversion },
+                    options: { ...options, sortPriority: [...options.sortPriority], universe: { ...options.universe, symbols: [symbol], sortPriority: [] } },
+                    loadDataset: async () => sliceFinderDataWindow(data, options.dataSlice, { from: options.dataRangeFrom, to: options.dataRangeTo }),
+                    generateParamSets: () => [{ decay: 1 }],
+                }, { setProgress() {}, setStatus() {}, yieldControl: async () => {}, isCancelled: () => false });
+                const candidate = universe.results[0]!;
+                expect(candidate, 'fixture must produce a survivor').to.exist;
+                const expected = candidate.symbols[0].result!;
+                expect(expected.totalTrades).to.be.greaterThan(0);
+                // Exercise shorthand matching and a conflicting pre-existing block.
+                state.set('currentSymbol', symbol.replace('@50/50', '@'));
+                state.set('currentInterval', '30m');
+                state.set('ohlcvData', data);
+                state.set('blockRange', { from: start, to: start + 1800 });
+                const store = new FinderResultStore(() => {});
+                const actions = new FinderResultActions({
+                    getResultStore: () => store, getLastRunBacktestSettings: () => ({ ...DEFAULT_BACKTEST_SETTINGS, ...settings }),
+                    // A restored result still has row bounds even without the original options.
+                    getLastFinderOptions: () => null, getLastFinderEvaluationData: () => null,
+                });
+                const replay = async (blockRange: typeof state.blockRange) => (await executeBacktest({
+                    ohlcvData: state.ohlcvData, interval: state.currentInterval, primarySymbol: state.currentSymbol,
+                    strategyKey: key, strategy: strategyRegistry.get(key), strategyParams: candidate.params,
+                    backtestSettings: (stubs.calls.appliedSettings[0] ?? settings) as BacktestSettings, capitalSettings,
+                    context: { engineMode: 'typescript', nowSec: 1792705762, blockRange },
+                })).result;
+                backtestService.runCurrentBacktest = (async () => {
+                    stubs.calls.backtestRuns++;
+                    const actual = await replay(state.blockRange);
+                    for (const metric of ['totalTrades', 'winningTrades', 'losingTrades', 'netProfit', 'expectancy', 'profitFactor', 'winRate'] as const) {
+                        if (Number.isFinite(expected[metric])) expect(actual[metric], metric).to.be.closeTo(expected[metric], 1e-9);
+                        else expect(actual[metric], metric).to.equal(expected[metric]);
+                    }
+                    expect(actual.trades.every(trade => trade.legs?.base && trade.legs.quote)).to.equal(true);
+                }) as typeof backtestService.runCurrentBacktest;
+                await actions.applyUniverseCandidate(candidate);
+                expect(stubs.calls.backtestRuns).to.equal(1);
+                expect(stubs.calls.toasts.some(toast => toast.type === 'error')).to.equal(false, 'Apply must not swallow a parity assertion');
+                expect(state.blockRange).to.deep.equal({ from: candidate.symbols[0].firstTime, to: candidate.symbols[0].lastTime });
+                const full = await replay(null);
+                expect(full.netProfit).not.to.equal(expected.netProfit, 'full-history run must reproduce the original discrepancy');
+            } finally {
+                state.set('currentSymbol', saved.symbol);
+                state.set('currentInterval', saved.interval);
+                state.set('currentStrategyKey', saved.strategy);
+                state.set('ohlcvData', saved.data);
+                state.set('blockRange', saved.block);
+                stubs.restore();
+            }
+        });
+    }
+
+    for (const bounds of [
+        { symbol: 'SMCI\u2022+AAPL\u2022', firstTime: 100, lastTime: 200 },
+        { symbol: 'SMCI\u2022+AAPL\u2022@50/50', firstTime: 'invalid', lastTime: 200 },
+        { symbol: 'SMCI\u2022+AAPL\u2022@50/50', firstTime: 200, lastTime: 100 },
+    ]) {
+        it(`keeps the chart range when the retained window is unavailable: ${JSON.stringify(bounds)}`, async () => {
+            const stubs = stubApplyServices();
+            const saved = { symbol: state.currentSymbol, block: state.blockRange, strategy: state.currentStrategyKey };
+            try {
+                strategyRegistry.register('apply_without_window', decay_anchor_reversion);
+                state.set('currentSymbol', 'SMCI\u2022+AAPL\u2022@50/50');
+                state.set('blockRange', { from: 50, to: 70 });
+                const store = new FinderResultStore(() => {});
+                const actions = new FinderResultActions({
+                    getResultStore: () => store, getLastRunBacktestSettings: () => DEFAULT_BACKTEST_SETTINGS,
+                    getLastFinderOptions: () => null, getLastFinderEvaluationData: () => null,
+                });
+                await actions.applyUniverseCandidate({ strategyKey: 'apply_without_window', params: { decay: 1 },
+                    symbols: [bounds], profitableSymbols: 1, activeSymbols: 1, totalTrades: 2,
+                } as unknown as Parameters<FinderResultActions['applyUniverseCandidate']>[0]);
+                expect(stubs.calls.backtestRuns).to.equal(1);
+                expect(state.blockRange).to.deep.equal({ from: 50, to: 70 });
+                expect(stubs.calls.toasts.some(toast => toast.message.includes('original symbol window unavailable'))).to.equal(true);
+            } finally {
+                state.set('currentSymbol', saved.symbol);
+                state.set('currentStrategyKey', saved.strategy);
+                state.set('blockRange', saved.block);
+                stubs.restore();
+            }
+        });
+    }
+
     it("rejects a second Apply while one is in flight", async () => {
         const stubs = stubApplyServices();
         try {

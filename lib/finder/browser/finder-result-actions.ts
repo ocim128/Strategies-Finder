@@ -19,7 +19,9 @@ import { settingsManager } from "../../settings-manager";
 import { cloneJsonCompatible } from "../../json-utils";
 import { debugLogger } from "../../debug-logger";
 import { strategyPanelController } from "../../strategy-panel-controller";
-import { setCurrentInterval, setCurrentStrategyKey } from "../../state-actions";
+import { setBlockRange, setCurrentInterval, setCurrentStrategyKey } from "../../state-actions";
+import { parseTimeToUnixSeconds } from "../../time-normalization";
+import { normalizeSyntheticPairExecutionSymbol } from "../../synthetic-pair-mode";
 import { buildFinderArmPerformanceApplySettings } from "../finder-arm-performance-settings";
 import { mergeFinderRiskParamsIntoBacktestSettings } from "../finder-runner-core";
 import type { FinderResultStore } from "./finder-result-store";
@@ -207,12 +209,21 @@ export class FinderResultActions {
 		paramManager.render(strategy);
 		paramManager.setValues(strategy, candidate.params);
 		this.applyFinderBacktestSettings(candidate.params, candidate.exitStrategyKey, candidate.exitStrategyParams);
+		// Use this symbol's actual IS bounds, including after a reload when the
+		// original Finder options are unavailable. Applying only the parameters
+		// reruns the full chart and also changes cumulative indicator warmup.
+		const symbol = normalizeSyntheticPairExecutionSymbol(state.currentSymbol);
+		const row = candidate.symbols?.find((item) => normalizeSyntheticPairExecutionSymbol(item.symbol) === symbol);
+		const from = parseTimeToUnixSeconds(row?.firstTime);
+		const to = parseTimeToUnixSeconds(row?.lastTime);
+		const hasWindow = from !== null && to !== null && from <= to;
+		if (hasWindow) setBlockRange({ from, to });
 		strategyPanelController.switchTab('trades');
 
 		try {
 			await backtestService.runCurrentBacktest();
 			uiManager.showToast(
-				`Applied Symbol Universe survivor: ${candidate.profitableSymbols}/${candidate.activeSymbols} profitable active symbols, ${candidate.totalTrades} total trades.`,
+				`Applied Symbol Universe survivor${hasWindow ? ' using this symbol\'s Finder date window' : ' to the current chart (original symbol window unavailable)'}: ${candidate.profitableSymbols}/${candidate.activeSymbols} profitable active symbols, ${candidate.totalTrades} total trades.`,
 				'success'
 			);
 		} catch (error) {

@@ -350,6 +350,17 @@ breakdown. Symbol statuses distinguish profitable, losing, flat, no-trade,
 load-failed, and run-failed symbols. Failed symbols are counted uniquely for
 the user-facing total even when multiple strategies were selected.
 
+Applying a Universe survivor uses the current chart symbol's retained
+in-sample first/last candle as the chart block range before running the
+backtest. This preserves the Finder window and indicator initialization,
+including for restored results whose original Finder controls are unavailable.
+The block remains selected for subsequent Run clicks; clear the block to test
+the full history. The comparison is against that symbol's IS row, not its OOS
+badge or the universe aggregate. If the current symbol has no retained bounds,
+Apply keeps the current chart range and reports that the original window is
+unavailable. Identical results also require the same interval, candle data,
+capital, and execution settings.
+
 Two aggregates are arithmetic means over the active symbols (symbols with at
 least one trade), which makes them deliberately different from their
 robust-median counterparts: `Average Net Profit` (`averageNetProfit`) and
