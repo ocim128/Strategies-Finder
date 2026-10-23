@@ -198,19 +198,28 @@ export function calculateSharpeRatioFromReturns(
     periodsPerYear = 1,
     riskFreeRatePerPeriod = 0
 ): number {
-    const finiteReturns = returns.filter(value => Number.isFinite(value));
-    if (finiteReturns.length < SHARPE_MIN_SAMPLES) return 0;
+    let sampleCount = 0;
+    let sum = 0;
+    for (const value of returns) {
+        if (!Number.isFinite(value)) continue;
+        sum += value;
+        sampleCount++;
+    }
+    if (sampleCount < SHARPE_MIN_SAMPLES) return 0;
 
-    const avgReturn = finiteReturns.reduce((sum, value) => sum + value, 0) / finiteReturns.length;
-    const variance = finiteReturns.length > 1
-        ? finiteReturns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / (finiteReturns.length - 1)
-        : 0;
+    const avgReturn = sum / sampleCount;
+    let squaredDeviationSum = 0;
+    for (const value of returns) {
+        if (!Number.isFinite(value)) continue;
+        squaredDeviationSum += Math.pow(value - avgReturn, 2);
+    }
+    const variance = squaredDeviationSum / (sampleCount - 1);
     const stdReturn = Math.sqrt(Math.max(0, variance));
 
     return calculateSharpeRatioFromMoments(
         avgReturn,
         stdReturn,
-        finiteReturns.length,
+        sampleCount,
         periodsPerYear,
         riskFreeRatePerPeriod
     );

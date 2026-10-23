@@ -30,6 +30,11 @@ distributions, confidence intervals, equity paths and ruin frequency.
 - `lib/monte-carlo-dom.ts` owns the required DOM contract.
 - `html-partials/tab-monte-carlo.html` owns the lazily loaded markup.
 
+The renderer sorts drawdown samples once for the percentile table and equity
+samples once per fan-chart point, reusing each ordering for all displayed
+percentiles. Shorter sampled paths extend their final equity value; empty paths
+contribute no values.
+
 Every id declared in `lib/monte-carlo-dom.ts` is required. Initialization
 resolves the whole contract before attaching any listener; a missing element
 throws, so the lazy tab reports an activation failure (with Reload as the

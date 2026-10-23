@@ -60,9 +60,8 @@ export function normalizeOhlcvCandles(input: readonly RawCandleLike[]): OHLCVDat
         });
     }
 
-    return Array.from(deduped.entries())
-        .sort((a, b) => a[0] - b[0])
-        .map(([, candle]) => candle);
+    return Array.from(deduped.values())
+        .sort((a, b) => Number(a.time) - Number(b.time));
 }
 
 export function intervalToSeconds(interval: string): number | null {

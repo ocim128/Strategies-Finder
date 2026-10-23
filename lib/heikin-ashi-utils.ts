@@ -26,7 +26,7 @@ import { OHLCVData } from "./strategies/index";
 export function toHeikinAshi(data: OHLCVData[]): OHLCVData[] {
     if (data.length === 0) return [];
 
-    const result: OHLCVData[] = [];
+    const result = new Array<OHLCVData>(data.length);
 
     for (let i = 0; i < data.length; i++) {
         const current = data[i];
@@ -50,14 +50,14 @@ export function toHeikinAshi(data: OHLCVData[]): OHLCVData[] {
         // HA Low = minimum of low, HA open, HA close
         const haLow = Math.min(current.low, haOpen, haClose);
 
-        result.push({
+        result[i] = {
             time: current.time,
             open: haOpen,
             high: haHigh,
             low: haLow,
             close: haClose,
             volume: current.volume,
-        });
+        };
     }
 
     return result;

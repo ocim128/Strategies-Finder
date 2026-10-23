@@ -2,7 +2,7 @@ import { expect } from "chai";
 import { describe, it } from "node:test";
 import type { Time } from "../lib/strategies";
 import { calculateBacktestStats } from "../lib/strategies";
-import { calculateAdvancedPerformanceAnalyticsFromEquityCurve } from "../lib/strategies/performance-metrics";
+import { calculateAdvancedPerformanceAnalyticsFromEquityCurve, calculateSharpeRatioFromReturns } from "../lib/strategies/performance-metrics";
 import { percentile } from "../lib/statistics-utils";
 
 function curveFrom(values: number[], startDay = 1): Array<{ time: Time; value: number }> {
@@ -22,6 +22,20 @@ function dailyReturns(values: number[]): number[] {
 }
 
 describe("advanced performance analytics", () => {
+    it("ignores non-finite returns while retaining the Sharpe sample threshold and risk-free adjustment", () => {
+        const returns = [0.01, -0.02, 0.03, 0.04, -0.01];
+        const mixed = [NaN, ...returns.slice(0, 2), Infinity, ...returns.slice(2), -Infinity];
+        const snapshot = [...mixed];
+        expect(calculateSharpeRatioFromReturns(mixed, 12, 0.001))
+            .to.equal(calculateSharpeRatioFromReturns(returns, 12, 0.001));
+        expect(calculateSharpeRatioFromReturns(mixed, 12, 0.001))
+            .to.be.closeTo(1.222859196876163, 1e-12);
+        expect(mixed).to.deep.equal(snapshot);
+        expect(calculateSharpeRatioFromReturns([NaN, 0.01, 0.02, 0.03, 0.04])).to.equal(0);
+        expect(calculateSharpeRatioFromReturns([0.01, 0.01, 0.01, 0.01, 0.01])).to.equal(0);
+        expect(calculateSharpeRatioFromReturns([])).to.equal(0);
+    });
+
     it("computes advanced risk metrics from an equity curve and attaches them to backtest results", () => {
         const equityCurve = [
             { time: "2020-01-01T00:00:00Z" as Time, value: 10000 },

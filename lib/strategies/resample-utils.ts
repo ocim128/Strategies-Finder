@@ -13,7 +13,10 @@ export function getResampleBucketStart(
     time: number,
     targetInterval: string
 ): number {
-    const intervalSeconds = getIntervalSeconds(targetInterval);
+    return getBucketStart(time, getIntervalSeconds(targetInterval));
+}
+
+function getBucketStart(time: number, intervalSeconds: number): number {
     if (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0) {
         return Math.floor(time);
     }
@@ -57,7 +60,7 @@ export function resampleOHLCV(
 
     for (const bar of data) {
         const time = typeof bar.time === 'number' ? bar.time : 0;
-        const periodStart = getResampleBucketStart(time, targetInterval);
+        const periodStart = getBucketStart(time, targetIntervalSeconds);
 
         if (periodStart !== currentPeriodStart) {
             if (currentBar) {

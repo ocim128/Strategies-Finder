@@ -1,6 +1,6 @@
 import type { MonteCarloResult, MonteCarloSimulation } from "./strategies/monte-carlo/monte-carlo-engine";
 import type { MonteCarloDomElements } from "./monte-carlo-dom";
-import { mean, median, percentile, sampleStdDev } from "./statistics-utils";
+import { mean, median, percentileSorted, sampleStdDev } from "./statistics-utils";
 import { escapeHtml } from "./html-escape";
 import {
     formatDecimal,
@@ -172,10 +172,11 @@ function renderConfidenceIntervals(
 }
 
 function renderDrawdownPercentiles(tbody: HTMLTableSectionElement, values: readonly number[]): void {
+    const sorted = [...values].sort((left, right) => left - right);
     const rows = [50, 90, 95, 99].map((percentileValue) => `
         <tr>
             <td>${percentileValue}th</td>
-            <td>${formatPercent(percentile(values, percentileValue))}</td>
+            <td>${formatPercent(percentileSorted(sorted, percentileValue))}</td>
         </tr>
     `);
     tbody.innerHTML = rows.join("");
@@ -297,20 +298,23 @@ function renderEquityFanChart(canvas: HTMLCanvasElement | null, simulations: rea
     const percentilesByPoint: Array<{ p5: number; p25: number; p50: number; p75: number; p95: number }> = [];
 
     for (let pointIndex = 0; pointIndex < pointCount; pointIndex++) {
-        const values = simulations
-            .map((simulation) => simulation.equityCurve[pointIndex] ?? simulation.equityCurve[simulation.equityCurve.length - 1])
-            .filter((value): value is number => typeof value === "number");
+        const values: number[] = [];
+        for (const { equityCurve } of simulations) {
+            const value = equityCurve[pointIndex] ?? equityCurve[equityCurve.length - 1];
+            if (typeof value === "number") values.push(value);
+        }
 
         if (values.length === 0) {
             continue;
         }
 
+        values.sort((left, right) => left - right);
         percentilesByPoint.push({
-            p5: percentile(values, 5),
-            p25: percentile(values, 25),
-            p50: percentile(values, 50),
-            p75: percentile(values, 75),
-            p95: percentile(values, 95),
+            p5: percentileSorted(values, 5),
+            p25: percentileSorted(values, 25),
+            p50: percentileSorted(values, 50),
+            p75: percentileSorted(values, 75),
+            p95: percentileSorted(values, 95),
         });
     }
 
