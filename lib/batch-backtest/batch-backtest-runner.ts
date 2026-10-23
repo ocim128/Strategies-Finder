@@ -15,6 +15,7 @@
 
 import { executeBacktest, resolveExecutorBacktestSettings } from "../backtest-executor";
 import { resolveCapitalSettingsFromRaw } from "../backtest-capital-settings";
+import { sliceOhlcvByBlock } from "../block-selector";
 import { ensureConfirmationStrategiesLoaded } from "../confirmation-signal-filter";
 import type {
     BacktestResult,
@@ -108,6 +109,8 @@ export interface BatchBacktestTradeSummary {
 }
 
 export interface BatchBacktestRunInput {
+    /** Snapshot of the inclusive chart date range; absent/null uses all history. */
+    blockRange?: import("./batch-run-contract").BatchBlockRange | null;
     interval: string;
     strategyKey: string;
     strategy: Strategy;
@@ -223,6 +226,7 @@ export async function runBatchBacktest(
 
     const abort = new AbortController();
     const nowSec = Math.floor(Date.now() / 1000);
+    const blockRange = input.blockRange ? { ...input.blockRange } : null;
     const cancelCheck = () => {
         const cancelled = callbacks.isCancelled();
         if (cancelled) abort.abort();
@@ -320,6 +324,23 @@ export async function runBatchBacktest(
                 if (nextIdx < symbols.length) startPrefetch(nextIdx);
                 continue;
             }
+            // Validate cache completeness against the loaded history, then apply
+            // the UI window. A deliberately short selection is not a stale cache.
+            data = sliceOhlcvByBlock(data, blockRange);
+            if (data.length === 0) {
+                const failure: BatchBacktestSymbolResult = {
+                    symbol,
+                    status: "load_failed",
+                    barCount: 0,
+                    error: "No candles in the selected date range.",
+                };
+                results[i] = failure;
+                failedSymbols.push(symbol);
+                await notifyComplete(i, failure);
+                const nextIdx = i + PREFETCH_AHEAD;
+                if (nextIdx < symbols.length) startPrefetch(nextIdx);
+                continue;
+            }
             loadedSymbols += 1;
         } catch (error) {
             if (cancelCheck()) {
@@ -360,7 +381,7 @@ export async function runBatchBacktest(
                 preResolvedSettings,
                 preResolvedCapital,
                 context: {
-                    blockRange: null,
+                    blockRange,
                     engineMode: "auto",
                     useRustEnginePreference: input.useRustEnginePreference,
                     nowSec,

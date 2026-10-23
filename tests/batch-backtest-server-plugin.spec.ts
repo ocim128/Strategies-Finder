@@ -921,6 +921,30 @@ describe("batch-backtest server plugin route-level authorization", () => {
 });
 
 describe("batch-backtest server plugin run intake size guard", () => {
+    it("rejects malformed date ranges before claiming run ownership", async () => {
+        const handler = captureBatchRoutes().get("/api/batch-backtest/run")!;
+        const previousToken = process.env.LOCAL_PROXY_TOKEN;
+        delete process.env.LOCAL_PROXY_TOKEN;
+        try {
+            for (const blockRange of ["bad", [], {}, { from: "1", to: 2 }, { from: 1, to: null }, { from: 3, to: 2 }]) {
+                const req = Readable.from([JSON.stringify({
+                    symbols: ["UP"], interval: "5m", strategyKey: STRATEGY_KEY, blockRange,
+                })]) as any;
+                req.method = "POST";
+                req.url = "/api/batch-backtest/run";
+                req.headers = { host: "127.0.0.1:5173", origin: "http://127.0.0.1:5173", "content-type": "application/json" };
+                req.socket = { remoteAddress: "127.0.0.1" };
+                const res = makeRouteResponse();
+                await handler(req, res);
+                expect(res.statusCode).to.equal(400);
+                expect(JSON.parse(res.body).error).to.include("blockRange");
+                expect(getRunOwnerForTests()).to.equal(0);
+            }
+        } finally {
+            if (previousToken !== undefined) process.env.LOCAL_PROXY_TOKEN = previousToken;
+        }
+    });
+
     it("rejects a run with more than BATCH_MAX_SYMBOLS symbols with 400 before streaming", async () => {
         const routes = captureBatchRoutes();
         const handler = routes.get("/api/batch-backtest/run");

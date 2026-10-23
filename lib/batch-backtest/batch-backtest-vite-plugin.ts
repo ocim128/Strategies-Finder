@@ -1087,6 +1087,7 @@ export async function processRunBatch(
         backtestSettings: input.backtestSettings,
         capitalSettings: input.capitalSettings,
         interval: input.interval,
+        blockRange: input.blockRange,
         ...(pairListProvenanceMeta.status === "verified" && pairListProvenanceMeta.provenance
             ? { pairListProvenance: pairListProvenanceMeta.provenance }
             : {}),
@@ -1375,6 +1376,19 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
     // THIS run. Empty string signals a stale browser bundle that predates the
     // contract; the server falls back to legacy unscoped behavior in that case.
     const runId = parseBatchRunId(body.runId);
+    const rawBlockRange = body.blockRange;
+    let blockRange: BatchBacktestRunInput["blockRange"] = null;
+    if (rawBlockRange != null) {
+        if (typeof rawBlockRange !== "object" || Array.isArray(rawBlockRange)) {
+            throw new HttpStatusError(400, "blockRange must contain finite from/to Unix seconds with from <= to.");
+        }
+        const { from, to } = rawBlockRange as { from?: unknown; to?: unknown };
+        if (typeof from !== "number" || !Number.isFinite(from)
+            || typeof to !== "number" || !Number.isFinite(to) || from > to) {
+            throw new HttpStatusError(400, "blockRange must contain finite from/to Unix seconds with from <= to.");
+        }
+        blockRange = { from, to };
+    }
 
     // Phase 3 MAX_ACTIVE: extract the optional pair-list provenance and the
     // optional research registration. Both are untrusted client input; the
@@ -1454,6 +1468,7 @@ async function handleRunRequest(res: ViteHttpResponse, body: Record<string, unkn
                     capitalSettings,
                     symbols,
                     useRustEnginePreference,
+                    blockRange,
                     // Phase 3 MAX_ACTIVE: carry the verified pair-list provenance
                     // and the research registration into the run so the snapshot
                     // and the OPEN_SCORE USD report can name the provenance status

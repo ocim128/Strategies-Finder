@@ -308,6 +308,32 @@ describe("BatchBacktestService analysis lifecycle", () => {
         });
     }
 
+    it("submits the chart date range and keeps the submitted fingerprint fixed during the run", async () => {
+        const dom = setupForAnalysis();
+        dom.batchBacktestSymbols.value = "BTCUSDT";
+        const previousRange = state.blockRange;
+        try {
+            for (const range of [{ from: 1700000000, to: 1700001200 }, null]) {
+                state.blockRange = range;
+                let submitted: any;
+                await withRunSettings(async () => withMockFetch((_url, init) => {
+                    submitted = JSON.parse(init.body);
+                    // Changing the chart after submission must not change this run.
+                    if (state.blockRange) state.blockRange.to += 300;
+                    return { ok: true, status: 200, body: eventStream([{
+                        type: "done", summary: "done", cancelled: false,
+                        totals: { failedSymbols: 0 },
+                    }]) };
+                }, async () => { await svc().batchRun.runBatch(); }));
+                expect(submitted.blockRange).to.deep.equal(range ? { from: 1700000000, to: 1700001200 } : null);
+                const fingerprint = JSON.parse(svc().batchRun.getLastRunFingerprint());
+                expect(fingerprint.blockRange ?? null).to.deep.equal(submitted.blockRange);
+            }
+        } finally {
+            state.blockRange = previousRange;
+        }
+    });
+
     for (const scenario of ["http", "fatal", "eof", "done", "cancelled"] as const) {
         it(`keeps the progress outcome accurate after ${scenario}`, async () => {
             const dom = setupForAnalysis();

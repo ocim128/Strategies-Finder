@@ -5,7 +5,7 @@ import {
     parseBatchSymbols,
     runBatchBacktest,
 } from "../lib/batch-backtest/batch-backtest-runner";
-import { validateBatchSymbolToken } from "../lib/batch-backtest/batch-run-contract";
+import { buildBatchRunFingerprint, validateBatchSymbolToken } from "../lib/batch-backtest/batch-run-contract";
 import type { CapitalSettings } from "../lib/types/backtest";
 import type { BacktestSettings, OHLCVData, Strategy, Time } from "../lib/types/strategies";
 
@@ -91,6 +91,74 @@ describe("parseBatchSymbols", () => {
 });
 
 describe("runBatchBacktest", () => {
+    for (const executionModel of ["signal_close", "next_open"] as const) {
+        for (const tradeDirection of ["long", "short"] as const) {
+            it(`uses the selected date window for ${tradeDirection} ${executionModel} execution and row statistics`, async () => {
+                const candles = makeCandles(Array.from({ length: BATCH_MIN_USABLE_BARS }, (_, i) => 100 + i));
+                const selected = candles.slice(2, 7);
+                const blockRange = { from: selected[0].time as number, to: selected.at(-1)!.time as number };
+                let strategyTimes: Time[] = [];
+                const strategy: Strategy = {
+                    ...testStrategy,
+                    execute(data) {
+                        strategyTimes = data.map(bar => bar.time);
+                        return [
+                            { time: data[0].time, type: tradeDirection === "long" ? "buy" : "sell", price: data[0].close },
+                            { time: data[2].time, type: tradeDirection === "long" ? "sell" : "buy", price: data[2].close },
+                        ];
+                    },
+                };
+                const output = await runBatchBacktest({
+                    interval: "5m", strategyKey: "batch_test", strategy,
+                    strategyParams: {}, backtestSettings: { ...settings, executionModel, tradeDirection },
+                    capitalSettings, symbols: ["BTC+ETH"], blockRange,
+                    loadDataset: async () => candles,
+                }, { setProgress: () => {}, setStatus: () => {}, isCancelled: () => false });
+                const row = output.results[0];
+                expect(strategyTimes).to.deep.equal(selected.map(bar => bar.time));
+                expect(row.data).to.deep.equal(selected);
+                expect(row.barCount).to.equal(5);
+                expect(row.firstTime).to.equal(blockRange.from);
+                expect(row.lastTime).to.equal(blockRange.to);
+                expect(row.result!.totalTrades).to.equal(1);
+                const trade = row.result!.trades[0];
+                expect(trade.entryTime).to.equal(selected[executionModel === "next_open" ? 1 : 0].time);
+                expect(trade.exitTime).to.equal(selected[executionModel === "next_open" ? 3 : 2].time);
+                expect(trade.type).to.equal(tradeDirection);
+                expect(row.tradeSummary!.avgHoldBars).to.equal(2);
+                expect(candles).to.have.lengthOf(BATCH_MIN_USABLE_BARS);
+            });
+        }
+    }
+
+    it("reports a range with no overlapping candles without executing the strategy", async () => {
+        let executed = false;
+        const output = await runBatchBacktest({
+            interval: "5m", strategyKey: "batch_test",
+            strategy: { ...testStrategy, execute() { executed = true; return []; } },
+            strategyParams: {}, backtestSettings: settings, capitalSettings,
+            symbols: ["UP"], blockRange: { from: 1, to: 2 }, minUsableBars: 1,
+            loadDataset: async () => makeCandles([100, 101, 102]),
+        }, { setProgress: () => {}, setStatus: () => {}, isCancelled: () => false });
+        expect(executed).to.equal(false);
+        expect(output.loadedSymbols).to.equal(0);
+        expect(output.failedSymbols).to.deep.equal(["UP"]);
+        expect(output.results[0]).to.include({ status: "load_failed", barCount: 0 });
+        expect(output.results[0].error).to.include("selected date range");
+    });
+
+    it("includes the date window in fingerprints while preserving full-history fingerprints", () => {
+        const input = {
+            symbols: ["UP"], interval: "5m", strategyKey: "batch_test",
+            strategyParams: {}, backtestSettings: settings, capitalSettings,
+        };
+        const full = buildBatchRunFingerprint(input);
+        expect(buildBatchRunFingerprint({ ...input, blockRange: null })).to.equal(full);
+        const ranged = buildBatchRunFingerprint({ ...input, blockRange: { from: 1, to: 2 } });
+        expect(ranged).to.not.equal(full);
+        expect(buildBatchRunFingerprint({ ...input, blockRange: { from: 1, to: 3 } })).to.not.equal(ranged);
+    });
+
     it("runs the current strategy across every pair and reports per-symbol status", async () => {
         const datasets = new Map<string, OHLCVData[]>([
             // uptrend -> profitable

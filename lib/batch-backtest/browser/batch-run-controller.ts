@@ -28,6 +28,7 @@ import {
     parseBatchSymbols,
     BATCH_MAX_SYMBOLS,
     buildBatchRunFingerprint,
+    type BatchBlockRange,
 } from "../batch-run-contract";
 import type { BatchBacktestSymbolResult } from "../batch-backtest-runner";
 import { collectOpenPositionSymbols } from "../batch-open-positions";
@@ -377,6 +378,7 @@ export class BatchRunController {
         const backtestSettings = backtestService.getBacktestSettings();
         const capitalSettings = backtestService.getCapitalSettings();
         const interval = state.currentInterval;
+        const blockRange = state.blockRange ? { ...state.blockRange } : null;
         const runFingerprint = buildBatchRunFingerprint({
             symbols,
             strategyKey,
@@ -384,6 +386,7 @@ export class BatchRunController {
             backtestSettings,
             capitalSettings,
             interval,
+            blockRange,
             pairListProvenance: this.deps.getPairListProvenance(),
         });
 
@@ -446,7 +449,7 @@ export class BatchRunController {
                 // what actually happened (done / cancelled) instead of guessing
                 // from `this.cancelled` after the fact.
                 runState.outcome = finalOutcome;
-            });
+            }, blockRange);
         } catch (error) {
             if (token !== this.runToken) return;
             const message = error instanceof Error ? error.message : String(error);
@@ -506,6 +509,7 @@ export class BatchRunController {
         interval: string,
         runFingerprint: string,
         onTerminal: (outcome: BatchBenchmarkRunOutcome) => void,
+        blockRange: BatchBlockRange | null = null,
     ): Promise<void> {
         // Audit Finding 5: generate a per-run id and send it on the /run body
         // so the server can scope Stop to THIS run. Adopted on the controller
@@ -527,6 +531,7 @@ export class BatchRunController {
                 strategyParams,
                 backtestSettings,
                 capitalSettings,
+                blockRange,
                 useRustEnginePreference: shouldUseRustEngine(),
                 runId,
                 // Phase 3 MAX_ACTIVE: attach the active pair-list provenance

@@ -1,6 +1,12 @@
 import type { PairListProvenanceV1 } from "./balanced-pair-list-generator";
 import { normalizeSyntheticPairExecutionSymbol } from '../synthetic-pair-mode';
 
+/** Inclusive chart selection, expressed in Unix seconds. */
+export interface BatchBlockRange {
+    from: number;
+    to: number;
+}
+
 export interface BatchRunFingerprintInput {
     symbols: readonly string[];
     strategyKey: string;
@@ -8,6 +14,7 @@ export interface BatchRunFingerprintInput {
     backtestSettings: unknown;
     capitalSettings: unknown;
     interval: string;
+    blockRange?: BatchBlockRange | null;
     /**
      * Optional verified pair-list provenance attached to the run only while
      * the current pair-textarea digest matches `provenance.emittedPairListHash`.
@@ -94,6 +101,7 @@ export function buildBatchRunFingerprint(args: BatchRunFingerprintInput): string
         backtestSettings: args.backtestSettings,
         capitalSettings: args.capitalSettings,
         interval: args.interval,
+        ...(args.blockRange ? { blockRange: { from: args.blockRange.from, to: args.blockRange.to } } : {}),
         ...(args.pairListProvenance ? { pairListProvenance: args.pairListProvenance } : {}),
     });
 }

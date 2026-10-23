@@ -108,6 +108,15 @@ delays so the loop cannot reschedule).
 
 ## Batch menu interaction contracts
 
+Batch Run captures the chart toolbar's selected date range at submission and
+applies the same inclusive Unix-second bounds to every symbol. Full (no
+selection) uses all loaded history. Strategy execution, retained replay
+artifacts, bar counts, dates, B&H and hold/exposure statistics use that window.
+The loaded history still passes the usual cache-completeness check before
+selection; a short selection is allowed, and no overlapping candles produces
+a `load_failed` row naming the selected date range. The range is included in
+the run fingerprint and stays fixed if the chart selection changes during a run.
+
 Asset-Switch Replay performance cards use a responsive grid in both the
 full-window report and expanded independent calendar-year reports. Columns
 adapt to the available panel width with a 380px minimum card width, falling
@@ -503,7 +512,9 @@ even when the user has Rust enabled — a perf regression vs browser mode.
 All endpoints live under `/api/batch-backtest/*`:
 
 - `POST /run` — NDJSON stream. Body: `{ symbols, interval, strategyKey,
-  strategyParams, backtestSettings, capitalSettings, useRustEnginePreference }`.
+  strategyParams, backtestSettings, capitalSettings, useRustEnginePreference,
+  blockRange?: { from, to } | null }`. Bounds must be finite Unix seconds with
+  `from <= to`; omitted/null preserves full-history behavior for older clients.
   Streams `start`, `progress`, `symbol`, `done`, `fatal` events. Load/run
   failures are transported as ordinary `symbol` events with a `load_failed` /
   `run_failed` status on the row; there is no separate failure event.
