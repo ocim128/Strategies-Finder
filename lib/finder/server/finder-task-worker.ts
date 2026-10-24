@@ -33,6 +33,9 @@ export function createFinderTaskWorker<TTask, TMessage>(
     });
 
     return {
+        postMessage: (message: unknown): void => {
+            if (!disposed && !stopping) worker.postMessage(message);
+        },
         runTask: (task: TTask): void => {
             if (disposed || stopping) {
                 onFatal(task, `${errorLabel} was stopped before task start`);

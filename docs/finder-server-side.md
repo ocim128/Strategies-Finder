@@ -1,5 +1,11 @@
 # Server-Owned Finder Jobs
 
+Finder admission also honors the checked shared `monte_carlo_universe`
+reservation. [Universe Monte Carlo](monte-carlo.md#universe-server-and-persistence)
+cannot start while Finder owns compute, and Finder rechecks the reservation
+after asynchronous preflight before claiming its generation. Batch/TOP_MEAN
+and Universe do not cancel each other to acquire ownership.
+
 Finder Symbol Universe is a **server-owned job**: the Vite server process owns
 the complete lifecycle for every selected entry strategy — IS evaluation,
 survivor merge, optional OOS validation, diagnostics combination, and the

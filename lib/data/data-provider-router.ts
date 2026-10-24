@@ -10,9 +10,11 @@ import { tradfiSearchService } from "../tradfi-search-service";
 import { isIbkrSymbol } from "../local-daily-datasets";
 
 export class DataProviderRouter {
+    constructor(private readonly capturedProvider?: DataProvider) {}
     private providerOverrideBySymbol: Map<string, Exclude<DataProvider, BinanceDataProvider>> = new Map();
 
     getDefaultBinanceProvider(): BinanceDataProvider {
+        if (this.capturedProvider && isBinanceDataProvider(this.capturedProvider)) return this.capturedProvider;
         return getBinanceProviderForMarketType(state.binanceMarketType);
     }
 
@@ -32,6 +34,7 @@ export class DataProviderRouter {
             this.providerOverrideBySymbol.set(normalizedSymbol, 'ibkr-local');
             return 'ibkr-local';
         }
+        if (this.capturedProvider) return this.capturedProvider;
         if (tradfiSearchService.isTradFiSymbol(normalizedSymbol)) {
             this.providerOverrideBySymbol.set(normalizedSymbol, 'bybit-tradfi');
             return 'bybit-tradfi';

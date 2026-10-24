@@ -2,6 +2,7 @@ import type { MonteCarloResult, MonteCarloSimulation } from "./strategies/monte-
 import type { MonteCarloDomElements } from "./monte-carlo-dom";
 import { mean, median, percentileSorted, sampleStdDev } from "./statistics-utils";
 import { escapeHtml } from "./html-escape";
+import { UNIVERSE_LIMITS, isUniverseTerminal, sortUniverseRows, type UniverseSnapshot, type UniverseSortKey } from './monte-carlo/universe/model';
 import {
     formatDecimal,
     formatDollarAmount,
@@ -17,6 +18,34 @@ export interface MonteCarloMethodComparisonRow {
     maxDrawdown95: number;
     medianSharpe: number;
     ruinProbability: number;
+}
+
+export function universeCoverageText(snapshot: UniverseSnapshot): string {
+    const c = snapshot.counts;
+    const rate = c.passRatePercent === null ? 'No eligible instruments' : `${c.passed}/${c.evaluated} eligible instruments pass (${c.passRatePercent.toFixed(1)}%)`;
+    return `${rate}; ${c.requested} requested, ${c.processed} processed, ${c.insufficient} insufficient, ${c.loadFailed} load failures, ${c.backtestFailed} backtest failures, ${c.simulationFailed} simulation failures, ${c.resourceLimited} resource limited, ${c.notProcessed} not processed. ${snapshot.state === 'completed' ? 'Complete' : 'Partial'} (${snapshot.state}).`;
+}
+export function renderUniverseInventory(snapshot: UniverseSnapshot, dom: MonteCarloDomElements, page: number, sortKey?: UniverseSortKey, ascending = true): void {
+    const rows = sortUniverseRows(snapshot.rows, sortKey, ascending);
+    const pages = Math.max(1, Math.ceil(rows.length / UNIVERSE_LIMITS.pageSize));
+    const current = Math.min(page, pages - 1);
+    const percent = (value: number | null) => value === null ? '—' : `${value.toFixed(2)}%`;
+    const date = (value: number | null) => value === null ? '—' : new Date(value * 1000).toISOString().slice(0, 10);
+    const captured = snapshot.configuration;
+    dom.universeSummary.textContent = `${universeCoverageText(snapshot)} Captured: ${captured.strategyKey} · ${captured.interval} · ${captured.sourceContext.provider} · initial capital $${captured.simulation.initialCapital} · minimum ${captured.criteria.minimumTradeRecords} records · profitable paths ≥${captured.criteria.minimumProfitablePathPercent}% · P95 drawdown ≤${captured.criteria.maximumP95DrawdownPercent}%.`;
+    dom.universeRows.innerHTML = rows.slice(current * 100, (current + 1) * 100).map(row => `<tr>
+        <td>${escapeHtml(row.token)}<br>${escapeHtml(row.mode)}</td><td>${date(row.firstTime)} – ${date(row.lastTime)}</td>
+        <td>${row.barCount}</td><td>${row.tradeRecords}</td><td>${percent(row.observedReturnPercent)}</td>
+        <td>${percent(row.profitablePathPercent)}</td><td>${percent(row.medianReturnPercent)}</td><td>${percent(row.p95DrawdownPercent)}</td>
+        <td>${escapeHtml(row.verdict ?? row.status)}${row.reason ? `<br>${escapeHtml(row.reason)}` : ''}</td>
+        <td><button class="btn btn-secondary" type="button" data-detail="${row.index}" ${row.detailAvailable && isUniverseTerminal(snapshot.state) ? '' : 'disabled'}>Details</button></td></tr>`).join('');
+    dom.universePrevious.disabled = current === 0;
+    dom.universeNext.disabled = current >= pages - 1;
+    dom.universePage.textContent = `Page ${current + 1} / ${pages} · ${rows.length} rows`;
+    dom.universeCsv.disabled = dom.universeJson.disabled = !isUniverseTerminal(snapshot.state);
+    for (const button of Array.from(dom.universeTable.querySelectorAll<HTMLButtonElement>('[data-sort]'))) {
+        button.parentElement?.setAttribute('aria-sort', button.dataset.sort === sortKey ? ascending ? 'ascending' : 'descending' : 'none');
+    }
 }
 
 export function getMonteCarloSuccessRateLabel(result: Pick<MonteCarloResult, "successRateLabel">): string {
@@ -44,7 +73,7 @@ export function renderMonteCarloResults(
 
     const multiScenario = methodComparisons.length > 1;
     const { netProfitValues, maxDrawdownPercentValues, sharpeRatioValues } = result.metricSamples;
-    dom.sourceBadge.textContent = "Chart Monte Carlo";
+    dom.sourceBadge.textContent = result.inputSource === 'universe' ? 'Symbol Universe · saved bootstrap detail' : 'Chart Monte Carlo';
     dom.summaryProfitLabel.textContent = "Median Net Profit";
     dom.methodProfitHeader.textContent = "Median Net Profit";
     dom.profitDistTitle.textContent = "Net Profit Distribution";

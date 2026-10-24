@@ -21,6 +21,7 @@ export interface MonteCarloSettings {
 }
 
 export interface MonteCarloSizingConfig {
+    executionMode?: 'equal_weight';
     mode: TradeSizingMode;
     positionSizePercent: number;
     fixedTradeAmount: number;
@@ -128,7 +129,7 @@ export interface ConfidenceIntervals {
 export interface MonteCarloResult {
     status: "success" | "error" | "insufficient_sample";
     errorMessage?: string;
-inputSource?: "chart";
+    inputSource?: "chart" | "universe";
     successRateLabel?: "Win Rate" | "Positive Trade Rate";
     coverageSummary?: MonteCarloCoverageSummary;
     

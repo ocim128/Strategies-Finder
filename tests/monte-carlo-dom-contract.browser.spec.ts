@@ -14,7 +14,7 @@ import { state } from "../lib/state";
 import { createFakeElement } from "./helpers/fake-element";
 
 describe("Monte Carlo required DOM contract", () => {
-    for (const missingId of ["mc-cancel-btn", "mc-seed"] as const) {
+    for (const missingId of ["mc-cancel-btn", "mc-seed", "mc-universe-symbols"] as const) {
         it(`fails initialization when ${missingId} is missing instead of aliasing another element`, () => {
             const elements = new Map<string, ReturnType<typeof createFakeElement>>();
             for (const id of MONTE_CARLO_REQUIRED_IDS) {

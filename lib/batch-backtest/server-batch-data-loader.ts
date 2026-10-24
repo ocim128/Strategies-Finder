@@ -7,6 +7,7 @@
  */
 
 import type { OHLCVData } from "../types/strategies";
+import type { DataProvider } from "../types/data-providers";
 import {
     createBatchDatasetLoaderCore,
     type BatchDatasetCacheStats,
@@ -90,4 +91,27 @@ export function clearServerBatchDatasetCaches(): void {
 
 export function getServerBatchDatasetCacheStats(): BatchDatasetCacheStats {
     return loader.getCacheStats();
+}
+
+/** A worker's captured provider owns its caches; live UI/global source changes cannot reach it. */
+export function createCapturedServerBatchDatasetLoader(provider: DataProvider) {
+    const fetcher = createServerDataFetcher(provider);
+    const memo = createSeedFingerprintMemo();
+    const diskSafe = provider === 'binance' || provider === 'ibkr-local';
+    return createBatchDatasetLoaderCore({
+        logPrefix: 'monte-carlo.universe',
+        legCacheMaxEntries: cacheBudget.legCacheMaxEntries,
+        pairCacheMaxEntries: cacheBudget.pairCacheMaxEntries,
+        fetchDetached: (symbol, interval, options) => provider !== 'binance' && !isIbkrSymbol(symbol)
+            ? fetcher.fetchDataDetached(symbol, interval, options)
+            : fetchServerDetachedDataWithFetcher(fetcher, symbol, interval, options),
+        fetchHistorical: (symbol, interval, limit, options) => provider !== 'binance' && !isIbkrSymbol(symbol)
+            ? fetcher.fetchHistoricalData(symbol, interval, limit, options)
+            : fetchServerHistoricalDataWithFetcher(fetcher, symbol, interval, limit, options),
+        acceptOfflineThinData: (symbol, interval) => isIbkrSymbol(symbol) || (provider === 'binance' && getCryptoCsvMtimeMs(symbol, interval) !== null),
+        ...(diskSafe ? {
+            computeSyntheticPairFingerprint: (args: { baseSymbol: string; quoteSymbol: string; sourceInterval: string }) => memo.compute(args.baseSymbol, args.quoteSymbol, args.sourceInterval),
+            loadCachedSyntheticPair, storeSyntheticPair,
+        } : {}),
+    });
 }

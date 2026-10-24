@@ -109,6 +109,15 @@ Unfinished next-open bridge bars retain only each leg's known opening price.
 
 Pairs without a suffix retain the existing ratio behavior.
 
+Symbol Universe in [Monte Carlo](monte-carlo.md#symbol-universe) supports ratio
+and `@50/50` instruments through the shared TypeScript Batch executor. Leg
+samples survive loading, slicing and execution-aware preparation. Each
+instrument bootstraps complete records with both legs kept together. Simulations
+normalize 50/50 P&L by gross entry notional; ordinary/ratio allocation includes
+entry commission. Missing/inconsistent legs fail explicitly. Universe v1
+rejects partial exits, keeps separate accounts and does not apply Finder's
+pair-neutral ranking transformation.
+
 ### Finder execution performance
 
 Single-position `@50/50` runs can use the TypeScript Finder fast path,

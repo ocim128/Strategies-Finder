@@ -8,6 +8,7 @@ import { localSqlitePlugin } from './lib/local-sqlite-vite-plugin';
 import { batchBacktestVitePlugin, createBatchOwnerLocksAdapter } from './lib/batch-backtest/batch-backtest-vite-plugin';
 import { assetOpportunityExplorerVitePlugin } from './lib/asset-opportunity-explorer/server-vite-plugin';
 import { finderVitePlugin } from './lib/finder/server/finder-vite-plugin';
+import { monteCarloUniverseVitePlugin } from './lib/monte-carlo/universe/server';
 import { rankPairsVitePlugin } from './lib/rank-pairs/server/rank-pairs-vite-plugin';
 import { sendJson, proxyUpstreamJson } from './lib/vite-http-utils';
 import { debugLogger } from './lib/debug-logger';
@@ -173,6 +174,7 @@ export default defineConfig({
         batchBacktestVitePlugin(),
         assetOpportunityExplorerVitePlugin(),
         finderVitePlugin({ batchOwnerLocks: createBatchOwnerLocksAdapter() }),
+        monteCarloUniverseVitePlugin(createBatchOwnerLocksAdapter()),
         rankPairsVitePlugin(),
     ],
     server: {

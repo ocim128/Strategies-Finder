@@ -35,6 +35,7 @@ import { DataFetcher } from "./data-fetcher";
 import { DataPersistence } from "./data-persistence";
 import { DataProviderRouter } from "./data-provider-router";
 import type { OHLCVData } from "../types/strategies";
+import type { DataProvider } from "../types/data-providers";
 import { isIbkrSymbol } from "../local-daily-datasets";
 import { loadFreshIbkrCandlesFromDisk } from "../batch-backtest/server-ibkr-csv-loader";
 import { loadFreshCryptoCandlesFromDisk } from "../batch-backtest/server-crypto-csv-loader";
@@ -49,10 +50,10 @@ const emptyImportedData = new Map<string, OHLCVData[]>();
  * data cache, and persistence. Callers should retain the returned instance for
  * the lifetime of their loader (one per loader); do NOT allocate per request.
  */
-export function createServerDataFetcher(): DataFetcher {
+export function createServerDataFetcher(capturedProvider?: DataProvider): DataFetcher {
     return new DataFetcher(
-        providerRouter,
-        dataCache,
+        capturedProvider ? new DataProviderRouter(capturedProvider) : providerRouter,
+        capturedProvider ? new DataCache() : dataCache,
         dataPersistence,
         () => emptyImportedData,
         () => DATA_CHART_TOTAL_LIMIT,

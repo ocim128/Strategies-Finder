@@ -22,6 +22,14 @@ export class UIManager {
      * blocks superseded renders/commits until the loading request settles.
      */
     private pendingStrategySelection: { key: string; generation: number } | null = null;
+    private readonly selectionWaiters = new Set<() => void>();
+    public waitForStrategySelection(): Promise<void> {
+        return this.pendingStrategySelection === null ? Promise.resolve() : new Promise(resolve => this.selectionWaiters.add(resolve));
+    }
+    private resolveSelectionWaiters(): void {
+        for (const resolve of this.selectionWaiters) resolve();
+        this.selectionWaiters.clear();
+    }
     /** Monotonic render generation owning the strategy parameter form. */
     private strategyParamRenderGeneration = 0;
 
@@ -53,6 +61,7 @@ export class UIManager {
     public settleStrategySelection(generation: number): void {
         if (this.pendingStrategySelection?.generation === generation) {
             this.pendingStrategySelection = null;
+            this.resolveSelectionWaiters();
         }
     }
 
@@ -64,6 +73,7 @@ export class UIManager {
      */
     public cancelPendingStrategySelection(): void {
         this.pendingStrategySelection = null;
+        this.resolveSelectionWaiters();
     }
 
     public updateSymbolDataSource(

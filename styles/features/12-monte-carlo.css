@@ -75,3 +75,14 @@
     font-size: var(--font-size-xs);
     color: var(--text-secondary);
 }
+/* Universe keeps the full inventory in memory and renders one bounded page. */
+#mc-universe-scope-container [hidden], #mc-chart-scope-container[hidden], #mc-universe-scope-container[hidden] { display: none !important; }
+#mc-universe-scope-container { min-width: 0; }
+#mc-universe-symbols { width: 100%; resize: vertical; }
+#mc-universe-preview { white-space: pre-wrap; overflow-wrap: anywhere; margin-block: 12px; }
+.mc-universe-table-scroll { max-width: 100%; overflow-x: auto; }
+#mc-universe-table { min-width: 1100px; }
+#mc-universe-table th button { color: inherit; font: inherit; background: transparent; border: 0; cursor: pointer; text-align: left; }
+#mc-universe-table button:focus-visible, #mc-universe-scope-container .btn:focus-visible { outline: 2px solid var(--accent-color, #409cff); outline-offset: 2px; }
+#mc-universe-scope-container .param-row { flex-wrap: wrap; }
+#mc-universe-scope-container .mc-actions { flex-wrap: wrap; align-items: center; gap: 8px; }

@@ -109,6 +109,9 @@ export interface BatchBacktestTradeSummary {
 }
 
 export interface BatchBacktestRunInput {
+    /** One captured execution clock for every instrument in a research run. */
+    asOfTimeSec?: number;
+    engineMode?: 'typescript';
     /** Snapshot of the inclusive chart date range; absent/null uses all history. */
     blockRange?: import("./batch-run-contract").BatchBlockRange | null;
     interval: string;
@@ -225,7 +228,7 @@ export async function runBatchBacktest(
     };
 
     const abort = new AbortController();
-    const nowSec = Math.floor(Date.now() / 1000);
+    const nowSec = input.asOfTimeSec ?? Math.floor(Date.now() / 1000);
     const blockRange = input.blockRange ? { ...input.blockRange } : null;
     const cancelCheck = () => {
         const cancelled = callbacks.isCancelled();
@@ -382,7 +385,7 @@ export async function runBatchBacktest(
                 preResolvedCapital,
                 context: {
                     blockRange,
-                    engineMode: "auto",
+                    engineMode: input.engineMode ?? "auto",
                     useRustEnginePreference: input.useRustEnginePreference,
                     nowSec,
                     signal: abort.signal,

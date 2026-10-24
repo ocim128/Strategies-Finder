@@ -69,6 +69,9 @@ export interface BatchOwnerLocks {
      * caller passes to {@link releaseIfStillOwner} on completion.
      */
     acquire(runId: string): BatchOwnerToken;
+    acquireExclusive?(runId: string, kind: 'monte_carlo_universe'): BatchOwnerToken;
+    setFinderBusyCheck?(check: () => boolean): void;
+    isUniverseReserved?(): boolean;
     /**
      * Release the run + analysis locks iff this caller still owns them (a
      * concurrent Stop or release-last-results may have already cleared them).
@@ -86,7 +89,7 @@ export interface BatchOwnerLocks {
 export interface BatchOwnerToken {
     readonly runOwner: number;
     readonly analysisOwner: number;
-    readonly ownerKind?: "batch" | "finder_sweep";
+    readonly ownerKind?: "batch" | "finder_sweep" | "monte_carlo_universe";
 }
 
 /**

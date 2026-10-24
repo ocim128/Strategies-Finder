@@ -30,6 +30,7 @@ export interface MonteCarloProgress {
 }
 
 export interface RunMonteCarloOptions {
+    inputSource?: "chart" | "universe";
     signal?: AbortSignal;
     onProgress?: (progress: MonteCarloProgress) => void;
     sizing?: MonteCarloSizingConfig;
@@ -87,13 +88,44 @@ interface BuildResultArgs {
     timesToRuin: number[];
     ruinCount: number;
     sampledSimulations: MonteCarloSimulation[];
-    inputSource: "chart";
+    inputSource: "chart" | "universe";
     successRateLabel: "Win Rate" | "Positive Trade Rate";
     coverageSummary?: MonteCarloCoverageSummary;
 }
 
+export type MonteCarloBacktestInput = Pick<BacktestResult,
+    "trades" | "netProfit" | "maxDrawdownPercent" | "sharpeRatio" | "winRate">;
+
+/** Reject invalid arithmetic before statistics helpers can discard samples. */
+export function assertFiniteMonteCarlo(value: unknown): void {
+    if (typeof value === "number" && !Number.isFinite(value)) throw new Error("non_finite_simulation");
+    if (value && typeof value === "object") {
+        for (const item of Object.values(value)) assertFiniteMonteCarlo(item);
+    }
+}
+
 export async function runMonteCarloSimulation(
-    backtestResult: BacktestResult,
+    backtestResult: MonteCarloBacktestInput,
+    settings: MonteCarloSettings,
+    ohlcvData?: OHLCVData[],
+    strategyParams?: StrategyParams,
+    options: RunMonteCarloOptions = {},
+): Promise<MonteCarloResult> {
+    try {
+        return await simulate(backtestResult, settings, ohlcvData, strategyParams, options);
+    } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") throw error;
+        const result = createInsufficientSampleResult({
+            inputTradeCount: backtestResult.trades.length, inputNetProfit: 0, inputSharpeRatio: 0,
+            settings, startTime: Date.now(), inputSource: options.inputSource ?? "chart",
+            successRateLabel: "Win Rate", errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        return { ...result, status: "error" };
+    }
+}
+
+async function simulate(
+    backtestResult: MonteCarloBacktestInput,
     settings: MonteCarloSettings,
     _ohlcvData?: OHLCVData[],
     _strategyParams?: StrategyParams,
@@ -109,7 +141,7 @@ export async function runMonteCarloSimulation(
             inputSharpeRatio: backtestResult.sharpeRatio,
             settings,
             startTime,
-            inputSource: "chart",
+            inputSource: options.inputSource ?? "chart",
             successRateLabel: "Win Rate",
             errorMessage: `Insufficient trades for Monte Carlo simulation. Need at least ${MIN_TRADES_FOR_SIMULATION} trades, got ${trades.length}.`,
         });
@@ -121,6 +153,9 @@ export async function runMonteCarloSimulation(
             ohlcvData: options.sizing.ohlcvData ?? _ohlcvData,
         }
         : undefined;
+    assertFiniteMonteCarlo({ trades, netProfit: backtestResult.netProfit, maxDrawdownPercent: backtestResult.maxDrawdownPercent,
+        sharpeRatio: backtestResult.sharpeRatio, winRate: backtestResult.winRate });
+    assertFiniteMonteCarlo(settings);
     const tradeSamples = createChartTradeSamples(trades, sizing);
     const tradeExitTimes = tradeSamples.map((trade) => trade.exitTime);
     const runContext = createSimulationRunContext(settings, trades.length);
@@ -147,6 +182,7 @@ export async function runMonteCarloSimulation(
             sizing,
             shouldStoreSimulation ? runContext.curveSampleIndices : null,
         );
+        assertFiniteMonteCarlo(metrics);
 
         netProfitValues[simulationId] = metrics.netProfit;
         maxDrawdownPercentValues[simulationId] = metrics.maxDrawdownPercent;
@@ -196,7 +232,7 @@ export async function runMonteCarloSimulation(
         timesToRuin,
         ruinCount,
         sampledSimulations,
-        inputSource: "chart",
+        inputSource: options.inputSource ?? "chart",
         successRateLabel: "Win Rate",
     });
 }
@@ -223,7 +259,7 @@ function createInsufficientSampleResult(args: {
     inputSharpeRatio: number;
     settings: MonteCarloSettings;
     startTime: number;
-    inputSource: "chart";
+    inputSource: "chart" | "universe";
     successRateLabel: "Win Rate" | "Positive Trade Rate";
     errorMessage: string;
     coverageSummary?: MonteCarloCoverageSummary;
@@ -299,6 +335,7 @@ function createSimulationRunContext(settings: MonteCarloSettings, tradeCount: nu
 }
 
 function buildMonteCarloResult(args: BuildResultArgs): MonteCarloResult {
+    assertFiniteMonteCarlo(args);
     const confidenceIntervals = computeConfidenceIntervals(
         args.netProfitValues,
         args.maxDrawdownPercentValues,
@@ -313,6 +350,7 @@ function buildMonteCarloResult(args: BuildResultArgs): MonteCarloResult {
         args.ruinCount,
         args.settings.simulations,
     );
+    assertFiniteMonteCarlo({ confidenceIntervals, netProfitDistribution, ruinProbabilityMetrics });
 
     return {
         status: "success",
@@ -407,12 +445,22 @@ function createChartTradeSamples(
 
     return trades.map((trade) => {
         const entryValue = Math.abs(trade.size * trade.entryPrice);
+        if (sizing?.executionMode === 'equal_weight' || trade.legs) {
+            if (!trade.legs) throw new Error('invalid_pair_records');
+            const summed = Math.abs(trade.legs.base.size * trade.legs.base.entryPrice)
+                + Math.abs(trade.legs.quote.size * trade.legs.quote.entryPrice);
+            assertFiniteMonteCarlo(summed);
+            if (entryValue <= 0 || Math.abs(entryValue - summed) > 1e-9 * Math.max(1, entryValue, summed)) {
+                throw new Error('invalid_pair_records');
+            }
+        }
         const allocatedCapital = entryValue > 0
-            ? entryValue * (1 + commissionRate)
+            ? entryValue * (trade.legs ? 1 : (1 + commissionRate))
             : 0;
         const returnOnAllocatedCapital = allocatedCapital > 0
             ? trade.pnl / allocatedCapital
             : null;
+        assertFiniteMonteCarlo([entryValue, allocatedCapital, returnOnAllocatedCapital]);
 
         return {
             pnl: trade.pnl,
@@ -446,6 +494,8 @@ function simulateChartTradePath(
     const equitySamples = new Array<number>(order.length);
     const equityCurve = curveSampleIndices ? new Array<number>(curveSampleIndices.length) : undefined;
     const smartSizingState = sizing ? createSmartSizingState() : null;
+    let returnSum = 0;
+    let squaredReturnSum = 0;
 
     for (let step = 0; step < order.length; step++) {
         const tradeIndex = order[step];
@@ -454,7 +504,14 @@ function simulateChartTradePath(
             ? resolveChartTradePnl(trade, equity, sizing, smartSizingState)
             : 0;
 
+        const previousEquity = equity;
         equity += pnl;
+        assertFiniteMonteCarlo([pnl, equity]);
+        if (previousEquity > 0) {
+            const value = (equity - previousEquity) / previousEquity;
+            returnSum += value; squaredReturnSum += value * value;
+            assertFiniteMonteCarlo([value, returnSum, squaredReturnSum]);
+        }
         equitySamples[step] = equity;
 
         if (equityCurve && curveSampleIndices && curveSampleIndices[nextCurvePoint] === step) {
@@ -467,6 +524,7 @@ function simulateChartTradePath(
         }
 
         const drawdown = peak - equity;
+        assertFiniteMonteCarlo(drawdown);
         if (drawdown > maxDrawdown) {
             maxDrawdown = drawdown;
         }
@@ -475,6 +533,7 @@ function simulateChartTradePath(
         // loss.
         if (peak > 0) {
             const drawdownPercent = (drawdown / peak) * 100;
+            assertFiniteMonteCarlo(drawdownPercent);
             if (drawdownPercent > maxDrawdownPercent) {
                 maxDrawdownPercent = drawdownPercent;
             }
@@ -528,7 +587,8 @@ function resolveChartTradePnl(
     }
 
     const allocatedCapital = resolveMonteCarloAllocatedCapital(trade, equity, sizing, smartSizingState);
-    if (!Number.isFinite(allocatedCapital) || allocatedCapital <= 0) {
+    assertFiniteMonteCarlo(allocatedCapital);
+    if (allocatedCapital <= 0) {
         return 0;
     }
 

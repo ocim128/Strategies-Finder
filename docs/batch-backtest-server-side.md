@@ -1,5 +1,12 @@
 # Server-Side Batch Backtest
 
+[Symbol Universe Monte Carlo](monte-carlo.md#universe-server-and-persistence)
+uses the runner in one separate task worker, with optional captured
+`asOfTimeSec`, provider context, TypeScript execution and pruned artifacts.
+Existing callers retain the default clock and engine selection. Its checked
+`monte_carlo_universe` reservation owns both Batch/analysis generations until
+worker termination and writes settle. Batch Stop cannot release that reservation.
+
 Pair lists accept `BASE+QUOTE@50/50` and the shorthand `BASE+QUOTE@` for
 [equal-dollar two-leg execution](synthetic-pairs.md#equal-dollar-two-leg-execution).
 The shared Batch/Finder loader retains source leg OHLC, separates its cache

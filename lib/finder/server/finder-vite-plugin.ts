@@ -621,7 +621,9 @@ function flushPendingDatasetCacheInvalidation(): void {
  * Acquire single-owner run ownership. Flushes any deferred dataset-cache
  * invalidation first so the new run cannot load pre-sync datasets.
  */
+let universeReservationCheck: (() => boolean) | undefined;
 function acquireRunOwnership(): number {
+    if (universeReservationCheck?.()) throw new HttpStatusError(409, 'Symbol Universe Monte Carlo is running.');
     flushPendingDatasetCacheInvalidation();
     const owner = ++runOwnerGen;
     runOwner = owner;
@@ -4369,6 +4371,8 @@ export function finderVitePlugin(deps: { batchOwnerLocks?: BatchOwnerLocks } = {
  * caller.
  */
 function registerFinderRoutes(middlewares: any, serverRoot?: string, batchOwnerLocks?: BatchOwnerLocks): void {
+    universeReservationCheck = batchOwnerLocks?.isUniverseReserved;
+    batchOwnerLocks?.setFinderBusyCheck?.(() => runOwner !== RUN_OWNER_NONE);
     // The batch archive dir resolves from Vite's configured project root so
     // launching Vite from another working directory cannot write to the wrong
     // archive. Tests call the registration seam without a root and fall back

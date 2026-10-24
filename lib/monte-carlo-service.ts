@@ -15,6 +15,7 @@ import {
 import { median } from "./statistics-utils";
 import { debugLogger } from "./debug-logger";
 import { isAbortError } from "./abort-utils";
+import { UniverseController } from './monte-carlo/universe/controller';
 
 const MAX_SIMULATION_CAP = 10_000;
 const MIN_SIMULATION_CAP = 250;
@@ -33,6 +34,11 @@ let abortController: AbortController | null = null;
 let initialized = false;
 let observedBacktestResult = state.currentBacktestResult;
 let backtestRevision = 0;
+let universeController: UniverseController | null = null;
+let universeScope = false;
+let chartPresentation: { result: MonteCarloResult; comparisons: MonteCarloMethodComparisonRow[] } | null = null;
+let chartStatus = 'Ready';
+function setChartStatus(text: string): void { chartStatus = text; if (dom && !universeScope) dom.statusSpan.textContent = text; }
 
 export function initMonteCarloService(): void {
     if (initialized) {
@@ -67,23 +73,41 @@ export function initMonteCarloService(): void {
     });
 
     refreshMonteCarloFromState();
+    universeController = new UniverseController(elements, (universe, detail) => {
+        universeScope = universe;
+        if (universe) {
+            elements.emptyState.style.display = 'none';
+            elements.resultsContainer.style.display = 'none';
+            if (detail) renderMonteCarloResults(detail, elements);
+        } else {
+            elements.statusSpan.textContent = chartStatus;
+            elements.cancelBtn.disabled = false;
+            setRunningState(isRunning);
+            if (chartPresentation) renderMonteCarloResults(chartPresentation.result, elements, chartPresentation.comparisons);
+            else elements.resultsContainer.style.display = 'none';
+            refreshMonteCarloFromState();
+        }
+    });
     initialized = true;
 }
 
+export function disposeMonteCarloUniverse(): void { universeController?.dispose(); universeController = null; }
+if (import.meta.hot) import.meta.hot.dispose(disposeMonteCarloUniverse);
+
 async function handleRun(): Promise<void> {
-    if (!dom || isRunning) {
+    if (!dom || isRunning || universeScope) {
         return;
     }
 
     const backtestResult = state.currentBacktestResult;
     if (!backtestResult) {
-        dom.statusSpan.textContent = "Please run a backtest first";
+        setChartStatus("Please run a backtest first");
         return;
     }
 
     const baseSettings = readSettingsFromDom();
     if (!baseSettings.enableSequenceRandomization && !baseSettings.enableBootstrap) {
-        dom.statusSpan.textContent = "Enable sequence randomization or bootstrap resampling";
+        setChartStatus("Enable sequence randomization or bootstrap resampling");
         return;
     }
 
@@ -94,12 +118,12 @@ async function handleRun(): Promise<void> {
 
     if (requestedSimulations > safeCap) {
         baseSettings.simulations = effectiveSimulations;
-        dom.statusSpan.textContent = `Requested ${requestedSimulations.toLocaleString()} sims; using safe cap ${safeCap.toLocaleString()} for this run`;
+        setChartStatus(`Requested ${requestedSimulations.toLocaleString()} sims; using safe cap ${safeCap.toLocaleString()} for this run`);
     }
 
     const scenarioPlans = buildScenarioPlans(baseSettings);
     if (scenarioPlans.length === 0) {
-        dom.statusSpan.textContent = "No Monte Carlo scenarios are available for the selected settings";
+        setChartStatus("No Monte Carlo scenarios are available for the selected settings");
         return;
     }
 
@@ -108,7 +132,7 @@ async function handleRun(): Promise<void> {
     const runBacktestRevision = backtestRevision;
     abortController = runController;
     setRunningState(true);
-    dom.statusSpan.textContent = `Running Monte Carlo: 0/${(scenarioPlans.length * effectiveSimulations).toLocaleString()} simulations...`;
+    setChartStatus(`Running Monte Carlo: 0/${(scenarioPlans.length * effectiveSimulations).toLocaleString()} simulations...`);
 
     try {
         const results: Array<{ plan: ScenarioPlan; result: MonteCarloResult }> = [];
@@ -128,7 +152,7 @@ async function handleRun(): Promise<void> {
                         if (!dom || runBacktestRevision !== backtestRevision || runController.signal.aborted) {
                             return;
                         }
-                        dom.statusSpan.textContent = formatProgressStatus(plan.label, progress, scenarioIndex, scenarioPlans.length);
+                        setChartStatus(formatProgressStatus(plan.label, progress, scenarioIndex, scenarioPlans.length));
                     },
                 },
             );
@@ -151,32 +175,33 @@ async function handleRun(): Promise<void> {
             .map(({ plan, result }) => toComparisonRow(plan, result));
         const aggregateExecutionTimeMs = totalExecutionTimeMs(results);
 
-        renderMonteCarloResults(primaryEntry.result, dom, comparisonRows);
+        chartPresentation = { result: primaryEntry.result, comparisons: comparisonRows };
+        if (!universeScope) renderMonteCarloResults(primaryEntry.result, dom, comparisonRows);
 
         if (primaryEntry.result.status !== "success") {
-            dom.statusSpan.textContent = primaryEntry.result.errorMessage ?? "Monte Carlo could not complete";
+            setChartStatus(primaryEntry.result.errorMessage ?? "Monte Carlo could not complete");
             return;
         }
 
-        if (scenarioPlans.length > 1) {
+        if (scenarioPlans.length > 1 && !universeScope) {
             dom.execTimeEl.textContent = `${(aggregateExecutionTimeMs / 1000).toFixed(2)}s`;
         }
 
-        dom.statusSpan.textContent = formatCompletionStatus(
+        setChartStatus(formatCompletionStatus(
             requestedSimulations,
             effectiveSimulations,
             scenarioPlans.length,
             aggregateExecutionTimeMs,
-        );
+        ));
     } catch (error) {
         if (!dom || runBacktestRevision !== backtestRevision) {
             return;
         }
 
         if (isAbortError(error)) {
-            dom.statusSpan.textContent = "Monte Carlo run cancelled";
+            setChartStatus("Monte Carlo run cancelled");
         } else {
-            dom.statusSpan.textContent = `Error: ${error instanceof Error ? error.message : "Unknown error"}`;
+            setChartStatus(`Error: ${error instanceof Error ? error.message : "Unknown error"}`);
             debugLogger.error("monte_carlo.run_failed", {
                 error: error instanceof Error ? error.message : String(error),
             });
@@ -197,7 +222,7 @@ function readSettingsFromDom(): MonteCarloSettings {
 
     return {
         simulations: parseInt(dom.simulationsInput.value, 10) || 1000,
-        seed: parseInt(dom.seedInput.value, 10) || 1337,
+        seed: Number.isFinite(Number(dom.seedInput.value)) ? Number(dom.seedInput.value) : 1337,
         enableSequenceRandomization: dom.sequenceToggle.checked,
         enableBootstrap: dom.bootstrapToggle.checked,
         ruinThresholdPercent: parseFloat(dom.ruinThresholdInput.value) || 50,
@@ -316,7 +341,7 @@ function applyPreset(target: number): void {
 }
 
 function handleCancel(): void {
-    abortController?.abort();
+    if (!universeScope) abortController?.abort();
 }
 
 function formatProgressStatus(
@@ -355,7 +380,7 @@ function formatCompletionStatus(
 }
 
 function refreshActionAvailability(): void {
-    if (!dom) {
+    if (!dom || universeScope) {
         return;
     }
 
@@ -373,7 +398,7 @@ function refreshActionAvailability(): void {
 }
 
 function setRunningState(running: boolean): void {
-    if (!dom) {
+    if (!dom || universeScope) {
         return;
     }
 
@@ -394,7 +419,7 @@ function setIdleStatusMessageIfRelevant(message: string): void {
         || current === "Please run a backtest first"
         || current.startsWith("Chart safe cap:")
     ) {
-        dom.statusSpan.textContent = message;
+        setChartStatus(message);
     }
 }
 
@@ -408,11 +433,14 @@ export function refreshMonteCarloFromState(): void {
         observedBacktestResult = state.currentBacktestResult;
         backtestRevision++;
         abortController?.abort();
-        dom.resultsContainer.style.display = "none";
-        dom.statusSpan.textContent = observedBacktestResult
+        chartPresentation = null;
+        if (!universeScope) dom.resultsContainer.style.display = "none";
+        setChartStatus(observedBacktestResult
             ? hadBacktest ? "Backtest changed. Run Monte Carlo again." : "Ready"
-            : "Please run a backtest first";
+            : "Please run a backtest first");
     }
+
+    if (universeScope) { refreshActionAvailability(); return; }
 
     if (!state.currentBacktestResult) {
         dom.emptyState.style.display = "block";

@@ -8,6 +8,7 @@ import type { AddressInfo } from 'node:net';
 import { pathToFileURL } from 'node:url';
 import { withTimeout } from './helpers/with-timeout';
 import { verifyTopRawScanWorkflow } from './helpers/top-raw-scan-e2e';
+import { verifyMonteCarloUniverse } from './helpers/monte-carlo-universe-e2e';
 import { createEmptyAssetSwitchSummary } from '../lib/batch-backtest/open-score-replay/asset-switch';
 
 const requireFromHere = createRequire(import.meta.url);
@@ -2026,6 +2027,7 @@ async function runTest() {
             await verifyBatchCausalArms(page);
             await verifyTopRawScanWorkflow(page);
             await verifyMonteCarlo(page);
+            await verifyMonteCarloUniverse(page);
 
             console.log('Performing layout verification...');
             const layoutIssues = await verifyLayout(page);

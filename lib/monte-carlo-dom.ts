@@ -1,6 +1,28 @@
 import { getRequiredDomElements } from "./dom-utils";
 
 export interface MonteCarloDomElements {
+    scopeSelect: HTMLSelectElement;
+    chartScope: HTMLElement;
+    universeScope: HTMLElement;
+    universeSymbols: HTMLTextAreaElement;
+    universeCopyFinder: HTMLButtonElement;
+    universePaths: HTMLInputElement;
+    universeCapital: HTMLInputElement;
+    universeMinimum: HTMLInputElement;
+    universeProfitable: HTMLInputElement;
+    universeDrawdown: HTMLInputElement;
+    universeSeed: HTMLInputElement;
+    universeRuin: HTMLInputElement;
+    universePreview: HTMLElement;
+    universeSummary: HTMLElement;
+    universeTable: HTMLTableElement;
+    universeRows: HTMLTableSectionElement;
+    universePrevious: HTMLButtonElement;
+    universeNext: HTMLButtonElement;
+    universePage: HTMLElement;
+    universeCsv: HTMLButtonElement;
+    universeJson: HTMLButtonElement;
+    universeDetailStatus: HTMLElement;
     simulationsInput: HTMLInputElement;
     simulationCapHint: HTMLElement;
     seedInput: HTMLInputElement;
@@ -50,6 +72,14 @@ export interface MonteCarloDomElements {
 }
 
 const MONTE_CARLO_DOM_IDS = {
+    scopeSelect: 'mc-scope', chartScope: 'mc-chart-scope-container', universeScope: 'mc-universe-scope-container',
+    universeSymbols: 'mc-universe-symbols', universeCopyFinder: 'mc-universe-copy-finder',
+    universePaths: 'mc-universe-paths', universeCapital: 'mc-universe-capital', universeMinimum: 'mc-universe-minimum',
+    universeProfitable: 'mc-universe-profitable', universeDrawdown: 'mc-universe-drawdown',
+    universeSeed: 'mc-universe-seed', universeRuin: 'mc-universe-ruin', universePreview: 'mc-universe-preview',
+    universeSummary: 'mc-universe-summary', universeTable: 'mc-universe-table', universeRows: 'mc-universe-rows',
+    universePrevious: 'mc-universe-previous', universeNext: 'mc-universe-next', universePage: 'mc-universe-page',
+    universeCsv: 'mc-universe-csv', universeJson: 'mc-universe-json', universeDetailStatus: 'mc-universe-detail-status',
     simulationsInput: "mc-simulations",
     simulationCapHint: "mc-sim-cap-hint",
     seedInput: "mc-seed",

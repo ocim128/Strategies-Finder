@@ -539,7 +539,8 @@ let runOwnerGen = 0;
 // relying only on `runState.runId`, otherwise a Stop in that window can be
 // rejected as stale or clear the lock without preventing the run from starting.
 let runOwnerRunId: string | null = null;
-let runOwnerKind: "batch" | "finder_sweep" | null = null;
+let runOwnerKind: "batch" | "finder_sweep" | "monte_carlo_universe" | null = null;
+let finderBusyCheck: (() => boolean) | null = null;
 let finderSweepStopCallback: ((runId: string) => boolean) | null = null;
 let finderSweepChildRunId: string | null = null;
 let analysisOwner = RUN_OWNER_NONE;
@@ -1525,6 +1526,7 @@ async function handleStopRequest(rawRunId?: unknown): Promise<{ ok: boolean; sto
     const requestedRunId = parseBatchRunId(rawRunId);
     const runWasActive = runOwner !== RUN_OWNER_NONE;
     const analysisWasActive = analysisOwner !== RUN_OWNER_NONE;
+    if (runOwnerKind === 'monte_carlo_universe') return { ok: false, stopped: false };
     if (stopActiveTopRawScan(requestedRunId ?? null)) return { ok: true, stopped: true };
 
     if (runWasActive && runOwnerKind === "finder_sweep") {
@@ -2146,6 +2148,16 @@ export function batchBacktestVitePlugin(): Plugin {
 /** Shared Batch/TOP_MEAN reservation adapter injected into Finder sweeps. */
 export function createBatchOwnerLocksAdapter(): BatchOwnerLocks {
     return {
+        setFinderBusyCheck: (check) => { finderBusyCheck = check; },
+        isUniverseReserved: () => runOwnerKind === 'monte_carlo_universe',
+        acquireExclusive(runId, kind) {
+            if (runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE || getActiveTopMeanCoordinatorEngine() !== null || finderBusyCheck?.()) {
+                throw new HttpStatusError(409, 'A Finder, Batch, analysis, or TOP_MEAN operation is already running.');
+            }
+            const ownerGen = ++runOwnerGen, analysisGen = ++analysisOwnerGen;
+            runOwner = ownerGen; runOwnerRunId = runId; runOwnerKind = kind; analysisOwner = analysisGen;
+            return { runOwner: ownerGen, analysisOwner: analysisGen, ownerKind: kind };
+        },
         isBusy: () => runOwner !== RUN_OWNER_NONE || analysisOwner !== RUN_OWNER_NONE,
         acquire(runId) {
             const ownerGen = ++runOwnerGen;
