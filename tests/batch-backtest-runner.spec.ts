@@ -277,7 +277,7 @@ describe("runBatchBacktest", () => {
         const row = output.results[0]!;
         expect(row.result!.totalTrades).to.equal(1);
         expect(row.result!.trades[0]!.exitReason).to.equal("end_of_data");
-        expect(row.openPosition).to.deep.equal({ side: "long" });
+        expect(row.openPosition).to.deep.equal({ side: "long", entryTimeSec: 1_700_000_300 });
     });
 
     it("preloads confirmation strategies before replaying the batch", async () => {

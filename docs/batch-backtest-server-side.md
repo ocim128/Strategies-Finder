@@ -436,11 +436,15 @@ In server-side mode, the `symbol` event still strips `data`, `signals`, and
   string (for example, `2020:+120.5(14)|2021:-31.0(9)`). It contains no arrays;
   the browser parses it to build the portfolio yearly section.
 - `openPosition` preserves whether the pair's position was still open at the
-  end of its data (`{ side: "long" | "short" }`; the engine force-closes such
-  positions with `exitReason: end_of_data` on the last trade — the same signal
-  the OPEN_SCORE sections use). It feeds the **Copy Open Positions** button:
+  end of its data (`{ side: "long" | "short", entryTimeSec?: number }`);
+  the engine force-closes such positions with `exitReason: end_of_data` on
+  the last trade — the same signal the OPEN_SCORE sections use.
+  It feeds the **Copy Open Positions** button:
   it copies those pair symbols, one per line (paste-ready into the Pairs
-  textarea). Rows without the scalar (runs made before it existed) cannot be
+  textarea), sorted by entry time with the newest entry first. Entry timestamps
+  survive server streaming and snapshot reloads. Equal entry times retain run
+  order; older scalars without timestamps sort last in run order.
+  Rows without the scalar (runs made before it existed) cannot be
   recovered from the browser and are omitted from the list.
 
 The OPEN_SCORE USD replay (POST `/api/batch-backtest/open-score-usd`) produces

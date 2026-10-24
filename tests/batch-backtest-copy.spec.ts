@@ -15,6 +15,7 @@ import {
 } from "../lib/batch-backtest/batch-backtest-summary";
 import { containsNonEmptyNestedArrays, toScalarRow } from "../lib/batch-backtest/batch-backtest-stream-types";
 import { collectOpenPositionSymbols, computeOpenPosition } from "../lib/batch-backtest/batch-open-positions";
+import { normalizeBatchBacktestResultsSnapshot } from "../lib/batch-backtest/batch-backtest-snapshot";
 import { formatYearlyPnl, getBatchRowYearlyPnl, groupTradesByExitYear } from "../lib/batch-backtest/batch-yearly-pnl";
 import { sortBatchResults } from "../lib/batch-backtest/batch-results-sort";
 import type { BatchBacktestSymbolResult } from "../lib/batch-backtest/batch-backtest-runner";
@@ -276,9 +277,9 @@ describe("computeCurrentMaxActiveCandidates", () => {
 });
 
 describe("computeOpenPosition", () => {
-    it("returns the side of a position still open at end of data", () => {
-        expect(computeOpenPosition(openTradeRow("WLD+BTC", "long").result)).to.deep.equal({ side: "long" });
-        expect(computeOpenPosition(openTradeRow("ETHUSDT", "short").result)).to.deep.equal({ side: "short" });
+    it("returns the side and entry time of a position still open at end of data", () => {
+        expect(computeOpenPosition(openTradeRow("WLD+BTC", "long").result)).to.deep.equal({ side: "long", entryTimeSec: 1 });
+        expect(computeOpenPosition(openTradeRow("ETHUSDT", "short").result)).to.deep.equal({ side: "short", entryTimeSec: 1 });
     });
 
     it("returns null when the last trade exited normally", () => {
@@ -294,7 +295,7 @@ describe("computeOpenPosition", () => {
 });
 
 describe("collectOpenPositionSymbols", () => {
-    it("lists pairs whose last trade was force-closed at end of data, in run order", () => {
+    it("lists pairs whose last trade was force-closed at end of data, retaining run order for ties", () => {
         expect(collectOpenPositionSymbols([
             openTradeRow("WLD+BTC", "long"),
             resultRow("CLOSED", { netProfit: 1, totalTrades: 1 }),
@@ -313,6 +314,32 @@ describe("collectOpenPositionSymbols", () => {
         stripped.openPosition = { side: "long" };
         stripped.result!.trades = [];
         expect(collectOpenPositionSymbols([stripped])).to.deep.equal(["WLD+BTC"]);
+    });
+
+    it("copies newest entries first for full, streamed and restored rows without reordering results", () => {
+        const older = openTradeRow("OLDER", "long");
+        older.result!.trades[0]!.entryTime = "2026-01-01" as Time;
+        const newest = openTradeRow("NEWEST", "short");
+        newest.result!.trades[0]!.entryTime = (Date.UTC(2026, 0, 3) / 1000) as Time;
+        const middle = openTradeRow("MIDDLE", "long");
+        middle.result!.trades[0]!.entryTime = { year: 2026, month: 1, day: 2 } as Time;
+        const tied = openTradeRow("TIED", "long");
+        tied.result!.trades[0]!.entryTime = newest.result!.trades[0]!.entryTime;
+        const legacy = toScalarRow(openTradeRow("LEGACY", "long"));
+        legacy.openPosition = { side: "long" };
+        const invalid = toScalarRow(openTradeRow("INVALID", "short"));
+        invalid.openPosition = { side: "short", entryTimeSec: NaN };
+        const rows = [legacy, older, newest, resultRow("CLOSED"), middle, invalid, tied];
+        const originalOrder = rows.map((row) => row.symbol);
+        const expected = ["NEWEST", "TIED", "MIDDLE", "OLDER", "LEGACY", "INVALID"];
+
+        expect(collectOpenPositionSymbols(rows)).to.deep.equal(expected);
+        const streamed = rows.map(toScalarRow);
+        expect(streamed.every((row) => !row.result?.trades?.length)).to.equal(true);
+        expect(collectOpenPositionSymbols(streamed)).to.deep.equal(expected);
+        const restored = normalizeBatchBacktestResultsSnapshot(JSON.parse(JSON.stringify({ results: streamed })));
+        expect(collectOpenPositionSymbols(restored!.results)).to.deep.equal(expected);
+        expect(rows.map((row) => row.symbol)).to.deep.equal(originalOrder);
     });
 });
 
@@ -493,8 +520,8 @@ describe("server scalar batch rows", () => {
     it("carries the openPosition scalar through toScalarRow only when a position is open", () => {
         // Full row without the runner scalar: toScalarRow computes the
         // fallback from the trades (older-runner parity).
-        expect(toScalarRow(openTradeRow("WLD+BTC", "long")).openPosition).to.deep.equal({ side: "long" });
-        expect(toScalarRow(openTradeRow("ETHUSDT", "short")).openPosition).to.deep.equal({ side: "short" });
+        expect(toScalarRow(openTradeRow("WLD+BTC", "long")).openPosition).to.deep.equal({ side: "long", entryTimeSec: 1 });
+        expect(toScalarRow(openTradeRow("ETHUSDT", "short")).openPosition).to.deep.equal({ side: "short", entryTimeSec: 1 });
 
         // Closed position: the field must not ride the wire at all.
         const closed = openTradeRow("WLD+BTC", "long");

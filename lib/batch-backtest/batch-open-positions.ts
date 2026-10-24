@@ -1,4 +1,5 @@
 import type { BacktestResult } from "../types/strategies";
+import { timeToNumber } from "../strategies/backtest/backtest-utils";
 import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 
 /**
@@ -14,6 +15,8 @@ import type { BatchBacktestSymbolResult } from "./batch-backtest-runner";
 
 export interface OpenPositionInfo {
     side: "long" | "short";
+    /** Entry timestamp in Unix seconds; absent in older saved results. */
+    entryTimeSec?: number;
 }
 
 /**
@@ -30,23 +33,30 @@ export function computeOpenPosition(
     const last = trades[trades.length - 1]!;
     if (last.exitReason !== "end_of_data") return null;
     if (last.type !== "long" && last.type !== "short") return null;
-    return { side: last.type };
+    const entryTimeSec = timeToNumber(last.entryTime);
+    return { side: last.type, ...(entryTimeSec !== null ? { entryTimeSec } : {}) };
 }
 
 /**
- * Pair symbols (in run order) whose position was still open at the end of the
- * run. Prefers the runner-computed `openPosition` scalar so scalar-only server
- * rows (no `result.trades` on the wire) participate; falls back to the trades
- * for full rows that predate the scalar.
+ * Pair symbols whose position was still open at the end of the run, newest
+ * entry first. Ties and entries without a timestamp retain run order; unknown
+ * timestamps sort last. Prefers the runner-computed `openPosition` scalar so
+ * scalar-only server rows (no `result.trades` on the wire) participate; falls
+ * back to the trades for full rows that predate the scalar.
  */
 export function collectOpenPositionSymbols(
     rows: readonly BatchBacktestSymbolResult[],
 ): string[] {
-    const symbols: string[] = [];
+    const positions: { symbol: string; entryTimeSec: number }[] = [];
     for (const row of rows) {
-        if (row.openPosition ?? computeOpenPosition(row.result)) {
-            symbols.push(row.symbol);
+        const position = row.openPosition ?? computeOpenPosition(row.result);
+        if (position) {
+            positions.push({
+                symbol: row.symbol,
+                entryTimeSec: Number.isFinite(position.entryTimeSec) ? position.entryTimeSec! : -Infinity,
+            });
         }
     }
-    return symbols;
+    positions.sort((a, b) => a.entryTimeSec === b.entryTimeSec ? 0 : b.entryTimeSec - a.entryTimeSec);
+    return positions.map((position) => position.symbol);
 }
